@@ -1,0 +1,9 @@
+{"file":".trellis/spec/frontend/official-pi-renderer.md","reason":"Defines generation-safe authoritative hydration, official Fork behavior, stale-data gating, and session-row identity rules."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Guides compact icon-only response actions, menus, confirmation dialogs, loading states, tooltips, and accessible interaction."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Guides provider/store ownership for entry provenance, one Fork in flight, row mutation state, and scoped catalog refresh."}
+{"file":".trellis/spec/backend/official-pi-session-catalog.md","reason":"Owns opaque selection tokens, canonical session-file validation, scope isolation, duplicate IDs, invalidation, and the approved whole-session deletion exception."}
+{"file":".trellis/spec/backend/local-pi-rpc.md","reason":"Constrains Fork to exact official RPC, bounds active runtime stop, and forbids invented delete commands or renderer session paths."}
+{"file":".trellis/spec/backend/service-patterns.md","reason":"Guides the serialized Main deletion lifecycle, injected trash dependency, typed failure ownership, and catalog invalidation."}
+{"file":".trellis/spec/backend/type-and-validation-patterns.md","reason":"Guides strict IPC schemas, opaque tokens, discriminated delete results, and validation at every filesystem boundary."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Maps official entries through projector/UI and scoped delete intent through preload/Main/filesystem without implicit format assumptions."}
+{"file":".trellis/tasks/08-09-chat-copy-fork-session-delete/research/technical-choices.md","reason":"Records inspected Pi 0.84.1 fork/entry/delete behavior, repository seams, chosen provenance algorithm, deletion boundary, and rejected alternatives."}

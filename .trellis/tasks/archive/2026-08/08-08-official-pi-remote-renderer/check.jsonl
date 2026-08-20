@@ -1,0 +1,5 @@
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Checks snapshots, streaming, extension UI, supported workflows, locales, and build evidence."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Confirms one generation-scoped subscription owner and no legacy durable transcript projection."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Finds stale private Pi imports, unsupported UI workarounds, or mismatched RPC actions."}
+{"file":".trellis/tasks/08-08-official-pi-agent-migration/research/capability-matrix.md","reason":"Provides the authoritative restore/remove/degrade acceptance inventory."}
+{"file":".trellis/tasks/08-08-local-pi-developer-workflow/research/official-first-audit.md","reason":"Checks that model data and switching come only from official Pi and no production mock fallback remains."}

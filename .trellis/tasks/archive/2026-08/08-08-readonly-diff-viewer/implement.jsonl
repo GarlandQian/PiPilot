@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/service-patterns.md","reason":"Guides simplification of WorkspaceContentService to bounded read-only Git ownership."}
+{"file":".trellis/spec/backend/type-and-validation-patterns.md","reason":"Guides unified-patch DTO bounds and coherent removal of mutation contracts/fingerprints."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Guides the lazy read-only Diff adapter, stable states, navigation, and settings mapping."}
+{"file":".trellis/spec/frontend/read-only-changes.md","reason":"Defines the continuous Changes controller, three-read FIFO, epoch invalidation, lazy Virtualizer, and per-file states."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Accept/revert removal crosses service, shared schema, IPC, preload, renderer, locales, and tests."}
+{"file":".trellis/tasks/08-08-local-pi-developer-workflow/research/technical-choices.md","reason":"Records the maintained library choice, version, public React capability, and lazy-loading decision."}

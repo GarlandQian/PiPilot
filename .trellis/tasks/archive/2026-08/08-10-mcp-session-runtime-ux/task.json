@@ -1,0 +1,32 @@
+{
+  "id": "mcp-session-runtime-ux",
+  "name": "mcp-session-runtime-ux",
+  "title": "Polish MCP and session runtime UX",
+  "description": "Plan local Pi package and MCP management, Composer and generic extension UX, Plan/Retry adapters, session-owned inspector behavior, clone-safe Pi RPC, and deterministic first-session activation.",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P0",
+  "creator": "GarlandQian",
+  "assignee": "GarlandQian",
+  "createdAt": "2026-08-10",
+  "completedAt": "2026-08-12",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "08-10-runtime-session-reliability",
+    "08-10-composer-extension-ux",
+    "08-10-local-pi-integrations-manager",
+    "08-10-plan-retry-adapters",
+    "08-10-pi-session-jump-navigation"
+  ],
+  "parent": "08-08-local-pi-developer-workflow",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

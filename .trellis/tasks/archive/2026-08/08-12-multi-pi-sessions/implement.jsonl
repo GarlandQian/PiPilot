@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/directory-structure.md","reason":"Places the Main-owned runtime pool beside the official local Pi host and keeps renderer access behind preload."}
+{"file":".trellis/spec/backend/service-patterns.md","reason":"Defines independent process ownership, subscription isolation, typed errors, queue/lifecycle handling, and shutdown disposal."}
+{"file":".trellis/spec/backend/local-pi-rpc.md","reason":"Preserves the official Pi 0.84.1 JSONL/RPC boundary, exact session/fork argv, generation rules, and no invented protocol."}
+{"file":".trellis/spec/backend/type-and-validation-patterns.md","reason":"Requires shared Zod DTOs, strict IPC contracts, runtimeId routing, and validation at the Main/preload edges."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Guides the lightweight runtime-summary facade and prevents a second renderer-owned transcript/runtime projection."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Traces pool targets, runtime IDs, events, commands, extension UI, and shutdown across Main, IPC, preload, and renderer."}
+{"file":".trellis/tasks/08-12-multi-pi-sessions/research/codex-worktree-model.md","reason":"Records the Local/shared conflict semantics and the explicitly deferred Worktree/Handoff product boundary."}

@@ -1,0 +1,6 @@
+{"file":".trellis/tasks/08-13-github-actions-release-updates/prd.md","reason":"Check platform-specific actions, manual download, notification placement, and active-work confirmation."}
+{"file":".trellis/tasks/08-13-desktop-update-runtime/prd.md","reason":"Verify UI consumes shared truth and never invents capability or parses raw provider data."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Audit primitive reuse, direct preload avoidance, localization, and accessible interactions."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Audit state ownership, subscription cleanup, stale revisions, and action races."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Require focused Electron and visual evidence for the settings/notification changes."}
+{"file":".agents/skills/pipilot-ui-style/references/review-checklist.md","reason":"Apply the approved PiPilot UI review gate across themes, minimum size, keyboard, and states."}

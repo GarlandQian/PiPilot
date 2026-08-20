@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Independent quality gate and focused verification"}
+{"file": ".trellis/spec/frontend/official-pi-renderer.md", "reason": "Verify generation/session provenance and Composer behavior"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Verify accessibility, responsive layout, tokens and locale parity"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Verify stale activity cleanup and derived state ownership"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Verify Turn/activity union exhaustiveness"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Audit event provenance and reset paths end-to-end"}

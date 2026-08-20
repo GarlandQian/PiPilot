@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/service-patterns.md","reason":"Defines ownership and lifecycle for the local executable resolver, process host, and session catalog."}
+{"file":".trellis/spec/backend/type-and-validation-patterns.md","reason":"Guides the documented RPC envelope and IPC boundaries without creating a parallel semantic protocol."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Guides replacement of the custom transcript/runtime stores with official RPC-derived view state."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"The cutover crosses settings, Main child process, preload, renderer state, sessions, and packaging."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Enforces local official Pi ownership and removal of duplicate Agent behavior."}
+{"file":".trellis/tasks/08-08-official-pi-agent-migration/research/capability-matrix.md","reason":"Authoritative retained, restored, removed, and degraded capability inventory."}
+{"file":".trellis/tasks/08-08-local-pi-developer-workflow/research/official-first-audit.md","reason":"Provides the repository-wide official-versus-desktop-glue classification used to remove every duplicate Agent behavior."}

@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/service-patterns.md","reason":"Guides Main ownership of cwd resolution, Pi-owned session discovery, runtime replacement, and terminal lifecycle."}
+{"file":".trellis/spec/backend/type-and-validation-patterns.md","reason":"Guides the discriminated current scope and path-free IPC/preload contracts."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Guides one active-scope owner, derived project-only states, and stale generation clearing."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Projectless chat crosses repository, directory resolution, Pi process, catalog, preload, Store, sidebar, terminal, and inspector."}
+{"file":".trellis/tasks/08-08-official-pi-agent-migration/research/capability-matrix.md","reason":"Keeps all chat actions on the latest documented official Pi RPC boundary."}

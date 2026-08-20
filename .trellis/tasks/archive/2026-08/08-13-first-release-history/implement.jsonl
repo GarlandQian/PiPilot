@@ -1,0 +1,5 @@
+{"file":".trellis/tasks/08-13-github-actions-release-updates/prd.md","reason":"Authoritative 0.0.1, history-reset, tag, release, exclusion, and final-confirmation requirements."}
+{"file":".trellis/tasks/08-13-github-actions-release-updates/design.md","reason":"Defines last-phase root commit sequence and primary-session ownership."}
+{"file":".trellis/tasks/08-13-github-actions-release-updates/implement.md","reason":"Requires every implementation and quality dependency to pass before history rewrite."}
+{"file":".trellis/tasks/08-13-github-actions-release-updates/research/release-update-evidence.md","reason":"Records inspected old commits/tags/worktree facts that must be rechecked before mutation."}
+{"file":"AGENTS.md","reason":"Repository hygiene, dirty-worktree preservation, Skill symlink, verification, and truthful reporting rules."}

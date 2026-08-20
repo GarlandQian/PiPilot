@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/service-patterns.md","reason":"Guides bounded workspace path-search ownership, cancellation, and reuse of WorkspaceContentService."}
+{"file":".trellis/spec/backend/type-and-validation-patterns.md","reason":"Guides canonical path-search/official image contracts, limits, and IPC validation."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Guides attachment chips, searchable picker, keyboard/focus states, errors, and responsive Composer layout."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Guides session-scoped non-persisted selections and acceptance-aware draft clearing without duplicate state."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"The workflow crosses Composer, renderer RPC adapter, workspace service, IPC/preload, and official Pi commands."}
+{"file":".trellis/tasks/08-08-local-pi-developer-workflow/research/technical-choices.md","reason":"Records why images use official RPC while workspace context remains canonical path references, not private fields."}

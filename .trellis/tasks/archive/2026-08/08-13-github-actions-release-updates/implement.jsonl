@@ -1,0 +1,15 @@
+{"file":".trellis/tasks/08-13-github-actions-release-updates/prd.md","reason":"Authoritative product decisions, platform capability matrix, release policy, requirements, and acceptance criteria."}
+{"file":".trellis/tasks/08-13-github-actions-release-updates/design.md","reason":"Cross-child architecture, Main update ownership, shutdown coordination, draft assembly, UI, and failure matrix."}
+{"file":".trellis/tasks/08-13-github-actions-release-updates/implement.md","reason":"Ordered child delivery dependencies, risky seams, validation commands, and stop conditions."}
+{"file":".trellis/tasks/08-13-github-actions-release-updates/research/release-update-evidence.md","reason":"Local repository evidence, upstream constraints, platform decision matrix, and implementation recheck links."}
+{"file":".trellis/tasks/08-13-first-release-history/prd.md","reason":"Defines the final primary-session-only root commit, remote lease, v0.0.1 tag, and destructive scope."}
+{"file":".trellis/spec/backend/service-patterns.md","reason":"Main service composition, events, stable errors, timers, and disposal conventions."}
+{"file":".trellis/spec/backend/type-and-validation-patterns.md","reason":"Strict shared Zod schemas and synchronized IPC/preload/API ownership."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Desktop lifecycle, package, native runner, and truthful verification requirements."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Settings/notification composition, primitive reuse, localization, and accessibility."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Single update truth source, stale async rejection, and subscription cleanup."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Focused state, Electron, build, and visual validation selection."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Trace tag/feed/update/install state through CI, Main, IPC, preload, renderer, and shutdown."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Prevent duplicate version, platform matrix, artifact list, and state-transition definitions."}
+{"file":".agents/skills/pipilot-ui-style/references/ui-language.md","reason":"Keep About and notices consistent with the approved PiPilot UI language."}
+{"file":".agents/skills/pipilot-ui-style/references/review-checklist.md","reason":"Renderer completion gate for tokens, states, keyboard, themes, responsive, and real Electron review."}

@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/directory-structure.md","reason":"Guides safe removal of legacy Worker/Main/shared modules while retaining the local executable/process host layout."}
+{"file":".trellis/spec/frontend/directory-structure.md","reason":"Guides cleanup of dead stores/components/exports without broad unrelated deletion."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Provides the central test for deleting duplicate Pi semantics and policies."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Ensures every removed operation disappears coherently from backend through UI."}
+{"file":".trellis/tasks/08-08-official-pi-agent-migration/research/capability-matrix.md","reason":"Acts as the authoritative restore/delete/retain inventory for the local-RPC endpoint."}
+{"file":".trellis/tasks/08-08-local-pi-developer-workflow/research/official-first-audit.md","reason":"Defines Electron-only production, real Settings sources, test-only fixtures, and the web/mock removal gate."}

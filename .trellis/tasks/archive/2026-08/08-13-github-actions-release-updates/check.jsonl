@@ -1,0 +1,12 @@
+{"file":".trellis/tasks/08-13-github-actions-release-updates/prd.md","reason":"Check every delivered behavior against resolved release, update, signing, and UX decisions."}
+{"file":".trellis/tasks/08-13-github-actions-release-updates/design.md","reason":"Review cross-child dependencies, boundaries, failure handling, shutdown, and rollback."}
+{"file":".trellis/tasks/08-13-github-actions-release-updates/research/release-update-evidence.md","reason":"Re-verify local facts and current official upstream behavior before accepting claims."}
+{"file":".trellis/tasks/08-13-first-release-history/prd.md","reason":"Check final Git rewrite scope, inventory exclusions, force-with-lease safety, and authorized public Release result."}
+{"file":".trellis/spec/backend/service-patterns.md","reason":"Audit Main ownership, cleanup, stable errors, and lifecycle composition."}
+{"file":".trellis/spec/backend/type-and-validation-patterns.md","reason":"Audit strict schemas and IPC/preload/type parity across runtimes."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Demand actual package, native CI, packaged smoke, and updater evidence."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Audit one truth source, stale revision handling, and subscriptions."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Audit focused unit/Electron/build/visual gates and truthful reporting."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Review tag-to-release-to-client and install-to-shutdown flows end to end."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Check platform/version/artifact/state definitions remain single-source."}
+{"file":".agents/skills/pipilot-ui-style/references/review-checklist.md","reason":"Review About/notice states against current PiPilot accessibility and visual language."}

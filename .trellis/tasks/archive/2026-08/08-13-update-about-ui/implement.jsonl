@@ -1,0 +1,9 @@
+{"file":".trellis/tasks/08-13-github-actions-release-updates/prd.md","reason":"Defines approved update interaction, platform warnings, notification placement, and current UI constraint."}
+{"file":".trellis/tasks/08-13-github-actions-release-updates/design.md","reason":"Defines About composition, provider ownership, install confirmation, and update notice behavior."}
+{"file":".trellis/tasks/08-13-desktop-update-runtime/prd.md","reason":"Dependency: consume only the stable shared snapshot/action contract from Runtime."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Reuse existing settings, button, dialog, localization, and accessibility primitives."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Keep one provider truth source and reject stale revision data."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Choose focused projection, Electron, typecheck, build, and visual checks."}
+{"file":".agents/skills/pipilot-ui-style/references/ui-language.md","reason":"Preserve PiPilot compact settings language, tokens, state honesty, themes, and minimum window."}
+{"file":".agents/skills/pipilot-ui-style/references/component-recipes.md","reason":"Reuse Settings, state, notification, and confirmation recipes rather than new shells."}
+{"file":".agents/skills/pipilot-ui-style/references/review-checklist.md","reason":"UI completion gate for hierarchy, tokens, keyboard, i18n, responsive, and Electron evidence."}

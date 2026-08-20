@@ -1,0 +1,7 @@
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Checks visible loading/error states, accessibility, removal of no-op/old Fork surfaces, and focused renderer evidence."}
+{"file":".trellis/spec/frontend/official-pi-renderer.md","reason":"Checks exact entry provenance, direct Fork, generation/session guards, Composer draft restoration, and no stale session-owned UI."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Checks destructive Main behavior with injected dependencies, focused regressions, typecheck, Electron workflow, build, and package evidence."}
+{"file":".trellis/spec/backend/official-pi-session-catalog.md","reason":"Checks one-shot scoped tokens, canonical file/header identity, active/inactive deletion, duplicate IDs, and isolated invalidation."}
+{"file":".trellis/spec/backend/type-and-validation-patterns.md","reason":"Checks that delete IPC contains no path and stale, replayed, cross-scope, malformed, or changed targets fail deterministically."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Checks reuse of official Pi Fork and existing UI/runtime/catalog infrastructure without a parallel session database or invented RPC."}
+{"file":".trellis/tasks/08-09-chat-copy-fork-session-delete/research/technical-choices.md","reason":"Provides the official behavior and edge-case matrix used to review implementation drift."}

@@ -1,0 +1,21 @@
+{"file":".trellis/tasks/08-14-windows-packaged-runtime-fixes/prd.md","reason":"Authoritative corrected scope: project-owned creation, first-click transcript hydration, Windows npm/fnm package binding, and replacement 0.0.1 release policy."}
+{"file":".trellis/tasks/08-14-windows-packaged-runtime-fixes/design.md","reason":"Cross-layer architecture, fail-closed Windows shim binding, hydration identity, test topology, and rollback design."}
+{"file":".trellis/tasks/08-14-windows-packaged-runtime-fixes/research/windows-session-package-root-causes.md","reason":"Concrete source/test/upstream evidence for the missing Sidebar action, session hydration path, and npm command-shim mismatch."}
+{"file":".trellis/tasks/08-13-first-release-history/research/windows-packaged-session-regressions.md","reason":"Independent source trace of the populated-project UI omission, fnm global npm shim spawn mismatch, and native Windows packaged regression design."}
+{"file":".trellis/tasks/08-13-github-actions-release-updates/prd.md","reason":"Parent first-release version, native platform, public release, signing, and final-history requirements."}
+{"file":".trellis/tasks/08-13-github-actions-release-updates/design.md","reason":"One-root-commit release ordering, native packaging gates, public Release assembly, and rollback boundaries."}
+{"file":".trellis/tasks/08-13-first-release-history/prd.md","reason":"Exact single-root history, lease-protected remote replacement, v0.0.1 tag, and destructive scope contract."}
+{"file":".trellis/spec/backend/conversation-context.md","reason":"Current startup/new/open lifecycle, scope publication, confirmation, and terminal ownership contract to update after the fix."}
+{"file":".trellis/spec/backend/official-pi-session-catalog.md","reason":"Opaque selection tokens, exact session-file activation, observation, refresh, and catalog invalidation requirements."}
+{"file":".trellis/spec/backend/local-pi-rpc.md","reason":"Executable discovery, Windows command invocation, generation-safe host, and official RPC hydration rules."}
+{"file":".trellis/spec/backend/type-and-validation-patterns.md","reason":"Fail-closed bounded parsing and shared IPC/type ownership for any changed cross-runtime contract."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Required Windows packaged fixtures, native evidence, Electron waits, and release-quality rules."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Existing DropdownMenu/Button/localization/accessibility patterns for the project-owned New session action."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Single truth source, stale async rejection, replacement identity, and error settlement."}
+{"file":".trellis/spec/frontend/official-pi-renderer.md","reason":"Exact first-click selection phases, hydration identity, stale-data gating, and loading/error presentation."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Focused UI/Electron/theme/minimum-window validation requirements."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Trace project action and Windows executable identity through renderer, Main, package helper, and release validation."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reuse the existing project task callback, package validator, and presentation gate rather than creating parallel owners."}
+{"file":".agents/skills/pipilot-ui-style/references/ui-language.md","reason":"Preserve current Sidebar density, menu interaction, state treatment, themes, keyboard behavior, and visual language."}
+{"file":".agents/skills/pipilot-ui-style/references/component-recipes.md","reason":"Use current Sidebar row/menu and centered session-state recipes."}
+{"file":".agents/skills/pipilot-ui-style/references/review-checklist.md","reason":"Visual/a11y/state/localization/minimum-window completion gate."}

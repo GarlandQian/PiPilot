@@ -1,0 +1,5 @@
+{"file":".trellis/spec/frontend/official-pi-renderer.md","reason":"Authoritative transcript projection, provenance, hydration, inspector, response Fork, and stale-session rules."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Defines generation/session ownership and renderer reset boundaries for navigation state."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Applies accessibility, bounded rendering, component ownership, and focused UI verification rules."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Keeps official entry identity coherent from RPC hydration through projection and sibling UI components."}
+{"file": ".trellis/spec/backend/official-pi-session-catalog.md", "reason": "Defines visible selection-token lifetime, refresh coalescing, append-only validation, and one-click startup activation."}

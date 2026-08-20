@@ -1,0 +1,5 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/tasks/08-10-mcp-session-runtime-ux/research/technical-choices.md", "reason": "Composer interaction, notification placement, and generic plugin evidence."}
+{"file": ".trellis/spec/frontend/official-pi-renderer.md", "reason": "Composer submission, extension projection, and generation reset contracts."}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Component composition, accessibility, and visual conventions."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Local versus provider state ownership and stale result handling."}

@@ -1,0 +1,6 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Use existing PiPilot primitives, disclosure patterns, icons, accessibility, and state presentation."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Keep tool/activity and file-preview ownership generation-safe and prevent stale data flashes."}
+{"file":".trellis/spec/frontend/official-pi-renderer.md","reason":"Preserve official Pi DTO authority while adding renderer-only presentation projections."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Model structured-value and file-viewer states as bounded discriminated unions."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reuse MarkdownContent, CodeBlock, Inspector tabs, and existing UI primitives instead of parallel implementations."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Confirm the viewer reuses existing secure preview IPC and presentation changes do not alter Main or preload contracts."}

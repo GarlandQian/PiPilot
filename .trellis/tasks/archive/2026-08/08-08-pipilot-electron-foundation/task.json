@@ -1,0 +1,36 @@
+{
+  "id": "pipilot-electron-foundation",
+  "name": "pipilot-electron-foundation",
+  "title": "PiPilot Electron and Pi SDK foundation (historical migration)",
+  "description": "Archived migration of the completed pre-Trellis Phase 0-13 implementation",
+  "status": "completed",
+  "dev_type": "migration",
+  "scope": "historical Phase 0-13 desktop implementation",
+  "package": null,
+  "priority": "P1",
+  "creator": "GarlandQian",
+  "assignee": "GarlandQian",
+  "createdAt": "2026-08-08",
+  "completedAt": "2026-08-08",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "docs/IMPLEMENTATION_PLAN.md",
+    "docs/ARCHITECTURE.md",
+    "docs/COMPLETION_AUDIT.md",
+    "docs/TEST_MATRIX.md",
+    "docs/PACKAGING.md",
+    "docs/PHASE_0_REPORT.md",
+    "docs/PHASE_13_REPORT.md"
+  ],
+  "notes": "Imported after completion; no commit is attributed to the historical worktree.",
+  "meta": {
+    "migration": "historical"
+  }
+}

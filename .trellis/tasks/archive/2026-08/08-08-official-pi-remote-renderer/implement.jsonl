@@ -1,0 +1,7 @@
+{"file":".trellis/spec/frontend/directory-structure.md","reason":"Guides placement and ownership of the RPC provider, selectors, dialogs, and presentation adapters."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Guides generation-scoped official snapshot state and transient streaming without a duplicate durable transcript."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Guides official message/extension UI rendering and coherent removal of unsupported controls."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Guides exhaustive documented RPC message, delta, event, response, and extension UI variants."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Every renderer action and event must align with the typed preload bridge and local process host."}
+{"file":".trellis/tasks/08-08-official-pi-agent-migration/research/capability-matrix.md","reason":"Defines the supported, restored, degraded, and removed renderer boundary."}
+{"file":".trellis/tasks/08-08-local-pi-developer-workflow/research/official-first-audit.md","reason":"Requires real official model state, removal of mock/credential model semantics, and justification for retained desktop UI."}

@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/service-patterns.md","reason":"Defines ownership and lifecycle boundaries for the local Pi child-process host."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Guides renderer state replacement and UI child integration without parallel semantic stores."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"The umbrella spans local process, IPC, renderer state, settings, workspace content, and packaging."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Enforces official Pi ownership and one icon/dependency source per capability."}
+{"file":".trellis/tasks/08-08-local-pi-developer-workflow/research/technical-choices.md","reason":"Records the approved runtime, plugin/MCP, capability, icon, terminal, Diff, cost, Composer, dependency, and sequencing decisions."}
+{"file":".trellis/tasks/08-08-local-pi-developer-workflow/research/official-first-audit.md","reason":"Classifies every Agent, session, plugin, configuration, and desktop feature as official Pi, necessary desktop glue, or removal, with no compatibility category."}
+{"file":".trellis/tasks/08-08-mcp-config-integration/research/pi-mcp-adapter.md","reason":"Defines the optional adapter disclosure, standard config paths, and TUI-only command boundary."}

@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Checks config parsing, atomic persistence, conflict behavior, IPC, dependency, and focused tests."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Checks optional-plugin disclosure, editor behavior, localization, Electron flow, and visual coherence."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Reviews file-to-runtime apply flow and prevents stale or duplicated MCP ownership across layers."}
+{"file":".trellis/tasks/08-08-mcp-config-integration/research/pi-mcp-adapter.md","reason":"Verifies the implementation stays standard-file based and does not copy unsupported plugin TUI/private APIs."}
+{"file":".trellis/tasks/08-08-official-pi-agent-migration/research/capability-matrix.md","reason":"Checks official command discovery, extension UI, and restart behavior against the parent runtime contract."}

@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Checks absence of credential injection/persistence and old-data cleanup code, plus real build results."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Checks intentional credential UI/state removal and retained official model/error presentation."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Finds stale credential operations and values across every former boundary."}
+{"file":".trellis/tasks/08-08-credential-storage-alternatives/research.md","reason":"Verifies no replacement credential store/editor or transitional embedded-runtime auth path was created."}

@@ -1,0 +1,3 @@
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Checks common mappings/fallbacks, row stability, development/package asset resolution, typecheck, build, and visual evidence."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Checks icon family boundaries, open/closed folder state, contrast, truncation, and accessible labels."}
+{"file":".trellis/tasks/08-08-local-pi-developer-workflow/research/technical-choices.md","reason":"Verifies the implementation matches the researched maintained Material theme rather than a copied mapping."}

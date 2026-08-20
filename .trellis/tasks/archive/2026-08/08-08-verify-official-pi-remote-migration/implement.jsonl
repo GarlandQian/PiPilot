@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Defines proportional-to-risk checks for core runtime, persistence, process, and packaging changes."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Defines renderer, localization, Electron, and visual verification expectations."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Provides the end-to-end checklist for official Agent data flow and stale contract removal."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Guides structural review for duplicate or fallback Agent semantics."}
+{"file":".trellis/tasks/08-08-official-pi-agent-migration/research/capability-matrix.md","reason":"Defines the exact restored, removed, degraded, and retained surface to verify under the fresh-state model."}
+{"file":".trellis/tasks/08-08-local-pi-developer-workflow/research/official-first-audit.md","reason":"Defines the Electron-only, no-production-mock, and real Settings-source gates for final verification."}

@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Checks path-search bounds/canonicalization, contracts, focused tests, and no persisted image bytes."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Checks chooser/paste/drop, picker keyboard access, error retention, responsive states, Electron flow, and build."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verifies exact official prompt/steer/follow-up image flow and one canonical workspace context path flow."}
+{"file":".trellis/tasks/08-08-official-pi-agent-migration/research/capability-matrix.md","reason":"Verifies images stay within documented RPC and no plugin/private context protocol becomes required."}

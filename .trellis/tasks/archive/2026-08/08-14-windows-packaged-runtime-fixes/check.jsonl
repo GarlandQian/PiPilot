@@ -1,0 +1,17 @@
+{"file":".trellis/tasks/08-14-windows-packaged-runtime-fixes/prd.md","reason":"Verify every observable project creation, session hydration, Windows package-management, version, and release acceptance criterion."}
+{"file":".trellis/tasks/08-14-windows-packaged-runtime-fixes/design.md","reason":"Audit boundaries, identity proof, stale-state handling, native evidence, rollback, and no broad fallback."}
+{"file":".trellis/tasks/08-14-windows-packaged-runtime-fixes/research/windows-session-package-root-causes.md","reason":"Recheck the implementation against the concrete reproduced root causes and npm shim evidence."}
+{"file":".trellis/tasks/08-13-first-release-history/research/windows-packaged-session-regressions.md","reason":"Audit exact native argv evidence and ensure macOS/direct-mjs tests are not misreported as Windows proof."}
+{"file":".trellis/tasks/08-13-first-release-history/prd.md","reason":"Audit the final one-root commit, exact leases, v0.0.1 tag, public Release, and one visible successful Actions run."}
+{"file":".trellis/spec/backend/conversation-context.md","reason":"Check explicit creation, scope publication, confirmation, and cleanup are coherent."}
+{"file":".trellis/spec/backend/official-pi-session-catalog.md","reason":"Check selection-token validity, exact file/session confirmation, catalog refresh, and first-click behavior."}
+{"file":".trellis/spec/backend/local-pi-rpc.md","reason":"Check Windows executable invocation, generation replacement, official messages hydration, and bounded shutdown."}
+{"file":".trellis/spec/backend/type-and-validation-patterns.md","reason":"Audit strict bounded shim parsing and contract/schema parity if shared types change."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Demand focused tests, native Windows package/smoke, checked-in fixtures, and truthful release evidence."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Audit project menu semantics, icon/label, focus, disabled state, and locale ownership."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Audit single state ownership, superseded operations, loading completion, and terminal errors."}
+{"file":".trellis/spec/frontend/official-pi-renderer.md","reason":"Audit exact scope/generation/session hydration and no stale/empty flash on the first click."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Audit Electron, themes, 1100x680, keyboard, and real UI evidence."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Review executable-to-package and click-to-message flows across every boundary."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Ensure no duplicate session action, parser, validator, or renderer state owner was introduced."}
+{"file":".agents/skills/pipilot-ui-style/references/review-checklist.md","reason":"Final PiPilot visual consistency, state, accessibility, i18n, overflow, and Electron review gate."}

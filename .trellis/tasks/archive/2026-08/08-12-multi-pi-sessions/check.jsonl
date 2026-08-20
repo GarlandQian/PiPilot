@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Quality gate for process lifecycle, cross-layer tracing, focused tests, and truthful verification claims."}
+{"file":".trellis/spec/backend/local-pi-rpc.md","reason":"Review the pool against official argv, JSONL, generation, stale-event, and shutdown requirements."}
+{"file":".trellis/spec/backend/type-and-validation-patterns.md","reason":"Review strict shared schemas and IPC/preload contract parity."}
+{"file":".trellis/spec/frontend/official-pi-renderer.md","reason":"Confirm the compatibility renderer remains the sole transcript projection and pool events are identity-tagged."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Review runtimeId data flow and stale-event isolation across every boundary."}
+{"file":".trellis/tasks/08-12-multi-pi-sessions/research/codex-worktree-model.md","reason":"Check that Local/shared conflict warnings do not overclaim Worktree isolation or Handoff support."}

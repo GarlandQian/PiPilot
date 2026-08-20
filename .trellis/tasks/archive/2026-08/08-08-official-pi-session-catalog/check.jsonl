@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Checks bounded current-format fixtures, path containment, focused tests, typecheck, Electron flow, and build evidence."}
+{"file":".trellis/spec/backend/type-and-validation-patterns.md","reason":"Checks that observed paths stay Main-owned and never-loaded, malformed, stale, oversized, and unsupported rows fail deterministically."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Confirms there is no private Pi import, copied session-directory resolver, transcript writer, session database, compatibility adapter, or migrator."}
+{"file":".trellis/tasks/08-08-official-pi-agent-migration/research/capability-matrix.md","reason":"Checks catalog and session-open behavior against the latest supported official Pi contract."}

@@ -1,0 +1,5 @@
+{"file":".trellis/tasks/08-13-first-release-history/prd.md","reason":"Check exact destructive scope, exclusions, lease safety, tag, and authorized public Release outcome."}
+{"file":".trellis/tasks/08-13-first-release-history/design.md","reason":"Audit sequencing, remote revalidation, failure recovery, and no destructive worktree reset."}
+{"file":".trellis/tasks/08-13-github-actions-release-updates/prd.md","reason":"Verify root tree is the approved 0.0.1 product and release scope."}
+{"file":".trellis/tasks/08-13-github-actions-release-updates/implement.md","reason":"Confirm all child/integrated gates were actually completed before mutation."}
+{"file":"AGENTS.md","reason":"Audit secrets, generated files, user changes, local Skill noise, and real verification claims."}

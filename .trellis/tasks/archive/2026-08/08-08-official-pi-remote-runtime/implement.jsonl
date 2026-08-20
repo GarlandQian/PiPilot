@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/directory-structure.md","reason":"Guides placement of the Main local Pi resolver, JSONL host, schemas, and fixtures."}
+{"file":".trellis/spec/backend/service-patterns.md","reason":"Guides explicit process lifecycle ownership, subscriptions, errors, and shutdown."}
+{"file":".trellis/spec/backend/type-and-validation-patterns.md","reason":"Guides validation of documented RPC envelopes and IPC contracts at one boundary."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"The local RPC path crosses child process, Main, preload, renderer, and extension UI boundaries."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Prevents copying Pi Agent semantics or its unexported RpcClient while allowing minimal host glue."}
+{"file":".trellis/tasks/08-08-official-pi-agent-migration/research/capability-matrix.md","reason":"Defines required official commands, plugin behavior, version target, and unsupported boundaries."}

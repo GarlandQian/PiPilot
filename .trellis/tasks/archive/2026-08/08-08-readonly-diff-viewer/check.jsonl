@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Checks bounded Git reads, no mutation side effects, contract tests, dependency cleanup, and real commands."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Checks lazy loading, themes/settings, state/error rendering, accessibility, screenshots, typecheck, and build."}
+{"file":".trellis/spec/frontend/read-only-changes.md","reason":"Checks source order, bounded visibility loading, stale-response rejection, lazy bundle boundaries, and read-only behavior."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verifies accept/revert/fingerprint absence and one read-only flow across every layer."}
+{"file":".trellis/tasks/08-08-local-pi-developer-workflow/research/technical-choices.md","reason":"Verifies the final adapter uses the selected public maintained library and no overlapping renderer."}

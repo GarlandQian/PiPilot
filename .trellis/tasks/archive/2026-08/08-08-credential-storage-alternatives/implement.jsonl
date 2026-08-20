@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/service-patterns.md","reason":"Guides removal of Main credential composition while preserving the local process host boundary."}
+{"file":".trellis/spec/backend/type-and-validation-patterns.md","reason":"Guides direct cross-layer contract removal without a compatibility schema or old-data cleanup API."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Guides removal of credential state while retaining official model/error presentation."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Credential data crosses renderer, preload, Main, Worker, persistence, and startup and must be removed coherently."}
+{"file":".trellis/tasks/08-08-credential-storage-alternatives/research.md","reason":"Defines official local-Pi credential ownership and the greenfield removal of PiPilot credentials.json behavior."}

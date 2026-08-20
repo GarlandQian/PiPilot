@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/service-patterns.md","reason":"Guides a Main-owned bounded read-only catalog whose directory is learned from official Pi state, with explicit lifecycle and typed failure ownership."}
+{"file":".trellis/spec/backend/type-and-validation-patterns.md","reason":"Guides discriminated scope, bounded metadata/cursor schemas, opaque selections, and validation at IPC boundaries."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"The catalog selection flows from Main filesystem metadata through preload/store into local Pi process replacement."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Keeps the catalog as minimal navigation glue without copying Pi session path resolution or adding a parallel database."}
+{"file":".trellis/tasks/08-08-official-pi-agent-migration/research/capability-matrix.md","reason":"Defines the current official Pi RPC/session boundary and the justified read-only listing exception."}

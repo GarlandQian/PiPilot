@@ -1,0 +1,28 @@
+{
+  "id": "windows-packaged-runtime-fixes",
+  "name": "windows-packaged-runtime-fixes",
+  "title": "Windows packaged runtime acceptance fixes",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": "cross-layer",
+  "package": null,
+  "priority": "P0",
+  "creator": "GarlandQian",
+  "assignee": "GarlandQian",
+  "createdAt": "2026-08-14",
+  "completedAt": "2026-08-14",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "08-13-github-actions-release-updates",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "priority": "P0"
+  }
+}

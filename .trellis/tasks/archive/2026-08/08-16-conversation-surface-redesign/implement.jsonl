@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "Renderer package entry and pre-development checklist"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Component composition, accessibility, styling and i18n rules"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "Subscription, effect and cleanup rules for transient runtime activity"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Generation-safe renderer state ownership and reset rules"}
+{"file": ".trellis/spec/frontend/official-pi-renderer.md", "reason": "Official Pi projection, transcript and Composer contracts"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Typed Turn/activity unions and boundary validation"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Focused verification and Electron coverage expectations"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Trace extension events through store and presentation without widening IPC"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Reuse existing projection, presenter and UI primitives"}

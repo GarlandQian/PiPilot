@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Checks process lifecycle, IPC, local-runtime, dependency, and packaged behavior."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Checks the requested UI workflows and intentional removals."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verifies each official command/event and UI workflow end to end."}
+{"file":".trellis/tasks/08-08-local-pi-developer-workflow/research/technical-choices.md","reason":"Provides the authoritative architecture, dependency, optional-plugin, and child dependency boundary for final review."}
+{"file":".trellis/tasks/08-08-local-pi-developer-workflow/research/official-first-audit.md","reason":"Checks that every surviving Agent-facing capability maps to latest official Pi and every custom module is limited to justified desktop glue."}
+{"file":".trellis/tasks/08-08-mcp-config-integration/research/pi-mcp-adapter.md","reason":"Checks that only MCP depends on the optional adapter and the absent state clearly informs users."}

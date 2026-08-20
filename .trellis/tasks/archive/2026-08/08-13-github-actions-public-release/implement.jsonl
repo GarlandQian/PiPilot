@@ -1,0 +1,8 @@
+{"file":".trellis/tasks/08-13-github-actions-release-updates/prd.md","reason":"Owns tag, public Release, platform trust, public repository, and complete-asset publication requirements."}
+{"file":".trellis/tasks/08-13-github-actions-release-updates/design.md","reason":"Defines native job, assembly, artifact, privilege, idempotence, and rollback design."}
+{"file":".trellis/tasks/08-13-github-actions-release-updates/research/release-update-evidence.md","reason":"Lists current workflows/configs and authoritative upstream references to recheck."}
+{"file":"AGENTS.md","reason":"Preserve repository hygiene while verifying AI development files stay out of packages."}
+{"file":".trellis/tasks/08-13-desktop-update-runtime/prd.md","reason":"Dependency: exact packaged targets and updater metadata capabilities must match Runtime."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Requires real native package and packaged smoke evidence for packaging changes."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Trace tag/version through native manifests, metadata, assembly, Release, and client feed."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reuse current package matrix/scripts and avoid parallel artifact/version definitions."}

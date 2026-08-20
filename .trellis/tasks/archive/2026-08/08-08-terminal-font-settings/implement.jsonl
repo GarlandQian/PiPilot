@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Guides the Terminal Settings controls, preview, reset command, and stable xterm surface."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Guides shared persisted settings ownership and live terminal consumption without duplicate state."}
+{"file":".trellis/spec/backend/type-and-validation-patterns.md","reason":"Guides the single current settings schema, bounded terminal fields, explicit rejection of other versions, and IPC validation."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Terminal typography crosses persistence, Main/preload settings, renderer store, Settings UI, and xterm layout."}

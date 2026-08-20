@@ -1,0 +1,6 @@
+{"file":".trellis/spec/frontend/official-pi-renderer.md","reason":"Verify exact provenance, outline visibility, hydration gating, navigation, and Fork behavior."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Verify pending jumps, anchors, highlights, and outline items reset across scope/session/generation replacement."}
+{"file":".trellis/spec/backend/local-pi-rpc.md","reason":"Verify renderer cleanup does not narrow official get_tree/bash/abort_bash schemas or remove bounded Main host behavior."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Verify keyboard semantics, reduced motion, bounded text, empty states, and component tests."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Trace official entry identity end to end and reject stale or approximate navigation."}
+{"file": ".trellis/spec/backend/official-pi-session-catalog.md", "reason": "Verify retained visible tokens, stale cursors, one-shot consumption, identity validation, and first-click startup behavior."}

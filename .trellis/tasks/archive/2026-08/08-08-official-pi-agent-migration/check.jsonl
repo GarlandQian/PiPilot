@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Checks local process lifecycle, Pi-owned session catalog, absence of old-data compatibility, dependency cleanup, and packaged startup."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Checks official renderer state, restored capabilities, extension UI, and intentional removals."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verifies every official command/event flow through Electron end to end."}
+{"file":".trellis/tasks/08-08-official-pi-agent-migration/research/capability-matrix.md","reason":"Supplies the final structural and behavioral review boundary."}
+{"file":".trellis/tasks/08-08-local-pi-developer-workflow/research/official-first-audit.md","reason":"Verifies no unsupported custom Agent/session/configuration semantics survive and retained custom code has a documented desktop-only reason."}

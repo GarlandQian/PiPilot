@@ -1,0 +1,7 @@
+{"file": ".trellis/tasks/08-11-ui-redesign-command-center/design.md", "reason": "Authoritative frame model, token plan, status bar wiring, palette registry, MCP single-draft data flow."}
+{"file": ".trellis/tasks/archive/2026-08/08-10-local-pi-integrations-manager/prd.md", "reason": "Archived MCP structured-form behavioral requirements this task's Phase E satisfies."}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Component shape, ui/ primitive ownership, cn() and variant conventions."}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "Where frame/, ui/form.tsx, lib/commands.ts and settings components belong."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Store subscription patterns for StatusBar (pi-rpc, mcp, workspace) and App frame state."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Locale-key typing derives from zh-CN.json; keep parity when adding rail/palette/statusbar/mcp.form keys."}
+{"file": "PRODUCT.md", "reason": "Binding visual constraints: neutral grays, one low-saturation sage accent, no gradients/glass/decorative shadows, compact by default."}

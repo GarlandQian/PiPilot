@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/08-10-mcp-session-runtime-ux/research/technical-choices.md", "reason": "Exact Pi package APIs, MCP behavior, and public resource-filter limitation."}
+{"file": ".trellis/spec/backend/service-patterns.md", "reason": "Main service, helper lifecycle, serialization, and dependency injection patterns."}
+{"file": ".trellis/spec/backend/type-and-validation-patterns.md", "reason": "Strict helper/IPC DTO validation patterns."}
+{"file": ".trellis/spec/backend/local-pi-rpc.md", "reason": "Executable identity, restart, and process lifecycle invariants."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Integrations store scope, operation, and stale response ownership."}

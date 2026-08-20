@@ -1,0 +1,6 @@
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Verify focused tests, typecheck, build, Electron visuals, and no accidental passive JSON dumps."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Review keyboard, focus, copy controls, localization, theme, and minimum-window behavior."}
+{"file":".trellis/spec/frontend/read-only-changes.md","reason":"Retain the Inspector's read-only ownership and bounded scrolling conventions."}
+{"file":".trellis/spec/frontend/official-pi-renderer.md","reason":"Check that raw Pi contracts and provenance remain unchanged and no hidden reasoning is fabricated."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Check exhaustive structured projections, honest fallbacks, and bounded malformed-value behavior."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Audit the complete preview and activity data flow for stale identities and contract drift."}

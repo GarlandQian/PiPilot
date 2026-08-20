@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Checks current settings validation, absence of compatibility migration, atomic persistence, focused tests, and real command results."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Checks Terminal Settings accessibility, live xterm identity/refit, CJK screenshots, typecheck, and build."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verifies one terminal settings flow from persisted document through the mounted xterm instance."}

@@ -1,0 +1,5 @@
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Checks focused Renderer tests, localization, desktop behavior, visual inspection, typecheck, and build evidence."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Reviews identity-only selection, stale response rejection, cleanup, and single ownership of streamed tool state."}
+{"file":".trellis/spec/frontend/official-pi-renderer.md","reason":"Checks response grouping, tool provenance, subagent timeline bounds, typewriter/scroll behavior, and session replacement safety."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Checks keyboard, focus, ARIA, reduced motion, responsive density, and existing primitive/icon usage."}
+{"file":".trellis/tasks/08-20-codex-tool-activity-presentation/research/codex-activity-presentation.md","reason":"Verifies the implementation matches the approved Codex-style hierarchy without copying branding or exposing private reasoning/scheduler data."}

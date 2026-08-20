@@ -1,0 +1,5 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Guides stable project/conversation rows, split and icon controls, flyout reuse, accessible labels, and tooltips."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Guides derived active scope, lazy per-project catalog state, and one owner for panel/navigation state."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Guides discriminated project/projectless row actions without nullable or fake-workspace branches."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Sidebar selection crosses catalog, runtime scope replacement, Store hydration, App wiring, and ChatHeader layout."}
+{"file":".trellis/tasks/08-08-official-pi-agent-migration/research/capability-matrix.md","reason":"Defines retained official session actions and removed session pin/delete behavior."}

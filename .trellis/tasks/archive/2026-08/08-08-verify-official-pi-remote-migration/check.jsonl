@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Reviews the actual focused/full/build/package commands and results."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Reviews official RPC-supported Electron workflows, removed policy UI, retained desktop features, and visual evidence."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Reviews local process, renderer, Pi-owned sessions, fresh-state removal, packaging, and shutdown boundaries against evidence."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Confirms structural searches show one official Agent source of truth."}
+{"file":".trellis/tasks/08-08-official-pi-agent-migration/research/capability-matrix.md","reason":"Serves as the final restore/delete/retain/degrade comparison for verification sign-off without old-data migration."}
+{"file":".trellis/tasks/08-08-local-pi-developer-workflow/research/official-first-audit.md","reason":"Checks evidence for preload-required Electron runtime, test-only fixtures, and authoritative Settings data."}

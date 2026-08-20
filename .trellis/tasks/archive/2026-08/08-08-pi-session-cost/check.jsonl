@@ -1,0 +1,3 @@
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Checks formatting edge cases, responsive header layout, locales, focused tests, and real visual evidence."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Checks session reset, refresh coalescing, and old-generation response rejection."}
+{"file":".trellis/tasks/08-08-official-pi-agent-migration/research/capability-matrix.md","reason":"Verifies the display uses official stats and remains within the retained RPC capability boundary."}

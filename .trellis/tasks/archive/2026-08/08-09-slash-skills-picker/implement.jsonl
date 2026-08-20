@@ -1,0 +1,6 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Guides controlled Composer state, reuse of Command/Popover primitives, Tabler icon controls, localization, focus, and accessible interaction."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Guides local picker state versus authoritative provider command state, scope resets, and avoiding duplicated server data."}
+{"file":".trellis/spec/frontend/official-pi-renderer.md","reason":"Requires commands to come from the active official Pi generation and forbids stale or mock session-owned state."}
+{"file":".trellis/spec/backend/local-pi-rpc.md","reason":"Defines get_commands as the official discovery boundary and preserves Pi-owned skill expansion through prompt/queue."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Maps official RPC metadata through provider, App, Composer, and the unchanged Pi invocation without parallel parsing."}
+{"file":".trellis/tasks/08-09-slash-skills-picker/research/official-skill-sources.md","reason":"Records official Codex interaction, inspected Pi 0.84.1 skill/RPC behavior, current repository seams, and rejected alternatives."}

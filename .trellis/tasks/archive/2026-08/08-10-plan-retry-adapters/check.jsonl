@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/08-10-mcp-session-runtime-ux/research/technical-choices.md", "reason": "Verify only externally reachable Plan/Retry semantics are adapted."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Settings/runtime synchronization verification."}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Adapter fallback and activity UI verification."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Trace package facts, settings writes, RPC events, and renderer state."}

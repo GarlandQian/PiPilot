@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Checks project/recent hierarchy, lazy/empty/error states, keyboard accessibility, both panel states, Electron, build, and visuals."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Checks stable row tracks, split-control semantics, reusable collapsed flyout, and mirrored panel buttons."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Checks that stale project catalogs/runtime state cannot appear under another scope."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Reviews folder selection through catalog/session activation and projectless navigation end to end."}

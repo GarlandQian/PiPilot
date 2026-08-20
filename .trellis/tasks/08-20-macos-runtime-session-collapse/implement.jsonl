@@ -1,0 +1,13 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Main、Utility Host、IPC 与生命周期边界"}
+{"file": ".trellis/spec/backend/service-patterns.md", "reason": "Host 池、单飞恢复、订阅与清理模式"}
+{"file": ".trellis/spec/backend/type-and-validation-patterns.md", "reason": "MessagePort fatal DTO、Zod 与跨进程验证"}
+{"file": ".trellis/spec/backend/embedded-pi-host.md", "reason": "内置 SDK、Utility Host、Runtime 与崩溃边界"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Main 日志隐私、故障恢复和测试门"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Renderer 状态与组件分层"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Session 选择、loading/ready/error 和旧状态清理"}
+{"file": ".trellis/spec/frontend/official-pi-renderer.md", "reason": "generation-safe hydration、Host crash 与终态契约"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Utility、Main、Preload、Renderer 故障数据流"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用现有 Host facade、schema 和状态机"}
+{"file": ".trellis/tasks/08-20-macos-runtime-session-collapse/research/root-cause.md", "reason": "已确认的 crashed Host 永久占位和首错丢失证据"}
+{"file": ".trellis/tasks/08-14-pi-plugin-lag-refactor/research/session-activation-tray-reliability.md", "reason": "既有 Session 激活竞态和 tray runtime 可靠性回归"}
+{"file": ".trellis/tasks/08-14-pi-plugin-lag-refactor/research/session-catalog-loading-loop-20260816.md", "reason": "既有永久 loading 根因与边界，避免重复修错层"}

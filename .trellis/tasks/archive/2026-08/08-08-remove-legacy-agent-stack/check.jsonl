@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Checks structural absence, no old-data compatibility hooks, dependency/build evidence, and retained baseline correctness."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Checks removed policy/mutation controls and surviving official conversation plus desktop UI."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Confirms every retained Agent-adjacent custom module is required host, catalog, or presentation glue."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Finds dangling callers, schemas, tests, mocks, locales, dependencies, and current claims across layers."}
+{"file":".trellis/tasks/08-08-official-pi-agent-migration/research/capability-matrix.md","reason":"Provides the final restore/delete/retain comparison for review."}
+{"file":".trellis/tasks/08-08-local-pi-developer-workflow/research/official-first-audit.md","reason":"Checks removal of standalone web/mock behavior and verifies every retained Settings value has a real owner."}

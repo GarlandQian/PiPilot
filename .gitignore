@@ -1,0 +1,23 @@
+node_modules/
+/.pnpm-store/
+/dist/
+/out/
+/release/
+*.local
+.DS_Store
+
+# Machine-local skills stay ignored; Trellis project skills are source files.
+/.agents/skills/*
+!/.agents/skills/trellis-*/
+!/.agents/skills/trellis-*/**
+!/.agents/skills/pipilot-ui-style/
+!/.agents/skills/pipilot-ui-style/**
+
+# Test artifacts (approved visual baselines live under tests/visual)
+/test-results/
+/playwright-report/
+/blob-report/
+/.playwright-mcp/
+
+# Trellis developer journals are local; keep only the generic workspace index.
+/.trellis/workspace/*/

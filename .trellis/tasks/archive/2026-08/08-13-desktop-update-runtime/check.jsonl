@@ -1,0 +1,7 @@
+{"file":".trellis/tasks/08-13-github-actions-release-updates/prd.md","reason":"Check exact platform capability and manual-download policy compliance."}
+{"file":".trellis/tasks/08-13-github-actions-release-updates/design.md","reason":"Review state ownership, provider isolation, operation races, and shutdown final intent."}
+{"file":".trellis/spec/backend/type-and-validation-patterns.md","reason":"Audit strict schemas, clone-safe IPC payloads, and sender/receiver parity."}
+{"file":".trellis/spec/backend/service-patterns.md","reason":"Audit timer/listener/process cleanup and fixed error mapping."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Require focused lifecycle, Electron, build, and packaged evidence."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Check stale revisions and provider subscription cleanup in renderer state."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Review the complete provider-to-UI and install-to-shutdown data flow."}

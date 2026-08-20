@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/service-patterns.md","reason":"Guides explicit Main service composition, atomic file ownership, error mapping, and lifecycle."}
+{"file":".trellis/spec/backend/type-and-validation-patterns.md","reason":"Guides one typed JSONC/IPC boundary and validation of unknown external configuration."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Guides the operational Settings editor, controls, accessibility, and coherent optional-dependency state."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Guides local dirty drafts, adapter snapshots, conflict recovery, and command availability without duplicate runtime state."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"MCP configuration crosses standard files, Main, IPC, renderer, controlled Pi restart, and optional plugin discovery."}
+{"file":".trellis/tasks/08-08-mcp-config-integration/research/pi-mcp-adapter.md","reason":"Defines authoritative config paths, current RPC/TUI incompatibility, versions, and the allowed integration boundary."}
+{"file":".trellis/tasks/08-08-official-pi-agent-migration/research/capability-matrix.md","reason":"Keeps command/status and controlled-restart integration aligned with the local official Pi RPC boundary."}

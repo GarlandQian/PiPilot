@@ -1,0 +1,73 @@
+import { randomUUID } from 'node:crypto'
+import type { BrowserWindow } from 'electron'
+import {
+  externalControlGetContract,
+  externalControlSetEnabledContract,
+  ipcChannels,
+} from '../../shared/ipc/contracts'
+import {
+  ExternalControlError,
+  externalControlSettingsChangedEventSchema,
+} from '../../shared/external-control'
+import type { ExternalControlLifecycleService } from '../external-control/lifecycle-service'
+import type { ApplicationUrlPolicy } from '../security/url-policy'
+import {
+  createTrustedSenderValidator,
+  MainProcessError,
+  registerValidatedHandler,
+} from './validated-handler'
+
+export interface RegisterExternalControlIpcOptions {
+  getMainWindow(): BrowserWindow | null
+  policy: ApplicationUrlPolicy
+  service: ExternalControlLifecycleService
+}
+
+function mapExternalControlError(error: unknown): never {
+  if (error instanceof ExternalControlError) {
+    throw new MainProcessError(error.code, error.message, true)
+  }
+  throw error
+}
+
+export function registerExternalControlIpc({
+  getMainWindow,
+  policy,
+  service,
+}: RegisterExternalControlIpcOptions) {
+  const isTrustedSender = createTrustedSenderValidator(policy, getMainWindow)
+  const unsubscribe = service.subscribe((snapshot) => {
+    const window = getMainWindow()
+    if (!window || window.isDestroyed()) return
+    window.webContents.send(
+      ipcChannels.externalControlChanged,
+      externalControlSettingsChangedEventSchema.parse({
+        eventId: randomUUID(),
+        snapshot,
+      }),
+    )
+  })
+
+  const disposeGet = registerValidatedHandler(
+    externalControlGetContract,
+    isTrustedSender,
+    () => service.getSnapshot(),
+  )
+  const disposeSetEnabled = registerValidatedHandler(
+    externalControlSetEnabledContract,
+    isTrustedSender,
+    ({ enabled }) => service.setEnabled(enabled).catch(mapExternalControlError),
+  )
+
+  let disposed = false
+  return {
+    dispose() {
+      if (disposed) return false
+      disposed = true
+      unsubscribe()
+      disposeGet()
+      disposeSetEnabled()
+      return true
+    },
+  }
+}

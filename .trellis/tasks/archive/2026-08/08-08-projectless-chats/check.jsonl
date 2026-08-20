@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Checks fresh userData, exact cwd, omitted session-dir override, official session-location discovery, runtime replacement, Electron, and build evidence."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Checks split creation, recent-chat navigation, no-project states, accessibility, and stale UI clearing."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Reviews project selection and projectless switching end to end without path or state leakage."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Confirms no fake workspace, compatibility adapter, migration, second runtime, or transcript store was added."}

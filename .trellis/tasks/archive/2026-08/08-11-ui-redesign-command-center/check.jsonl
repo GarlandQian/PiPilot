@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Smallest applicable verification commands and review expectations."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Confirm no renderer change leaks into preload/IPC; frame work stays renderer-only."}
+{"file": ".trellis/tasks/08-11-ui-redesign-command-center/design.md", "reason": "Verify implementation matches the navigation model, keyboard map, status bar sources, and MCP draft-text flow."}
+{"file": ".trellis/tasks/archive/2026-08/08-10-local-pi-integrations-manager/prd.md", "reason": "Verify the archived MCP form behaviors: unified add/edit dialog, dynamic rows, description remark, Form/JSON single draft, diagnostics block save without dropping draft."}

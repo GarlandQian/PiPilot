@@ -1,0 +1,7 @@
+{"file":".trellis/tasks/08-13-github-actions-release-updates/prd.md","reason":"Check public-release gating, public host, stable SemVer, unsigned trust labels, and fail-closed gates."}
+{"file":".trellis/tasks/08-13-github-actions-release-updates/design.md","reason":"Review permissions, artifact inventory, idempotence, promotion, and rollback boundaries."}
+{"file":".trellis/tasks/08-13-desktop-update-runtime/prd.md","reason":"Check generated feed/metadata exactly matches enabled client capabilities."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Require actual native CI/package/smoke results rather than local inference."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Audit version and metadata consistency from source tag to installed update client."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Detect duplicate platform matrices, versions, and artifact allowlists that can drift."}
+{"file":"AGENTS.md","reason":"Audit source/package hygiene, ignored artifacts, machine-specific links, and truthful package claims."}

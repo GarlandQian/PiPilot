@@ -1,0 +1,5 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/tasks/08-10-mcp-session-runtime-ux/research/technical-choices.md", "reason": "Deep-tree, catalog churn, and inspector readiness evidence."}
+{"file": ".trellis/spec/backend/local-pi-rpc.md", "reason": "Exact host response, lifecycle, and JSONL contract."}
+{"file": ".trellis/spec/backend/official-pi-session-catalog.md", "reason": "Scoped catalog, tokens, refresh, and activation invariants."}
+{"file": ".trellis/spec/frontend/official-pi-renderer.md", "reason": "Generation-safe hydration and inspector projection rules."}

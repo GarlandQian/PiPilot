@@ -1,0 +1,32 @@
+{
+  "id": "github-actions-release-updates",
+  "name": "github-actions-release-updates",
+  "title": "GitHub Actions packaging releases and auto updates",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "GarlandQian",
+  "assignee": "GarlandQian",
+  "createdAt": "2026-08-13",
+  "completedAt": "2026-08-14",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "08-13-desktop-update-runtime",
+    "08-13-github-actions-public-release",
+    "08-13-update-about-ui",
+    "08-13-first-release-history",
+    "08-14-windows-packaged-runtime-fixes"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

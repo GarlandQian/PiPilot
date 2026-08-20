@@ -1,0 +1,33 @@
+{
+  "id": "official-pi-agent-migration",
+  "name": "official-pi-agent-migration",
+  "title": "Migrate PiPilot to local official Pi RPC",
+  "description": "Run the selected latest local Pi JSONL RPC, restore supported official capabilities, use Pi-owned sessions, and remove embedded Agent semantics and policy stacks without old-data compatibility.",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P0",
+  "creator": "GarlandQian",
+  "assignee": "GarlandQian",
+  "createdAt": "2026-08-08",
+  "completedAt": "2026-08-12",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "08-08-official-pi-remote-runtime",
+    "08-08-official-pi-remote-renderer",
+    "08-08-credential-storage-alternatives",
+    "08-08-remove-legacy-agent-stack",
+    "08-08-verify-official-pi-remote-migration",
+    "08-08-official-pi-session-catalog"
+  ],
+  "parent": "08-08-local-pi-developer-workflow",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

@@ -1,0 +1,5 @@
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Checks keyboard/focus behavior, distinct empty/loading/error states, accessibility, localization, and focused renderer evidence."}
+{"file":".trellis/spec/frontend/official-pi-renderer.md","reason":"Checks generation/session gating, exact official command provenance, and removal of stale skill rows on replacement."}
+{"file":".trellis/spec/backend/local-pi-rpc.md","reason":"Checks that PiPilot neither invents skill RPC nor expands or executes skills outside the official prompt pipeline."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Checks reuse of existing command metadata, Composer ownership, Command/Popover primitives, and dependency stack."}
+{"file":".trellis/tasks/08-09-slash-skills-picker/research/official-skill-sources.md","reason":"Provides the source-of-truth behavior and product boundary used to detect implementation drift."}

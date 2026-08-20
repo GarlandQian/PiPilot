@@ -1,0 +1,5 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Defines compact component composition, accessibility, localization, and reuse rules for transcript and Inspector UI."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Keeps subagent Inspector selection identity-scoped and prevents stale session/generation presentation state."}
+{"file":".trellis/spec/frontend/official-pi-renderer.md","reason":"Preserves the authoritative transcript projection, provenance, tool presenter, typewriter, and session hydration contracts."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Requires reuse of existing Markdown, structured evidence, status, and subagent timeline projections instead of parallel parsing."}
+{"file":".trellis/tasks/08-20-codex-tool-activity-presentation/research/codex-activity-presentation.md","reason":"Records the Codex hierarchy evidence, current PiPilot mismatch, chosen response grouping, Bash formatting, and subagent-only Inspector design."}

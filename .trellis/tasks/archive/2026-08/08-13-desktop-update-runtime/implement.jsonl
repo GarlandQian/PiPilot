@@ -1,0 +1,8 @@
+{"file":".trellis/tasks/08-13-github-actions-release-updates/prd.md","reason":"Parent platform, signing, download, publication, and UX decisions are authoritative."}
+{"file":".trellis/tasks/08-13-github-actions-release-updates/design.md","reason":"Defines provider boundaries, state contract, shutdown coordination, and child interfaces."}
+{"file":".trellis/tasks/08-13-github-actions-release-updates/research/release-update-evidence.md","reason":"Records local packaging facts, upstream constraints, and the platform capability matrix."}
+{"file":".trellis/spec/backend/service-patterns.md","reason":"Follow Main composition, event subscription, stable error, timer, and disposal ownership patterns."}
+{"file":".trellis/spec/backend/type-and-validation-patterns.md","reason":"Requires shared Zod DTO ownership and synchronized IPC/preload/type changes."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Select lifecycle, Electron, build, and packaged verification for a Main-owned service."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Implement one renderer provider with stale async protection and subscription cleanup."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Trace updater data and errors across provider, Main, IPC, preload, renderer, and shutdown."}

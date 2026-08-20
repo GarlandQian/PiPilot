@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Checks focused transport/lifecycle tests, typecheck, build, package, and real smoke evidence."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Reviews process generation, request correlation, IPC, renderer subscription, and cleanup end to end."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Confirms no embedded SDK, PiServer, private import, copied client, or semantic fallback remains."}
+{"file":".trellis/tasks/08-08-official-pi-agent-migration/research/capability-matrix.md","reason":"Provides the authoritative latest-version command and acceptance inventory."}
