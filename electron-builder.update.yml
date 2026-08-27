@@ -1,0 +1,8 @@
+extends: ./electron-builder.yml
+
+publish:
+  provider: github
+  owner: GarlandQian
+  repo: PiPilot
+  releaseType: release
+  channel: latest

@@ -1,0 +1,30 @@
+{
+  "id": "pi-plugin-lag-refactor",
+  "name": "pi-plugin-lag-refactor",
+  "title": "Zeno-informed Pi runtime refactor to fix plugin lag",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": "cross-layer",
+  "package": null,
+  "priority": "P2",
+  "creator": "GarlandQian",
+  "assignee": "GarlandQian",
+  "createdAt": "2026-08-14",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "architecture": "bundled-pi-sdk-utilityprocess-messageport",
+    "sdkVersion": "0.84.2",
+    "hostTopology": "project-cwd-host-bounded-runtime-pool"
+  }
+}

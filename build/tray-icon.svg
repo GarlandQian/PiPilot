@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Monochrome template artwork for the macOS menu bar. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <path fill="#000" d="M 46 42 Q 43 44 39 44 Q 34 44 34 38 L 34 23 L 29 23 Q 29 32 27 38 Q 25 44 20 44 Q 16 44 16 40 Q 16 37 19 37 Q 21 37 23 40 Q 25 37 25 23 L 19 23 Q 16 23 16 28 L 13 28 Q 13 19 21 19 L 47 19 L 47 23 L 40 23 L 40 37 Q 40 40 43 40 Q 44 40 46 39 Z"/>
+</svg>

@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Main、Host、日志隐私和完整质量门"}
+{"file": ".trellis/spec/backend/type-and-validation-patterns.md", "reason": "fatal envelope、clone-safe DTO 和协议回归"}
+{"file": ".trellis/spec/backend/embedded-pi-host.md", "reason": "Host crash、Runtime 清理、恢复与 no-replay 契约"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Session loading/error 与真实 Electron 验证"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "exact identity、supersession 和终态检查"}
+{"file": ".trellis/spec/frontend/official-pi-renderer.md", "reason": "generation-safe hydration 和 crash/recovery parity"}
+{"file": ".trellis/tasks/08-20-macos-runtime-session-collapse/research/root-cause.md", "reason": "用已确认故障链检查实现是否修在正确层"}

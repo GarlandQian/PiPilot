@@ -1,0 +1,27 @@
+{
+  "skill_name": "pipilot-ui-style",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "使用 $pipilot-ui-style 设计一个新的 Integrations 空状态。",
+      "expected_output": "提出一个符合 PiPilot 紧凑 Command Center 视觉语言的 Integrations 空状态方案，包含层级、文案、交互、无障碍、双语和验证要点，并复用现有 token 与组件。",
+      "files": [],
+      "expectations": [
+        "The proposal uses neutral tokenized surfaces with sage as the only accent.",
+        "The empty state is localized, keyboard accessible, and honest about adapter capability.",
+        "The proposal names existing PiPilot components or tokens instead of inventing a separate design system."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "使用 $pipilot-ui-style 评审 Composer 新增按钮的方案。",
+      "expected_output": "评审 Composer 新增按钮方案，优先列出视觉、交互、无障碍、i18n、响应式和官方 Pi 边界问题，并给出基于现有组件与 token 的修正建议。",
+      "files": [],
+      "expectations": [
+        "The review leads with concrete severity-ordered findings rather than generic praise.",
+        "It checks icon/button semantics, focus and keyboard behavior, picker/submission behavior, and reduced motion.",
+        "It references existing Composer primitives and avoids recommending direct renderer Pi or filesystem access."
+      ]
+    }
+  ]
+}

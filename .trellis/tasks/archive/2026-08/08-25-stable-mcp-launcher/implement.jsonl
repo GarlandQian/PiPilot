@@ -1,0 +1,14 @@
+{"file":".trellis/tasks/08-25-stable-mcp-launcher/prd.md","reason":"Approved portable JSON, launcher installation, security, UI, and out-of-scope requirements."}
+{"file":".trellis/tasks/08-25-stable-mcp-launcher/design.md","reason":"Cross-platform launcher, headless bootstrap, IPC, and renderer ownership design."}
+{"file":".trellis/tasks/08-25-stable-mcp-launcher/implement.md","reason":"Ordered implementation and validation checklist."}
+{"file":".trellis/tasks/08-25-stable-mcp-launcher/research/official-client-configs.md","reason":"Official evidence for emitting JSON without mutating client-owned configuration."}
+{"file":".trellis/spec/backend/directory-structure.md","reason":"External Control Main ownership and file placement."}
+{"file":".trellis/spec/backend/service-patterns.md","reason":"Injected Main services, typed errors, atomic patterns, and lifecycle boundaries."}
+{"file":".trellis/spec/backend/type-and-validation-patterns.md","reason":"Current launcher contract to replace deliberately across every boundary."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"External Control native and packaged verification requirements."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Compact accessible Settings composition and existing primitives."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Renderer provider ownership and authoritative snapshot application."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Strict shared schema and preload/renderer contract rules."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Theme, minimum-window, keyboard, localization, and Electron visual checks."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Trace installer actions across Main, IPC, preload, store, UI, and packaging."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reuse External Control lifecycle/settings and atomic repository patterns."}
