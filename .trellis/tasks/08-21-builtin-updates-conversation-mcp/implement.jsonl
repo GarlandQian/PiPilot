@@ -1,0 +1,15 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Main, utility Host, bridge, lifecycle, packaging, and validation entry point"}
+{"file": ".trellis/spec/backend/service-patterns.md", "reason": "Main-owned services, repositories, subscriptions, bounded waits, and deterministic cleanup"}
+{"file": ".trellis/spec/backend/type-and-validation-patterns.md", "reason": "Strict shared schemas and validation at stdio, socket, IPC, and MessagePort boundaries"}
+{"file": ".trellis/spec/backend/embedded-pi-host.md", "reason": "Exact Runtime/generation routing, event credit, background Runtime ownership, and Host crash semantics"}
+{"file": ".trellis/spec/backend/official-pi-session-catalog.md", "reason": "Bounded official Session inventory, scope ownership, target revalidation, and path privacy"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Cross-process privacy, platform, packaging, and current-worktree verification gates"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Renderer ownership and Integrations UI entry point"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Existing compact primitives, accessibility, locale, and interaction patterns"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Generation-safe async settings snapshots and stale-state cleanup"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Real Electron visual, responsive, theme, keyboard, and accessibility verification"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "End-to-end data flow across MCP stdio, local bridge, Main, Host, preload, and Renderer"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Reuse the existing Runtime owner, catalog, schemas, shutdown, and Integrations patterns"}
+{"file": ".trellis/tasks/08-21-builtin-updates-conversation-mcp/research/dependency-inventory.md", "reason": "Authoritative dependency/Pi version evidence and Vite beta fallback decision"}
+{"file": ".trellis/tasks/08-21-builtin-updates-conversation-mcp/research/conversation-mcp-architecture.md", "reason": "Main ownership, identity, transport, operation state, privacy, and packaging research"}
+{"file": ".trellis/tasks/08-21-builtin-updates-conversation-mcp/research/documentation-current-state-audit.md", "reason": "Project-wide current-versus-historical documentation inventory, known drift, authority rules, and final synchronization gate"}

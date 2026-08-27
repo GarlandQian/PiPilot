@@ -1,0 +1,14 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Verify all changed Main/shared/Host layers and required quality checks"}
+{"file": ".trellis/spec/backend/service-patterns.md", "reason": "Audit service ownership, idempotency, subscriptions, deadlines, shutdown, and cleanup"}
+{"file": ".trellis/spec/backend/type-and-validation-patterns.md", "reason": "Audit every untrusted/cross-process schema, DTO bound, and sanitized error"}
+{"file": ".trellis/spec/backend/embedded-pi-host.md", "reason": "Audit exact Runtime isolation, command ordering, event acknowledgements, replacement, and crashes"}
+{"file": ".trellis/spec/backend/official-pi-session-catalog.md", "reason": "Audit bounded catalog discovery, stable control targets, and no-read-side Runtime allocation"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Audit privacy, native platform evidence, packaging, and test claims"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Audit External Control async state, reset, and stale result rejection"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Audit primitive reuse, compact layout, locale, focus, and accessible controls"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Audit real Electron light/dark/minimum-window/keyboard/accessibility evidence"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Trace MCP calls and failures through every process and lifecycle boundary"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Check for duplicate Runtime, catalog, protocol, and state-machine ownership"}
+{"file": ".trellis/tasks/08-21-builtin-updates-conversation-mcp/research/dependency-inventory.md", "reason": "Verify final dependency set against the approved upgrade/fallback policy"}
+{"file": ".trellis/tasks/08-21-builtin-updates-conversation-mcp/research/conversation-mcp-architecture.md", "reason": "Verify implementation against researched identity, transport, security, operation, and packaging risks"}
+{"file": ".trellis/tasks/08-21-builtin-updates-conversation-mcp/research/documentation-current-state-audit.md", "reason": "Verify every current authority matches final source/evidence and every historical document is clearly classified without falsifying old facts"}

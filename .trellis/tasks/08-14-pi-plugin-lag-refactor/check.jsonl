@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Main、Host 和打包质量门"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Renderer、Electron 和状态验证"}
+{"file": ".trellis/spec/backend/type-and-validation-patterns.md", "reason": "共享协议边界回归"}
+{"file": ".trellis/spec/frontend/official-pi-renderer.md", "reason": "Renderer parity、generation 和 hydration 检查"}
+{"file": ".trellis/tasks/08-14-pi-plugin-lag-refactor/research/pi-sdk-feasibility.md", "reason": "SDK public API、插件兼容性和 disposal 风险"}
+{"file": ".trellis/tasks/08-14-pi-plugin-lag-refactor/research/electron-utility-host-feasibility.md", "reason": "跨平台 utility/MessagePort/package gate"}
+{"file": ".trellis/tasks/08-14-pi-plugin-lag-refactor/research/current-runtime-migration-summary.md", "reason": "迁移覆盖和现有回归路径"}
+{"file": ".trellis/tasks/08-14-pi-plugin-lag-refactor/research/feasibility-synthesis.md", "reason": "最终架构、Host 拓扑和质量门"}

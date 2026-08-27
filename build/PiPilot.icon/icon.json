@@ -1,0 +1,31 @@
+{
+  "color-space-for-untagged-svg-colors": "display-p3",
+  "fill": {
+    "solid": "srgb:0.09020,0.09412,0.10980,1.00000"
+  },
+  "groups": [
+    {
+      "name": "PiPilot Mark",
+      "layers": [
+        {
+          "glass": true,
+          "image-name": "pi-mark.svg",
+          "name": "Pi"
+        }
+      ],
+      "lighting": "individual",
+      "shadow": {
+        "kind": "layer-color",
+        "opacity": 0.32
+      },
+      "specular": true,
+      "translucency": {
+        "enabled": true,
+        "value": 0.12
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": ["macOS"]
+  }
+}

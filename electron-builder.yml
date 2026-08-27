@@ -1,0 +1,93 @@
+appId: com.pipilot.desktop
+productName: PiPilot
+copyright: Copyright © 2026 PiPilot contributors
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - out/**/*
+  - package.json
+  - '!out/**/*.map'
+  - '!node_modules/**/*.map'
+  - '!node_modules/**/*.test.*'
+  - '!node_modules/**/{test,tests,__tests__,coverage}/**'
+  - '!node_modules/node-pty/{deps,scripts,src}/**/*'
+
+extraResources:
+  - from: build/tray-icon.png
+    to: tray-icon.png
+
+asar: true
+asarUnpack:
+  - node_modules/node-pty/build/Release/**/*
+  - node_modules/node-pty/prebuilds/**/*
+  - node_modules/@earendil-works/pi-coding-agent/dist/utils/image-resize-worker.js
+  - node_modules/@earendil-works/pi-tui/native/**/prebuilds/**/*
+  - node_modules/@mariozechner/clipboard-*/**/*.node
+  - node_modules/@silvia-odwyer/photon-node/**/*.wasm
+afterPack: build/apply-electron-fuses.cjs
+npmRebuild: true
+nativeRebuilder: sequential
+electronLanguages:
+  - en-US
+  - zh-CN
+
+artifactName: ${productName}-${version}-${arch}.${ext}
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+    - target: zip
+      arch:
+        - arm64
+        - x64
+  category: public.app-category.developer-tools
+  icon: build/PiPilot.icon
+  identity: '-'
+  hardenedRuntime: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.inherit.plist
+  notarize: false
+  darkModeSupport: true
+
+dmg:
+  title: ${productName} ${version}
+  backgroundColor: '#17181c'
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: build/icons/windows/icon.ico
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: false
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  runAfterFinish: false
+  deleteAppDataOnUninstall: false
+
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+  icon: build/icons/linux
+  category: Development
+  executableName: pipilot
+  maintainer: PiPilot contributors <GarlandQian@users.noreply.github.com>
+  synopsis: Desktop workspace for the local Pi coding agent
+
+deb:
+  priority: optional

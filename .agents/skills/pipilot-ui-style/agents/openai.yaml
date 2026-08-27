@@ -1,0 +1,4 @@
+interface:
+  display_name: "PiPilot UI Style"
+  short_description: "Design and review PiPilot's compact command-center UI"
+  default_prompt: "Use $pipilot-ui-style to design, implement, or review a PiPilot renderer surface with the project's visual language and interaction contracts."

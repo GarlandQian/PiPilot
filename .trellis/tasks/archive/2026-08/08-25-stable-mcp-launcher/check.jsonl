@@ -1,0 +1,7 @@
+{"file":".trellis/tasks/08-25-stable-mcp-launcher/prd.md","reason":"Verify every acceptance criterion and explicit non-mutation boundary."}
+{"file":".trellis/tasks/08-25-stable-mcp-launcher/design.md","reason":"Verify implementation matches launcher, bootstrap, IPC, and failure design."}
+{"file":".trellis/tasks/08-25-stable-mcp-launcher/research/official-client-configs.md","reason":"Verify no client-owned config format is misrepresented or mutated."}
+{"file":".trellis/spec/backend/type-and-validation-patterns.md","reason":"Check strict portable public contract and internal absolute descriptor validation."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Check unit, Electron, native package, and stdio evidence."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Check compact UI, themes, minimum window, keyboard, and localization."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Audit the end-to-end installer contract and all failure paths."}

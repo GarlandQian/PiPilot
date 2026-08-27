@@ -1,0 +1,13 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Main、IPC、生命周期和目录边界"}
+{"file": ".trellis/spec/backend/service-patterns.md", "reason": "Host、Runtime、端口、订阅和清理模式"}
+{"file": ".trellis/spec/backend/type-and-validation-patterns.md", "reason": "MessagePort DTO、Zod 和跨层契约"}
+{"file": ".trellis/spec/backend/embedded-pi-host.md", "reason": "内置 SDK、Utility Host、MessagePort、Runtime 与淘汰旧 CLI 的边界"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Renderer 分层和状态边界"}
+{"file": ".trellis/spec/frontend/official-pi-renderer.md", "reason": "generation-safe Pi projector 和 hydration"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Main、Host、Preload、Renderer 数据流"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用 facade、schema、projector"}
+{"file": ".trellis/tasks/08-14-pi-plugin-lag-refactor/research/pi-sdk-feasibility.md", "reason": "官方 Pi SDK public API、多 Runtime 和插件隔离证据"}
+{"file": ".trellis/tasks/08-14-pi-plugin-lag-refactor/research/electron-utility-host-feasibility.md", "reason": "Electron utilityProcess、MessagePort、打包和压力边界"}
+{"file": ".trellis/tasks/08-14-pi-plugin-lag-refactor/research/current-runtime-migration-summary.md", "reason": "现有 runtime/IPC/store 迁移面和生命周期不变量"}
+{"file": ".trellis/tasks/08-14-pi-plugin-lag-refactor/research/extension-cache-spike.md", "reason": "插件 factory 缓存基准"}
+{"file": ".trellis/tasks/08-14-pi-plugin-lag-refactor/research/feasibility-synthesis.md", "reason": "最终架构、Host 拓扑和 cutover gates 摘要"}
