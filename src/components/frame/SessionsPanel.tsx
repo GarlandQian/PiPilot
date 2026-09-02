@@ -13,10 +13,13 @@ import type {
   ConversationScope,
   OfficialPiSessionSummary,
 } from '@/shared/conversation-scope'
-import type { LocalPiRuntimeSessionStatus } from '@/shared/local-pi'
 import type { WorkspaceSummary } from '@/shared/schemas/workspace'
 import { usePiRuntime } from '@/store/pi-rpc'
 import { conversationScopeKey, useWorkspaceStore } from '@/store/workspace'
+import {
+  deriveSessionActivityState,
+  runtimeStatusForOfficialSession,
+} from '@/store/workspace-state'
 import {
   ProjectNavigationGroup,
   RecentChatGroup,
@@ -32,34 +35,18 @@ function sessionSearchText(summary: OfficialPiSessionSummary) {
   return (summary.name?.trim() || summary.preview.trim()).toLowerCase()
 }
 
-function runtimeStatusFor(
-  summary: OfficialPiSessionSummary,
-  statuses: readonly LocalPiRuntimeSessionStatus[] | undefined,
-  siblings: readonly OfficialPiSessionSummary[],
-) {
-  const scopeKey = conversationScopeKey(summary.scope)
-  const scoped = statuses?.filter((status) =>
-    conversationScopeKey(status.scope) === scopeKey) ?? []
-  const exact = scoped.find((status) =>
-    status.selectionToken === summary.selectionToken)
-  if (exact) return exact.status
-  const duplicateSessionId = siblings.some((candidate) =>
-    candidate !== summary && candidate.sessionId === summary.sessionId)
-  if (duplicateSessionId) return undefined
-  return scoped.find((status) =>
-    status.selectionToken === undefined &&
-    status.sessionId === summary.sessionId)?.status
-}
-
 export interface SessionsPanelProps {
   /**
-   * Keeps the panel mounted while visually hidden so project expansion and
-   * pagination state survive rail destination switches.
+    * Keeps the panel mounted while visually hidden so project expansion and
+   * pagination state survive workspace switches.
    */
   hidden?: boolean
   renamingSelectionToken: string | null
   deletingSelectionToken: string | null
-  isOpeningSessionRow: (summary: OfficialPiSessionSummary) => boolean
+  isOpeningSessionRow: (
+    summary: OfficialPiSessionSummary,
+    siblings: readonly OfficialPiSessionSummary[],
+  ) => boolean
   onSelect(item: SidebarConversationItem): void
   onNewPrimary(): void
   onNewProjectless(): void
@@ -258,31 +245,49 @@ export function SessionsPanel({
       // Local filter: a session matches on its title or its project name; a
       // matching project name keeps every loaded session of that project.
       const projectMatches = filtering && project.name.toLowerCase().includes(normalizedQuery)
-      const visibleRows = filtering
-        ? rows.filter((summary) =>
-            projectMatches || sessionSearchText(summary).includes(normalizedQuery))
-        : rows.slice(0, limit)
-      const items = visibleRows.map((summary): SidebarConversationItem => {
-        const runtimeStatus = runtimeStatusFor(summary, runtimeSessionStatuses, rows)
-        const isActive = summary.sessionId === workspace.activeSessionId &&
+      const mappedItems = rows.map((summary): SidebarConversationItem => {
+        const runtimeStatus = runtimeStatusForOfficialSession(
+          summary,
+          runtimeSessionStatuses,
+          rows,
+        )
+        const duplicateSessionId = rows.some((candidate) =>
+          candidate !== summary && candidate.sessionId === summary.sessionId)
+        const isActive = !duplicateSessionId && summary.sessionId === workspace.activeSessionId &&
           workspace.activeScope.kind === 'project' &&
           workspace.activeScope.workspaceId === project.id
         const status = runtimeStatus ?? (isActive ? pi.status : undefined)
+        const opening = isOpeningSessionRow(summary, rows)
+        const loading = opening ||
+          summary.selectionToken === deletingSelectionToken
+        const activityState = deriveSessionActivityState({
+          opening,
+          status,
+          pendingMessageCount: isActive ? pi.session?.pendingMessageCount ?? 0 : 0,
+        })
         return {
           summary,
-          ...(isOpeningSessionRow(summary) ||
-            summary.selectionToken === deletingSelectionToken
-            ? { loading: true }
-            : {}),
+          loading,
+          selected: isActive || opening,
+          activityState,
           ...(status ? { status } : {}),
         }
       })
+      const matchingItems = mappedItems.filter((item) =>
+        !filtering || projectMatches || sessionSearchText(item.summary).includes(normalizedQuery))
+      const items = filtering
+        ? matchingItems
+        : matchingItems.slice(0, limit)
       const projectCatalog: SidebarProjectNavigation['catalog'] = !catalog
         ? { status: workspace.mode === 'electron' && project.available && expandedByPreference
             ? 'loading'
             : 'idle' }
         : catalog.status === 'ready' || (catalog.status === 'loading' && rows.length > 0)
-          ? { status: 'ready', items, hasMore: !filtering && rows.length > items.length }
+          ? {
+              status: 'ready',
+              items,
+              hasMore: !filtering && rows.length > items.length,
+            }
           : catalog.status === 'error'
             ? { status: 'error', ...(catalog.errorMessage
                 ? { message: catalog.errorMessage }
@@ -304,6 +309,7 @@ export function SessionsPanel({
       filtering,
       isOpeningSessionRow,
       normalizedQuery,
+      pi.session?.pendingMessageCount,
       pi.status,
       runtimeSessionStatuses,
       projectSessionLimits,
@@ -325,27 +331,38 @@ export function SessionsPanel({
   const recentChats = React.useMemo<SidebarConversationItem[]>(() => {
     const catalog = workspace.sessionCatalogs.projectless
     if (!catalog) return []
-    const rows = filtering
-      ? catalog.rows.filter((summary) => sessionSearchText(summary).includes(normalizedQuery))
-      : catalog.rows
-    return rows.map((summary) => {
-      const runtimeStatus = runtimeStatusFor(summary, runtimeSessionStatuses, catalog.rows)
-      const isActive = summary.sessionId === workspace.activeSessionId &&
+    return catalog.rows.map((summary): SidebarConversationItem => {
+      const runtimeStatus = runtimeStatusForOfficialSession(
+        summary,
+        runtimeSessionStatuses,
+        catalog.rows,
+      )
+      const duplicateSessionId = catalog.rows.some((candidate) =>
+        candidate !== summary && candidate.sessionId === summary.sessionId)
+      const isActive = !duplicateSessionId && summary.sessionId === workspace.activeSessionId &&
         workspace.activeScope.kind === 'projectless'
       const status = runtimeStatus ?? (isActive ? pi.status : undefined)
+      const opening = isOpeningSessionRow(summary, catalog.rows)
+      const loading = opening ||
+        summary.selectionToken === deletingSelectionToken
       return {
         summary,
-        ...(isOpeningSessionRow(summary) ||
-          summary.selectionToken === deletingSelectionToken
-          ? { loading: true }
-          : {}),
+        loading,
+        selected: isActive || opening,
+        activityState: deriveSessionActivityState({
+          opening,
+          status,
+          pendingMessageCount: isActive ? pi.session?.pendingMessageCount ?? 0 : 0,
+        }),
         ...(status ? { status } : {}),
       }
-    })
+    }).filter((item) =>
+      !filtering || sessionSearchText(item.summary).includes(normalizedQuery))
   }, [
     filtering,
     isOpeningSessionRow,
     normalizedQuery,
+    pi.session?.pendingMessageCount,
     pi.status,
     runtimeSessionStatuses,
     workspace.activeScope,
@@ -404,9 +421,11 @@ export function SessionsPanel({
       />
       <div className="pt-3">
         {filtering && !filterHasResults ? (
-          <p className="px-2 py-1.5 text-caption text-muted-foreground">
-            {t('sidebar.sessions.empty')}
-          </p>
+          <div className="flex flex-col items-start gap-2 px-2 py-1.5">
+            <p className="text-caption text-muted-foreground">
+              {t('sidebar.sessions.empty')}
+            </p>
+          </div>
         ) : (
           <>
             {(!filtering || visibleProjects.length > 0) && (

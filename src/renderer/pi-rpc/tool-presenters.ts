@@ -3,6 +3,7 @@ import type {
   SubagentPresentation,
   SubagentTaskPresentation,
   SubagentTimelineEvent,
+  StructuredValueProjection,
   ToolCall,
   ToolCallDetails,
 } from '@/types/chat'
@@ -19,11 +20,15 @@ export interface ToolPresentationInput {
   args: unknown
   /** Raw Pi streaming tool-call text is not a completed structured argument value. */
   argsPresentation?: 'structured' | 'plain-text'
+  /** The source was bounded before it reached this presenter. */
+  argsTruncated?: boolean
   phase: 'queued' | 'running' | 'complete'
   resultText?: string
   resultDetails?: unknown
   /** Pi content text is display output, not an independently encoded JSON value. */
   resultPresentation?: 'structured' | 'plain-text'
+  /** The source was bounded before it reached this presenter. */
+  resultTruncated?: boolean
   resultIsPartial?: boolean
   isError?: boolean | null
   fallback?: Partial<ToolCall>
@@ -549,13 +554,19 @@ function resultValue(input: ToolPresentationInput) {
 }
 
 function projectToolResult(input: ToolPresentationInput) {
+  let projection: StructuredValueProjection
   if (input.resultPresentation === 'plain-text' && input.resultText !== undefined) {
     if (input.resultDetails === undefined || input.resultDetails === null) {
-      return projectPlainText(input.resultText)
+      projection = projectPlainText(input.resultText)
+    } else {
+      projection = projectStructuredValue({ message: input.resultText, details: input.resultDetails })
     }
-    return projectStructuredValue({ message: input.resultText, details: input.resultDetails })
+  } else {
+    projection = projectStructuredValue(resultValue(input))
   }
-  return projectStructuredValue(resultValue(input))
+  return input.resultTruncated && !projection.truncated
+    ? { ...projection, truncated: true }
+    : projection
 }
 
 function mergeDetails(
@@ -587,11 +598,14 @@ function genericPresentation(input: ToolPresentationInput): ToolCall {
   // Shell commands already have a safe, purpose-built summary. Rendering the
   // full argument object adds noise (and often repeats the command) without
   // giving the user useful context.
-  const argumentProjection = kind === 'shell' || input.args === undefined
+  const projectedArguments = kind === 'shell' || input.args === undefined
     ? undefined
     : input.argsPresentation === 'plain-text' && typeof input.args === 'string'
       ? projectPlainText(input.args)
       : projectStructuredValue(input.args)
+  const argumentProjection = projectedArguments && input.argsTruncated && !projectedArguments.truncated
+    ? { ...projectedArguments, truncated: true }
+    : projectedArguments
   const projectedResult = input.resultText || input.resultDetails !== undefined
     ? projectToolResult(input)
     : undefined

@@ -2,9 +2,19 @@ import type {
   ConversationScope,
   OfficialPiSessionSummary,
 } from '@/shared/conversation-scope'
+import type { LocalPiRuntimeSessionStatus } from '@/shared/local-pi'
 import type { Session } from '@/types/chat'
+import type { AgentStatus } from '@/types/chat'
 
 export const SESSION_PAGE_SIZE = 50
+
+export type SessionActivityState =
+  | 'opening'
+  | 'running'
+  | 'waiting'
+  | 'completed'
+  | 'failed'
+  | 'released'
 
 export function sessionPageForId(
   source: readonly Pick<Session, 'id'>[],
@@ -66,4 +76,68 @@ export function sameConversationScope(
       right.kind === 'project' && left.workspaceId === right.workspaceId
     )
   )
+}
+
+export interface OfficialSessionOpeningTarget {
+  scope: ConversationScope
+  selectionToken: string
+  sessionId?: string
+}
+
+/**
+ * Keep the pending-row indicator tied to the catalog's opaque identity. Once
+ * activation has confirmed a canonical session id, use it only when that id
+ * is unambiguous in the current catalog snapshot.
+ */
+export function isOfficialSessionOpeningRow(
+  summary: OfficialPiSessionSummary,
+  siblings: readonly OfficialPiSessionSummary[],
+  target: OfficialSessionOpeningTarget | null,
+) {
+  if (!target || !sameConversationScope(summary.scope, target.scope)) return false
+  if (summary.selectionToken === target.selectionToken) return true
+  if (!target.sessionId || summary.sessionId !== target.sessionId) return false
+
+  return !siblings.some((candidate) =>
+    candidate.selectionToken !== summary.selectionToken &&
+    sameConversationScope(candidate.scope, summary.scope) &&
+    candidate.sessionId === summary.sessionId)
+}
+
+export function runtimeStatusForOfficialSession(
+  summary: OfficialPiSessionSummary,
+  statuses: readonly LocalPiRuntimeSessionStatus[] | undefined,
+  siblings: readonly OfficialPiSessionSummary[],
+) {
+  const scoped = statuses?.filter((status) =>
+    sameConversationScope(status.scope, summary.scope)) ?? []
+  const exact = scoped.find((status) =>
+    status.selectionToken === summary.selectionToken)
+  if (exact) return exact.status
+
+  const duplicateSessionId = siblings.some((candidate) =>
+    candidate !== summary && candidate.sessionId === summary.sessionId)
+  if (duplicateSessionId) return undefined
+
+  return scoped.find((status) =>
+    status.selectionToken === undefined && status.sessionId === summary.sessionId)?.status
+}
+
+export function deriveSessionActivityState({
+  opening = false,
+  status,
+  pendingMessageCount = 0,
+}: {
+  opening?: boolean
+  status?: AgentStatus | LocalPiRuntimeSessionStatus['status']
+  pendingMessageCount?: number
+}): SessionActivityState {
+  if (opening) return 'opening'
+  if (pendingMessageCount > 0) return 'waiting'
+  if (status === 'planning' || status === 'running') return 'running'
+  if (status === 'failed') return 'failed'
+  if (status === 'completed' || status === 'cancelled' || status === 'idle') {
+    return 'completed'
+  }
+  return 'released'
 }

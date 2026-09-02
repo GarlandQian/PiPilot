@@ -4,7 +4,6 @@ import {
   TbLayoutSidebarLeftCollapse,
   TbLayoutSidebarLeftExpand,
   TbMessages,
-  TbPackages,
   TbSettings,
 } from 'react-icons/tb'
 import { PiLogo } from '@/components/PiLogo'
@@ -13,9 +12,10 @@ import { Button } from '@/components/ui/button'
 import { Kbd } from '@/components/ui/kbd'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useT } from '@/i18n'
+import { primaryShortcut } from '@/lib/keyboard-shortcuts'
 import { cn } from '@/lib/utils'
 
-export type RailDestination = 'sessions' | 'integrations' | 'settings'
+export type RailDestination = 'sessions' | 'settings'
 
 export interface ActivityRailProps {
   rail: RailDestination
@@ -29,14 +29,13 @@ export interface ActivityRailProps {
 interface RailDestinationDefinition {
   id: RailDestination
   icon: React.ComponentType<{ className?: string }>
-  labelKey: 'rail.sessions' | 'rail.integrations' | 'rail.settings'
-  shortcut: string
+  labelKey: 'rail.sessions' | 'rail.settings'
+  shortcutKey: string
 }
 
 const DESTINATIONS: readonly RailDestinationDefinition[] = [
-  { id: 'sessions', icon: TbMessages, labelKey: 'rail.sessions', shortcut: '⌘1' },
-  { id: 'integrations', icon: TbPackages, labelKey: 'rail.integrations', shortcut: '⌘2' },
-  { id: 'settings', icon: TbSettings, labelKey: 'rail.settings', shortcut: '⌘3' },
+  { id: 'sessions', icon: TbMessages, labelKey: 'rail.sessions', shortcutKey: '1' },
+  { id: 'settings', icon: TbSettings, labelKey: 'rail.settings', shortcutKey: '2' },
 ]
 
 function RailButton({
@@ -98,7 +97,7 @@ export function ActivityRail({
       <div className="flex flex-col items-center pt-1 pb-0.5">
         <RailButton
           label={t('rail.togglePanel')}
-          shortcut="⌘B"
+          shortcut={primaryShortcut('B')}
           onClick={onToggleContextPanel}
         >
           {contextPanelOpen
@@ -108,7 +107,7 @@ export function ActivityRail({
       </div>
 
       <ul className="flex flex-col items-center gap-1">
-        {DESTINATIONS.map(({ id, icon: Icon, labelKey, shortcut }) => {
+        {DESTINATIONS.map(({ id, icon: Icon, labelKey, shortcutKey }) => {
           const active = rail === id
           return (
             <li key={id} className="relative flex items-center">
@@ -121,7 +120,7 @@ export function ActivityRail({
               />
               <RailButton
                 label={t(labelKey)}
-                shortcut={shortcut}
+                shortcut={primaryShortcut(shortcutKey)}
                 active={active}
                 onClick={() => onRailChange(id)}
               >
@@ -134,7 +133,11 @@ export function ActivityRail({
 
       <div className="mt-auto flex flex-col items-center gap-1 border-t border-border py-2">
         <GlobalNotifications onOpenAbout={onOpenAbout} />
-        <RailButton label={t('rail.palette')} shortcut="⌘K" onClick={onOpenPalette}>
+        <RailButton
+          label={t('rail.palette')}
+          shortcut={primaryShortcut('K')}
+          onClick={onOpenPalette}
+        >
           <TbCommand className="size-4.5" aria-hidden />
         </RailButton>
       </div>

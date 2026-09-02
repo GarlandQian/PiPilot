@@ -347,6 +347,38 @@ test('keeps rich-editor text and images visible across Steer, Follow-up, and que
     const composer = page.getByRole('textbox', { name: 'Message input' })
     const fileInput = page.locator('input[type="file"]')
 
+    await expect(page.getByRole('button', { name: 'Add image', exact: true })).toBeEnabled()
+
+    await fileInput.setInputFiles({
+      name: 'image-only.png',
+      mimeType: 'image/png',
+      buffer: pixelPng,
+    })
+    const imageOnlyAttachment = page.getByRole('button', {
+      name: 'Remove image image-only.png',
+      exact: true,
+    })
+    await page.getByRole('button', { name: 'Send', exact: true }).click()
+    await expect(imageOnlyAttachment).toHaveCount(0)
+    await expect.poll(async () => page.evaluate(() => (
+      window.pipilot!.localPi.runtime.command({ type: 'get_messages' })
+    ))).toMatchObject({
+      success: true,
+      command: 'get_messages',
+      data: {
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            role: 'user',
+            content: [{
+              type: 'image',
+              data: pixelPng.toString('base64'),
+              mimeType: 'image/png',
+            }],
+          }),
+        ]),
+      },
+    })
+
     await composer.fill(runningPrompt)
     await page.getByRole('button', { name: 'Send', exact: true }).click()
     await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible()
@@ -714,6 +746,21 @@ test('navigates from the outline and inserts file-tree references into the compo
     const inspector = page.getByRole('complementary', { name: 'Inspector' })
     const composer = page.getByRole('textbox', { name: 'Message input' })
     const promptsBeforeInspectorMentions = [...piFixture.prompts]
+    const fileSearch = inspector.getByRole('textbox', {
+      name: 'Search workspace files',
+      exact: true,
+    })
+    await fileSearch.fill('example')
+    const searchedSourceFile = inspector.getByRole('button', {
+      name: /example\.ts.*src\/example\.ts/u,
+    })
+    await expect(searchedSourceFile).toBeVisible()
+    await searchedSourceFile.click()
+    const searchedViewer = inspector.getByRole('region', { name: 'src/example.ts' })
+    await expect(searchedViewer).toContainText('export const example = true')
+    await searchedViewer.getByRole('button', { name: 'Back', exact: true }).click()
+    await inspector.getByRole('button', { name: 'Clear file search', exact: true }).click()
+
     const sourceFolder = inspector.getByRole('button').filter({ hasText: /^src$/u })
     await expect(sourceFolder).toBeVisible()
     await expect(sourceFolder).toHaveAttribute('aria-expanded', 'false')
@@ -839,6 +886,145 @@ test('navigates from the outline and inserts file-tree references into the compo
     await expect(page.evaluate(() => window.pipilot!.localPi.runtime.command({
       type: 'get_entries',
     }))).resolves.toMatchObject({ success: true, command: 'get_entries' })
+  } finally {
+    await electronApp.close()
+    await piFixture.close()
+  }
+})
+
+test('keeps a Markdown file preview across compact frame transitions', async ({}, testInfo) => {
+  test.setTimeout(45_000)
+  const userDataPath = testInfo.outputPath('user-data')
+  const workspacePath = testInfo.outputPath('workspace')
+  const fakeAgentDir = testInfo.outputPath('pi-agent')
+  await Promise.all([
+    mkdir(userDataPath, { recursive: true }),
+    mkdir(workspacePath, { recursive: true }),
+  ])
+  await Promise.all([
+    writeFile(
+      join(workspacePath, 'README.md'),
+      '# Responsive preview fixture\n\nThe preview must survive a compact frame transition.\n',
+    ),
+    writeFile(
+      join(userDataPath, 'settings.json'),
+      `${JSON.stringify({
+        version: SETTINGS_SCHEMA_VERSION,
+        settings: {
+          ...DEFAULT_SETTINGS,
+          locale: 'en-US',
+        },
+      }, null, 2)}\n`,
+    ),
+  ])
+
+  const canonicalWorkspacePath = await realpath(workspacePath)
+  const encodedWorkspacePath = `--${canonicalWorkspacePath
+    .replace(/^[/\\]/, '')
+    .replace(/[/\\:]/g, '-')}--`
+  const selectedSessionDirectory = join(
+    fakeAgentDir,
+    'sessions',
+    encodedWorkspacePath,
+  )
+  const sessionTimestamp = '2026-08-09T00:00:00.000Z'
+  await mkdir(selectedSessionDirectory, { recursive: true })
+  await writeFile(join(selectedSessionDirectory, 'responsive-preview.jsonl'), [
+    {
+      type: 'session',
+      version: 3,
+      id: 'responsive-preview-session',
+      timestamp: sessionTimestamp,
+      cwd: canonicalWorkspacePath,
+    },
+    {
+      type: 'message',
+      id: '00000000-0000-4000-8000-000000000201',
+      parentId: null,
+      timestamp: sessionTimestamp,
+      message: {
+        role: 'user',
+        content: 'Keep the Inspector preview open',
+        timestamp: Date.parse(sessionTimestamp),
+      },
+    },
+    {
+      type: 'message',
+      id: '00000000-0000-4000-8000-000000000202',
+      parentId: '00000000-0000-4000-8000-000000000201',
+      timestamp: '2026-08-09T00:00:01.000Z',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'The preview is ready.' }],
+        api: 'openai-completions',
+        provider: 'fixture',
+        model: 'fake-chat',
+        usage: {
+          input: 12,
+          output: 8,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 20,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: 'stop',
+        timestamp: Date.parse('2026-08-09T00:00:01.000Z'),
+      },
+    },
+    {
+      type: 'session_info',
+      id: '00000000-0000-4000-8000-000000000203',
+      parentId: '00000000-0000-4000-8000-000000000202',
+      timestamp: sessionTimestamp,
+      name: 'Responsive preview session',
+    },
+  ].map((entry) => JSON.stringify(entry)).join('\n') + '\n')
+
+  const piFixture = await startPiSdkFixture({ agentDir: fakeAgentDir })
+  const electronApp = await electron.launch({
+    args: [resolve(process.cwd())],
+    env: {
+      ...process.env,
+      ...piFixture.env,
+      PIPILOT_E2E_DISABLE_AUTO_RESTART: '1',
+      PIPILOT_E2E_USER_DATA: userDataPath,
+    },
+  })
+  try {
+    const page = await electronApp.firstWindow()
+    await page.waitForLoadState('domcontentloaded')
+    await page.setViewportSize({ width: 1_440, height: 900 })
+    await selectWorkspaceFromSystemDialog(electronApp, workspacePath)
+    await page.getByRole('button', { name: 'Add project folder', exact: true }).click()
+    const projectSession = page.getByRole('button', {
+      name: 'Responsive preview session',
+      exact: true,
+    })
+    await expect(projectSession).toBeVisible()
+    await projectSession.click()
+    await expect(page.getByText('The preview is ready.', { exact: true })).toBeVisible()
+
+    const inspector = page.getByRole('complementary', { name: 'Inspector' })
+    await inspector.getByRole('button').filter({ hasText: /^README\.md$/u }).click()
+    const markdownViewer = inspector.getByRole('region', { name: 'README.md' })
+    await expect(markdownViewer.getByRole('heading', {
+      name: 'Responsive preview fixture',
+      exact: true,
+    })).toBeVisible()
+
+    await page.setViewportSize({ width: 1_100, height: 680 })
+    await expect(page.getByRole('complementary', { name: 'Inspector' })).toHaveCount(0)
+    await page.setViewportSize({ width: 1_440, height: 900 })
+
+    const restoredInspector = page.getByRole('complementary', { name: 'Inspector' })
+    const restoredViewer = restoredInspector.getByRole('region', { name: 'README.md' })
+    await expect(restoredViewer.getByRole('heading', {
+      name: 'Responsive preview fixture',
+      exact: true,
+    })).toBeVisible()
+    await restoredViewer.getByRole('button', { name: 'Close', exact: true }).click()
+    await expect(restoredInspector.getByRole('button').filter({ hasText: /^README\.md$/u }))
+      .toBeVisible()
   } finally {
     await electronApp.close()
     await piFixture.close()
@@ -1675,6 +1861,9 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
   const thinkingPrompt = 'thinking lifecycle'
   const piFixture = await startPiSdkFixture({
     agentDir,
+    completionDelays: {
+      [typewriterPrompt]: 300,
+    },
     promptDelays: {
       hold: 10_000,
       'background hold': 30_000,
@@ -2221,6 +2410,16 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
     await expect(page.locator('[data-composer-mention-kind="skill"]')).toHaveCount(1)
     await composer.pressSequentially(' @typed stale query')
     await expect(mentionMenu).toBeVisible()
+    await page.locator('input[type="file"]').setInputFiles({
+      name: 'survives-session-switch.png',
+      mimeType: 'image/png',
+      buffer: pixelPng,
+    })
+    const switchingDraftImage = page.getByRole('button', {
+      name: 'Remove image survives-session-switch.png',
+      exact: true,
+    })
+    await expect(switchingDraftImage).toBeAttached()
     await projectSession.click()
     await expect(page.getByText('Loading conversation…', { exact: true })).toBeVisible()
     const inspector = page.getByRole('complementary', { name: 'Inspector' })
@@ -2239,6 +2438,8 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
     await expect(mentionMenu).toHaveCount(0)
     await expect(mentionAtoms).toHaveCount(0)
     await expect(composer).toHaveText('ordinary draft @typed stale query')
+    await expect(switchingDraftImage).toBeAttached()
+    await switchingDraftImage.click()
     await expect(page.getByText('Selected session history response', { exact: true }))
       .toBeVisible()
     await expect(page.getByRole('button', {
@@ -2299,6 +2500,14 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
     expect(await page.evaluate(() => (
       document.documentElement.scrollWidth <= document.documentElement.clientWidth
     ))).toBe(true)
+    const compactSubagentInspector = page.getByRole('dialog', {
+      name: 'Inspector',
+      exact: true,
+    })
+    await expect(compactSubagentInspector).toBeVisible()
+    await expect(compactSubagentInspector.locator(
+      '[data-subagent-execution-panel="fixture-subagent-call"]',
+    )).toBeVisible()
     await page.screenshot({ path: testInfo.outputPath('subagent-details-minimum-dark.png') })
     await page.evaluate(() => window.pipilot!.settings.update({ appearance: { theme: 'light' } }))
     await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains('dark')))
@@ -2333,11 +2542,18 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
     expect(await page.evaluate(() => (
       document.documentElement.scrollWidth <= document.documentElement.clientWidth
     ))).toBe(true)
+    await page.getByRole('button', { name: 'Expand panel', exact: true }).click()
+    const compactInspector = page.getByRole('dialog', { name: 'Inspector', exact: true })
+    await expect(compactInspector).toBeVisible()
+    await expect(compactInspector.getByRole('region', { name: 'README.md' })).toBeVisible()
     await page.screenshot({ path: testInfo.outputPath('workspace-file-viewer-minimum-dark.png') })
+    await compactInspector.getByRole('button', { name: 'Close panel', exact: true }).click()
+    await expect(compactInspector).toHaveCount(0)
     await page.evaluate(() => window.pipilot!.settings.update({ appearance: { theme: 'light' } }))
     await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains('dark')))
       .toBe(false)
     await page.setViewportSize(desktopViewport)
+    await expect(inspector).toBeVisible()
     await markdownViewer.getByRole('button', { name: 'Close', exact: true }).click()
     await expect(inspector.getByRole('button').filter({ hasText: /^README\.md$/u }))
       .toBeVisible()
@@ -2898,6 +3114,7 @@ test('launches a sandboxed shell with a narrow validated bridge', async ({}, tes
       }, factor)
       await expect(page.locator('#composer-input')).toBeVisible()
       await page.getByRole('button', { name: 'Settings', exact: true }).click()
+      await page.getByRole('button', { name: 'Appearance', exact: true }).click()
       await expect(page.getByRole('main', { name: 'Appearance' })).toBeVisible()
       await page.getByRole('button', { name: 'Sessions', exact: true }).click()
     }

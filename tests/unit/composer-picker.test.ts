@@ -3,6 +3,7 @@ import {
   composerPickerOptionId,
   composerPickerSelectableIds,
   createComposerPickerRows,
+  isComposerPickerSelectionKey,
   transitionComposerPickerActiveId,
   type ComposerPickerSection,
 } from '../../src/renderer/composer/composer-picker'
@@ -98,5 +99,22 @@ describe('composer picker navigation', () => {
     expect(transitionComposerPickerActiveId(rows, 'old', 'reconcile')).toBeNull()
     expect(composerPickerOptionId('composer-listbox', 'skill:release/notes'))
       .toBe('composer-listbox-option-skill%3Arelease%2Fnotes')
+  })
+
+  it('owns only unmodified Enter and Tab for picker selection', () => {
+    const key = (value: string, modifiers = {}) => ({
+      altKey: false,
+      ctrlKey: false,
+      key: value,
+      metaKey: false,
+      shiftKey: false,
+      ...modifiers,
+    })
+
+    expect(isComposerPickerSelectionKey(key('Enter'))).toBe(true)
+    expect(isComposerPickerSelectionKey(key('Tab'))).toBe(true)
+    expect(isComposerPickerSelectionKey(key('Enter', { shiftKey: true }))).toBe(false)
+    expect(isComposerPickerSelectionKey(key('Enter', { ctrlKey: true }))).toBe(false)
+    expect(isComposerPickerSelectionKey(key('Escape'))).toBe(false)
   })
 })

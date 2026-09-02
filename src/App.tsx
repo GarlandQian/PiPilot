@@ -1,7 +1,14 @@
 import * as React from 'react'
-import { TbLayoutDashboard, TbLoader2, TbServer } from 'react-icons/tb'
+import { TbLoader2, TbX } from 'react-icons/tb'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -33,16 +40,19 @@ import {
 } from '@/components/chat/Composer'
 import { ExtensionUiDialog } from '@/components/chat/ExtensionUiDialog'
 import { ActiveControlBar } from '@/components/chat/ExtensionSurfaces'
-import { InspectorPanel } from '@/components/inspector/InspectorPanel'
+import {
+  InspectorPanel,
+  type InspectorPreviewState,
+  type InspectorTab,
+} from '@/components/inspector/InspectorPanel'
 import { PanelResizeHandle } from '@/components/layout/PanelResizeHandle'
 import {
-  SETTINGS_SECTIONS,
+  SETTINGS_GROUPS,
   SettingsLayout,
   isSettingsSectionId,
   type IntegrationsTabId,
   type SettingsSectionId,
 } from '@/components/settings/SettingsLayout'
-import { IntegrationsSettings } from '@/components/settings/IntegrationsSettings'
 import {
   type CommandContext,
   type SessionCommandEntry,
@@ -64,11 +74,26 @@ import {
 } from '@/store/workspace'
 import { opensMcpSettings } from '@/renderer/mcp/mcp-command-routing'
 import {
+  CONTEXT_PANEL_DEFAULT_WIDTH,
+  CONTEXT_PANEL_MAX_WIDTH,
+  CONTEXT_PANEL_MIN_WIDTH,
+  INSPECTOR_DEFAULT_WIDTH,
+  INSPECTOR_MAX_WIDTH,
+  INSPECTOR_MIN_WIDTH,
+  deriveFrameLayoutMode,
+  readAppRoute,
   readContextPanelOpen,
+  readPanelLayout,
+  writeAppRoute,
   writeContextPanelOpen,
+  writePanelLayout,
+  type AppRoute,
 } from '@/renderer/layout-preferences'
 import type { LocalPiImageContent } from '@/shared/local-pi'
-import type { ConversationActivationResult } from '@/shared/conversation-scope'
+import type {
+  ConversationActivationResult,
+  ConversationScope,
+} from '@/shared/conversation-scope'
 import type { WorkspacePathSearchEntry } from '@/shared/workspace-content'
 import type { WorkspaceSummary } from '@/shared/schemas/workspace'
 import type {
@@ -82,13 +107,8 @@ import {
   type PlanActionId,
 } from '@/renderer/pi-rpc/adapters'
 import { projectComposerMentionCandidates } from '@/renderer/composer/composer-mentions'
+import { isOfficialSessionOpeningRow } from '@/store/workspace-state'
 
-const CONTEXT_PANEL_MIN = 200
-const CONTEXT_PANEL_DEFAULT = 240
-const CONTEXT_PANEL_MAX = 320
-const INSPECTOR_MIN = 280
-const INSPECTOR_MAX = 480
-const INSPECTOR_DEFAULT = 360
 const EMPTY_COMPOSER_QUEUE: ComposerQueueState = Object.freeze({
   pendingCount: 0,
   detailsKnown: false,
@@ -101,14 +121,14 @@ const EMPTY_COMPOSER_QUEUE: ComposerQueueState = Object.freeze({
 })
 
 interface FrameNav {
-  rail: RailDestination
+  route: AppRoute
   contextPanelOpen: boolean
-  inspectorOpen: boolean
   paletteOpen: boolean
 }
 
 interface SessionOpening {
   operationId: number
+  scope: ConversationScope
   scopeKey: string
   selectionToken: string
   activation: ConversationActivationResult | null
@@ -137,19 +157,31 @@ export default function App() {
   const extension = usePiExtensionUi()
 
   const [frameNav, setFrameNav] = React.useState<FrameNav>(() => ({
-    rail: 'sessions',
+    route: readAppRoute(),
     contextPanelOpen: readContextPanelOpen(),
-    inspectorOpen: true,
     paletteOpen: false,
   }))
-  const [settingsSection, setSettingsSection] = React.useState<SettingsSectionId>('appearance')
+  const [lastSettingsSection, setLastSettingsSection] = React.useState<SettingsSectionId>(
+    () => {
+      const route = readAppRoute()
+      return route.workspace === 'settings' ? route.section : 'appearance'
+    },
+  )
   const [integrationsTab, setIntegrationsTab] = React.useState<IntegrationsTabId>('overview')
   const [renamingToken, setRenamingToken] = React.useState<string | null>(null)
   const [openingSession, setOpeningSession] = React.useState<SessionOpening | null>(null)
   const openingSessionRef = React.useRef<SessionOpeningHandle | null>(null)
   const openingSessionSequence = React.useRef(0)
-  const [inspectorWidth, setInspectorWidth] = React.useState(INSPECTOR_DEFAULT)
-  const [contextPanelWidth, setContextPanelWidth] = React.useState(CONTEXT_PANEL_DEFAULT)
+  const [panelLayout, setPanelLayout] = React.useState(readPanelLayout)
+  const [inspectorTab, setInspectorTab] = React.useState<InspectorTab>('files')
+  const [inspectorPreview, setInspectorPreview] =
+    React.useState<InspectorPreviewState | null>(null)
+  const [compactSettingsDetailOpen, setCompactSettingsDetailOpen] = React.useState(false)
+  const compactSettingsReturnFocusRef = React.useRef<SettingsSectionId | null>(null)
+  const [compactInspectorOpen, setCompactInspectorOpen] = React.useState(false)
+  const compactInspectorReturnFocusRef = React.useRef<HTMLElement | null>(null)
+  const [frameWidth, setFrameWidth] = React.useState(() =>
+    typeof window === 'undefined' ? 1_440 : window.innerWidth)
   const [pendingDeletion, setPendingDeletion] = React.useState<
     SidebarConversationItem | null
   >(null)
@@ -178,6 +210,16 @@ export default function App() {
   const subagentSelectionSequence = React.useRef(0)
   const subagentFocusSequence = React.useRef(0)
 
+  const rail: RailDestination = frameNav.route.workspace === 'settings'
+    ? 'settings'
+    : frameNav.route.context
+  const settingsSection = frameNav.route.workspace === 'settings'
+    ? frameNav.route.section
+    : lastSettingsSection
+  const frameLayoutMode = deriveFrameLayoutMode(frameNav.route, frameWidth)
+  const conversationWorkspace = frameNav.route.workspace === 'conversation'
+  const compactConversation = frameLayoutMode === 'conversation-compact'
+
   React.useEffect(() => () => {
     cancelPiGenerationHydrationWaiter(openingSessionRef)
   }, [])
@@ -185,6 +227,83 @@ export default function App() {
   React.useEffect(() => {
     writeContextPanelOpen(frameNav.contextPanelOpen)
   }, [frameNav.contextPanelOpen])
+
+  React.useEffect(() => {
+    writeAppRoute(frameNav.route)
+  }, [frameNav.route])
+
+  React.useEffect(() => {
+    writePanelLayout(panelLayout)
+  }, [panelLayout])
+
+  React.useLayoutEffect(() => {
+    const updateFrameWidth = () => setFrameWidth(window.innerWidth)
+    updateFrameWidth()
+    window.addEventListener('resize', updateFrameWidth)
+    return () => window.removeEventListener('resize', updateFrameWidth)
+  }, [])
+
+  const setRail = React.useCallback((destination: RailDestination) => {
+    setCompactSettingsDetailOpen(false)
+    setFrameNav((current) => {
+      const route: AppRoute = destination === 'settings'
+        ? { workspace: 'settings', section: lastSettingsSection }
+        : { workspace: 'conversation', context: destination }
+      if (
+        current.route.workspace === route.workspace &&
+        (route.workspace === 'settings'
+          ? current.route.workspace === 'settings' && current.route.section === route.section
+          : current.route.workspace === 'conversation' && current.route.context === route.context)
+      ) return current
+      return { ...current, route }
+    })
+  }, [lastSettingsSection])
+
+  const setSettingsSection = React.useCallback((section: SettingsSectionId) => {
+    const route: AppRoute = { workspace: 'settings', section }
+    if (deriveFrameLayoutMode(route, frameWidth) === 'settings-compact') {
+      compactSettingsReturnFocusRef.current = section
+      setCompactSettingsDetailOpen(true)
+    }
+    setLastSettingsSection(section)
+    setFrameNav((current) => ({
+      ...current,
+      route,
+    }))
+  }, [frameWidth])
+
+  const closeCompactSettingsDetail = React.useCallback(() => {
+    setCompactSettingsDetailOpen(false)
+    const targetId = compactSettingsReturnFocusRef.current
+    compactSettingsReturnFocusRef.current = null
+    requestAnimationFrame(() => {
+      if (!targetId) return
+      document.querySelector<HTMLElement>(
+        `[data-context-panel-nav-id="${targetId}"]`,
+      )?.focus()
+    })
+  }, [])
+
+  const toggleContextPanel = React.useCallback(() => {
+    setFrameNav((current) => ({ ...current, contextPanelOpen: !current.contextPanelOpen }))
+  }, [])
+  const toggleInspector = React.useCallback(() => {
+    if (compactConversation) {
+      setCompactInspectorOpen((current) => {
+        if (!current) {
+          compactInspectorReturnFocusRef.current = document.activeElement instanceof HTMLElement
+            ? document.activeElement
+            : null
+        }
+        return !current
+      })
+      return
+    }
+    setPanelLayout((current) => ({ ...current, inspectorOpen: !current.inspectorOpen }))
+  }, [compactConversation])
+  const openPalette = React.useCallback(() => {
+    setFrameNav((current) => ({ ...current, paletteOpen: true }))
+  }, [])
 
   React.useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -196,37 +315,29 @@ export default function App() {
         setFrameNav((current) => ({ ...current, contextPanelOpen: !current.contextPanelOpen }))
       } else if (key === 'j') {
         event.preventDefault()
-        setFrameNav((current) => ({ ...current, inspectorOpen: !current.inspectorOpen }))
+        toggleInspector()
       } else if (key === 'k') {
         event.preventDefault()
         setFrameNav((current) => ({ ...current, paletteOpen: !current.paletteOpen }))
       } else if (event.key === '1') {
         event.preventDefault()
-        setFrameNav((current) => ({ ...current, rail: 'sessions' }))
+        setCompactSettingsDetailOpen(false)
+        setFrameNav((current) => ({
+          ...current,
+          route: { workspace: 'conversation', context: 'sessions' },
+        }))
       } else if (event.key === '2') {
         event.preventDefault()
-        setFrameNav((current) => ({ ...current, rail: 'integrations' }))
-      } else if (event.key === '3') {
-        event.preventDefault()
-        setFrameNav((current) => ({ ...current, rail: 'settings' }))
+        setCompactSettingsDetailOpen(false)
+        setFrameNav((current) => ({
+          ...current,
+          route: { workspace: 'settings', section: lastSettingsSection },
+        }))
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
-
-  const setRail = React.useCallback((rail: RailDestination) => {
-    setFrameNav((current) => (current.rail === rail ? current : { ...current, rail }))
-  }, [])
-  const toggleContextPanel = React.useCallback(() => {
-    setFrameNav((current) => ({ ...current, contextPanelOpen: !current.contextPanelOpen }))
-  }, [])
-  const toggleInspector = React.useCallback(() => {
-    setFrameNav((current) => ({ ...current, inspectorOpen: !current.inspectorOpen }))
-  }, [])
-  const openPalette = React.useCallback(() => {
-    setFrameNav((current) => ({ ...current, paletteOpen: true }))
-  }, [])
+  }, [lastSettingsSection, toggleInspector])
 
   const run = React.useCallback((operation: () => Promise<void>) => {
     void operation().catch(() => undefined)
@@ -264,6 +375,7 @@ export default function App() {
     })
     const opening: SessionOpeningHandle = {
       operationId,
+      scope: item.summary.scope,
       scopeKey: conversationScopeKey(item.summary.scope),
       selectionToken: item.summary.selectionToken,
       activation: null,
@@ -276,6 +388,7 @@ export default function App() {
     openingSessionRef.current = opening
     setOpeningSession({
       operationId: opening.operationId,
+      scope: opening.scope,
       scopeKey: opening.scopeKey,
       selectionToken: opening.selectionToken,
       activation: opening.activation,
@@ -378,12 +491,10 @@ export default function App() {
       },
       opening.operationId,
     )
-    setRail('sessions')
   }, [
     beginSessionOpening,
     confirmSessionOpeningActivation,
     requestSwitch,
-    setRail,
     settleSessionOpening,
     workspace,
   ])
@@ -411,6 +522,12 @@ export default function App() {
   const conversationSessionKey = conversationReady
     ? `${conversationScopeKey(workspace.activeScope)}:${conversation.sessionId}:${pi.runtime?.generation ?? 'none'}`
     : null
+
+  React.useEffect(() => {
+    setInspectorPreview((current) => (
+      current?.sessionKey === conversationSessionKey ? current : null
+    ))
+  }, [conversationSessionKey])
   const addWorkspaceReferenceToComposer = React.useCallback((
     entry: WorkspacePathSearchEntry,
   ) => {
@@ -439,10 +556,33 @@ export default function App() {
     }
     return null
   }, [conversationSessionKey, subagentSelection, transcript.turns])
+  const compactInspectorVisible = compactInspectorOpen || Boolean(selectedSubagentCall)
 
   React.useEffect(() => {
     if (subagentSelection && !selectedSubagentCall) setSubagentSelection(null)
   }, [selectedSubagentCall, subagentSelection])
+
+  React.useEffect(() => {
+    if (!conversationWorkspace || !selectedSubagentCall) return
+    if (compactConversation) {
+      setCompactInspectorOpen((current) => {
+        if (!current && !compactInspectorReturnFocusRef.current) {
+          compactInspectorReturnFocusRef.current = document.activeElement instanceof HTMLElement
+            ? document.activeElement
+            : null
+        }
+        return true
+      })
+      return
+    }
+    setPanelLayout((current) => current.inspectorOpen
+      ? current
+      : { ...current, inspectorOpen: true })
+  }, [compactConversation, conversationWorkspace, selectedSubagentCall])
+
+  React.useEffect(() => {
+    if (!compactConversation) setCompactInspectorOpen(false)
+  }, [compactConversation])
 
   React.useEffect(() => {
     setConversationJump(null)
@@ -480,10 +620,22 @@ export default function App() {
       toolCallId,
       sequence: ++subagentSelectionSequence.current,
     })
-    setFrameNav((current) => current.inspectorOpen
-      ? current
-      : { ...current, inspectorOpen: true })
-  }, [closeSubagentExecution, conversationSessionKey, subagentSelection])
+    if (compactConversation) {
+      compactInspectorReturnFocusRef.current = document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null
+      setCompactInspectorOpen(true)
+    } else {
+      setPanelLayout((current) => current.inspectorOpen
+        ? current
+        : { ...current, inspectorOpen: true })
+    }
+  }, [
+    closeSubagentExecution,
+    compactConversation,
+    conversationSessionKey,
+    subagentSelection,
+  ])
   const commandCatalogState: ComposerCommandCatalogState = conversation.status === 'empty'
     ? { state: 'unavailable' }
     : conversation.status === 'loading'
@@ -500,23 +652,29 @@ export default function App() {
 
   const isOpeningSessionRow = React.useCallback((
     summary: SidebarConversationItem['summary'],
-  ) => Boolean(
-    openingSession &&
-    !openingSession.error &&
-    (
-      summary.selectionToken === openingSession.selectionToken ||
-      (
-        openingSession.activation !== null &&
-        pi.runtime?.generation === openingSession.activation.generation &&
-        conversationScopeKey(summary.scope) === openingSession.scopeKey &&
-        summary.sessionId === openingSession.activation.sessionId
-      )
-    )
+    siblings: readonly SidebarConversationItem['summary'][],
+  ) => isOfficialSessionOpeningRow(
+    summary,
+    siblings,
+    openingSession && !openingSession.error
+      ? {
+          scope: openingSession.scope,
+          selectionToken: openingSession.selectionToken,
+          ...(openingSession.activation !== null &&
+            pi.runtime?.generation === openingSession.activation.generation
+            ? { sessionId: openingSession.activation.sessionId }
+            : {}),
+        }
+      : null,
   ), [openingSession, pi.runtime?.generation])
 
   const openConversation = React.useCallback((item: SidebarConversationItem) => {
     requestSessionOpening(item)
   }, [requestSessionOpening])
+  const openConversationFromPalette = React.useCallback((item: SidebarConversationItem) => {
+    setRail('sessions')
+    requestSessionOpening(item)
+  }, [requestSessionOpening, setRail])
 
   const newPrimarySession = React.useCallback(() => {
     requestSwitch(() => workspace.newSession(workspace.activeScope))
@@ -531,21 +689,21 @@ export default function App() {
     newSession: newPrimarySession,
     openSettingsSection: (section) => {
       setSettingsSection(section)
-      setRail('settings')
     },
     openIntegrationsTab: (tab) => {
       setIntegrationsTab(tab)
-      setRail('integrations')
+      setSettingsSection('integrations')
     },
     stopGeneration: () => void actions.abort(),
-    selectSession: openConversation,
+    selectSession: openConversationFromPalette,
   }), [
     actions,
     conversationReady,
     newPrimarySession,
-    openConversation,
+    openConversationFromPalette,
     pi.session?.isStreaming,
     setRail,
+    setSettingsSection,
     toggleContextPanel,
     toggleInspector,
   ])
@@ -576,11 +734,11 @@ export default function App() {
   ) => {
     if (images.length === 0 && opensMcpSettings(text)) {
       setIntegrationsTab('mcp')
-      setRail('integrations')
+      setSettingsSection('integrations')
       return
     }
     await actions.send(text, action, images)
-  }, [actions, setRail])
+  }, [actions, setSettingsSection])
 
   const runPlanAction = React.useCallback(async (
     action: PlanActionId,
@@ -604,24 +762,46 @@ export default function App() {
     await actions.send(goalActionRoute(action), 'prompt')
   }, [actions, conversationReady, extension.goalMode])
 
+  const inspectorPanel = (
+    <InspectorPanel
+      width={panelLayout.inspectorWidth}
+      activeTab={inspectorTab}
+      onActiveTabChange={setInspectorTab}
+      previewState={inspectorPreview}
+      onPreviewStateChange={setInspectorPreview}
+      conversation={conversation}
+      outline={conversationReady ? transcript.outline : []}
+      outlineSessionKey={conversationSessionKey}
+      onNavigateOutline={navigateConversationOutline}
+      onAddWorkspaceReference={conversationReady && workspace.activeScope.kind === 'project'
+        ? addWorkspaceReferenceToComposer
+        : undefined}
+      subagentCall={selectedSubagentCall}
+      onCloseSubagent={closeSubagentExecution}
+    />
+  )
+
   return (
     <TooltipProvider delayDuration={350}>
       <div className="flex h-screen w-full min-w-0 flex-col overflow-hidden bg-background text-foreground">
         <div className="flex min-h-0 flex-1">
           <ActivityRail
-            rail={frameNav.rail}
+            rail={rail}
             onRailChange={setRail}
             contextPanelOpen={frameNav.contextPanelOpen}
             onToggleContextPanel={toggleContextPanel}
             onOpenPalette={openPalette}
-            onOpenAbout={() => {
-              setRail('settings')
-              setSettingsSection('about')
-            }}
+            onOpenAbout={() => setSettingsSection('about')}
           />
-          <ContextPanel rail={frameNav.rail} hidden={!frameNav.contextPanelOpen} width={contextPanelWidth}>
+          <ContextPanel
+            rail={rail}
+            hidden={!frameNav.contextPanelOpen || (
+              frameLayoutMode === 'settings-compact' && compactSettingsDetailOpen
+            )}
+            width={panelLayout.contextPanelWidth}
+          >
             <SessionsPanel
-              hidden={frameNav.rail !== 'sessions'}
+              hidden={!conversationWorkspace}
               renamingSelectionToken={renamingToken}
               deletingSelectionToken={deletingSelectionToken}
               isOpeningSessionRow={isOpeningSessionRow}
@@ -682,63 +862,60 @@ export default function App() {
                 setPendingProjectRemoval(project)
               }}
             />
-            {frameNav.rail === 'integrations' && (
-              <ContextPanelNav
-                ariaLabel={t('rail.integrations')}
-                items={[
-                  {
-                    id: 'overview',
-                    label: t('settings.integrations.tab.overview'),
-                    icon: <TbLayoutDashboard />,
-                  },
-                  {
-                    id: 'mcp',
-                    label: t('settings.integrations.tab.mcp'),
-                    icon: <TbServer />,
-                  },
-                ]}
-                activeId={integrationsTab}
-                onSelect={(id) => {
-                  if (id === 'overview' || id === 'mcp') setIntegrationsTab(id)
-                }}
-              />
-            )}
-            {frameNav.rail === 'settings' && (
-              <ContextPanelNav
-                ariaLabel={t('rail.settings')}
-                items={SETTINGS_SECTIONS.map((meta) => ({
-                  id: meta.id,
-                  label: t(meta.labelKey),
-                  icon: <meta.icon />,
-                }))}
-                activeId={settingsSection}
-                onSelect={(id) => {
-                  if (isSettingsSectionId(id)) setSettingsSection(id)
-                }}
-              />
+            {frameNav.route.workspace === 'settings' && !(
+              frameLayoutMode === 'settings-compact' && compactSettingsDetailOpen
+            ) && (
+              <div className="p-2">
+                {SETTINGS_GROUPS.map((group) => (
+                  <section key={group.id} className="mb-3 last:mb-0">
+                    <h3 className="px-2.5 pb-1 text-micro font-medium uppercase text-muted-foreground">
+                      {t(group.labelKey)}
+                    </h3>
+                    <ContextPanelNav
+                      ariaLabel={t(group.labelKey)}
+                      className="p-0"
+                      items={group.sections.map((meta) => ({
+                        id: meta.id,
+                        label: t(meta.labelKey),
+                        icon: <meta.icon />,
+                      }))}
+                      activeId={settingsSection}
+                      onSelect={(id) => {
+                        if (isSettingsSectionId(id)) setSettingsSection(id)
+                      }}
+                    />
+                  </section>
+                ))}
+              </div>
             )}
           </ContextPanel>
 
-          {frameNav.contextPanelOpen && (
+          {frameNav.contextPanelOpen && !(
+            frameLayoutMode === 'settings-compact' && compactSettingsDetailOpen
+          ) && (
             <PanelResizeHandle
-              width={contextPanelWidth}
-              min={CONTEXT_PANEL_MIN}
-              max={CONTEXT_PANEL_MAX}
-              defaultWidth={CONTEXT_PANEL_DEFAULT}
+              width={panelLayout.contextPanelWidth}
+              min={CONTEXT_PANEL_MIN_WIDTH}
+              max={CONTEXT_PANEL_MAX_WIDTH}
+              defaultWidth={CONTEXT_PANEL_DEFAULT_WIDTH}
               label={t('panel.resizeContext')}
-              onChange={setContextPanelWidth}
+              onChange={(contextPanelWidth) => {
+                setPanelLayout((current) => ({ ...current, contextPanelWidth }))
+              }}
               side="left"
             />
           )}
 
           <main
-            hidden={frameNav.rail !== 'sessions'}
+            hidden={!conversationWorkspace}
             className="relative flex min-w-0 flex-1 flex-col overflow-x-hidden"
           >
             <ChatHeader
               title={title}
               sessionVisible={conversationReady}
-              inspectorOpen={frameNav.inspectorOpen}
+              inspectorOpen={compactConversation
+                ? compactInspectorOpen
+                : panelLayout.inspectorOpen}
               branch={conversationReady ? workspace.workspace?.branch ?? '' : ''}
               stats={conversationReady ? pi.stats : null}
               onToggleInspector={toggleInspector}
@@ -804,50 +981,82 @@ export default function App() {
             />
           </main>
 
-          {frameNav.rail === 'integrations' && (
-            <main
-              className="scroll-slim min-w-0 flex-1 overflow-x-hidden overflow-y-auto bg-background"
-              aria-label={t('rail.integrations')}
-            >
-              <IntegrationsSettings tab={integrationsTab} onTab={setIntegrationsTab} />
-            </main>
-          )}
-
-          {frameNav.rail === 'settings' && (
+          {frameNav.route.workspace === 'settings' && (
             <SettingsLayout
               section={settingsSection}
               integrationsTab={integrationsTab}
               onIntegrationsTab={setIntegrationsTab}
+              compact={frameLayoutMode === 'settings-compact'}
+              detailVisible={frameLayoutMode !== 'settings-compact' || compactSettingsDetailOpen}
+              onBack={frameLayoutMode === 'settings-compact' ? closeCompactSettingsDetail : undefined}
             />
           )}
 
-          {frameNav.inspectorOpen && (
+          {conversationWorkspace && panelLayout.inspectorOpen && !compactConversation && (
             <>
               <PanelResizeHandle
-                width={inspectorWidth}
-                min={INSPECTOR_MIN}
-                max={INSPECTOR_MAX}
-                defaultWidth={INSPECTOR_DEFAULT}
+                width={panelLayout.inspectorWidth}
+                min={INSPECTOR_MIN_WIDTH}
+                max={INSPECTOR_MAX_WIDTH}
+                defaultWidth={INSPECTOR_DEFAULT_WIDTH}
                 label={t('panel.resizeInspector')}
-                onChange={setInspectorWidth}
+                onChange={(inspectorWidth) => {
+                  setPanelLayout((current) => ({ ...current, inspectorWidth }))
+                }}
                 side="right"
               />
-              <InspectorPanel
-                width={inspectorWidth}
-                conversation={conversation}
-                outline={conversationReady ? transcript.outline : []}
-                outlineSessionKey={conversationSessionKey}
-                onNavigateOutline={navigateConversationOutline}
-                onAddWorkspaceReference={conversationReady && workspace.activeScope.kind === 'project'
-                  ? addWorkspaceReferenceToComposer
-                  : undefined}
-                subagentCall={selectedSubagentCall}
-                onCloseSubagent={closeSubagentExecution}
-              />
+              {inspectorPanel}
             </>
           )}
         </div>
       </div>
+
+      {compactConversation && conversationWorkspace && (
+        <Dialog
+          open={compactInspectorVisible}
+          onOpenChange={(open) => {
+            setCompactInspectorOpen(open)
+            if (!open && selectedSubagentCall) closeSubagentExecution()
+          }}
+        >
+          <DialogContent
+            showCloseButton={false}
+            className="flex flex-col translate-x-0 translate-y-0 gap-0 rounded-none border-y-0 border-r-0 bg-sidebar p-0"
+            onCloseAutoFocus={(event) => {
+              event.preventDefault()
+              const returnTarget = compactInspectorReturnFocusRef.current
+              compactInspectorReturnFocusRef.current = null
+              returnTarget?.focus()
+            }}
+            style={{
+              top: 0,
+              right: 0,
+              bottom: 0,
+              left: 'auto',
+              width: panelLayout.inspectorWidth,
+              height: '100%',
+              maxWidth: 'calc(100% - 48px)',
+              transform: 'none',
+            }}
+          >
+            <DialogTitle className="sr-only">{t('inspector.title')}</DialogTitle>
+            <DialogDescription className="sr-only">
+              {t('inspector.title')}
+            </DialogDescription>
+            <div className="flex h-8 shrink-0 items-center justify-between border-b border-border/60 px-2 pl-3">
+              <span className="text-caption font-medium text-foreground">
+                {t('inspector.title')}
+              </span>
+              <DialogClose asChild>
+                <Button variant="ghost" size="icon-sm" aria-label={t('inspector.close')}>
+                  <TbX aria-hidden />
+                </Button>
+              </DialogClose>
+            </div>
+            <div className="min-h-0 flex-1">{inspectorPanel}</div>
+          </DialogContent>
+        </Dialog>
+      )}
 
       <CommandPalette
         open={frameNav.paletteOpen}

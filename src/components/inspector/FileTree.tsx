@@ -1,5 +1,13 @@
 import * as React from 'react'
-import { TbAt, TbChevronRight, TbRefresh } from 'react-icons/tb'
+import {
+  TbAlertCircle,
+  TbAt,
+  TbChevronRight,
+  TbLoader2,
+  TbRefresh,
+  TbSearch,
+  TbX,
+} from 'react-icons/tb'
 import { Button } from '@/components/ui/button'
 import {
   ContextMenu,
@@ -7,10 +15,20 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
+import { Input } from '@/components/ui/input'
 import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
-import type { WorkspacePathSearchEntry } from '@/shared/workspace-content'
+import type {
+  WorkspacePathSearchEntry,
+  WorkspacePathSearchResult,
+} from '@/shared/workspace-content'
 import type { FileNode } from '@/types/chat'
+import {
+  fileTreeSearchAction,
+  normalizeFileTreeSearchQuery,
+  projectFileTreeSearchResult,
+  type FileTreeSearchState,
+} from './file-tree-search'
 import { MaterialFileIcon } from './MaterialFileIcon'
 
 const statusDot = {
@@ -29,6 +47,49 @@ interface FileTreeProps {
   onRefresh?: () => void
   onSelect?: (path: string) => void
   onAddToComposer?: (entry: WorkspacePathSearchEntry) => void
+  loading?: boolean
+  errorMessage?: string
+  onRetry?: () => void
+  onSearch?: (query: string) => Promise<WorkspacePathSearchResult>
+  searchWorkspaceId?: string
+  searchQuery?: string
+  onSearchQueryChange?: (query: string) => void
+}
+
+function ComposerContextMenu({
+  children,
+  entry,
+  onAddToComposer,
+}: {
+  children: React.ReactElement
+  entry: WorkspacePathSearchEntry
+  onAddToComposer?: (entry: WorkspacePathSearchEntry) => void
+}) {
+  const t = useT()
+  const keepComposerFocus = React.useRef(false)
+  if (!onAddToComposer) return children
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+      <ContextMenuContent
+        onCloseAutoFocus={(event) => {
+          if (!keepComposerFocus.current) return
+          keepComposerFocus.current = false
+          event.preventDefault()
+        }}
+      >
+        <ContextMenuItem
+          onSelect={() => {
+            keepComposerFocus.current = true
+            onAddToComposer(entry)
+          }}
+        >
+          <TbAt aria-hidden />
+          {t('inspector.files.addToComposer')}
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  )
 }
 
 function TreeNode({
@@ -49,13 +110,17 @@ function TreeNode({
   const t = useT()
   const [open, setOpen] = React.useState(depth < 2 && node.children !== undefined)
   const [loading, setLoading] = React.useState(false)
-  const keepComposerFocus = React.useRef(false)
+  const [loadError, setLoadError] = React.useState(false)
   const isDir = node.type === 'dir'
   const current = !isDir && currentPath === node.path
 
   React.useEffect(() => {
     if (isDir && node.children === undefined && open) setOpen(false)
   }, [isDir, node.children, open])
+
+  React.useEffect(() => {
+    if (node.children !== undefined) setLoadError(false)
+  }, [node.children])
 
   const activate = async () => {
     if (!isDir) {
@@ -64,10 +129,12 @@ function TreeNode({
     }
     const nextOpen = !open
     if (nextOpen && node.children === undefined && onExpand) {
+      setLoadError(false)
       setLoading(true)
       try {
         await onExpand(node.path)
       } catch {
+        setLoadError(true)
         return
       } finally {
         setLoading(false)
@@ -89,7 +156,12 @@ function TreeNode({
         )}
         style={{ paddingLeft: `${depth * 14 + 4}px` }}
       >
-        {isDir ? (
+        {loading ? (
+          <TbLoader2
+            className="size-3 shrink-0 animate-spin text-muted-foreground motion-reduce:animate-none"
+            aria-hidden
+          />
+        ) : isDir ? (
           <TbChevronRight className={cn('size-3 shrink-0 text-muted-foreground/70 transition-transform duration-(--duration-fast)', open && 'rotate-90')} aria-hidden />
         ) : (
           <span className="size-3 shrink-0" aria-hidden />
@@ -122,32 +194,21 @@ function TreeNode({
 
   return (
     <li>
-      {onAddToComposer ? (
-        <ContextMenu>
-          <ContextMenuTrigger asChild>{row}</ContextMenuTrigger>
-          <ContextMenuContent
-            onCloseAutoFocus={(event) => {
-              if (!keepComposerFocus.current) return
-              keepComposerFocus.current = false
-              event.preventDefault()
-            }}
-          >
-            <ContextMenuItem
-              onSelect={() => {
-                keepComposerFocus.current = true
-                onAddToComposer({
-                  name: node.name,
-                  path: node.path,
-                  type: node.type,
-                })
-              }}
-            >
-              <TbAt aria-hidden />
-              {t('inspector.files.addToComposer')}
-            </ContextMenuItem>
-          </ContextMenuContent>
-        </ContextMenu>
-      ) : row}
+      <ComposerContextMenu
+        entry={{ name: node.name, path: node.path, type: node.type }}
+        onAddToComposer={onAddToComposer}
+      >
+        {row}
+      </ComposerContextMenu>
+      {loadError ? (
+        <p
+          role="alert"
+          className="py-1 pr-2 text-micro leading-relaxed text-destructive"
+          style={{ paddingLeft: `${(depth + 1) * 14 + 4}px` }}
+        >
+          {t('inspector.files.directoryLoadError')}
+        </p>
+      ) : null}
       {isDir && open && node.children && (
         <ul>
           {node.children.map((c) => (
@@ -182,8 +243,24 @@ export function FileTree({
   onRefresh,
   onSelect,
   onAddToComposer,
+  loading = false,
+  errorMessage,
+  onRetry,
+  onSearch,
+  searchWorkspaceId,
+  searchQuery,
+  onSearchQueryChange,
 }: FileTreeProps) {
   const t = useT()
+  const [internalQuery, setInternalQuery] = React.useState('')
+  const query = searchQuery ?? internalQuery
+  const setQuery = React.useCallback((nextQuery: string) => {
+    if (searchQuery === undefined) setInternalQuery(nextQuery)
+    onSearchQueryChange?.(nextQuery)
+  }, [onSearchQueryChange, searchQuery])
+  const [searchRevision, setSearchRevision] = React.useState(0)
+  const [searchState, setSearchState] = React.useState<FileTreeSearchState>({ status: 'idle' })
+  const normalizedQuery = normalizeFileTreeSearchQuery(query)
   const modified = React.useMemo(() => {
     let n = 0
     const walk = (f: FileNode) => {
@@ -193,6 +270,106 @@ export function FileTree({
     walk(root)
     return n
   }, [root])
+
+  React.useEffect(() => {
+    if (!onSearch || !normalizedQuery) {
+      setSearchState({ status: 'idle' })
+      return
+    }
+    let disposed = false
+    setSearchState({ status: 'loading' })
+    const timer = setTimeout(() => {
+      void onSearch(normalizedQuery)
+        .then((result) => {
+          if (disposed) return
+          const projected = searchWorkspaceId
+            ? projectFileTreeSearchResult(searchWorkspaceId, normalizedQuery, result)
+            : null
+          if (!projected) {
+            setSearchState({ status: 'error' })
+            return
+          }
+          setSearchState(projected)
+        })
+        .catch(() => {
+          if (!disposed) setSearchState({ status: 'error' })
+        })
+    }, 140)
+    return () => {
+      disposed = true
+      clearTimeout(timer)
+    }
+  }, [normalizedQuery, onSearch, searchRevision, searchWorkspaceId])
+
+  const searchContent = normalizedQuery ? (
+    searchState.status === 'loading' || searchState.status === 'idle' ? (
+      <div className="flex h-full min-h-24 items-center justify-center gap-2 px-4 text-center text-caption text-muted-foreground" role="status">
+        <TbLoader2 className="size-4 animate-spin motion-reduce:animate-none" aria-hidden />
+        {t('inspector.files.searching')}
+      </div>
+    ) : searchState.status === 'error' ? (
+      <div className="flex h-full min-h-24 flex-col items-center justify-center gap-2 px-4 text-center text-caption" role="alert">
+        <TbAlertCircle className="size-4 text-destructive" aria-hidden />
+        <p className="text-destructive">{t('inspector.files.searchError')}</p>
+        <Button variant="outline" size="xs" onClick={() => setSearchRevision((value) => value + 1)}>
+          <TbRefresh aria-hidden />
+          {t('common.retry')}
+        </Button>
+      </div>
+    ) : searchState.entries.length === 0 ? (
+      <div className="flex h-full min-h-24 items-center justify-center px-4 text-center text-caption text-muted-foreground">
+        {t('inspector.files.noSearchResults')}
+      </div>
+    ) : (
+      <div>
+        <ul aria-label={t('inspector.files.searchResults')}>
+          {searchState.entries.map((entry) => {
+            const row = (
+              <button
+                type="button"
+                className="flex min-h-[var(--tree-row-h)] w-full min-w-0 items-center gap-2 rounded-sm px-2 py-1 text-left outline-none transition-colors duration-(--duration-fast) hover:bg-accent/50 focus-visible:ring-1 focus-visible:ring-ring"
+                onClick={() => {
+                  const action = fileTreeSearchAction(entry)
+                  if (action.type === 'preview') onSelect?.(action.path)
+                  else setQuery(action.query)
+                }}
+                title={entry.path}
+              >
+                <MaterialFileIcon
+                  name={entry.name}
+                  path={entry.path}
+                  type={entry.type}
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-mono text-caption text-foreground">
+                    {entry.name}
+                  </span>
+                  <span className="block truncate font-mono text-micro text-muted-foreground">
+                    {entry.path}
+                  </span>
+                </span>
+                {entry.type === 'dir' ? (
+                  <TbChevronRight className="size-3 shrink-0 text-muted-foreground" aria-hidden />
+                ) : null}
+              </button>
+            )
+            return (
+              <li key={entry.path}>
+                <ComposerContextMenu entry={entry} onAddToComposer={onAddToComposer}>
+                  {row}
+                </ComposerContextMenu>
+              </li>
+            )
+          })}
+        </ul>
+        {searchState.truncated ? (
+          <p className="border-t border-border/60 px-2 py-1.5 text-micro text-muted-foreground">
+            {t('inspector.files.searchTruncated')}
+          </p>
+        ) : null}
+      </div>
+    )
+  ) : null
 
   return (
     <div className="flex h-full flex-col">
@@ -222,25 +399,83 @@ export function FileTree({
           </p>
         </div>
       )}
-      <div className="scroll-slim min-h-0 flex-1 overflow-y-auto p-1">
-        <ul aria-label={t('inspector.tab.files')}>
-          {root.children?.map((c) => (
-            <TreeNode
-              key={c.path}
-              node={c}
-              depth={0}
-              currentPath={currentPath}
-              onExpand={onExpand}
-              onSelect={onSelect}
-              onAddToComposer={onAddToComposer}
-            />
-          ))}
-          {root.truncated && (
-            <li className="px-2 py-1 font-mono text-micro text-muted-foreground">
-              {t('inspector.files.truncated')}
-            </li>
-          )}
-        </ul>
+      {onSearch ? (
+        <div className="relative border-b border-border/60 p-1.5">
+          <TbSearch
+            className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground/70"
+            aria-hidden
+          />
+          <Input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== 'Escape') return
+              setQuery('')
+            }}
+            placeholder={t('inspector.files.searchPlaceholder')}
+            aria-label={t('inspector.files.search')}
+            aria-controls="inspector-file-tree-content"
+            autoComplete="off"
+            className="h-7 pl-7 pr-7 text-caption"
+          />
+          {query ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              className="absolute right-2 top-1/2 -translate-y-1/2"
+              onClick={() => setQuery('')}
+              aria-label={t('inspector.files.clearSearch')}
+            >
+              <TbX aria-hidden />
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+      <div
+        id="inspector-file-tree-content"
+        className="scroll-slim min-h-0 flex-1 overflow-y-auto p-1"
+      >
+        {normalizedQuery ? searchContent : loading ? (
+          <div className="flex h-full min-h-24 items-center justify-center gap-2 px-4 text-center text-caption text-muted-foreground" role="status">
+            <TbLoader2 className="size-4 animate-spin motion-reduce:animate-none" aria-hidden />
+            {t('inspector.files.loading')}
+          </div>
+        ) : errorMessage ? (
+          <div className="flex h-full min-h-24 flex-col items-center justify-center gap-2 px-4 text-center text-caption" role="alert">
+            <TbAlertCircle className="size-4 text-destructive" aria-hidden />
+            <p className="text-destructive">{errorMessage}</p>
+            {onRetry ? (
+              <Button variant="outline" size="xs" onClick={onRetry}>
+                <TbRefresh aria-hidden />
+                {t('common.retry')}
+              </Button>
+            ) : null}
+          </div>
+        ) : root.children?.length ? (
+          <ul aria-label={t('inspector.tab.files')}>
+            {root.children.map((c) => (
+              <TreeNode
+                key={c.path}
+                node={c}
+                depth={0}
+                currentPath={currentPath}
+                onExpand={onExpand}
+                onSelect={onSelect}
+                onAddToComposer={onAddToComposer}
+              />
+            ))}
+            {root.truncated && (
+              <li className="px-2 py-1 font-mono text-micro text-muted-foreground">
+                {t('inspector.files.truncated')}
+              </li>
+            )}
+          </ul>
+        ) : (
+          <div className="flex h-full min-h-24 items-center justify-center px-4 text-center text-caption text-muted-foreground">
+            {t('inspector.files.empty')}
+          </div>
+        )}
       </div>
     </div>
   )

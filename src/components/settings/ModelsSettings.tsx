@@ -268,7 +268,7 @@ export function ModelsSettings() {
 
   const setDefault = async (providerId: string, modelId: string) => {
     if (!adapter || defaultBusy) return
-    const key = `${providerId}${modelId}`
+    const key = modelSelectionKey(providerId, modelId)
     setDefaultBusy(key)
     setError(null)
     setStatus(null)
@@ -500,7 +500,10 @@ export function ModelsSettings() {
         desc={t('settings.models.customProvidersDesc')}
       >
         <div className="flex flex-wrap items-center justify-between gap-2 px-2">
-          <p className="break-all font-mono text-micro text-muted-foreground">
+          <p
+            title={snapshot?.path}
+            className="min-w-0 flex-1 truncate font-mono text-micro text-muted-foreground"
+          >
             {snapshot?.path ?? t('settings.models.noPath')}
           </p>
           <div className="flex items-center gap-1.5">
@@ -667,9 +670,12 @@ export function ModelsSettings() {
                             const modelSelected = selectedCustomModels.has(modelSelectionKey(provider.id, model.id))
                             const testState = modelTests[modelSelectionKey(provider.id, model.id)]
                             return (
-                          <div key={model.id} className="group/model flex min-h-10 items-center gap-2 rounded-md border border-border/60 px-2 py-1">
+                          <div
+                            key={model.id}
+                            className="group/model flex min-h-10 flex-wrap items-center gap-2 rounded-md border border-border/60 px-2 py-1.5"
+                          >
                             <Checkbox checked={modelSelected} aria-label={t('settings.models.selectModel', { name: model.name || model.id })} onCheckedChange={(checked) => toggleCustomModel(provider.id, model.id, checked === true)} />
-                            <span className="min-w-0 flex-1 truncate font-mono text-micro text-foreground">
+                            <span className="min-w-44 flex-1 truncate font-mono text-micro text-foreground">
                               <span className="font-sans text-caption">{model.name || model.id}</span>
                               <span className="ml-2 text-muted-foreground">{model.id}</span>
                             </span>
@@ -683,26 +689,18 @@ export function ModelsSettings() {
                               </span>
                             )}
                             {testState?.state === 'success' && (
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <span className="max-w-32 truncate text-micro text-sage" role="status">
-                                    {t('settings.models.testSuccess', { latency: testState.latencyMs })}
-                                  </span>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  {testState.responsePreview || t('settings.models.testNoPreview')}
-                                </TooltipContent>
-                              </Tooltip>
+                              <p className="order-last w-full break-words pl-7 text-micro text-success" role="status">
+                                {t('settings.models.testSuccess', { latency: testState.latencyMs })}
+                                {' · '}
+                                {testState.responsePreview || t('settings.models.testNoPreview')}
+                              </p>
                             )}
                             {testState?.state === 'error' && (
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <span className="max-w-32 truncate text-micro text-destructive" role="alert">
-                                    {t('settings.models.testFailed')}
-                                  </span>
-                                </TooltipTrigger>
-                                <TooltipContent>{testState.message}</TooltipContent>
-                              </Tooltip>
+                              <p className="order-last w-full break-words pl-7 text-micro text-destructive" role="alert">
+                                {t('settings.models.testFailed')}
+                                {' '}
+                                {testState.message}
+                              </p>
                             )}
                             <Button
                               variant="ghost"
@@ -719,8 +717,18 @@ export function ModelsSettings() {
                             </Button>
                             <Tooltip>
                               <TooltipTrigger asChild>
-                                <Button variant="ghost" size="icon-xs" aria-label={`${t('settings.models.setDefault')} ${model.name || model.id}`} onClick={() => void setDefault(provider.id, model.id)}>
-                                  {modelIsDefault ? <TbStarFilled className="text-sage" aria-hidden /> : <TbStar aria-hidden />}
+                                <Button
+                                  variant="ghost"
+                                  size="icon-xs"
+                                  disabled={defaultBusy !== null}
+                                  aria-label={`${t('settings.models.setDefault')} ${model.name || model.id}`}
+                                  onClick={() => void setDefault(provider.id, model.id)}
+                                >
+                                  {defaultBusy === modelSelectionKey(provider.id, model.id)
+                                    ? <TbLoader2 className="animate-spin" aria-hidden />
+                                    : modelIsDefault
+                                      ? <TbStarFilled className="text-sage" aria-hidden />
+                                      : <TbStar aria-hidden />}
                                 </Button>
                               </TooltipTrigger>
                               <TooltipContent>{t('settings.models.setDefault')}</TooltipContent>

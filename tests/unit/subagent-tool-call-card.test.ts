@@ -132,6 +132,27 @@ describe('ToolCallCard subagent details', () => {
     expect(markup).toContain('data-tool-kind="shell"')
   })
 
+  it('labels Bash output that was bounded before rendering', () => {
+    const call = presentToolCall({
+      id: 'shell-bounded-card',
+      name: 'bash',
+      args: { command: 'pnpm test' },
+      phase: 'complete',
+      resultText: 'bounded output…',
+      resultPresentation: 'plain-text',
+      resultTruncated: true,
+    })
+    const markup = renderToStaticMarkup(createElement(
+      TooltipProvider,
+      null,
+      createElement(ToolCallCard, { call }),
+    ))
+
+    expect(markup).toContain('bounded output…')
+    expect(markup).toContain('tool.outputTruncated')
+    expect(markup).not.toContain('tool.arguments')
+  })
+
   it('formats Markdown-shaped Bash evidence and retains a raw evidence view', () => {
     const call = presentToolCall({
       id: 'shell-markdown-card',

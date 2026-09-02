@@ -93,6 +93,15 @@ function CompatibilityBadge({ value }: { value: PiCompatibilityLabel }) {
   )
 }
 
+function ResourceStateBadge({ value }: { value: PiResourceSummary['effectiveState'] }) {
+  const t = useT()
+  return (
+    <Badge variant={value === 'enabled' ? 'soft-success' : 'outline'}>
+      {t(`settings.integrations.resource.state.${value}`)}
+    </Badge>
+  )
+}
+
 function EmptyState({ children }: { children: React.ReactNode }) {
   return (
     <div className="grid min-h-44 place-items-center px-6 text-center text-caption text-muted-foreground">
@@ -511,14 +520,19 @@ function PackageDetail({
   return (
     <div className="min-w-0 p-4">
       <div className="flex min-w-0 items-start gap-2">
-        <Button className="lg:hidden" variant="ghost" size="icon-sm" aria-label={t('common.back')} onClick={onBack}>
+        <Button className="@min-[880px]/integrations:hidden" variant="ghost" size="icon-sm" aria-label={t('common.back')} onClick={onBack}>
           <TbArrowLeft aria-hidden />
         </Button>
         <div className="min-w-0 flex-1">
           <h3 className="truncate text-title">{pkg.displayName}</h3>
           <p className="mt-0.5 truncate font-mono text-micro text-muted-foreground">{pkg.source}</p>
         </div>
-        <CompatibilityBadge value={pkg.compatibility} />
+        <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
+          {pkg.updateAvailable ? (
+            <Badge variant="soft-warning">{t('settings.integrations.package.updateAvailable')}</Badge>
+          ) : null}
+          <CompatibilityBadge value={pkg.compatibility} />
+        </div>
       </div>
 
       <dl className="mt-5 grid gap-3 border-y border-border py-4 sm:grid-cols-[8rem_minmax(0,1fr)]">
@@ -583,8 +597,11 @@ function PackagesView() {
 
   return (
     <>
-      <div className="grid min-h-[31rem] overflow-hidden rounded-md border border-border lg:grid-cols-[minmax(16rem,0.38fr)_minmax(0,1fr)]">
-        <div className={cn('min-w-0 border-border lg:border-r', selected && 'max-lg:hidden')}>
+      <div className="grid min-h-[31rem] overflow-hidden rounded-md border border-border @min-[880px]/integrations:grid-cols-[minmax(16rem,0.38fr)_minmax(0,1fr)]">
+        <div className={cn(
+          'min-w-0 border-border @min-[880px]/integrations:border-r',
+          selected && 'hidden @min-[880px]/integrations:block',
+        )}>
           <div className="flex items-center gap-2 border-b border-border p-2">
             <SearchField value={query} onChange={setQuery} />
             <Tooltip>
@@ -603,7 +620,7 @@ function PackagesView() {
                 type="button"
                 aria-current={selected?.id === pkg.id ? 'true' : undefined}
                 className={cn(
-                  'grid h-16 w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md px-2.5 text-left outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring/40',
+                  'grid min-h-16 w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md px-2.5 py-2 text-left outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring/40',
                   selected?.id === pkg.id && 'bg-accent',
                 )}
                 onClick={() => setSelectedId(pkg.id)}
@@ -612,16 +629,23 @@ function PackagesView() {
                   <span className="block truncate text-caption font-medium text-foreground">{pkg.displayName}</span>
                   <span className="mt-1 block truncate font-mono text-micro text-muted-foreground">{pkg.source}</span>
                 </span>
-                <span className="text-right text-micro text-muted-foreground">
-                  <span className="block">{pkg.installedVersion ?? pkg.sourceType}</span>
-                  <span className="block">{t('settings.integrations.resourceCount', { count: totalResources(pkg) })}</span>
+                <span className="flex max-w-44 flex-col items-end gap-1 text-right text-micro text-muted-foreground">
+                  <span>{pkg.installedVersion ?? pkg.sourceType}</span>
+                  {pkg.updateAvailable ? (
+                    <Badge variant="soft-warning">{t('settings.integrations.package.updateAvailable')}</Badge>
+                  ) : (
+                    <span>{t('settings.integrations.resourceCount', { count: totalResources(pkg) })}</span>
+                  )}
                 </span>
               </button>
             ))}
             {filtered.length === 0 && <EmptyState>{t('settings.integrations.packages.empty')}</EmptyState>}
           </div>
         </div>
-        <div className={cn('min-w-0', !selected && 'max-lg:hidden')}>
+        <div className={cn(
+          'min-w-0',
+          !selected && 'hidden @min-[880px]/integrations:block',
+        )}>
           {selected
             ? (
                 <PackageDetail
@@ -667,14 +691,17 @@ function ResourceDetail({ resource, onBack }: { resource: PiResourceSummary; onB
   return (
     <div className="min-w-0 p-4">
       <div className="flex min-w-0 items-start gap-2">
-        <Button className="lg:hidden" variant="ghost" size="icon-sm" aria-label={t('common.back')} onClick={onBack}>
+        <Button className="@min-[880px]/integrations:hidden" variant="ghost" size="icon-sm" aria-label={t('common.back')} onClick={onBack}>
           <TbArrowLeft aria-hidden />
         </Button>
         <div className="min-w-0 flex-1">
           <h3 className="truncate text-title">{resource.label}</h3>
           <p className="mt-0.5 break-all font-mono text-micro text-muted-foreground">{resource.path}</p>
         </div>
-        <Badge variant="outline">{t(`settings.integrations.resource.${resource.kind}`)}</Badge>
+        <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
+          <Badge variant="outline">{t(`settings.integrations.resource.${resource.kind}`)}</Badge>
+          <ResourceStateBadge value={resource.effectiveState} />
+        </div>
       </div>
       {resource.description && <p className="mt-4 text-caption text-muted-foreground">{resource.description}</p>}
       <dl className="mt-5 grid gap-3 border-y border-border py-4 sm:grid-cols-[8rem_minmax(0,1fr)]">
@@ -724,8 +751,11 @@ function ResourcesView() {
   }, [resources, selectedId])
 
   return (
-    <div className="grid min-h-[31rem] overflow-hidden rounded-md border border-border lg:grid-cols-[minmax(16rem,0.38fr)_minmax(0,1fr)]">
-      <div className={cn('min-w-0 border-border lg:border-r', selected && 'max-lg:hidden')}>
+    <div className="grid min-h-[31rem] overflow-hidden rounded-md border border-border @min-[880px]/integrations:grid-cols-[minmax(16rem,0.38fr)_minmax(0,1fr)]">
+      <div className={cn(
+        'min-w-0 border-border @min-[880px]/integrations:border-r',
+        selected && 'hidden @min-[880px]/integrations:block',
+      )}>
         <div className="border-b border-border p-2">
           <SearchField value={query} onChange={setQuery} />
           <div className="mt-2 flex flex-wrap gap-1" role="group" aria-label={t('settings.integrations.resources.filter')}>
@@ -749,7 +779,7 @@ function ResourcesView() {
               type="button"
               aria-current={selected?.id === resource.id ? 'true' : undefined}
               className={cn(
-                'grid h-16 w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md px-2.5 text-left outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring/40',
+                'grid min-h-16 w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md px-2.5 py-2 text-left outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring/40',
                 selected?.id === resource.id && 'bg-accent',
               )}
               onClick={() => setSelectedId(resource.id)}
@@ -758,13 +788,19 @@ function ResourcesView() {
                 <span className="block truncate text-caption font-medium">{resource.label}</span>
                 <span className="mt-1 block truncate text-micro text-muted-foreground">{resource.source}</span>
               </span>
-              <Badge variant="outline">{t(`settings.integrations.resource.${resource.kind}`)}</Badge>
+              <span className="flex flex-col items-end gap-1">
+                <Badge variant="outline">{t(`settings.integrations.resource.${resource.kind}`)}</Badge>
+                <ResourceStateBadge value={resource.effectiveState} />
+              </span>
             </button>
           ))}
           {filtered.length === 0 && <EmptyState>{t('settings.integrations.resources.empty')}</EmptyState>}
         </div>
       </div>
-      <div className={cn('min-w-0', !selected && 'max-lg:hidden')}>
+      <div className={cn(
+        'min-w-0',
+        !selected && 'hidden @min-[880px]/integrations:block',
+      )}>
         {selected
           ? <ResourceDetail resource={selected} onBack={() => setSelectedId(null)} />
           : <EmptyState>{t('settings.integrations.resources.select')}</EmptyState>}
@@ -1009,16 +1045,18 @@ export function IntegrationsSettings({ tab, onTab }: IntegrationsSettingsProps) 
   }
 
   return (
-    <div className="min-w-0 px-4 py-5 sm:px-6 lg:px-8">
+    <div className="@container/integrations min-w-0 px-4 py-5 sm:px-6 lg:px-8">
       <header className="flex flex-col gap-3 border-b border-border pb-4">
         <div className="flex min-w-0 flex-wrap items-start gap-3">
           <div className="min-w-0 flex-1">
             <h2 className="text-title">{t('settings.integrations.title')}</h2>
-            <p className={cn(
+            <p
+              title={tab === 'external-control' ? undefined : snapshot?.executable?.path}
+              className={cn(
               'mt-1 text-micro text-muted-foreground',
               tab === 'external-control'
                 ? 'max-w-2xl'
-                : 'break-all font-mono',
+                : 'truncate font-mono',
             )}>
               {tab === 'external-control'
                 ? t('settings.externalControl.localOnly')
@@ -1059,11 +1097,18 @@ export function IntegrationsSettings({ tab, onTab }: IntegrationsSettingsProps) 
           </div>
         )}
 
-        {tab !== 'external-control' && integrations.operation && ['queued', 'running', 'progress'].includes(integrations.operation.phase) && (
-          <p className="text-caption text-muted-foreground" role="status">
-            {integrations.operation.progress?.message ?? t(`settings.integrations.operation.${integrations.operation.kind}`)}
-          </p>
-        )}
+        {tab !== 'external-control' && integrations.operation ? (
+          ['queued', 'running', 'progress'].includes(integrations.operation.phase) ? (
+            <p className="text-caption text-muted-foreground" role="status">
+              {integrations.operation.progress?.message ?? t(`settings.integrations.operation.${integrations.operation.kind}`)}
+            </p>
+          ) : integrations.operation.phase === 'succeeded' ? (
+            <p className="flex items-center gap-1.5 text-caption text-success" role="status">
+              <TbCheck aria-hidden />
+              {t(`settings.integrations.operation.success.${integrations.operation.kind}`)}
+            </p>
+          ) : null
+        ) : null}
         {tab !== 'external-control' && integrations.errorMessage && (
           <div className="flex items-center justify-between gap-3 text-caption text-destructive" role="alert">
             <span>{integrations.errorMessage}</span>

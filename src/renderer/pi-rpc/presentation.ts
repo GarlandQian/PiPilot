@@ -17,6 +17,7 @@ import {
 } from './adapters/plan-mode'
 import { alignLocalPiMessageOrigins } from './response-provenance'
 import { mergeSubagentPresentation, presentToolCall } from './tool-presenters'
+import { truncateUtf8 } from './structured-value'
 import type {
   ConversationOutlineItem,
   ConversationOutlineStatus,
@@ -27,7 +28,7 @@ import type {
   UserMessageImage,
 } from '@/types/chat'
 
-const MAX_TOOL_DETAIL_CHARS = 24_000
+const MAX_TOOL_DETAIL_BYTES = 24_000
 const MAX_OUTLINE_TITLE_CHARS = 120
 const MAX_OUTLINE_SUMMARY_CHARS = 180
 const MAX_RESPONSE_ACTIVITIES = 64
@@ -142,17 +143,18 @@ function userMessageImages(
 }
 
 function boundedToolText(value: string) {
-  if (value.length <= MAX_TOOL_DETAIL_CHARS) return value
-  return `${value.slice(0, MAX_TOOL_DETAIL_CHARS)}\n...`
+  return truncateUtf8(value, MAX_TOOL_DETAIL_BYTES)
 }
 
 function toolResultText(
   result: LocalPiProjectedTool['result'],
   toolName: string,
 ) {
-  if (!result) return ''
+  if (!result) return { value: '', truncated: false }
   const text = textContent(result.content)
-  return toolName === 'subagent' ? text : boundedToolText(text)
+  return toolName === 'subagent'
+    ? { value: text, truncated: false }
+    : boundedToolText(text)
 }
 
 function projectedToolCall(
@@ -165,7 +167,8 @@ function projectedToolCall(
     name: tool.toolName,
     args: tool.args,
     phase: tool.phase,
-    resultText: result || undefined,
+    resultText: result.value || undefined,
+    resultTruncated: result.truncated,
     resultDetails: tool.result?.details,
     resultPresentation: 'plain-text',
     resultIsPartial: tool.resultIsPartial,
@@ -422,14 +425,15 @@ function appendMessage(
     }
     const rawResult = textContent(message.content)
     const result = message.toolName === 'subagent'
-      ? rawResult
+      ? { value: rawResult, truncated: false }
       : boundedToolText(rawResult)
     appendTool(projection, presentToolCall({
       id: message.toolCallId,
       name: message.toolName,
       args: undefined,
       phase: 'complete',
-      resultText: result || undefined,
+      resultText: result.value || undefined,
+      resultTruncated: result.truncated,
       resultDetails: message.details,
       resultPresentation: 'plain-text',
       resultIsPartial: false,
@@ -637,12 +641,14 @@ export function projectLocalPiTurns(
   }
 
   for (const [index, delta] of state.streamingToolCallDeltas) {
+    const boundedDelta = boundedToolText(delta)
     appendTool(projection, presentToolCall({
       id: `${prefix}:stream-tool:${index}`,
       name: 'tool',
       // Pi emits raw, incrementally assembled argument JSON here. It is not a
       // completed LocalPiToolCall.arguments value until toolcall_end.
-      args: boundedToolText(delta),
+      args: boundedDelta.value,
+      argsTruncated: boundedDelta.truncated,
       argsPresentation: 'plain-text',
       phase: 'running',
     }), `${prefix}:stream-tool:${index}`, activeAnchorEntryId)

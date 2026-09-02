@@ -3,6 +3,43 @@ import { workspaceIdSchema } from '@/shared/schemas/workspace'
 
 export const CONTEXT_PANEL_LAYOUT_KEY = 'pipilot.layout.context-panel.v1'
 export const PROJECT_EXPANSION_LAYOUT_KEY = 'pipilot.layout.project-expansion.v1'
+export const APP_ROUTE_LAYOUT_KEY = 'pipilot.layout.app-route.v1'
+export const PANEL_LAYOUT_KEY = 'pipilot.layout.panels.v1'
+
+export const CONTEXT_PANEL_MIN_WIDTH = 200
+export const CONTEXT_PANEL_DEFAULT_WIDTH = 240
+export const CONTEXT_PANEL_MAX_WIDTH = 320
+export const INSPECTOR_MIN_WIDTH = 280
+export const INSPECTOR_DEFAULT_WIDTH = 360
+export const INSPECTOR_MAX_WIDTH = 480
+export const COMPACT_FRAME_MAX_WIDTH = 1_279
+
+export const SETTINGS_ROUTE_IDS = [
+  'general',
+  'appearance',
+  'language',
+  'models',
+  'integrations',
+  'terminal',
+  'about',
+] as const
+
+export type SettingsRouteId = (typeof SETTINGS_ROUTE_IDS)[number]
+export type ConversationContext = 'sessions'
+export type AppRoute =
+  | { workspace: 'conversation'; context: ConversationContext }
+  | { workspace: 'settings'; section: SettingsRouteId }
+export type FrameLayoutMode =
+  | 'conversation-wide'
+  | 'conversation-compact'
+  | 'settings-wide'
+  | 'settings-compact'
+
+export interface PanelLayoutPreferences {
+  contextPanelWidth: number
+  inspectorWidth: number
+  inspectorOpen: boolean
+}
 
 const LAYOUT_DOCUMENT_VERSION = 1
 const MAX_LAYOUT_DOCUMENT_CHARS = 16_384
@@ -14,6 +51,30 @@ const contextPanelLayoutSchema = z
     open: z.boolean(),
   })
   .strict()
+
+const settingsRouteIdSchema = z.enum(SETTINGS_ROUTE_IDS)
+const appRouteSchema = z.discriminatedUnion('workspace', [
+  z.object({
+    workspace: z.literal('conversation'),
+    context: z.literal('sessions'),
+  }).strict(),
+  z.object({
+    workspace: z.literal('settings'),
+    section: settingsRouteIdSchema,
+  }).strict(),
+])
+
+const appRouteLayoutSchema = z.object({
+  version: z.literal(LAYOUT_DOCUMENT_VERSION),
+  route: appRouteSchema,
+}).strict()
+
+const panelLayoutSchema = z.object({
+  version: z.literal(LAYOUT_DOCUMENT_VERSION),
+  contextPanelWidth: z.number().finite(),
+  inspectorWidth: z.number().finite(),
+  inspectorOpen: z.boolean(),
+}).strict()
 
 const projectExpansionLayoutSchema = z
   .object({
@@ -38,6 +99,75 @@ export interface ProjectCatalogLoadCandidate {
   projectId: string
   available: boolean
   hasCatalog: boolean
+}
+
+const DEFAULT_APP_ROUTE: AppRoute = Object.freeze({
+  workspace: 'conversation',
+  context: 'sessions',
+})
+
+const DEFAULT_PANEL_LAYOUT: PanelLayoutPreferences = Object.freeze({
+  contextPanelWidth: CONTEXT_PANEL_DEFAULT_WIDTH,
+  inspectorWidth: INSPECTOR_DEFAULT_WIDTH,
+  inspectorOpen: true,
+})
+
+function boundedWidth(value: unknown, min: number, max: number, fallback: number) {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.min(max, Math.max(min, Math.round(value)))
+    : fallback
+}
+
+export function normalizeAppRoute(value: unknown): AppRoute {
+  const parsed = appRouteSchema.safeParse(value)
+  if (parsed.success) return parsed.data
+
+  // Removed and pre-redesign destinations are accepted only for migration.
+  if (
+    value === 'activity' ||
+    (
+      typeof value === 'object' &&
+      value !== null &&
+      (value as { workspace?: unknown }).workspace === 'conversation' &&
+      (value as { context?: unknown }).context === 'activity'
+    )
+  ) return DEFAULT_APP_ROUTE
+  if (value === 'integrations') return { workspace: 'settings', section: 'integrations' }
+  if (value === 'settings') return { workspace: 'settings', section: 'appearance' }
+  return DEFAULT_APP_ROUTE
+}
+
+export function deriveFrameLayoutMode(
+  route: AppRoute,
+  frameWidth: number,
+): FrameLayoutMode {
+  const compact = !Number.isFinite(frameWidth) || frameWidth <= COMPACT_FRAME_MAX_WIDTH
+  if (route.workspace === 'settings') {
+    return compact ? 'settings-compact' : 'settings-wide'
+  }
+  return compact ? 'conversation-compact' : 'conversation-wide'
+}
+
+export function normalizePanelLayout(
+  value: Partial<PanelLayoutPreferences> | null | undefined,
+): PanelLayoutPreferences {
+  return {
+    contextPanelWidth: boundedWidth(
+      value?.contextPanelWidth,
+      CONTEXT_PANEL_MIN_WIDTH,
+      CONTEXT_PANEL_MAX_WIDTH,
+      CONTEXT_PANEL_DEFAULT_WIDTH,
+    ),
+    inspectorWidth: boundedWidth(
+      value?.inspectorWidth,
+      INSPECTOR_MIN_WIDTH,
+      INSPECTOR_MAX_WIDTH,
+      INSPECTOR_DEFAULT_WIDTH,
+    ),
+    inspectorOpen: typeof value?.inspectorOpen === 'boolean'
+      ? value.inspectorOpen
+      : DEFAULT_PANEL_LAYOUT.inspectorOpen,
+  }
 }
 
 function browserStorage(): LayoutPreferenceStorage | null {
@@ -91,6 +221,44 @@ export function writeContextPanelOpen(
   writeStoredValue(CONTEXT_PANEL_LAYOUT_KEY, {
     version: LAYOUT_DOCUMENT_VERSION,
     open,
+  }, storage)
+}
+
+export function readAppRoute(
+  storage: LayoutPreferenceStorage | null = browserStorage(),
+): AppRoute {
+  const parsed = appRouteLayoutSchema.safeParse(
+    readStoredValue(APP_ROUTE_LAYOUT_KEY, storage),
+  )
+  return parsed.success ? parsed.data.route : DEFAULT_APP_ROUTE
+}
+
+export function writeAppRoute(
+  route: AppRoute,
+  storage: LayoutPreferenceStorage | null = browserStorage(),
+) {
+  writeStoredValue(APP_ROUTE_LAYOUT_KEY, {
+    version: LAYOUT_DOCUMENT_VERSION,
+    route: normalizeAppRoute(route),
+  }, storage)
+}
+
+export function readPanelLayout(
+  storage: LayoutPreferenceStorage | null = browserStorage(),
+): PanelLayoutPreferences {
+  const parsed = panelLayoutSchema.safeParse(
+    readStoredValue(PANEL_LAYOUT_KEY, storage),
+  )
+  return normalizePanelLayout(parsed.success ? parsed.data : null)
+}
+
+export function writePanelLayout(
+  value: PanelLayoutPreferences,
+  storage: LayoutPreferenceStorage | null = browserStorage(),
+) {
+  writeStoredValue(PANEL_LAYOUT_KEY, {
+    version: LAYOUT_DOCUMENT_VERSION,
+    ...normalizePanelLayout(value),
   }, storage)
 }
 

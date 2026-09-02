@@ -1,11 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import {
+  APP_ROUTE_LAYOUT_KEY,
   CONTEXT_PANEL_LAYOUT_KEY,
+  PANEL_LAYOUT_KEY,
   PROJECT_EXPANSION_LAYOUT_KEY,
+  deriveFrameLayoutMode,
   expandedProjectIdsNeedingCatalogLoad,
+  normalizeAppRoute,
+  normalizePanelLayout,
+  readAppRoute,
   readContextPanelOpen,
+  readPanelLayout,
   readProjectExpansionPreferences,
+  writeAppRoute,
   writeContextPanelOpen,
+  writePanelLayout,
   writeProjectExpansionPreferences,
   type LayoutPreferenceStorage,
 } from '../../src/renderer/layout-preferences'
@@ -27,6 +36,95 @@ function projectId(index: number) {
 }
 
 describe('renderer layout preferences', () => {
+  it('normalizes the app route and migrates known legacy destinations', () => {
+    expect(normalizeAppRoute({ workspace: 'conversation', context: 'activity' })).toEqual({
+      workspace: 'conversation',
+      context: 'sessions',
+    })
+    expect(normalizeAppRoute('integrations')).toEqual({
+      workspace: 'settings',
+      section: 'integrations',
+    })
+    expect(normalizeAppRoute('unknown')).toEqual({
+      workspace: 'conversation',
+      context: 'sessions',
+    })
+  })
+
+  it('round-trips the discriminated app route and rejects corrupt documents', () => {
+    const storage = new MemoryStorage()
+    writeAppRoute({ workspace: 'settings', section: 'models' }, storage)
+
+    expect(readAppRoute(storage)).toEqual({ workspace: 'settings', section: 'models' })
+    expect(JSON.parse(storage.getItem(APP_ROUTE_LAYOUT_KEY)!)).toEqual({
+      version: 1,
+      route: { workspace: 'settings', section: 'models' },
+    })
+
+    storage.setItem(APP_ROUTE_LAYOUT_KEY, JSON.stringify({
+      version: 1,
+      route: { workspace: 'conversation', context: 'activity' },
+    }))
+    expect(readAppRoute(storage)).toEqual({
+      workspace: 'conversation',
+      context: 'sessions',
+    })
+
+    storage.setItem(APP_ROUTE_LAYOUT_KEY, JSON.stringify({
+      version: 1,
+      route: { workspace: 'settings', section: 'missing' },
+    }))
+    expect(readAppRoute(storage)).toEqual({
+      workspace: 'conversation',
+      context: 'sessions',
+    })
+  })
+
+  it('derives explicit wide and compact frame compositions', () => {
+    expect(deriveFrameLayoutMode(
+      { workspace: 'conversation', context: 'sessions' },
+      1_440,
+    )).toBe('conversation-wide')
+    expect(deriveFrameLayoutMode(
+      { workspace: 'conversation', context: 'sessions' },
+      1_100,
+    )).toBe('conversation-compact')
+    expect(deriveFrameLayoutMode(
+      { workspace: 'settings', section: 'integrations' },
+      1_440,
+    )).toBe('settings-wide')
+    expect(deriveFrameLayoutMode(
+      { workspace: 'settings', section: 'appearance' },
+      Number.NaN,
+    )).toBe('settings-compact')
+  })
+
+  it('bounds and persists panel layout preferences', () => {
+    const storage = new MemoryStorage()
+    writePanelLayout({
+      contextPanelWidth: 999,
+      inspectorWidth: 10,
+      inspectorOpen: false,
+    }, storage)
+
+    expect(readPanelLayout(storage)).toEqual({
+      contextPanelWidth: 320,
+      inspectorWidth: 280,
+      inspectorOpen: false,
+    })
+    expect(JSON.parse(storage.getItem(PANEL_LAYOUT_KEY)!)).toEqual({
+      version: 1,
+      contextPanelWidth: 320,
+      inspectorWidth: 280,
+      inspectorOpen: false,
+    })
+    expect(normalizePanelLayout({ contextPanelWidth: Number.NaN })).toEqual({
+      contextPanelWidth: 240,
+      inspectorWidth: 360,
+      inspectorOpen: true,
+    })
+  })
+
   it('round-trips the context-panel state through a versioned document', () => {
     const storage = new MemoryStorage()
 

@@ -4,6 +4,7 @@ import {
   TbCheck,
   TbChevronDown,
   TbChevronRight,
+  TbClock,
   TbCopy,
   TbDots,
   TbFolder,
@@ -33,11 +34,14 @@ import type {
 } from '@/shared/conversation-scope'
 import type { WorkspaceSummary } from '@/shared/schemas/workspace'
 import type { AgentStatus } from '@/types/chat'
+import type { SessionActivityState } from '@/store/workspace-state'
 
 export interface SidebarConversationItem {
   summary: OfficialPiSessionSummary
   loading?: boolean
   status?: AgentStatus
+  activityState?: SessionActivityState
+  selected?: boolean
 }
 
 export type SidebarProjectCatalog =
@@ -83,9 +87,11 @@ const statusLabelKey = {
 function StatusIndicator({
   loading = false,
   status,
+  activityState,
 }: {
   loading?: boolean
   status?: AgentStatus
+  activityState?: SessionActivityState
 }) {
   const t = useT()
   if (loading) {
@@ -97,17 +103,33 @@ function StatusIndicator({
             role="status"
             aria-label={t('sidebar.session.loading')}
           >
-            <TbLoader2 className="size-3.5 animate-spin text-sage" aria-hidden />
+            <TbLoader2 className="size-3.5 animate-spin text-sage motion-reduce:animate-none" aria-hidden />
           </span>
         </TooltipTrigger>
         <TooltipContent side="right">{t('sidebar.session.loading')}</TooltipContent>
       </Tooltip>
     )
   }
+  if (activityState === 'waiting') {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className="flex size-4 shrink-0 items-center justify-center"
+            role="status"
+            aria-label={t('sidebar.session.waiting')}
+          >
+            <TbClock className="size-3.5 text-sage" aria-hidden />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="right">{t('sidebar.session.waiting')}</TooltipContent>
+      </Tooltip>
+    )
+  }
   if (!status || status === 'idle') return <span className="block size-4" aria-hidden />
 
   const icon = status === 'running' || status === 'planning'
-    ? <TbLoader2 className="size-3.5 animate-spin text-sage" aria-hidden />
+    ? <TbLoader2 className="size-3.5 animate-spin text-sage motion-reduce:animate-none" aria-hidden />
     : status === 'completed'
       ? <TbCheck className="size-3.5 text-sage" aria-hidden />
       : <TbAlertCircle className={cn(
@@ -223,7 +245,11 @@ function ConversationRow({
           </span>
         )}
 
-        <StatusIndicator loading={item.loading} status={item.status} />
+        <StatusIndicator
+          loading={item.loading}
+          status={item.status}
+          activityState={item.activityState}
+        />
 
         {!renaming ? (
           <DropdownMenu>
@@ -291,7 +317,7 @@ export function ConversationList({
         <ConversationRow
           key={item.summary.selectionToken}
           item={item}
-          active={item.summary.sessionId === activeSessionId}
+          active={item.selected ?? item.summary.sessionId === activeSessionId}
           renaming={item.summary.selectionToken === renamingSelectionToken}
           variant={variant}
           onSelect={onSelect}

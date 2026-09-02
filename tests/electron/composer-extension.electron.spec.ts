@@ -299,7 +299,7 @@ test('uses one keyboard-safe Composer picker and middle-column extension surface
 
     await composer.fill('/mcp')
     await page.getByRole('button', { name: 'Send', exact: true }).click()
-    await expect(page.getByRole('button', { name: 'Integrations', exact: true }))
+    await expect(page.getByRole('button', { name: 'Settings', exact: true }))
       .toHaveAttribute('aria-current', 'page')
     await expect(page.getByRole('tab', { name: 'MCP', exact: true }))
       .toHaveAttribute('aria-selected', 'true')

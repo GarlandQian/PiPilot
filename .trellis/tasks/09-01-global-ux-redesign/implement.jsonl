@@ -1,0 +1,11 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "Renderer pre-development checklist and routing to every applicable frontend rule"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "PiPilot component composition, primitive reuse, accessibility, localization, and interaction conventions"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "Place new route, projection, frame, chat, Inspector, and settings owners in established boundaries"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "Keep subscriptions, effects, derived state, and cleanup stable during the App composition redesign"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Generation-safe async presentation, stale-state suppression, and Main-owned source-of-truth rules"}
+{"file": ".trellis/spec/frontend/read-only-changes.md", "reason": "Preserve continuous read-only diff ownership, lazy file loading, and Inspector behavior"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Use discriminated route/state models and validated cross-process DTOs without unsafe casts"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Real Electron, responsive, theme, keyboard, accessibility, and current-worktree verification requirements"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Extend existing frame, chat, Composer, Inspector, settings, and projection recipes instead of duplicating them"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Trace any discovered status gap through Runtime, Main, preload, stores, and UI before changing a contract"}
+{"file": ".trellis/tasks/09-01-global-ux-redesign/research/current-ux-audit.md", "reason": "Current-worktree evidence, confirmed UX failures, and the approved conversation-first navigation decisions"}

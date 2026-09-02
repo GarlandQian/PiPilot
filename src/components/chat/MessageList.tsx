@@ -41,6 +41,7 @@ import { projectToolActivitySequence } from '@/renderer/pi-rpc/tool-activity'
 import {
   nextTypewriterText,
   shouldStartTypewriterFromEmpty,
+  thinkingDisclosureAfterPhaseChange,
 } from '@/renderer/pi-rpc/live-typewriter'
 import { useSettings } from '@/store/settings'
 import type { PiConversationPresentation } from '@/store/pi-rpc'
@@ -249,6 +250,7 @@ const ThinkingMessage = React.memo(function ThinkingMessage({
   const streaming = turn.state === 'streaming'
   const [open, setOpen] = React.useState(streaming)
   const previousStreamingRef = React.useRef(streaming)
+  const manualOpenRef = React.useRef<boolean | null>(null)
   const contentId = React.useId()
   const durationKey = React.useMemo(
     () => transientTurnAnimationKey(turn.id),
@@ -259,9 +261,15 @@ const ThinkingMessage = React.memo(function ThinkingMessage({
   )
 
   React.useEffect(() => {
-    if (previousStreamingRef.current === streaming) return
+    const nextOpen = thinkingDisclosureAfterPhaseChange(
+      previousStreamingRef.current,
+      streaming,
+      manualOpenRef.current,
+    )
+    if (nextOpen === null) return
     previousStreamingRef.current = streaming
-    setOpen(streaming)
+    if (streaming) manualOpenRef.current = null
+    setOpen(nextOpen)
   }, [streaming])
 
   React.useEffect(() => {
@@ -291,7 +299,13 @@ const ThinkingMessage = React.memo(function ThinkingMessage({
       : t('chat.thought')
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen}>
+    <Collapsible
+      open={open}
+      onOpenChange={(nextOpen) => {
+        manualOpenRef.current = nextOpen
+        setOpen(nextOpen)
+      }}
+    >
       <CollapsibleTrigger asChild>
         <button
           type="button"
@@ -633,16 +647,6 @@ export function MessageList({
   } else {
     knownAgentTurnsRef.current.ready = ready
   }
-  const animateAgentKeys = new Set(
-    motionEnabled && ready
-      ? turns.flatMap((turn) => (
-          turn.kind === 'agent' &&
-          !knownAgentTurnsRef.current.keys.has(agentAnimationKey(turn))
-            ? [agentAnimationKey(turn)]
-            : []
-        ))
-      : [],
-  )
   const latestAgentId = [...turns].reverse().find((turn) => turn.kind === 'agent')?.id
   const streamingAgentKeys = new Set(turns.flatMap((turn) => (
     turn.kind === 'agent' && (
@@ -655,6 +659,18 @@ export function MessageList({
       ? [agentAnimationKey(turn)]
       : []
   )))
+  const animateAgentKeys = new Set(
+    motionEnabled && ready
+      ? turns.flatMap((turn) => {
+          if (turn.kind !== 'agent') return []
+          const key = agentAnimationKey(turn)
+          return streamingAgentKeys.has(key) &&
+            !knownAgentTurnsRef.current.keys.has(key)
+            ? [key]
+            : []
+        })
+      : [],
+  )
 
   React.useEffect(() => {
     if (knownAgentTurnsRef.current.sessionKey !== sessionKey || !ready) return
