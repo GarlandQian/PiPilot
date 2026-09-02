@@ -9,8 +9,9 @@ Runtime，也不把 Pi 的数据迁移成 PiPilot 私有格式。
 
 Pi 继续拥有 Session、配置和资源，PiPilot 负责桌面使用体验。
 
-> **项目状态：**`v0.0.1` 是首个公开版本。源码仓库和 GitHub Release 均公开；未签名
-> 安装包只有在原生构建和 packaged smoke 验证通过后才用于手动下载。
+> **项目状态：**`v0.0.2` 是当前稳定版，`v0.0.1` 是首个公开版本。源码仓库和
+> GitHub Release 均公开；未签名安装包只有在原生构建和 packaged smoke 验证通过后
+> 才用于手动下载。
 
 [![CI](https://github.com/GarlandQian/PiPilot/actions/workflows/ci.yml/badge.svg)](https://github.com/GarlandQian/PiPilot/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2f3437.svg)](LICENSE)
@@ -101,7 +102,7 @@ pnpm package:win
 pnpm package:linux
 ```
 
-当前目标和首版策略：
+当前目标和分发策略：
 
 | 平台 | 架构 | 产物 | 信任与更新策略 |
 | --- | --- | --- | --- |
@@ -109,8 +110,8 @@ pnpm package:linux
 | Windows | x64 | NSIS | 未签名；可能出现 SmartScreen 或未知发布者提示 |
 | Linux | x64 | AppImage、DEB | 正在验证 AppImage 更新；DEB 手动安装 |
 
-macOS 首版没有 Apple Developer ID 签名，也没有 notarization。下载后可能需要在 Finder
-中右键选择“打开”，或在系统设置中明确允许。Windows 首版没有发布者签名，系统可能显示
+当前 macOS 版本没有 Apple Developer ID 签名，也没有 notarization。下载后可能需要在
+Finder 中右键选择“打开”，或在系统设置中明确允许。Windows 版本没有发布者签名，系统可能显示
 SmartScreen 警告。Release 说明和应用会如实展示这些状态。
 
 详细打包边界和最新真实验证状态见 [docs/PACKAGING.md](docs/PACKAGING.md)。
@@ -151,7 +152,7 @@ shell profile 或项目 MCP 配置文件。
 
 公开发布流程：
 
-1. 稳定标签（例如 `v0.0.1`）先触发发布专属的完整验证任务。
+1. 稳定标签（例如 `v0.0.2`）先触发发布专属的完整验证任务。
 2. 源码、单元测试、构建、集成和 Electron 检查通过后，macOS、Windows、Linux
    分别完成打包、产物检查和 packaged smoke。
 3. 最终装配任务拒绝同名文件覆盖，并校验文件名、版本、SHA-256，以及更新元数据
@@ -161,8 +162,8 @@ shell profile 或项目 MCP 配置文件。
    Release 才会公开。首次仓库重置只允许替换 `v0.0.1`，且标签必须指向仓库唯一的根
    提交；后续发布必须提高版本号。
 
-首个 `0.0.1` 版本需要手动下载安装。PiPilot 不会静默下载或安装更新。macOS 保持手动
-下载；Windows/Linux 的原生应用内更新只有在官方 updater 的隔离平台测试通过后才会启用。
+PiPilot 不会静默下载或安装更新。macOS 保持手动下载；Windows/Linux 的原生应用内更新
+只有在官方 updater 的隔离平台测试通过后才会启用。
 
 ## Pi 配置与数据
 

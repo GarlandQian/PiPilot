@@ -23,6 +23,7 @@ import {
 } from '@playwright/test'
 import { FuseState, FuseV1Options, getCurrentFuseWire } from '@electron/fuses'
 import { LATEST_PROTOCOL_VERSION } from '@modelcontextprotocol/server'
+import { PIPILOT_VERSION } from '../../src/shared/build-info'
 import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from '../../src/shared/settings'
 import { createWindowsUserPathAdapter } from '../../src/main/external-control/launcher-service'
 import { startPiSdkFixture } from '../electron/pi-sdk-fixture'
@@ -567,7 +568,7 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
     await expect(page.evaluate(() => window.pipilot!.app.getInfo()))
       .resolves.toMatchObject({
         name: 'PiPilot',
-        version: '0.0.1',
+        version: PIPILOT_VERSION,
         mode: 'production',
       })
 
@@ -655,7 +656,11 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
       ]),
     })
 
-    await page.getByRole('button', { name: 'Integrations', exact: true }).click()
+    await page.getByRole('button', { name: 'Settings', exact: true }).click()
+    await page
+      .getByRole('region', { name: 'Settings', exact: true })
+      .getByRole('button', { name: 'Integrations', exact: true })
+      .click()
     const integrationsMain = page.getByRole('main', {
       name: 'Integrations',
       exact: true,
@@ -1183,13 +1188,13 @@ test('runs the installed stable MCP command headlessly through the private bridg
       params: {
         protocolVersion: LATEST_PROTOCOL_VERSION,
         capabilities: {},
-        clientInfo: { name: 'PiPilot packaged smoke', version: '0.0.1' },
+        clientInfo: { name: 'PiPilot packaged smoke', version: PIPILOT_VERSION },
       },
     })}\n`)
     const initialized = await waitForMessage(1)
     expect(initialized).toHaveProperty('result.serverInfo', {
       name: 'pipilot-conversations',
-      version: '0.0.1',
+      version: PIPILOT_VERSION,
     })
     stdioProcess.stdin?.write(`${JSON.stringify({
       jsonrpc: '2.0',

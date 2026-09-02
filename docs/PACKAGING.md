@@ -1,6 +1,6 @@
 # PiPilot Packaging and Distribution
 
-PiPilot `0.0.1` is distributed through public GitHub Releases. The release
+PiPilot `0.0.2` is distributed through public GitHub Releases. The release
 workflow builds each platform on its native GitHub-hosted runner, runs the
 packaged smoke test, validates the artifact inventory and checksums, and then
 creates one public Release with the complete validated asset set. A failed
@@ -34,8 +34,9 @@ the validated files together in the final public Release.
 
 - package/product: `pipilot` / `PiPilot`
 - application ID: `com.pipilot.desktop`
+- current release: `0.0.2`
 - first release: `0.0.1`
-- stable tag: `v0.0.1`
+- stable tag: `v0.0.2`
 - executable: `PiPilot` on macOS/Windows and `pipilot` on Linux
 - output directory: ignored `release/`
 
@@ -58,7 +59,7 @@ macOS uses the base ad-hoc identity (`-`) solely for local launchability. It is
 not an Apple Developer ID signature and is not notarized. Users may need to
 choose **Open** in Finder or approve the application in System Settings. The
 Windows build is unsigned and may trigger SmartScreen or an unknown-publisher
-warning. These are expected first-release limitations, not claims of trust.
+warning. These are expected unsigned-distribution limitations, not claims of trust.
 
 Because an ad-hoc code identity can change whenever the application is rebuilt,
 PiPilot starts Chromium with its mock keychain on macOS. This prevents Chromium
@@ -73,7 +74,7 @@ storage against the stable signed identity.
 The workflow is [`.github/workflows/release.yml`](../.github/workflows/release.yml).
 
 1. Push an annotated stable tag matching `package.json`, for example
-   `v0.0.1`.
+   `v0.0.2`.
 2. Preflight verifies stable SemVer, exact package/tag identity, and public
    repository visibility. For `v0.0.1`, it also requires the tag to point to the
    repository's single root commit.
@@ -197,7 +198,7 @@ pnpm test:packaged
 ```
 
 The test launches the packaged executable with an isolated temporary user-data
-directory, checks production mode and version `0.0.1`, inspects ASAR/native
+directory, checks production mode and version `0.0.2`, inspects ASAR/native
 contents, verifies the preload bridge, and exercises the bundled official Pi SDK
 workflow. It does not use the developer's real Pi configuration or sessions.
 The current macOS arm64 worktree also runs the copied command against the live
@@ -206,7 +207,7 @@ client count, protocol-only stdout, permission bits, disable cleanup, and
 credential/endpoint/instance rotation. It also exits the enabled GUI, proves
 the command fails boundedly while stopped, relaunches the same app/user data,
 and verifies automatic readiness plus stable config and fresh credentials.
-This local packaged smoke passed 1/1; other native platforms remain CI/device
+This local packaged smoke passed 2/2; other native platforms remain CI/device
 evidence.
 
 ## Local update checks

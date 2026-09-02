@@ -85,8 +85,8 @@ import { ExternalControlLauncherService } from './external-control/launcher-serv
 registerAppSchemePrivileges()
 
 if (process.platform === 'darwin') {
-  // PiPilot 0.0.1 is intentionally distributed with an ad-hoc macOS
-  // signature. Chromium's default browser-data encryption binds its
+  // PiPilot's current macOS packages intentionally use an ad-hoc signature.
+  // Chromium's default browser-data encryption binds its
   // "PiPilot Safe Storage" keychain access to the current code identity, so
   // rebuilding the app can otherwise trigger a blocking password prompt on
   // every new build. PiPilot does not use Chromium cookies or password storage

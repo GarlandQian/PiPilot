@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
+import { PIPILOT_VERSION } from '../../src/shared/build-info'
 
 const execFileAsync = promisify(execFile)
 const temporaryDirectories: string[] = []
@@ -39,7 +40,7 @@ async function createReleaseFixture(options: {
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'pipilot-release-assembly-'))
   temporaryDirectories.push(root)
-  const version = '0.0.1'
+  const version = PIPILOT_VERSION
   const assets: Record<Platform, string[]> = {
     macos: [
       `PiPilot-${version}-arm64.dmg`,
@@ -158,7 +159,7 @@ describe('release assembly validation', () => {
   it('removes generated macOS updater metadata from the manual-download candidate', async () => {
     const root = await mkdtemp(join(tmpdir(), 'pipilot-macos-manifest-'))
     temporaryDirectories.push(root)
-    const version = '0.0.1'
+    const version = PIPILOT_VERSION
     const packages = [
       `PiPilot-${version}-arm64.dmg`,
       `PiPilot-${version}-arm64.zip`,

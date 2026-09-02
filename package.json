@@ -4,7 +4,7 @@
   "description": "An Electron desktop client for the local Pi coding agent",
   "author": "PiPilot contributors",
   "private": true,
-  "version": "0.0.1",
+  "version": "0.0.2",
   "packageManager": "pnpm@11.16.0",
   "type": "module",
   "main": "./out/main/index.js",

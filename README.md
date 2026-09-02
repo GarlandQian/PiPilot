@@ -12,9 +12,10 @@ PiPilot does not embed a parallel Agent Runtime or migrate Pi data into a
 PiPilot-specific format. Pi remains the owner of sessions, configuration, and
 resources; PiPilot owns the desktop experience.
 
-> **Project status:** `v0.0.1` is the first public release. The source repository
-> and GitHub Release are public. The unsigned installers are distributed for
-> manual download after native build and packaged-smoke verification.
+> **Project status:** `v0.0.2` is the current stable release; `v0.0.1` was the
+> first public release. The source repository and GitHub Releases are public.
+> Unsigned installers are distributed for manual download after native build
+> and packaged-smoke verification.
 
 [![CI](https://github.com/GarlandQian/PiPilot/actions/workflows/ci.yml/badge.svg)](https://github.com/GarlandQian/PiPilot/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2f3437.svg)](LICENSE)
@@ -119,7 +120,7 @@ pnpm package:win
 pnpm package:linux
 ```
 
-Current targets and first-release policy:
+Current targets and distribution policy:
 
 | Platform | Architecture | Artifacts | Trust and update policy |
 | --- | --- | --- | --- |
@@ -127,11 +128,11 @@ Current targets and first-release policy:
 | Windows | x64 | NSIS | Unsigned; Windows may show SmartScreen or unknown-publisher warnings |
 | Linux | x64 | AppImage, DEB | AppImage update support is being validated; DEB is installed manually |
 
-The first macOS release is not signed with an Apple Developer ID and is not
+The current macOS release is not signed with an Apple Developer ID and is not
 notarized. After downloading it, users may need to right-click the app and
-choose **Open**, or explicitly allow it in System Settings. The first Windows
-release has no publisher signature and may show a SmartScreen warning. Release
-notes and the application must describe these states honestly.
+choose **Open**, or explicitly allow it in System Settings. The Windows release
+has no publisher signature and may show a SmartScreen warning. Release notes
+and the application describe these states honestly.
 
 See [docs/PACKAGING.md](docs/PACKAGING.md) for the detailed package boundary
 and the latest verified packaging evidence.
@@ -179,7 +180,7 @@ files.
 
 The public release flow is:
 
-1. A stable tag such as `v0.0.1` starts a release-owned full verification job.
+1. A stable tag such as `v0.0.2` starts a release-owned full verification job.
 2. After source, unit, build, integration, and Electron checks pass, macOS,
    Windows, and Linux package, inspect their artifacts, and run packaged
    smoke tests independently.
@@ -191,10 +192,9 @@ The public release flow is:
    repository reset may replace only `v0.0.1`, whose tag must point to the
    repository's single root commit; subsequent releases require a higher version.
 
-The initial `0.0.1` version is installed manually. PiPilot never silently
-downloads or installs updates. macOS remains a manual-download path; native
-Windows/Linux update actions are enabled only after the official updater path
-passes isolated platform tests.
+PiPilot never silently downloads or installs updates. macOS remains a
+manual-download path; native Windows/Linux update actions are enabled only
+after the official updater path passes isolated platform tests.
 
 ## Pi configuration and data
 
