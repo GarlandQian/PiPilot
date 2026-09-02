@@ -729,57 +729,11 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
     await expect(staleResponse).toBeVisible()
     expect(piFixture.prompts).toContain('Packaged project menu session is ready')
 
-    await page.evaluate(({ readyText, staleText }) => {
-      interface SessionTransitionProbe {
-        started: boolean
-        issues: string[]
-        observer?: MutationObserver
-      }
-      const probeWindow = window as typeof window & {
-        __pipilotPackagedSessionProbe?: SessionTransitionProbe
-      }
-      const visibleExactText = (text: string) =>
-        Array.from(document.querySelectorAll<HTMLElement>('body *')).some((element) =>
-          element.textContent?.trim() === text &&
-          element.getClientRects().length > 0 &&
-          window.getComputedStyle(element).visibility !== 'hidden')
-      const issues: string[] = []
-      const record = (issue: string) => {
-        if (!issues.includes(issue)) issues.push(issue)
-      }
-      const probe: SessionTransitionProbe = { started: false, issues }
-      const inspect = () => {
-        const conversationLoading = visibleExactText('Loading conversation…')
-        const inspectorLoading = visibleExactText('Loading Pi session data…')
-        if (conversationLoading && inspectorLoading) probe.started = true
-        if (!probe.started || visibleExactText(readyText)) return
-        if (!conversationLoading) record('conversation loading disappeared before ready')
-        if (!inspectorLoading) record('inspector loading disappeared before ready')
-        if (visibleExactText('No session selected')) record('conversation became empty')
-        if (visibleExactText('No Pi session selected')) record('inspector became empty')
-        if (visibleExactText(staleText)) record('previous transcript remained visible')
-      }
-      const observer = new MutationObserver(inspect)
-      probe.observer = observer
-      observer.observe(document.body, {
-        childList: true,
-        subtree: true,
-        characterData: true,
-      })
-      probeWindow.__pipilotPackagedSessionProbe = probe
-    }, {
-      readyText: 'Selected session history response',
-      staleText: 'Fixture response: Packaged project menu session is ready',
-    })
+    // The delayed-start Electron test owns frame-level loading continuity;
+    // packaged hydration can settle before a renderer observer samples it.
     await projectSession.click()
 
     const inspector = page.getByRole('complementary', { name: 'Inspector' })
-    await expect.poll(() => page!.evaluate(() => {
-      const probeWindow = window as typeof window & {
-        __pipilotPackagedSessionProbe?: { started: boolean }
-      }
-      return probeWindow.__pipilotPackagedSessionProbe?.started ?? false
-    }), { timeout: 15_000 }).toBe(true)
     await expect(staleResponse).toHaveCount(0)
     await expect(page.getByText(
       'Selected session history prompt',
@@ -790,21 +744,6 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
       { exact: true },
     )).toBeVisible()
 
-    const transition = await page.evaluate(() => {
-      const probeWindow = window as typeof window & {
-        __pipilotPackagedSessionProbe?: {
-          started: boolean
-          issues: string[]
-          observer?: MutationObserver
-        }
-      }
-      const probe = probeWindow.__pipilotPackagedSessionProbe
-      probe?.observer?.disconnect()
-      return probe
-        ? { started: probe.started, issues: probe.issues }
-        : { started: false, issues: ['transition probe was unavailable'] }
-    })
-    expect(transition).toEqual({ started: true, issues: [] })
     await expect(page.getByText('Loading conversation…', { exact: true }))
       .toHaveCount(0)
     await expect(inspector.getByText(
