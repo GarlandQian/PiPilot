@@ -113,6 +113,9 @@ export function McpSettings({ scope, onDirtyChange }: McpSettingsProps) {
   const formSupported = structuredDocumentSupported(parsed)
   const dirty = Boolean(snapshotIsCurrent && draftText !== snapshot.content)
   const available = adapterDetected(runtime.commands)
+  const displayedPath = snapshotIsCurrent
+    ? displayMcpConfigPath(snapshot.target, snapshot.path)
+    : t('settings.mcp.loading')
 
   const updateDraft = React.useCallback((next: string) => {
     draftRevision.current += 1
@@ -279,10 +282,11 @@ export function McpSettings({ scope, onDirtyChange }: McpSettingsProps) {
             </Badge>
             {extension.statuses.mcp && <span className="truncate text-micro text-muted-foreground">{extension.statuses.mcp}</span>}
           </div>
-          <p className="mt-1 break-all font-mono text-micro text-muted-foreground">
-            {snapshotIsCurrent
-              ? displayMcpConfigPath(snapshot.target, snapshot.path)
-              : t('settings.mcp.loading')}
+          <p
+            className="mt-1 min-w-0 truncate font-mono text-micro text-muted-foreground"
+            title={snapshotIsCurrent ? displayedPath : undefined}
+          >
+            {displayedPath}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">

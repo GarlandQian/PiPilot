@@ -29,5 +29,19 @@ export function shouldStartTypewriterFromEmpty(
   animateOnMount: boolean,
   streaming: boolean,
 ) {
-  return motionEnabled && (animateOnMount || streaming)
+  return motionEnabled && animateOnMount && streaming
+}
+
+/**
+ * Keeps active reasoning visible, then collapses it at settlement unless the
+ * user explicitly chose a disclosure state during that live phase.
+ */
+export function thinkingDisclosureAfterPhaseChange(
+  wasStreaming: boolean,
+  streaming: boolean,
+  manualOpen: boolean | null,
+): boolean | null {
+  if (wasStreaming === streaming) return null
+  if (streaming) return true
+  return manualOpen ?? false
 }

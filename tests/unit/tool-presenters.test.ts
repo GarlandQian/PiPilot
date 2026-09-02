@@ -463,6 +463,31 @@ describe('tool presenter registry', () => {
     })
   })
 
+  it('preserves upstream truncation metadata for arguments and results', () => {
+    const call = presentToolCall({
+      id: 'bounded-tool',
+      name: 'extension_tool',
+      args: '{"command":',
+      argsPresentation: 'plain-text',
+      argsTruncated: true,
+      phase: 'complete',
+      resultText: 'bounded output…',
+      resultPresentation: 'plain-text',
+      resultTruncated: true,
+    })
+
+    expect(call.details?.arguments).toMatchObject({
+      kind: 'text',
+      malformed: false,
+      truncated: true,
+    })
+    expect(call.details?.result).toMatchObject({
+      kind: 'text',
+      malformed: false,
+      truncated: true,
+    })
+  })
+
   it('keeps specialized read and shell summaries while sharing bounded details', () => {
     const read = presentToolCall({
       id: 'read',

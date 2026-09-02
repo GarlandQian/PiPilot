@@ -93,6 +93,38 @@ when sessions already exist. Do not manufacture a second lifecycle path merely
 to expose the action; reuse the same project-scoped creation callback used by
 the empty state.
 
+## Responsive Presentation State And Focus
+
+When wide and compact layouts render mutually exclusive branches for the same
+domain surface, state that must survive a layout-mode change belongs above both
+branches. Keep the active Inspector tab, file-preview identity, contextual
+detail identity, and similar presentation state controlled by the shared frame;
+do not hide that state in a branch-local component or reset it with a layout key.
+
+```tsx
+// Correct: both responsive branches receive the same controlled state.
+const [inspectorTab, setInspectorTab] = React.useState<InspectorTab>('files')
+
+return compact
+  ? <InspectorPanel activeTab={inspectorTab} onActiveTabChange={setInspectorTab} />
+  : <InspectorPanel activeTab={inspectorTab} onActiveTabChange={setInspectorTab} />
+```
+
+Contextual detail navigation stores only stable identity and resolves current
+content from the authoritative projection on every render. Switching between
+wide and compact presentation must keep valid detail open; a scope/session
+replacement still invalidates it.
+
+Compact list/detail navigation also owns an explicit focus return contract:
+opening a detail focuses its visible Back action, and Back first hides the
+detail, then restores focus to the exact stable navigation row on the next
+animation frame. Use a stable data attribute or ref for that row rather than a
+text query or DOM index.
+
+Electron coverage for a responsive surface must cross the wide/compact boundary
+with state already selected and assert both retained content and focus return.
+This prevents a visual mode change from behaving like destructive navigation.
+
 ## Avoid
 
 - Calling `window.pipilot` directly from a feature component.

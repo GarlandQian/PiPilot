@@ -82,6 +82,7 @@ import {
 import {
   composerPickerOptionId,
   createComposerPickerRows,
+  isComposerPickerSelectionKey,
   transitionComposerPickerActiveId,
   type ComposerPickerRow,
 } from '@/renderer/composer/composer-picker'
@@ -805,11 +806,9 @@ export function Composer({
   }, [attachments])
 
   React.useEffect(() => {
-    for (const attachment of attachmentSnapshot.current) {
-      URL.revokeObjectURL(attachment.previewUrl)
-    }
-    attachmentSnapshot.current = []
-    setAttachments([])
+    // Attachments are user-owned draft content and remain available when the
+    // selected Session or Settings surface changes. Scope-bound trusted
+    // mentions and async candidate results are reset below.
     editorRef.current?.removeMentions()
     setSubmitError(null)
     setSubmitting(false)
@@ -1325,12 +1324,13 @@ export function Composer({
       ))
       return true
     }
-    if (event.key !== 'Enter' && event.key !== 'Tab') return false
+    if (!isComposerPickerSelectionKey(event)) return false
     const activeCandidate = activeMentionId
       ? mentionCandidateById.get(activeMentionId)
       : undefined
-    if (!activeCandidate) return false
-    selectMention(activeCandidate)
+    if (activeCandidate) selectMention(activeCandidate)
+    // The open picker owns unmodified Enter/Tab even while its rows are
+    // loading or empty. Do not let an incomplete @ query submit or move focus.
     return true
   }, [activeMentionId, mentionCandidateById, mentionRows, selectMention])
 
@@ -1470,19 +1470,18 @@ export function Composer({
         ))
         return true
       }
-      if ((event.key === 'Enter' || event.key === 'Tab') && !event.altKey && !event.ctrlKey &&
-        !event.metaKey && !event.shiftKey) {
+      if (isComposerPickerSelectionKey(event)) {
         if (commandArgumentQuery) {
           const selected = activeSlashId
             ? commandArgumentCandidateById.get(activeSlashId)
             : undefined
-          if (!selected) return false
-          selectCommandArgument(selected)
+          if (selected) selectCommandArgument(selected)
           return true
         }
         const selected = activeSlashId ? slashCandidateById.get(activeSlashId) : undefined
-        if (!selected) return false
-        selectCommand(selected)
+        if (selected) selectCommand(selected)
+        // Loading, empty, and error rows are non-selectable, but the open
+        // picker still owns Enter/Tab so it cannot submit stale text.
         return true
       }
     }
@@ -1520,6 +1519,7 @@ export function Composer({
       <div className="mx-auto min-w-0 w-full max-w-[920px]">
         <div
           data-composer-surface
+          data-composer-mode={isStreaming ? 'running' : 'idle'}
           aria-busy={submitting}
           className={cn(
             'min-w-0 rounded-lg border border-input bg-card transition-[border-color,box-shadow] duration-(--duration-fast) focus-within:border-sage/50 focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--color-sage)_10%,transparent)] motion-reduce:transition-none',
@@ -1713,64 +1713,60 @@ export function Composer({
             <div className="min-w-1 flex-1" />
 
             {isStreaming ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
+              <div
+                className="flex h-8 shrink-0 items-center gap-1.5"
+                data-composer-running-actions
+              >
+                <div className="flex h-8 shrink-0 overflow-hidden rounded-md border border-border bg-background/60">
                   <Button
-                    variant="secondary"
-                    size="icon-sm"
-                    className="rounded-lg"
-                    onClick={() => void stop()}
-                    aria-label={t('composer.stop')}
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 rounded-none border-0 px-2.5 text-caption"
+                    disabled={!hasSubmission || submitting || Boolean(submissionConflict)}
+                    aria-label={submitMode.kind === 'run-now' ? t('composer.runNow') : t('composer.queue')}
+                    onClick={() => void dispatch(primaryAction)}
                   >
-                    <TbPlayerStop aria-hidden />
+                    {submitMode.kind === 'run-now'
+                      ? <TbArrowUp aria-hidden />
+                      : <TbListDetails aria-hidden />}
+                    {submitMode.kind === 'run-now' ? t('composer.runNow') : t('composer.queue')}
                   </Button>
-                </TooltipTrigger>
-                <TooltipContent>{t('composer.stop')}</TooltipContent>
-              </Tooltip>
-            ) : null}
-
-            {isStreaming ? (
-              <div className="flex h-8 shrink-0 overflow-hidden rounded-lg">
+                  {submitMode.allowsSteer ? (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          className="h-8 w-7 rounded-none border-l border-border"
+                          disabled={!hasSubmission || submitting || Boolean(submissionConflict)}
+                          aria-label={t('composer.moreSubmitActions')}
+                        >
+                          <TbChevronDown aria-hidden />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onSelect={() => void dispatch('steer')}>
+                          <TbRoute aria-hidden />
+                          {t('composer.steer')}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  ) : null}
+                </div>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
                       variant="accent"
-                      size="icon-xs"
-                      className="h-8 w-8 rounded-none"
-                      disabled={!hasSubmission || submitting || Boolean(submissionConflict)}
-                      aria-label={submitMode.kind === 'run-now' ? t('composer.runNow') : t('composer.queue')}
-                      onClick={() => void dispatch(primaryAction)}
+                      size="icon-sm"
+                      className="rounded-lg"
+                      onClick={() => void stop()}
+                      aria-label={t('composer.stop')}
                     >
-                      {submitMode.kind === 'run-now'
-                        ? <TbArrowUp aria-hidden />
-                        : <TbListDetails aria-hidden />}
+                      <TbPlayerStop aria-hidden />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>
-                    {submitMode.kind === 'run-now' ? t('composer.runNow') : t('composer.queue')}
-                  </TooltipContent>
+                  <TooltipContent>{t('composer.stop')}</TooltipContent>
                 </Tooltip>
-                {submitMode.allowsSteer ? (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        variant="accent"
-                        size="icon-xs"
-                        className="h-8 w-6 rounded-none border-l border-sage-foreground/20"
-                        disabled={!hasSubmission || submitting || Boolean(submissionConflict)}
-                        aria-label={t('composer.moreSubmitActions')}
-                      >
-                        <TbChevronDown aria-hidden />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onSelect={() => void dispatch('steer')}>
-                        <TbRoute aria-hidden />
-                        {t('composer.steer')}
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                ) : null}
               </div>
             ) : (
               <Button

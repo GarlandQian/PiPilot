@@ -5,7 +5,6 @@ import type { RailDestination } from './ActivityRail'
 
 const LABEL_KEYS = {
   sessions: 'rail.sessions',
-  integrations: 'rail.integrations',
   settings: 'rail.settings',
 } as const
 
@@ -18,7 +17,7 @@ export interface ContextPanelProps {
   hidden?: boolean
   /** Panel-specific action rendered at the trailing edge of the header row. */
   headerAction?: React.ReactNode
-  /** Destination body (sessions list / integrations sub-nav / settings nav). */
+  /** Destination body (conversation inventory or settings nav). */
   children: React.ReactNode
   className?: string
   /** Optional pixel width override; defaults to the w-60 utility. */
@@ -85,6 +84,7 @@ export function ContextPanelNav({
             <li key={item.id}>
               <button
                 type="button"
+                data-context-panel-nav-id={item.id}
                 onClick={() => onSelect(item.id)}
                 aria-current={active ? 'page' : undefined}
                 className={cn(

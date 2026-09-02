@@ -7,7 +7,6 @@ import {
   TbMessage,
   TbMessagePlus,
   TbMessages,
-  TbPackages,
   TbPlayerStop,
   TbServer,
   TbSettings,
@@ -34,6 +33,7 @@ import {
   type SessionCommandEntry,
 } from '@/lib/commands'
 import { groupModelsByProvider } from '@/lib/model-groups'
+import { primaryShortcut } from '@/lib/keyboard-shortcuts'
 import { cn } from '@/lib/utils'
 import { type PiRpcModel, usePiRpcActions, usePiRuntime } from '@/store/pi-rpc'
 
@@ -51,7 +51,6 @@ const COMMAND_ICONS: Record<string, React.ComponentType<{ className?: string }>>
   'action:toggle-inspector': TbLayoutSidebarRight,
   'action:stop-generation': TbPlayerStop,
   'nav:sessions': TbMessages,
-  'nav:integrations': TbPackages,
   'nav:settings': TbSettings,
   'nav:integrations-mcp': TbServer,
 }
@@ -61,7 +60,7 @@ const SETTINGS_ICONS = new Map(SETTINGS_SECTIONS.map((meta) => [`settings:${meta
 type PalettePage = 'root' | 'models'
 
 /**
- * ⌘K command palette: fuzzy session switching plus the frame's core
+ * Primary-modifier command palette: fuzzy session switching plus the frame's core
  * navigation/actions. cmdk supplies keyboard operation and filtering;
  * reduced motion is honored globally by globals.css zeroing dialog
  * animations under [data-reduced-motion='true'] / prefers-reduced-motion.
@@ -129,7 +128,7 @@ export function CommandPalette({ open, onOpenChange, ctx, sessions }: CommandPal
         <Icon aria-hidden />
         <span className="truncate">{t(command.titleKey)}</span>
         {command.shortcut
-          ? <CommandShortcut>{command.shortcut}</CommandShortcut>
+          ? <CommandShortcut>{primaryShortcut(command.shortcut)}</CommandShortcut>
           : command.hintKey
             ? <CommandShortcut className="tracking-normal">{t(command.hintKey)}</CommandShortcut>
             : null}

@@ -248,6 +248,40 @@ describe('official Pi transcript presentation', () => {
     })
   })
 
+  it('marks tool output bounded by the transcript projector as truncated', () => {
+    let state = createLocalPiProjectorState({
+      generation: 4,
+      sessionId: 'session-a',
+    })
+    state = applyLocalPiProjectorEvent(state, envelope({
+      type: 'tool_execution_start',
+      toolCallId: 'call-bounded',
+      toolName: 'extension_tool',
+      args: { task: 'inspect' },
+    }))
+    state = applyLocalPiProjectorEvent(state, envelope({
+      type: 'tool_execution_end',
+      toolCallId: 'call-bounded',
+      toolName: 'extension_tool',
+      result: {
+        content: [{ type: 'text', text: 'x'.repeat(30_000) }],
+        details: null,
+      },
+      isError: false,
+    }))
+
+    const tool = projectLocalPiTurns(state).find((turn) => turn.kind === 'tool')
+    const result = tool?.kind === 'tool' ? tool.call.details?.result : undefined
+    expect(result).toMatchObject({
+      kind: 'text',
+      truncated: true,
+      malformed: false,
+    })
+    expect(new TextEncoder().encode(result?.copyText ?? '').byteLength)
+      .toBeLessThanOrEqual(24_000)
+    expect(result?.copyText.endsWith('…')).toBe(true)
+  })
+
   it('renders unknown extension tools as bounded generic activity with progress and errors', () => {
     let state = createLocalPiProjectorState({
       generation: 4,

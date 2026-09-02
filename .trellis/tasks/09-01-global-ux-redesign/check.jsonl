@@ -1,0 +1,11 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "Verify every applicable frontend quality check and referenced rule was followed"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Audit primitive reuse, hierarchy, interaction states, locales, focus, and accessible controls"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "Audit ownership boundaries and reject unnecessary global components or duplicate abstractions"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "Audit subscriptions, effect dependencies, cleanup, stable callbacks, and hidden mounted-workspace behavior"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Audit latest-selection-wins, no stale Session data, state restoration, and authoritative ownership"}
+{"file": ".trellis/spec/frontend/read-only-changes.md", "reason": "Audit continuous diff, independent large-file loading, and read-only Inspector constraints"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Audit route/state exhaustiveness, boundary schemas, nullability, and absence of unsafe casts"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Audit real Electron evidence at both viewports, themes, locales, motion, keyboard, and accessibility"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Check for duplicated status, selection, picker, settings, and detail-stack ownership"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Trace any Main/preload changes end to end and reject UI inference where a source contract is required"}
+{"file": ".trellis/tasks/09-01-global-ux-redesign/research/current-ux-audit.md", "reason": "Compare the result against confirmed release-worktree failures and preserved visual-language evidence"}

@@ -40,11 +40,12 @@ export function SkillPicker({
     <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverAnchor asChild>{anchor}</PopoverAnchor>
       <PopoverContent
+        data-composer-picker-surface
         side="top"
         align="start"
-        sideOffset={6}
+        sideOffset={4}
         collisionPadding={12}
-        className="w-[var(--radix-popover-trigger-width)] max-w-[calc(100vw-24px)] border-0 bg-transparent p-0 shadow-none"
+        className="w-[var(--radix-popover-trigger-width)] min-w-[var(--radix-popover-trigger-width)] max-w-[calc(100vw-24px)] border-0 bg-transparent p-0 shadow-none"
         onEscapeKeyDown={onEscapeKeyDown}
         onOpenAutoFocus={(event) => event.preventDefault()}
         onCloseAutoFocus={(event) => event.preventDefault()}

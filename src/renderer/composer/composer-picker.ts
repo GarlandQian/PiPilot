@@ -35,6 +35,16 @@ export interface ComposerPickerSection {
 
 export type ComposerPickerTransition = 'first' | 'last' | 'next' | 'previous' | 'reconcile'
 
+export function isComposerPickerSelectionKey(
+  event: Pick<KeyboardEvent, 'altKey' | 'ctrlKey' | 'key' | 'metaKey' | 'shiftKey'>,
+) {
+  return (event.key === 'Enter' || event.key === 'Tab') &&
+    !event.altKey &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.shiftKey
+}
+
 export function createComposerPickerRows(
   sections: readonly ComposerPickerSection[],
 ): ComposerPickerRow[] {

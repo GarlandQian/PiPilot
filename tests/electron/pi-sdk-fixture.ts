@@ -6,6 +6,7 @@ import { join } from 'node:path'
 interface PiSdkFixtureOptions {
   agentDir: string
   globalPackages?: readonly string[]
+  completionDelays?: Readonly<Record<string, number>>
   promptDelays?: Readonly<Record<string, number>>
   reasoningDelays?: Readonly<Record<string, number>>
   retryEnabled?: boolean
@@ -181,6 +182,8 @@ export async function startPiSdkFixture(
             finish_reason: null,
           }],
         })}\n\n`)
+        const completionDelay = options.completionDelays?.[prompt] ?? 0
+        if (completionDelay > 0) await delay(completionDelay)
         response.write(`data: ${JSON.stringify({
           id: 'chatcmpl-pipilot-fixture',
           object: 'chat.completion.chunk',

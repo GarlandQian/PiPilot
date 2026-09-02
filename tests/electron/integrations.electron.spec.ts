@@ -270,15 +270,13 @@ test('manages bundled Pi SDK integrations and MCP drafts across responsive Setti
     })
 
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
-    await page
-      .getByRole('region', { name: 'Settings', exact: true })
-      .getByRole('button', { name: 'Integrations', exact: true })
-      .click()
+    const settingsNavigation = page.getByRole('region', { name: 'Settings', exact: true })
+    await settingsNavigation.getByRole('button', { name: 'Integrations', exact: true }).click()
     await page.getByRole('button', { name: 'Current project', exact: true }).click()
     await expect(page.getByRole('heading', { name: 'Integrations', exact: true })).toBeVisible()
     await expect(page.getByText(/Pi 0\.84\.2/)).toBeVisible()
     await expect(page.getByText(
-      'Package changes are saved. Restart Pi to load the current resources.',
+      'Package changes are saved but not confirmed loaded. Restart Pi to try again.',
     )).toHaveCount(0)
     const overview = page.getByRole('region', { name: 'Overview', exact: true })
     const packageSummary = overview.getByRole('button', { name: /Installed packages/u })
@@ -357,6 +355,11 @@ test('manages bundled Pi SDK integrations and MCP drafts across responsive Setti
     await expect.poll(() => page.evaluate(() => (
       window.innerWidth === 1100 && window.innerHeight === 680
     ))).toBe(true)
+    await page
+      .getByRole('region', { name: 'Settings', exact: true })
+      .getByRole('button', { name: 'Integrations', exact: true })
+      .click()
+    await expect(page.getByText('Installed version', { exact: true })).toBeVisible()
     await expect.poll(() => page.evaluate(() => (
       document.documentElement.scrollWidth <= document.documentElement.clientWidth
     ))).toBe(true)

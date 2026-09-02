@@ -34,7 +34,7 @@ export function SettingRow({
   return (
     <div
       className={cn(
-        'density-row flex items-center gap-4 rounded-md px-2 -mx-2 transition-colors duration-(--duration-fast) hover:bg-accent/30',
+        '@container/setting-row density-row -mx-2 flex flex-col items-stretch gap-2 rounded-md px-2 py-1 transition-colors duration-(--duration-fast) hover:bg-accent/30 @min-[520px]/setting-row:flex-row @min-[520px]/setting-row:items-center @min-[520px]/setting-row:gap-4 @min-[520px]/setting-row:py-0',
         className,
       )}
     >
@@ -42,7 +42,7 @@ export function SettingRow({
         <p className="text-app text-foreground">{label}</p>
         {desc && <p className="mt-0.5 text-caption text-muted-foreground">{desc}</p>}
       </div>
-      <div className="flex shrink-0 items-center gap-2">{children}</div>
+      <div className="flex min-w-0 items-center gap-2 @min-[520px]/setting-row:shrink-0">{children}</div>
     </div>
   )
 }

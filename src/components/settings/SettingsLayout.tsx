@@ -2,6 +2,7 @@ import * as React from 'react'
 import {
   TbAdjustmentsHorizontal,
   TbAlertTriangle,
+  TbArrowLeft,
   TbCheck,
   TbCpu,
   TbDownload,
@@ -42,14 +43,17 @@ import type { AppInfo } from '@/shared/ipc/contracts'
 import { SUPPORTED_PI_VERSION } from '@/shared/local-pi'
 import { usePiRpcActions, usePiRuntime } from '@/store/pi-rpc'
 import { useApplicationUpdate } from '@/store/application-update'
+import {
+  SETTINGS_ROUTE_IDS,
+  type SettingsRouteId,
+} from '@/renderer/layout-preferences'
 
-export type SettingsSectionId =
-  | 'general'
-  | 'appearance'
-  | 'language'
-  | 'models'
-  | 'integrations'
-  | 'terminal'
+export type SettingsSectionId = SettingsRouteId
+
+export type SettingsGroupId =
+  | 'preferences'
+  | 'models-runtime'
+  | 'packages-mcp'
   | 'about'
 
 export type { IntegrationsTabId }
@@ -60,19 +64,59 @@ export interface SettingsSectionMeta {
   icon: React.ComponentType<{ className?: string }>
 }
 
-/** Section navigation metadata; rendered by the frame ContextPanel. */
-export const SETTINGS_SECTIONS: readonly SettingsSectionMeta[] = [
-  { id: 'general', labelKey: 'settings.nav.general', icon: TbAdjustmentsHorizontal },
-  { id: 'appearance', labelKey: 'settings.nav.appearance', icon: TbPalette },
-  { id: 'language', labelKey: 'settings.nav.language', icon: TbLanguage },
-  { id: 'models', labelKey: 'settings.nav.models', icon: TbCpu },
-  { id: 'integrations', labelKey: 'settings.nav.integrations', icon: TbPackages },
-  { id: 'terminal', labelKey: 'settings.nav.terminal', icon: TbTerminal2 },
-  { id: 'about', labelKey: 'settings.nav.about', icon: TbInfoCircle },
+export interface SettingsGroupMeta {
+  id: SettingsGroupId
+  labelKey: MessageKey
+  sections: readonly SettingsSectionMeta[]
+}
+
+/** Grouped navigation metadata; the flat export remains for deep-link consumers. */
+export const SETTINGS_GROUPS: readonly SettingsGroupMeta[] = [
+  {
+    id: 'preferences',
+    labelKey: 'settings.group.preferences',
+    sections: [
+      { id: 'general', labelKey: 'settings.nav.general', icon: TbAdjustmentsHorizontal },
+      { id: 'appearance', labelKey: 'settings.nav.appearance', icon: TbPalette },
+      { id: 'language', labelKey: 'settings.nav.language', icon: TbLanguage },
+      { id: 'terminal', labelKey: 'settings.nav.terminal', icon: TbTerminal2 },
+    ],
+  },
+  {
+    id: 'models-runtime',
+    labelKey: 'settings.group.modelsRuntime',
+    sections: [
+      { id: 'models', labelKey: 'settings.nav.models', icon: TbCpu },
+    ],
+  },
+  {
+    id: 'packages-mcp',
+    labelKey: 'settings.group.packagesMcp',
+    sections: [
+      { id: 'integrations', labelKey: 'settings.nav.integrations', icon: TbPackages },
+    ],
+  },
+  {
+    id: 'about',
+    labelKey: 'settings.group.about',
+    sections: [
+      { id: 'about', labelKey: 'settings.nav.about', icon: TbInfoCircle },
+    ],
+  },
 ]
 
+const SETTINGS_SECTIONS_BY_ID = new Map(
+  SETTINGS_GROUPS.flatMap((group) => group.sections)
+    .map((section) => [section.id, section] as const),
+)
+
+/** Flat route order is intentionally kept stable for command/search consumers. */
+export const SETTINGS_SECTIONS: readonly SettingsSectionMeta[] = SETTINGS_ROUTE_IDS
+  .map((id) => SETTINGS_SECTIONS_BY_ID.get(id))
+  .filter((section): section is SettingsSectionMeta => section !== undefined)
+
 export function isSettingsSectionId(id: string): id is SettingsSectionId {
-  return SETTINGS_SECTIONS.some((section) => section.id === id)
+  return SETTINGS_ROUTE_IDS.some((section) => section === id)
 }
 
 function platformName(platform: string) {
@@ -295,14 +339,21 @@ export interface SettingsLayoutProps {
   section: SettingsSectionId
   integrationsTab: IntegrationsTabId
   onIntegrationsTab: (tab: IntegrationsTabId) => void
+  compact?: boolean
+  detailVisible?: boolean
+  onBack?: () => void
 }
 
 export function SettingsLayout({
   section,
   integrationsTab,
   onIntegrationsTab,
+  compact = false,
+  detailVisible = true,
+  onBack,
 }: SettingsLayoutProps) {
   const t = useT()
+  const compactBackRef = React.useRef<HTMLButtonElement>(null)
   const appInfo = useAppInfo()
   const piRuntime = usePiRuntime()
   const piActions = usePiRpcActions()
@@ -325,9 +376,39 @@ export function SettingsLayout({
     }
   }, [piActions, restartBusy, t])
 
+  React.useEffect(() => {
+    if (!compact || !detailVisible) return
+    const frame = requestAnimationFrame(() => compactBackRef.current?.focus())
+    return () => cancelAnimationFrame(frame)
+  }, [compact, detailVisible, section])
+
   return (
-    <main className="scroll-slim min-w-0 flex-1 overflow-x-hidden overflow-y-auto bg-background" aria-label={t(`settings.nav.${section}`)}>
-      <div className={cn('mx-auto w-full', section === 'integrations' ? 'max-w-6xl' : 'max-w-2xl')}>
+    <main
+      hidden={!detailVisible}
+      className="scroll-slim min-w-0 flex-1 overflow-x-hidden overflow-y-auto bg-background"
+      aria-label={t(`settings.nav.${section}`)}
+    >
+      {compact && onBack ? (
+        <header className="sticky top-0 z-10 flex h-10 items-center gap-2 border-b border-border bg-background/95 px-3">
+          <Button
+            ref={compactBackRef}
+            variant="ghost"
+            size="sm"
+            aria-label={t('settings.back')}
+            onClick={onBack}
+          >
+            <TbArrowLeft aria-hidden />
+            {t('settings.back')}
+          </Button>
+          <span className="min-w-0 truncate text-caption font-medium text-foreground">
+            {t(`settings.nav.${section}`)}
+          </span>
+        </header>
+      ) : null}
+      <div className={cn(
+        '@container/settings-workspace mx-auto w-full',
+        section === 'integrations' || section === 'models' ? 'max-w-6xl' : 'max-w-2xl',
+      )}>
         {section === 'general' && (
           <GeneralSettings
             restartBusy={restartBusy}

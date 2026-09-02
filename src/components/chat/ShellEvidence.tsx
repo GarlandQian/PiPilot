@@ -9,10 +9,16 @@ import { MarkdownContent } from './markdown/MarkdownContent'
 interface ShellEvidenceProps {
   label: string
   source: string
+  sourceTruncated?: boolean
   tone?: 'default' | 'error'
 }
 
-export function ShellEvidence({ label, source, tone = 'default' }: ShellEvidenceProps) {
+export function ShellEvidence({
+  label,
+  source,
+  sourceTruncated = false,
+  tone = 'default',
+}: ShellEvidenceProps) {
   const t = useT()
   const evidence = React.useMemo(() => projectShellEvidence(source), [source])
   const [view, setView] = React.useState<'formatted' | 'raw'>(evidence.defaultView)
@@ -98,7 +104,7 @@ export function ShellEvidence({ label, source, tone = 'default' }: ShellEvidence
           <code>{evidence.source}</code>
         </pre>
       )}
-      {evidence.truncated ? (
+      {evidence.truncated || sourceTruncated ? (
         <p className="text-micro text-muted-foreground">{t('tool.outputTruncated')}</p>
       ) : null}
     </section>

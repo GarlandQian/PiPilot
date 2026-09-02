@@ -323,13 +323,26 @@ export function ToolCallCard({ call }: { call: ToolCall }) {
                   </pre>
                 ) : null}
                 {call.progress || details.progress?.copyText ? (
-                  <ShellEvidence label={t('tool.progress')} source={call.progress ?? details.progress?.copyText ?? ''} />
+                  <ShellEvidence
+                    label={t('tool.progress')}
+                    source={call.progress ?? details.progress?.copyText ?? ''}
+                    sourceTruncated={details.progress?.truncated}
+                  />
                 ) : null}
                 {call.output || details.result?.copyText ? (
-                  <ShellEvidence label={t('tool.result')} source={call.output ?? details.result?.copyText ?? ''} />
+                  <ShellEvidence
+                    label={t('tool.result')}
+                    source={call.output ?? details.result?.copyText ?? ''}
+                    sourceTruncated={details.result?.truncated}
+                  />
                 ) : null}
                 {call.error || details.error?.copyText ? (
-                  <ShellEvidence label={t('tool.error')} source={call.error ?? details.error?.copyText ?? ''} tone="error" />
+                  <ShellEvidence
+                    label={t('tool.error')}
+                    source={call.error ?? details.error?.copyText ?? ''}
+                    sourceTruncated={details.error?.truncated}
+                    tone="error"
+                  />
                 ) : null}
                 {call.patch || details.patch?.copyText ? (
                   <ShellEvidence label={t('tool.patch')} source={call.patch ?? details.patch?.copyText ?? ''} />
