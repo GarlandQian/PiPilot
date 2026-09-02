@@ -2882,6 +2882,7 @@ test('applies terminal font settings live without replacing the active PTY', asy
   try {
     const page = await electronApp.firstWindow()
     await page.waitForLoadState('domcontentloaded')
+    await page.setViewportSize({ width: 1_440, height: 900 })
     await page.evaluate(() => window.pipilot!.settings.update({ locale: 'en-US' }))
     await page.getByRole('tab', { name: 'Terminal', exact: true }).click()
     const terminalPanel = page.locator('[data-terminal-status]')
@@ -2946,6 +2947,7 @@ test('launches a sandboxed shell with a narrow validated bridge', async ({}, tes
   try {
     const page = await electronApp.firstWindow()
     await page.waitForLoadState('domcontentloaded')
+    await page.setViewportSize({ width: 1_440, height: 900 })
 
     await expect(page).toHaveTitle('PiPilot')
     expect(page.url()).toBe('pipilot://app/')

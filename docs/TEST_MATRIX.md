@@ -13,13 +13,13 @@ phase counts live in the documents listed by [the documentation index](README.md
 | Production build | `electron-vite build` | Passed; emitted Main, preload, Renderer, Host utility, and management-helper entries |
 | Full unit | `vitest run` | Passed 88 files / 704 tests, including native UDS bridge tests |
 | Full integration | `playwright test --config=playwright.integration.config.ts` | Passed 2/2 |
-| Full Electron | `playwright test --config=playwright.electron.config.ts` | Passed 19/19 in 2.4 minutes |
+| Full Electron | `playwright test --config=playwright.electron.config.ts` | Passed 19/19 in 2.6 minutes |
 | Focused launcher/MCP/bootstrap/IPC | `vitest run tests/unit/external-control-launcher-service.test.ts tests/unit/external-control-mcp.test.ts tests/unit/main-bootstrap.test.ts tests/unit/external-control-ipc.test.ts tests/unit/external-control-settings-contracts.test.ts tests/unit/local-pi-ipc.test.ts` | Passed 6 files / 43 tests; native socket run required the local elevated test environment |
 | External Control settings | `playwright test tests/electron/external-control-settings.electron.spec.ts` | Passed 1/1, including managed-only confirmed uninstall, exact clipboard JSON, light/dark, and compact 1100px checks |
 | Existing Electron startup smoke | project Electron Playwright smoke | Passed 1/1 after lazy Main chunk path verification |
 | Local packaged build | `CSC_IDENTITY_AUTO_DISCOVERY=false pnpm package:dir` | Passed on macOS arm64 with the pinned Electron 43.4.1 distribution and ad-hoc identity |
 | Packaged MCP smoke | `playwright test tests/packaged/pipilot.packaged.spec.ts --grep "installed stable MCP command"` | Passed 1/1 against the locally packaged macOS arm64 app bundle |
-| Full packaged application | `playwright test --config=playwright.packaged.config.ts` | Passed 2/2 against the final rebuilt `release/mac-arm64/PiPilot.app`; GUI/SDK workflow in 33.4s and stable headless MCP in 10.7s |
+| Full packaged application | `playwright test --config=playwright.packaged.config.ts` | Passed 2/2 against the final rebuilt `release/mac-arm64/PiPilot.app`; GUI/SDK workflow in 34.9s and stable headless MCP in 8.4s |
 | Dependency security | `pnpm audit --prod` | Passed with no known production dependency vulnerabilities |
 
 The complete repository scripts remain the release gates:
