@@ -1,6 +1,6 @@
 # PiPilot Documentation
 
-This index is the documentation authority boundary for the `0.0.1` worktree.
+This index is the documentation authority boundary for the `0.0.2` worktree.
 Current authority documents are generated from source, manifest, workflow, and
 executed evidence. Superseded planning snapshots and temporary reports are
 kept out of the product documentation tree.

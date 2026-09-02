@@ -1,6 +1,6 @@
 # PiPilot Architecture
 
-Status: current authority, verified against the `0.0.1` worktree on 2026-08-22.
+Status: current authority, verified against the `0.0.2` worktree on 2026-09-02.
 For document ownership and historical reports, see [the documentation index](README.md).
 
 ## Product Boundary
@@ -188,8 +188,8 @@ entries. `electron-builder.yml` packages compiled output and production
 dependencies in ASAR, unpacks native bindings, and excludes source, tests,
 docs, credentials, Pi data, and Trellis development directories.
 
-The first release is `0.0.1`; macOS is ad-hoc/not notarized and Windows is
-unsigned. Native release claims are platform-specific: the current worktree
+The current release is `0.0.2` (`0.0.1` was the first); macOS is ad-hoc/not
+notarized and Windows is unsigned. Native release claims are platform-specific: the current worktree
 has a real macOS arm64 packaged smoke; Windows/Linux package and smoke jobs are
 CI/device evidence and are not claimed locally unless those jobs run.
 

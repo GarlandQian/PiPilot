@@ -1,6 +1,6 @@
 # PiPilot Test Matrix
 
-Status: current authority, verified against the `0.0.1` worktree on 2026-08-31.
+Status: current authority, verified against the `0.0.2` worktree on 2026-09-02.
 This matrix records executable evidence and explicit platform limits; historical
 phase counts live in the documents listed by [the documentation index](README.md).
 
@@ -11,15 +11,15 @@ phase counts live in the documents listed by [the documentation index](README.md
 | Frozen dependency install | `CI=true pnpm install --frozen-lockfile` | Passed with the release lock and supply-chain policy verification |
 | Type safety | `tsc --noEmit` | Passed after the final Main/bootstrap, renderer, contract, test, and docs changes |
 | Production build | `electron-vite build` | Passed; emitted Main, preload, Renderer, Host utility, and management-helper entries |
-| Full unit | `vitest run` | Passed 85 files / 683 tests, including native UDS bridge tests |
+| Full unit | `vitest run` | Passed 88 files / 704 tests, including native UDS bridge tests |
 | Full integration | `playwright test --config=playwright.integration.config.ts` | Passed 2/2 |
-| Full Electron | `playwright test --config=playwright.electron.config.ts` | Passed 17/17 in 1.9 minutes |
+| Full Electron | `playwright test --config=playwright.electron.config.ts` | Passed 19/19 in 2.4 minutes |
 | Focused launcher/MCP/bootstrap/IPC | `vitest run tests/unit/external-control-launcher-service.test.ts tests/unit/external-control-mcp.test.ts tests/unit/main-bootstrap.test.ts tests/unit/external-control-ipc.test.ts tests/unit/external-control-settings-contracts.test.ts tests/unit/local-pi-ipc.test.ts` | Passed 6 files / 43 tests; native socket run required the local elevated test environment |
 | External Control settings | `playwright test tests/electron/external-control-settings.electron.spec.ts` | Passed 1/1, including managed-only confirmed uninstall, exact clipboard JSON, light/dark, and compact 1100px checks |
 | Existing Electron startup smoke | project Electron Playwright smoke | Passed 1/1 after lazy Main chunk path verification |
 | Local packaged build | `CSC_IDENTITY_AUTO_DISCOVERY=false pnpm package:dir` | Passed on macOS arm64 with the pinned Electron 43.4.1 distribution and ad-hoc identity |
 | Packaged MCP smoke | `playwright test tests/packaged/pipilot.packaged.spec.ts --grep "installed stable MCP command"` | Passed 1/1 against the locally packaged macOS arm64 app bundle |
-| Full packaged application | `playwright test --config=playwright.packaged.config.ts` | Passed 2/2 against the final rebuilt `release/mac-arm64/PiPilot.app`; GUI/SDK workflow in 36.4s and stable headless MCP in 4.8s |
+| Full packaged application | `playwright test --config=playwright.packaged.config.ts` | Passed 2/2 against the final rebuilt `release/mac-arm64/PiPilot.app`; GUI/SDK workflow in 33.4s and stable headless MCP in 10.7s |
 | Dependency security | `pnpm audit --prod` | Passed with no known production dependency vulnerabilities |
 
 The complete repository scripts remain the release gates:
@@ -102,10 +102,10 @@ actual packaged executable with isolated temporary user data. It verifies:
 - production Main/preload/Renderer and required bundled Pi/native entries;
 - absence of repository source, tests, docs, credentials, Pi data, and Trellis
   development roots from the application archive;
-- secure Electron fuses, native PTY placement, version `0.0.1`, and a single
+- secure Electron fuses, native PTY placement, version `0.0.2`, and a single
   GUI CDP page;
 - the installed `pipilot-mcp` command launches the packaged entry headlessly,
-  starts no second GUI, discovers `pipilot-conversations` version `0.0.1` and
+  starts no second GUI, discovers `pipilot-conversations` version `0.0.2` and
   exactly six tools, keeps stdout protocol-only/stderr empty, and reports one
   authenticated client;
 - descriptor/socket/directory owner-only permissions, disable cleanup, and

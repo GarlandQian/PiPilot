@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TerminalService } from '../../src/main/terminal/terminal-service'
+import { PIPILOT_VERSION } from '../../src/shared/build-info'
 import type { ConversationScope } from '../../src/shared/conversation-scope'
 
 const firstWorkspaceId = '00000000-0000-4000-8000-000000000101'
@@ -158,7 +159,7 @@ describe('TerminalService', () => {
           TERM: 'xterm-256color',
           COLORTERM: 'truecolor',
           TERM_PROGRAM: 'PiPilot',
-          TERM_PROGRAM_VERSION: '0.0.1',
+          TERM_PROGRAM_VERSION: PIPILOT_VERSION,
         },
       },
     })

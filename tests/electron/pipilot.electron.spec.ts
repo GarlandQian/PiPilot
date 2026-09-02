@@ -12,6 +12,7 @@ import {
   MIN_WINDOW_SIZE,
   normalizeWindowBounds,
 } from '../../src/main/windows/window-state'
+import { PIPILOT_VERSION } from '../../src/shared/build-info'
 import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from '../../src/shared/settings'
 import { startPiSdkFixture } from './pi-sdk-fixture'
 
@@ -2989,7 +2990,7 @@ test('launches a sandboxed shell with a narrow validated bridge', async ({}, tes
     const appInfo = await page.evaluate(() => window.pipilot?.app.getInfo())
     expect(appInfo).toMatchObject({
       name: 'PiPilot',
-      version: '0.0.1',
+      version: PIPILOT_VERSION,
       electronVersion: '43.4.1',
       mode: 'development',
     })

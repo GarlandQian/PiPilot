@@ -28,7 +28,7 @@ export class ExternalControlIdentityRepository {
       chmodSync(this.filePath, 0o600)
       return
     } catch {
-      // Unreleased 0.0.1 may replace malformed local identity state.
+      // Malformed local identity state is replaced with a fresh private key.
     }
     const document = identitySchema.parse({ version: 1, key: this.createKey() })
     const temporaryPath = `${this.filePath}.${randomUUID()}.tmp`
