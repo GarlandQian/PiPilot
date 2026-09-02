@@ -773,12 +773,13 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
     })
     await projectSession.click()
 
-    await expect(page.getByText('Loading conversation…', { exact: true })).toBeVisible()
     const inspector = page.getByRole('complementary', { name: 'Inspector' })
-    await expect(inspector.getByText(
-      'Loading Pi session data…',
-      { exact: true },
-    )).toBeVisible()
+    await expect.poll(() => page!.evaluate(() => {
+      const probeWindow = window as typeof window & {
+        __pipilotPackagedSessionProbe?: { started: boolean }
+      }
+      return probeWindow.__pipilotPackagedSessionProbe?.started ?? false
+    }), { timeout: 15_000 }).toBe(true)
     await expect(staleResponse).toHaveCount(0)
     await expect(page.getByText(
       'Selected session history prompt',
@@ -846,20 +847,24 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
       () => readFile(writeProjectionTarget, 'utf8').catch(() => ''),
       { timeout: 20_000 },
     ).toBe(writeProjectionContent)
-    await expect(page.getByText(
+    await expect.poll(
+      () => page!.evaluate(() => window.pipilot!.localPi.runtime.status()),
+      { timeout: 20_000 },
+    ).toMatchObject({
+      state: 'ready',
+      sessionFile: canonicalSelectedSessionFile,
+      sessionState: {
+        isStreaming: false,
+        pendingMessageCount: 0,
+        sessionId: 'packaged-existing-session',
+      },
+    })
+    const writeProjectionResponse = page.getByText(
       `Fixture response: ${writeProjectionPrompt}`,
       { exact: true },
-    )).toBeVisible({ timeout: 20_000 })
-    await expect(page.evaluate(() => window.pipilot!.localPi.runtime.status()))
-      .resolves.toMatchObject({
-        state: 'ready',
-        sessionFile: canonicalSelectedSessionFile,
-        sessionState: {
-          isStreaming: false,
-          pendingMessageCount: 0,
-          sessionId: 'packaged-existing-session',
-        },
-      })
+    )
+    await expect(writeProjectionResponse).toHaveCount(1, { timeout: 20_000 })
+    await expect(writeProjectionResponse).toBeVisible()
     await expect(page.getByText('No session selected', { exact: true })).toHaveCount(0)
     expect(piFixture.prompts.filter(
       (prompt) => prompt === writeProjectionPrompt,
