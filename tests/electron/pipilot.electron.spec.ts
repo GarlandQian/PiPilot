@@ -626,6 +626,7 @@ test('gates Files, Changes, and Conversation outline when no session is selected
   try {
     const page = await electronApp.firstWindow()
     await page.waitForLoadState('domcontentloaded')
+    await page.setViewportSize({ width: 1_440, height: 900 })
     const inspector = page.getByRole('complementary', { name: 'Inspector' })
     for (const tab of ['Files', 'Changes', 'Conversation outline']) {
       await inspector.getByRole('tab', { name: tab, exact: true }).click()
@@ -733,6 +734,7 @@ test('navigates from the outline and inserts file-tree references into the compo
   try {
     const page = await electronApp.firstWindow()
     await page.waitForLoadState('domcontentloaded')
+    await page.setViewportSize({ width: 1_440, height: 900 })
     await selectWorkspaceFromSystemDialog(electronApp, workspacePath)
     await page.getByRole('button', { name: 'Add project folder', exact: true }).click()
     const projectSession = page.getByRole('button', {
@@ -1455,6 +1457,7 @@ test('opens a persisted project session on the first click while Pi initializes'
   try {
     const page = await restartedApp.firstWindow()
     await page.waitForLoadState('domcontentloaded')
+    await page.setViewportSize({ width: 1_440, height: 900 })
     const projectSession = page.getByRole('button', {
       name: 'First click persisted session',
       exact: true,

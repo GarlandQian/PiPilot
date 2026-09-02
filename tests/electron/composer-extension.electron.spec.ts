@@ -95,6 +95,7 @@ test('uses one keyboard-safe Composer picker and middle-column extension surface
   try {
     const page = await electronApp.firstWindow()
     await page.waitForLoadState('domcontentloaded')
+    await page.setViewportSize({ width: 1_440, height: 900 })
     const composer = page.getByRole('textbox', { name: 'Message input' })
     const shortcutModifier = process.platform === 'darwin' ? 'Meta' : 'Control'
     await expect.poll(() => page.evaluate(() =>
@@ -275,6 +276,7 @@ test('uses one keyboard-safe Composer picker and middle-column extension surface
     await electronApp.evaluate(({ BrowserWindow }) => {
       BrowserWindow.getAllWindows()[0]?.setSize(1100, 680)
     })
+    await page.setViewportSize({ width: 1_100, height: 680 })
     await expect.poll(() => page.evaluate(() => window.innerWidth <= 1100 && window.innerWidth >= 960))
       .toBe(true)
     await expectNoDocumentHorizontalOverflow(page)
