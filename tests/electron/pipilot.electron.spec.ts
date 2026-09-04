@@ -1632,6 +1632,13 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nWQAAAAASUVORK5CYII=',
     'base64',
   )
+  const sourceViewerFixture = [
+    'export const example = true',
+    ...Array.from(
+      { length: 18 },
+      (_, index) => `export const example${index + 2} = ${index + 2}`,
+    ),
+  ].join('\n')
   await Promise.all([
     mkdir(userDataPath, { recursive: true }),
     mkdir(join(workspacePath, 'src'), { recursive: true }),
@@ -1655,7 +1662,7 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
     '---\nname: selected-fixture-skill\ndescription: Project-scoped real SDK fixture Skill.\n---\n\nUse the selected project fixture.\n',
     'utf8',
   )
-  await writeFile(join(workspacePath, 'src', 'example.ts'), 'export const example = true\n')
+  await writeFile(join(workspacePath, 'src', 'example.ts'), `${sourceViewerFixture}\n`)
   await writeFile(
     join(workspacePath, 'README.md'),
     '# Workspace viewer fixture\n\n- rendered Markdown\n',
@@ -2527,6 +2534,41 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
     await expect(sourceViewer).toBeVisible()
     await expect(sourceViewer).toContainText('typescript')
     await expect(sourceViewer).toContainText('export const example = true')
+    const sourceLineNumbers = sourceViewer.locator('.code-line-no > span')
+    await expect(sourceLineNumbers).toHaveCount(19)
+    const sourceLineNumberMetrics = await sourceViewer.locator('.code-line-no').evaluate((gutter) => {
+      const ninthLine = gutter.children.item(8)
+      const tenthLine = gutter.children.item(9)
+      if (!(ninthLine instanceof HTMLElement) || !(tenthLine instanceof HTMLElement)) {
+        throw new Error('Expected the ninth and tenth source line numbers.')
+      }
+      return {
+        flexShrink: getComputedStyle(gutter).flexShrink,
+        whiteSpace: getComputedStyle(gutter).whiteSpace,
+        ninthText: ninthLine.textContent,
+        tenthText: tenthLine.textContent,
+        ninthHeight: ninthLine.getBoundingClientRect().height,
+        tenthHeight: tenthLine.getBoundingClientRect().height,
+      }
+    })
+    expect(sourceLineNumberMetrics).toMatchObject({
+      flexShrink: '0',
+      whiteSpace: 'nowrap',
+      ninthText: '9',
+      tenthText: '10',
+    })
+    expect(sourceLineNumberMetrics.tenthHeight).toBeCloseTo(
+      sourceLineNumberMetrics.ninthHeight,
+      1,
+    )
+    await page.screenshot({ path: testInfo.outputPath('workspace-source-line-numbers-light.png') })
+    await page.evaluate(() => window.pipilot!.settings.update({ appearance: { theme: 'dark' } }))
+    await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains('dark')))
+      .toBe(true)
+    await page.screenshot({ path: testInfo.outputPath('workspace-source-line-numbers-dark.png') })
+    await page.evaluate(() => window.pipilot!.settings.update({ appearance: { theme: 'light' } }))
+    await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains('dark')))
+      .toBe(false)
     await expect(page.getByRole('dialog')).toHaveCount(0)
     await sourceViewer.getByRole('button', { name: 'Back', exact: true }).click()
 

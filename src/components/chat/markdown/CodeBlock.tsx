@@ -35,6 +35,7 @@ export function CodeBlock({
   const [expanded, setExpanded] = React.useState(false)
 
   const lineCount = React.useMemo(() => (code.endsWith('\n') ? code.slice(0, -1) : code).split('\n').length, [code])
+  const lineNumberWidth = `${String(lineCount).length + 1}ch`
   const collapsible = allowCollapse && lineCount > COLLAPSE_LINE_THRESHOLD
   const collapsedStyle: React.CSSProperties | undefined =
     collapsible && !expanded
@@ -105,7 +106,11 @@ export function CodeBlock({
       <div className="scroll-slim overflow-x-auto" style={collapsedStyle}>
         {lineNumbers ? (
           <pre className="code-body flex p-2.5">
-            <span aria-hidden className="code-line-no sticky left-0 select-none pr-3 text-right">
+            <span
+              aria-hidden
+              className="code-line-no sticky left-0 shrink-0 select-none whitespace-nowrap break-normal text-right tabular-nums"
+              style={{ minWidth: lineNumberWidth, width: lineNumberWidth }}
+            >
               {Array.from({ length: lineCount }, (_, i) => (
                 <span key={i} className="block">
                   {i + 1}
