@@ -59,6 +59,27 @@ structure may change as part of an approved Trellis task. When retaining the
 current look, follow neighboring Tailwind and token usage instead of duplicating
 raw CSS values.
 
+## Code Line-Number Gutters
+
+Line-number gutters are fixed-format controls. Size the non-shrinking gutter
+from the largest visible source line, keep digits on one line, and use tabular
+figures. Put separation from the code column in an outer gap or margin; padding
+inside a border-box width can consume the digit width and make `10` render as
+two stacked characters.
+
+```tsx
+const gutterWidth = `${String(lineCount).length + 1}ch`
+
+<span
+  className="code-line-no shrink-0 whitespace-nowrap break-normal tabular-nums"
+  style={{ minWidth: gutterWidth, width: gutterWidth }}
+/>
+```
+
+Cover digit-boundary cases (`9`/`10` and `99`/`100`) in a focused component
+test. A renderer geometry check should compare adjacent one- and two-digit line
+heights whenever the code viewer layout changes.
+
 ## Integrations External Control
 
 External Control stays in the existing compact Integrations internal tab strip;
