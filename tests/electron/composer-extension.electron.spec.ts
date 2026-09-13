@@ -244,7 +244,7 @@ test('uses one keyboard-safe Composer picker and middle-column extension surface
     await expect(notification).toBeVisible()
     const widgetActivity = transcript.getByText('Fixture widget', { exact: true })
     await expect(widgetActivity).toBeVisible()
-    await widgetActivity.click()
+    await transcript.getByRole('status', { name: 'fixture: Fixture widget', exact: true }).getByRole('button').click()
     await expect(transcript.getByText('ready', { exact: true })).toBeVisible()
     const notificationButton = page.getByRole('button', {
       name: 'Notifications',

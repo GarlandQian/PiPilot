@@ -43,6 +43,8 @@ export type RuntimeManagerErrorCode =
   | 'RUNTIME_NOT_BOUND'
   | 'RUNTIME_OPERATION_TIMEOUT'
   | 'RUNTIME_EXTENSION_SHUTDOWN_REQUESTED'
+  | 'RUNTIME_CONFIGURATION_BUSY'
+  | 'RUNTIME_CONFIGURATION_INVALID'
 
 export class RuntimeManagerError extends Error {
   readonly code: RuntimeManagerErrorCode
@@ -68,6 +70,11 @@ export interface RuntimeDescriptor {
   cwd: string
   sessionFile: string | null
   sessionId: string
+}
+
+export interface RuntimeReloadResult extends RuntimeDescriptor {
+  interactionRequired?: true
+  reloadFailed?: true
 }
 
 export interface RuntimeCommandResult {
@@ -110,6 +117,8 @@ interface RuntimeEntry {
   sequence: number
   unsubscribeSession: (() => void) | null
   uiBridge: RuntimeExtensionUiBridge
+  missingConfiguredModel?: string
+  configurationReload?: { interactionRequired: boolean }
 }
 
 function requireAbsolutePath(name: string, value: string): string {
@@ -444,6 +453,11 @@ export class RuntimeManager {
       unsubscribeSession: null,
       uiBridge: new RuntimeExtensionUiBridge(
         (request) => {
+          if (entry.configurationReload && ['select', 'confirm', 'input', 'editor'].includes(request.method)) {
+            entry.configurationReload.interactionRequired = true
+            entry.uiBridge.respond({ type: 'extension_ui_response', id: request.id, cancelled: true })
+            return
+          }
           entry.sequence += 1
           const record: RuntimeUiRequestRecord = {
             runtimeId: target.runtimeId,
@@ -629,7 +643,8 @@ export class RuntimeManager {
     runtimeId: string,
     expectedGeneration?: number,
     timeoutMs = this.operationTimeoutMs,
-  ): Promise<RuntimeDescriptor> {
+    configurationApply = false,
+  ): Promise<RuntimeReloadResult> {
     this.assertActive()
     const effectiveTimeoutMs = requireTimeout(timeoutMs)
     const entry = this.requireEntry(runtimeId)
@@ -657,18 +672,66 @@ export class RuntimeManager {
           )
         }
 
+        const assertIdle = () => {
+          const session = entry.runtime.session
+          if (session.isStreaming || session.isCompacting || session.isRetrying ||
+              session.isBashRunning || session.pendingMessageCount > 0 ||
+              entry.uiBridge.pendingCount > 0) {
+            throw new RuntimeManagerError(
+              'RUNTIME_CONFIGURATION_BUSY',
+              'Pi configuration application is deferred while this runtime has protected work.',
+            )
+          }
+        }
+        if (configurationApply) {
+          assertIdle()
+          const selectedModel = entry.runtime.session.model
+          const selectedModelKey = selectedModel ? JSON.stringify([selectedModel.provider, selectedModel.id]) : undefined
+          const wasConfigured = selectedModel && entry.runtime.session.modelRuntime.getModel(selectedModel.provider, selectedModel.id)
+          const refreshed = await entry.runtime.session.modelRuntime.refresh({ allowNetwork: false })
+          if (refreshed.aborted || refreshed.errors.size > 0 || entry.runtime.session.modelRuntime.getError()) {
+            throw new RuntimeManagerError(
+              'RUNTIME_CONFIGURATION_INVALID',
+              'Pi could not refresh the configured models.',
+            )
+          }
+          assertIdle()
+          if (selectedModel) {
+            const currentModel = entry.runtime.session.modelRuntime.getModel(selectedModel.provider, selectedModel.id)
+            if (!currentModel && (wasConfigured || entry.missingConfiguredModel === selectedModelKey)) {
+              entry.missingConfiguredModel = selectedModelKey
+              throw new RuntimeManagerError(
+                'RUNTIME_CONFIGURATION_INVALID',
+                'The selected model is no longer configured. Select an available model before applying configuration.',
+              )
+            }
+            // Public AgentState rebind, matching Pi's registry-refresh behavior.
+            // Unlike setModel(), this preserves thinking, Session history and defaults.
+            if (currentModel) entry.runtime.session.agent.state.model = currentModel
+            entry.missingConfiguredModel = undefined
+          }
+        }
         entry.uiBridge.reload()
-        await entry.runtime.session.reload({
-          // Pi performs this callback after resources and the new extension
-          // runner are ready but before `session_start`. Advance identity here
-          // so every new extension surface is tagged with the new generation,
-          // while early reload failures leave the old Runtime identity intact.
-          beforeSessionStart: () => {
-            entry.generation += 1
-            entry.sequence = 0
-          },
-        })
-        return describeRuntime(runtimeId, entry, this.cwd)
+        const reload = { interactionRequired: false }
+        if (configurationApply) entry.configurationReload = reload
+        try {
+          await entry.runtime.session.reload({
+            // Pi performs this callback before new extension startup UI.
+            beforeSessionStart: () => {
+              entry.generation += 1
+              entry.sequence = 0
+            },
+          })
+          return {
+            ...describeRuntime(runtimeId, entry, this.cwd),
+            ...(reload.interactionRequired ? { interactionRequired: true as const } : {}),
+          }
+        } catch (error) {
+          if (!configurationApply) throw error
+          return { ...describeRuntime(runtimeId, entry, this.cwd), reloadFailed: true as const }
+        } finally {
+          if (entry.configurationReload === reload) entry.configurationReload = undefined
+        }
       }),
       effectiveTimeoutMs,
       `Reloading runtime ${runtimeId}`,

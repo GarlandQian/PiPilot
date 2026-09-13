@@ -10,7 +10,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Checkbox } from '@/components/ui/checkbox'
-import { FormDialog, FormRow, KeyValueRows } from '@/components/ui/form'
+import { FormDialog, KeyValueRows } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import {
   Select,
@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/select'
 import { useT } from '@/i18n'
 import type { ProviderFormValue } from './models-form-model'
+import { ModelsAdvancedFields, ModelsFormField as FormRow, ModelsFormGroup } from './ModelsFormFields'
 
 const API_TYPES = [
   'openai-completions',
@@ -87,6 +88,7 @@ export function ModelsProviderFormDialog({
   const [touched, setTouched] = React.useState<Partial<Record<ErrorField, boolean>>>({})
   const [submitAttempted, setSubmitAttempted] = React.useState(false)
   const [confirmDiscard, setConfirmDiscard] = React.useState(false)
+  const [advancedOpen, setAdvancedOpen] = React.useState(false)
 
   const idId = React.useId()
   const nameId = React.useId()
@@ -94,6 +96,7 @@ export function ModelsProviderFormDialog({
   const apiId = React.useId()
   const apiKeyId = React.useId()
   const clearKeyId = React.useId()
+  const headersFeedbackId = React.useId()
 
   // Re-initialize once per opening; `initial` is the snapshot for that session.
   React.useEffect(() => {
@@ -104,6 +107,7 @@ export function ModelsProviderFormDialog({
       setTouched({})
       setSubmitAttempted(false)
       setConfirmDiscard(false)
+      setAdvancedOpen(value.headers.length > 0)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
@@ -153,6 +157,7 @@ export function ModelsProviderFormDialog({
 
   const handleSubmit = () => {
     if (Object.keys(errors).length > 0) {
+      if (errors.headers) setAdvancedOpen(true)
       setSubmitAttempted(true)
       setTouched({ id: true, headers: true })
       return
@@ -181,13 +186,18 @@ export function ModelsProviderFormDialog({
         title={t(mode === 'add'
           ? 'settings.models.form.titleAddProvider'
           : 'settings.models.form.titleEditProvider')}
+        description={t('settings.models.form.providerIntro')}
+        className="sm:max-w-[680px]"
+        bodyClassName="py-6"
         cancelLabel={t('common.cancel')}
         submitLabel={t(mode === 'add'
           ? 'settings.models.form.submitAdd'
           : 'settings.models.form.submitEdit')}
         onSubmit={handleSubmit}
       >
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-6">
+          <ModelsFormGroup title={t('settings.models.form.identitySection')}>
+          <div className="grid gap-4 sm:grid-cols-2">
           <FormRow
             label={<span>{t('settings.models.form.id')}{requiredMark}</span>}
             htmlFor={idId}
@@ -196,6 +206,7 @@ export function ModelsProviderFormDialog({
           >
             <Input
               id={idId}
+              aria-describedby={mode === 'add' || (showError('id') && errors.id) ? `${idId}-feedback` : undefined}
               value={draft.id}
               aria-invalid={(showError('id') && errors.id !== undefined) || undefined}
               className="font-mono"
@@ -212,7 +223,10 @@ export function ModelsProviderFormDialog({
               onChange={(event) => update({ name: event.target.value })}
             />
           </FormRow>
+          </div>
+          </ModelsFormGroup>
 
+          <ModelsFormGroup title={t('settings.models.form.connectionSection')}>
           <FormRow label={t('settings.models.form.baseUrl')} htmlFor={baseUrlId}>
             <Input
               id={baseUrlId}
@@ -240,7 +254,7 @@ export function ModelsProviderFormDialog({
                 })
               }}
             >
-              <SelectTrigger id={apiId} className="w-full font-mono">
+              <SelectTrigger id={apiId} aria-describedby={`${apiId}-feedback`} className="w-full font-mono">
                 <SelectValue placeholder={t('settings.models.form.apiPlaceholder')} />
               </SelectTrigger>
               <SelectContent>
@@ -273,12 +287,14 @@ export function ModelsProviderFormDialog({
           >
             <Input
               id={apiKeyId}
+              aria-describedby={`${apiKeyId}-feedback`}
               type="password"
               value={draft.apiKeyDraft}
               placeholder={t(mode === 'edit' && hasApiKey
                 ? 'settings.models.form.apiKeyPlaceholderEdit'
                 : 'settings.models.form.apiKeyPlaceholderAdd')}
               autoComplete="off"
+              disabled={draft.clearKey}
               className="font-mono"
               onChange={(event) => update({ apiKeyDraft: event.target.value })}
             />
@@ -295,11 +311,16 @@ export function ModelsProviderFormDialog({
               </div>
             ) : null}
           </FormRow>
+          </ModelsFormGroup>
 
+          <ModelsAdvancedFields open={advancedOpen} onOpenChange={setAdvancedOpen}
+            title={t('settings.models.form.advancedConnection')} description={t('settings.models.form.advancedConnectionDescription')}>
           <FormRow
             label={t('settings.models.form.headers')}
             error={showError('headers') ? errors.headers : undefined}
+            feedbackId={headersFeedbackId}
           >
+            <div role="group" aria-label={t('settings.models.form.headers')} aria-describedby={showError('headers') && errors.headers ? headersFeedbackId : undefined}>
             <KeyValueRows
               rows={draft.headers}
               onChange={(rows) => {
@@ -311,7 +332,10 @@ export function ModelsProviderFormDialog({
               keyPlaceholder={t('settings.models.form.kvKey')}
               valuePlaceholder={t('settings.models.form.kvValue')}
             />
+            </div>
           </FormRow>
+          </ModelsAdvancedFields>
+          <p className="text-micro leading-relaxed text-muted-foreground">{t('settings.models.form.draftNote')}</p>
         </div>
       </FormDialog>
 

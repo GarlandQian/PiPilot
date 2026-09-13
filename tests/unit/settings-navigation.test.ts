@@ -3,16 +3,15 @@ import {
   SETTINGS_GROUPS,
   SETTINGS_SECTIONS,
   isSettingsSectionId,
-} from '../../src/components/settings/SettingsLayout'
+} from '../../src/components/settings/settings-navigation'
 import { SETTINGS_ROUTE_IDS } from '../../src/renderer/layout-preferences'
 
 describe('settings navigation metadata', () => {
   it('groups every settings route without changing its flat route contract', () => {
     expect(SETTINGS_GROUPS.map((group) => group.id)).toEqual([
       'preferences',
-      'models-runtime',
-      'packages-mcp',
-      'about',
+      'agent',
+      'application',
     ])
 
     const groupedIds = SETTINGS_GROUPS.flatMap((group) => (

@@ -29,6 +29,8 @@ import { cn } from '@/lib/utils'
 import type { ApplicationUpdateSnapshot } from '@/shared/application-update'
 import { useApplicationUpdate } from '@/store/application-update'
 import { usePiExtensionUi, usePiRpcActions } from '@/store/pi-rpc'
+import { MarkdownContent } from '@/components/chat/markdown/MarkdownContent'
+import { filterWorkbenchNotifications, type NotificationFilter } from './notification-presentation'
 
 function manualDescriptionKey(packageName: string) {
   if (packageName === 'macos') return 'applicationUpdate.manualDescription.macos' as const
@@ -111,19 +113,19 @@ function UpdateNotification({
                 })}
               />
             ) : (
-              <p
+              <div
                 role={snapshot.state === 'error' ? 'alert' : 'status'}
                 className={cn(
                   'mt-0.5 text-micro',
                   snapshot.state === 'error' ? 'text-destructive' : 'text-muted-foreground',
                 )}
               >
-                {snapshot.state === 'error'
+                <MarkdownContent markdown={snapshot.state === 'error'
                   ? update.errorMessage ?? t('applicationUpdate.status.error')
                   : isManual
                     ? t(manualDescriptionKey(snapshot.policy.package))
-                    : t('applicationUpdate.nativeDescription')}
-              </p>
+                    : t('applicationUpdate.nativeDescription')} />
+              </div>
             )}
             <div className="mt-2 flex flex-wrap items-center gap-1">
               {snapshot.state === 'available' && isManual ? (
@@ -210,7 +212,12 @@ export function GlobalNotifications({ onOpenAbout }: { onOpenAbout(): void }) {
   const actions = usePiRpcActions()
   const update = useApplicationUpdate()
   const [open, setOpen] = React.useState(false)
+  const [filter, setFilter] = React.useState<NotificationFilter>('all')
+  const visibleNotifications = filterWorkbenchNotifications(extension.notifications, filter)
   const updateSnapshot = visibleUpdateSnapshot(update.snapshot, update.dismissedVersion)
+  const shownUpdate = filter === 'all' || updateSnapshot?.state === 'error' || updateSnapshot?.state === 'downloaded'
+    ? updateSnapshot
+    : null
   const count = extension.notifications.length + (updateSnapshot ? 1 : 0)
   const pendingReveal = extension.notifications.slice().reverse().find((notification) =>
     notification.autoReveal)
@@ -223,6 +230,7 @@ export function GlobalNotifications({ onOpenAbout }: { onOpenAbout(): void }) {
 
   React.useEffect(() => {
     if (!pendingReveal) return
+    setFilter('all')
     setOpen(true)
     actions.markNotificationRevealed(pendingReveal.id)
   }, [actions, pendingReveal])
@@ -263,30 +271,38 @@ export function GlobalNotifications({ onOpenAbout }: { onOpenAbout(): void }) {
         side="right"
         align="end"
         sideOffset={8}
-        className="w-80 p-0"
+        className="flex w-[min(22rem,calc(100vw-2rem))] max-h-(--radix-popover-content-available-height) flex-col overflow-hidden p-0"
         aria-label={t('rail.notifications')}
       >
-        <div className="border-b border-border px-3 py-2">
+        <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
           <h2 className="text-caption font-medium text-foreground">
             {t('rail.notifications')}
           </h2>
+          <span className="text-micro tabular-nums text-muted-foreground">{count}</span>
+          {extension.notifications.length > 0 ? <Button variant="ghost" size="xs" className="ml-auto" onClick={() => {
+            for (const notification of extension.notifications) actions.dismissNotification(notification.id)
+          }}>{t('workbenchReview.notifications.clear')}</Button> : null}
         </div>
+        {extension.notifications.length > 0 ? <div className="flex shrink-0 gap-1 border-b border-border px-2 py-1.5" role="group" aria-label={t('rail.notifications')}>
+          {(['all', 'attention'] as const).map((value) => <Button key={value} variant="ghost" size="xs" aria-pressed={filter === value} className={cn(filter === value && 'bg-selected')} onClick={() => setFilter(value)}>{t(value === 'all' ? 'workbenchReview.notifications.all' : 'workbenchReview.notifications.attention')}</Button>)}
+        </div> : null}
         {count === 0 ? (
           <p className="px-3 py-4 text-caption text-muted-foreground">
             {t('rail.notifications.empty')}
           </p>
         ) : (
-          <ul className="scroll-slim max-h-80 overflow-y-auto">
-            {updateSnapshot ? (
+          <ul className="scroll-slim min-h-0 max-h-80 overflow-y-auto">
+            {shownUpdate ? (
               <UpdateNotification
-                snapshot={updateSnapshot}
+                snapshot={shownUpdate}
                 onOpenAbout={() => {
                   setOpen(false)
                   onOpenAbout()
                 }}
               />
             ) : null}
-            {extension.notifications.map((notification) => (
+            {filter === 'attention' && visibleNotifications.length === 0 && !shownUpdate ? <li role="status" className="px-3 py-4 text-caption text-muted-foreground">{t('workbenchReview.notifications.noAttention')}</li> : null}
+            {visibleNotifications.map((notification) => (
               <li
                 key={notification.id}
                 className="flex items-start gap-2 border-b border-border/60 px-3 py-2.5 last:border-b-0"
@@ -305,12 +321,12 @@ export function GlobalNotifications({ onOpenAbout }: { onOpenAbout(): void }) {
                     aria-hidden
                   />
                 )}
-                <p
+                <div
                   role={notification.type === 'error' ? 'alert' : 'status'}
                   className="min-w-0 flex-1 break-words text-caption text-foreground"
                 >
-                  {notification.message}
-                </p>
+                  <MarkdownContent markdown={notification.message} />
+                </div>
                 <Button
                   variant="ghost"
                   size="icon-xs"

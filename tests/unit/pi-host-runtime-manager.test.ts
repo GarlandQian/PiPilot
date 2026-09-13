@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type {
   AgentSessionEvent,
+  AgentSession,
   ContextEvent,
   CreateAgentSessionServicesOptions,
   InlineExtension,
@@ -285,6 +286,191 @@ describe('Pi Host RuntimeManager', () => {
       { type: 'get_state' },
       reloaded.generation,
     )).resolves.toMatchObject({ runtime: { generation: reloaded.generation } })
+  })
+
+  it('refuses queued work before shutting down SDK extensions during configuration reload', async () => {
+    let shutdowns = 0
+    const { manager, sessionDir } = await createFixture([{
+      name: 'reload-safety',
+      factory: (pi) => { pi.on('session_shutdown', () => { shutdowns += 1 }) },
+    }])
+    const created = await manager.create({ runtimeId: 'rt_protected_reload', sessionDir })
+    await manager.bindRuntime(created.runtimeId, created.generation)
+    await manager.command(created.runtimeId, { type: 'follow_up', message: 'queued payload' }, created.generation)
+    await expect(manager.reloadRuntime(created.runtimeId, created.generation, undefined, true))
+      .rejects.toMatchObject({ code: 'RUNTIME_CONFIGURATION_BUSY' })
+    expect(shutdowns).toBe(0)
+    expect(manager.get(created.runtimeId)?.generation).toBe(created.generation)
+    expect((await manager.command(created.runtimeId, { type: 'get_state' })).response)
+      .toMatchObject({ data: { pendingMessageCount: 1 } })
+  })
+
+  it('rereads models.json through the public model runtime API during safe reload', async () => {
+    const { manager, agentDir, sessionDir } = await createFixture()
+    const created = await manager.create({ runtimeId: 'rt_model_reload', sessionDir })
+    await manager.bindRuntime(created.runtimeId, created.generation)
+    await writeFile(join(agentDir, 'models.json'), JSON.stringify({ providers: {
+      'fixture-config-apply': {
+        baseUrl: 'https://fixture.invalid/v1', api: 'openai-completions', apiKey: 'fixture-no-network',
+        models: [{ id: 'configured-model', name: 'Configured model' }],
+      },
+    } }))
+    const reloaded = await manager.reloadRuntime(created.runtimeId, created.generation, undefined, true)
+    const models = await manager.command(created.runtimeId, { type: 'get_available_models' }, reloaded.generation)
+    expect(models.response).toMatchObject({ success: true, data: { models: expect.arrayContaining([
+      expect.objectContaining({ provider: 'fixture-config-apply', id: 'configured-model' }),
+    ]) } })
+  })
+
+  it('uses refreshed model metadata and baseUrl for the next provider request without changing defaults or history', async () => {
+    const { manager, agentDir, sessionDir } = await createFixture()
+    const document = (baseUrl: string, contextWindow: number, supportsStore: boolean) => JSON.stringify({ providers: {
+      'fixture-config-apply': {
+        baseUrl, api: 'openai-completions', apiKey: 'fixture-no-network',
+        models: [{ id: 'configured-model', name: 'Configured model', contextWindow, maxTokens: 512,
+          compat: { supportsStore } }],
+      },
+    } })
+    await writeFile(join(agentDir, 'models.json'), document('https://fixture.invalid/old/v1', 8_000, true))
+    // Model selection is session-scoped in Pi 0.85; seed explicit defaults to
+    // verify configuration reload neither changes nor creates them implicitly.
+    await writeFile(join(agentDir, 'settings.json'), JSON.stringify({
+      defaultProvider: 'fixture-config-apply', defaultModel: 'configured-model',
+    }))
+    const created = await manager.create({ runtimeId: 'rt_model_request', sessionDir })
+    await manager.bindRuntime(created.runtimeId, created.generation)
+    await manager.command(created.runtimeId, {
+      type: 'set_model', provider: 'fixture-config-apply', modelId: 'configured-model',
+    }, created.generation)
+    const runtimes = Reflect.get(manager, 'runtimes') as Map<string, { runtime: { session: AgentSession } }>
+    const session = runtimes.get(created.runtimeId)!.runtime.session
+    await session.settingsManager.flush()
+    const defaults = await readFile(join(agentDir, 'settings.json'), 'utf8')
+    const entries = session.sessionManager.getEntries()
+    const thinking = session.thinkingLevel
+    await writeFile(join(agentDir, 'models.json'), document('https://fixture.invalid/new/v1', 12_000, false))
+    await manager.reloadRuntime(created.runtimeId, created.generation, undefined, true)
+    await session.settingsManager.flush()
+    expect(await readFile(join(agentDir, 'settings.json'), 'utf8')).toBe(defaults)
+    expect(session.sessionManager.getEntries()).toEqual(entries)
+    expect(session.thinkingLevel).toBe(thinking)
+    expect(session.model).toMatchObject({ baseUrl: 'https://fixture.invalid/new/v1', contextWindow: 12_000, compat: { supportsStore: false } })
+
+    const requests: Request[] = []
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      requests.push(new Request(input, init))
+      return new Response([
+        'data: {"id":"fixture","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"Applied"},"finish_reason":null}]}',
+        'data: {"id":"fixture","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}',
+        'data: [DONE]',
+        '',
+      ].join('\n\n'), { headers: { 'content-type': 'text/event-stream' } })
+    })
+    try {
+      await session.prompt('Verify the applied model configuration.')
+      expect(requests).toHaveLength(1)
+      expect(requests[0]!.url).toBe('https://fixture.invalid/new/v1/chat/completions')
+      const payload = await requests[0]!.json()
+      expect(payload).toMatchObject({ model: 'configured-model', stream: true })
+      expect(payload).not.toHaveProperty('store')
+      expect(session.messages[session.messages.length - 1]).toMatchObject({ role: 'assistant', stopReason: 'stop' })
+    } finally {
+      fetch.mockRestore()
+    }
+  })
+
+  it('reports a removed selected model as failed instead of claiming configuration application', async () => {
+    const { manager, agentDir, sessionDir } = await createFixture()
+    await writeFile(join(agentDir, 'models.json'), JSON.stringify({ providers: { 'fixture-config-apply': {
+      baseUrl: 'https://fixture.invalid/v1', api: 'openai-completions', apiKey: 'fixture-no-network',
+      models: [{ id: 'configured-model' }],
+    } } }))
+    const created = await manager.create({ runtimeId: 'rt_removed_model', sessionDir })
+    await manager.bindRuntime(created.runtimeId, created.generation)
+    await manager.command(created.runtimeId, { type: 'set_model', provider: 'fixture-config-apply', modelId: 'configured-model' })
+    await writeFile(join(agentDir, 'models.json'), '{}')
+    await expect(manager.reloadRuntime(created.runtimeId, created.generation, undefined, true)).rejects.toMatchObject({
+      code: 'RUNTIME_CONFIGURATION_INVALID',
+    })
+    await expect(manager.reloadRuntime(created.runtimeId, created.generation, undefined, true)).rejects.toMatchObject({
+      code: 'RUNTIME_CONFIGURATION_INVALID',
+    })
+    expect(manager.get(created.runtimeId)?.generation).toBe(created.generation)
+  })
+
+  it('cancels only new configuration-reload dialogs and leaves ordinary startup, reload and commands interactive', async () => {
+    const confirmations: Array<{ source: string; value: boolean }> = []
+    const { manager, sessionDir } = await createFixture([{
+      name: 'configuration-interaction-fixture',
+      factory: (pi) => {
+        pi.on('session_shutdown', async (event, context) => {
+          if (event.reason !== 'reload') return
+          confirmations.push({ source: 'shutdown', value: await context.ui.confirm('Reload shutdown', 'Continue?') })
+        })
+        pi.on('session_start', async (event, context) => {
+          confirmations.push({ source: event.reason, value: await context.ui.confirm('Session start', 'Continue?') })
+        })
+        pi.registerCommand('ordinary-confirm', {
+          description: 'Fixture confirmation',
+          handler: async (_args, context) => {
+            confirmations.push({ source: 'command', value: await context.ui.confirm('Ordinary command', 'Continue?') })
+          },
+        })
+      },
+    }])
+    let respond = true
+    const observed: Array<{ runtimeId: string; generation: number; id: string }> = []
+    manager.subscribeUiRequests((record) => {
+      if (record.request.method !== 'confirm') return
+      observed.push({ runtimeId: record.runtimeId, generation: record.generation, id: record.request.id })
+      if (respond) manager.respondToExtensionUi({ type: 'extension_ui_response', id: record.request.id, confirmed: true }, record.runtimeId, record.generation)
+    })
+    const created = await manager.create({ runtimeId: 'rt_reload_dialogs', sessionDir })
+    await manager.bindRuntime(created.runtimeId, created.generation)
+    expect(confirmations).toContainEqual({ source: 'startup', value: true })
+    const runtimes = Reflect.get(manager, 'runtimes') as Map<string, { runtime: { session: AgentSession } }>
+    const session = runtimes.get(created.runtimeId)!.runtime.session
+
+    respond = false
+    const ordinary = session.prompt('/ordinary-confirm')
+    await vi.waitFor(() => expect(observed).toHaveLength(2))
+    await expect(manager.reloadRuntime(created.runtimeId, created.generation, undefined, true))
+      .rejects.toMatchObject({ code: 'RUNTIME_CONFIGURATION_BUSY' })
+    expect(confirmations.filter((result) => result.source === 'command')).toEqual([])
+    manager.respondToExtensionUi({ type: 'extension_ui_response', id: observed[1]!.id, confirmed: true }, created.runtimeId, created.generation)
+    await ordinary
+
+    const reloaded = await manager.reloadRuntime(created.runtimeId, created.generation, undefined, true)
+    expect(reloaded).toMatchObject({ generation: 2, interactionRequired: true })
+    expect(confirmations).toContainEqual({ source: 'shutdown', value: false })
+    expect(confirmations).toContainEqual({ source: 'reload', value: false })
+    expect(observed).toHaveLength(2)
+    respond = true
+    await session.prompt('/ordinary-confirm')
+    expect(confirmations[confirmations.length - 1]).toEqual({ source: 'command', value: true })
+    const interactiveReload = await manager.reloadRuntime(created.runtimeId, reloaded.generation)
+    expect(interactiveReload).not.toHaveProperty('interactionRequired')
+    expect(confirmations[confirmations.length - 1]).toEqual({ source: 'reload', value: true })
+  })
+
+  it('returns the actual generation when a configuration reload fails after SDK startup advances identity', async () => {
+    const { manager, sessionDir } = await createFixture()
+    const created = await manager.create({ runtimeId: 'rt_partial_reload', sessionDir })
+    await manager.bindRuntime(created.runtimeId, created.generation)
+    const runtimes = Reflect.get(manager, 'runtimes') as Map<string, { runtime: { session: AgentSession } }>
+    const session = runtimes.get(created.runtimeId)!.runtime.session
+    const reload = vi.spyOn(session, 'reload').mockImplementationOnce(async (options) => {
+      await options?.beforeSessionStart?.()
+      throw new Error('startup reload failed')
+    })
+    try {
+      await expect(manager.reloadRuntime(created.runtimeId, created.generation, undefined, true)).resolves.toMatchObject({
+        generation: 2, runtimeId: created.runtimeId, sessionId: created.sessionId, reloadFailed: true,
+      })
+      await expect(manager.command(created.runtimeId, { type: 'get_state' }, 2)).resolves.toMatchObject({ response: { success: true } })
+    } finally {
+      reload.mockRestore()
+    }
   })
 
   it('keeps more than the former default Runtime count until explicit disposal', async () => {

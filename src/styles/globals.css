@@ -9,41 +9,49 @@
 :root,
 .light {
   color-scheme: light;
-  --color-background: hsl(220 13% 96%);
-  --color-foreground: hsl(240 8% 16%);
-  --color-surface: hsl(220 14% 98.5%);
-  --color-sidebar: hsl(220 12% 93%);
+  --color-background: #fbfaf8;
+  --color-foreground: #292824;
+  --color-surface: #fbfaf8;
+  --color-surface-raised: #ffffff;
+  --color-surface-inset: #f0efeb;
+  --color-sidebar: #f0efeb;
+  --color-selected: #e5e2dc;
+  --color-composer: #ffffff;
   --color-card: hsl(0 0% 100%);
-  --color-card-foreground: hsl(240 8% 16%);
+  --color-card-foreground: var(--color-foreground);
   --color-popover: hsl(0 0% 100%);
-  --color-popover-foreground: hsl(240 8% 16%);
-  --color-primary: hsl(240 8% 20%);
+  --color-popover-foreground: var(--color-foreground);
+  --color-primary: #39332c;
   --color-primary-foreground: hsl(220 14% 97%);
-  --color-secondary: hsl(220 10% 91%);
-  --color-secondary-foreground: hsl(240 8% 22%);
-  --color-muted: hsl(220 10% 93%);
-  --color-muted-foreground: hsl(220 8% 34%);
-  --color-accent: hsl(220 10% 90%);
-  --color-accent-foreground: hsl(240 8% 20%);
-  --color-border: hsl(220 9% 84%);
-  --color-input: hsl(220 9% 81%);
-  --color-ring: hsl(172 32% 34%);
-  --color-sage: hsl(172 32% 34%);
+  --color-secondary: #eae8e3;
+  --color-secondary-foreground: #39332c;
+  --color-muted: #f0eeea;
+  --color-muted-foreground: #706c65;
+  --color-accent: #e9e4dc;
+  --color-accent-foreground: #292824;
+  --color-border: #e2ded7;
+  --color-input: #cfc8bd;
+  --color-ring: #98643c;
+  --color-sage: #98643c;
   --color-sage-foreground: hsl(220 14% 97%);
-  --color-success: hsl(172 32% 34%);
-  --color-warning: hsl(38 55% 40%);
+  --color-success: #287548;
+  --color-warning: #946414;
   --color-scrollbar: hsl(220 8% 78%);
   --color-scrollbar-hover: hsl(220 8% 68%);
   --color-warning-foreground: hsl(220 14% 97%);
-  --color-destructive: hsl(0 50% 46%);
+  --color-destructive: #b13e4b;
+  --color-error: var(--color-destructive);
   --color-destructive-foreground: hsl(220 14% 97%);
-  --color-info: hsl(210 32% 42%);
+  --color-info: #396f9a;
 
   /* radius scale (rounded-* utilities resolve through @theme inline refs) */
   --radius-sm: 6px;
   --radius-md: 8px;
-  --radius-lg: 10px;
+  --radius-lg: 8px;
   --radius: var(--radius-md); /* legacy alias */
+  --radius-composer: 12px;
+  --conversation-width: 860px;
+  --shadow-composer: 0 5px 24px rgb(55 40 20 / 5%);
 
   /* motion */
   --duration-fast: 120ms;
@@ -58,8 +66,11 @@
   --font-sans: Inter, 'SF Pro Text', 'SF Pro Display', 'Segoe UI', 'PingFang SC',
     'Microsoft YaHei', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', SFMono-Regular, 'Cascadia Code', 'Fira Code', Consolas, monospace;
-  --control-h: 28px;
-  --row-h: 28px;
+  --control-h: 32px;
+  --row-h: 34px;
+  --frame-header-h: 48px;
+  --tool-row-h: 38px;
+  --tree-row-h: 30px;
   --space-2x: 2px;
   --space-3x: 3px;
   --vsession-gap: 10px;
@@ -67,42 +78,51 @@
 
 .dark {
   color-scheme: dark;
-  --color-background: hsl(240 6% 8.5%);
-  --color-foreground: hsl(240 6% 89%);
-  --color-surface: hsl(240 6% 11%);
-  --color-sidebar: hsl(240 6% 7%);
-  --color-card: hsl(240 6% 12.5%);
-  --color-card-foreground: hsl(240 6% 89%);
-  --color-popover: hsl(240 6% 13.5%);
-  --color-popover-foreground: hsl(240 6% 89%);
+  --color-background: #1b1c1e;
+  --color-foreground: #e9e5df;
+  --color-surface: #1b1c1e;
+  --color-surface-raised: #2b2b2d;
+  --color-surface-inset: #161719;
+  --color-sidebar: #161719;
+  --color-selected: #33312f;
+  --color-composer: #252527;
+  --color-card: #252527;
+  --color-card-foreground: var(--color-foreground);
+  --color-popover: #2b2b2d;
+  --color-popover-foreground: var(--color-foreground);
   --color-primary: hsl(240 6% 93%);
   --color-primary-foreground: hsl(240 6% 9%);
-  --color-secondary: hsl(240 5% 16%);
-  --color-secondary-foreground: hsl(240 6% 86%);
-  --color-muted: hsl(240 5% 14%);
-  --color-muted-foreground: hsl(240 6% 70%);
-  --color-accent: hsl(240 5% 18%);
-  --color-accent-foreground: hsl(240 6% 91%);
-  --color-border: hsl(240 5% 22%);
-  --color-input: hsl(240 5% 23%);
-  --color-ring: hsl(172 26% 62%);
-  --color-sage: hsl(172 26% 62%);
-  --color-sage-foreground: hsl(174 30% 11%);
-  --color-success: hsl(172 26% 62%);
-  --color-warning: hsl(38 55% 62%);
+  --color-secondary: #343231;
+  --color-secondary-foreground: #e9e5df;
+  --color-muted: #29292b;
+  --color-muted-foreground: #aaa59e;
+  --color-accent: #383431;
+  --color-accent-foreground: #e9e5df;
+  --color-border: #383637;
+  --color-input: #4d4742;
+  --shadow-composer: 0 3px 16px rgb(0 0 0 / 16%), 0 1px 3px rgb(0 0 0 / 10%);
+  --color-ring: #d0a47d;
+  --color-sage: #d0a47d;
+  --color-sage-foreground: #25211d;
+  --color-success: #88c69e;
+  --color-warning: #ddba73;
   --color-warning-foreground: hsl(40 60% 12%);
-  --color-destructive: hsl(0 50% 62%);
-  --color-destructive-foreground: hsl(220 14% 97%);
+  --color-destructive: #ee919a;
+  --color-destructive-foreground: #30171d;
   --color-scrollbar: hsl(240 5% 26%);
   --color-scrollbar-hover: hsl(240 5% 34%);
-  --color-info: hsl(210 30% 68%);
+  --color-info: #8bb8dd;
 }
 
 @theme inline {
   --color-background: var(--color-background);
   --color-foreground: var(--color-foreground);
   --color-surface: var(--color-surface);
+  --color-surface-raised: var(--color-surface-raised);
+  --color-surface-inset: var(--color-surface-inset);
+  --color-selected: var(--color-selected);
   --color-sidebar: var(--color-sidebar);
+  --color-composer: var(--color-composer);
   --color-card: var(--color-card);
   --color-card-foreground: var(--color-card-foreground);
   --color-popover: var(--color-popover);
@@ -124,6 +144,7 @@
   --color-warning: var(--color-warning);
   --color-warning-foreground: var(--color-warning-foreground);
   --color-destructive: var(--color-destructive);
+  --color-error: var(--color-error);
   --color-destructive-foreground: var(--color-destructive-foreground);
   --color-scrollbar: var(--color-scrollbar);
   --color-scrollbar-hover: var(--color-scrollbar-hover);
@@ -169,13 +190,16 @@
     background: var(--color-background);
     color: var(--color-foreground);
     font-feature-settings: 'cv02', 'cv11';
+    letter-spacing: 0;
   }
   :focus-visible {
-    outline: none;
+    outline: 2px solid var(--color-ring);
+    outline-offset: 2px;
   }
   ::selection {
-    background: color-mix(in srgb, var(--color-ring) 70%, transparent);
+    background: color-mix(in srgb, var(--color-ring) 24%, transparent);
   }
+  input, textarea, [contenteditable='true'] { caret-color: var(--color-ring); }
 
   /* ============ app typography scale (variable-driven) ============ */
   .text-app,
@@ -335,6 +359,20 @@
 }
 
 /* ================= Markdown body (agent prose) ================= */
+.conversation-question-content .md-body {
+  font-size: var(--app-font-size);
+  line-height: 1.7;
+}
+.conversation-answer-content .md-body {
+  font-size: calc(var(--app-font-size) + 1px);
+  line-height: 1.8;
+}
+[data-response-region='work'] .conversation-answer-content .md-body,
+[data-response-region='work'] .md-body {
+  font-size: var(--app-font-size);
+  color: var(--color-muted-foreground);
+  line-height: 1.65;
+}
 .md-body {
   min-width: 0;
   max-width: 100%;

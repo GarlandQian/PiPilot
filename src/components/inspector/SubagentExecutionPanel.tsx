@@ -6,6 +6,7 @@ import {
   TbX,
 } from 'react-icons/tb'
 import { SubagentDetails } from '@/components/chat/ToolCallCard'
+import { useFollowingViewport } from '@/components/chat/useFollowingViewport'
 import { ToolCallStatus } from '@/components/chat/ToolCallStatus'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -23,52 +24,19 @@ export function SubagentExecutionPanel({ call, onClose }: SubagentExecutionPanel
   const t = useT()
   const { appearance } = useSettings()
   const panelRef = React.useRef<HTMLDivElement>(null)
-  const scrollRef = React.useRef<HTMLDivElement>(null)
-  const contentRef = React.useRef<HTMLDivElement>(null)
-  const followingRef = React.useRef(true)
-  const [following, setFollowing] = React.useState(true)
   const presentation = call.subagent
-
-  const scrollToLatest = React.useCallback((smooth = true) => {
-    const scroll = scrollRef.current
-    if (!scroll) return
-    followingRef.current = true
-    setFollowing(true)
-    scroll.scrollTo({
-      top: scroll.scrollHeight,
-      behavior: smooth && !appearance.reducedMotion ? 'smooth' : 'auto',
+  const { scrollRef, contentRef, scrollProps, canJumpToLatest, scrollToLatest } =
+    useFollowingViewport({
+      ownerKey: call.id,
+      revision: call,
+      smooth: !appearance.reducedMotion &&
+        typeof window !== 'undefined' &&
+        !window.matchMedia('(prefers-reduced-motion: reduce)').matches,
     })
-  }, [appearance.reducedMotion])
 
   React.useEffect(() => {
     panelRef.current?.focus()
-    followingRef.current = true
-    setFollowing(true)
-    const scroll = scrollRef.current
-    if (scroll) scroll.scrollTo({ top: scroll.scrollHeight, behavior: 'auto' })
   }, [call.id])
-
-  React.useEffect(() => {
-    if (followingRef.current) scrollToLatest(false)
-  }, [call.status, presentation?.output?.markdown, presentation?.timeline, scrollToLatest])
-
-  React.useEffect(() => {
-    const content = contentRef.current
-    if (!content || typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(() => {
-      if (followingRef.current) scrollToLatest(false)
-    })
-    observer.observe(content)
-    return () => observer.disconnect()
-  }, [scrollToLatest])
-
-  const handleScroll = () => {
-    const scroll = scrollRef.current
-    if (!scroll) return
-    const nearLatest = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 48
-    followingRef.current = nearLatest
-    setFollowing((current) => current === nearLatest ? current : nearLatest)
-  }
 
   const title = presentation?.tasks[0]?.summary ||
     presentation?.tasks[0]?.agent ||
@@ -89,7 +57,7 @@ export function SubagentExecutionPanel({ call, onClose }: SubagentExecutionPanel
       className="absolute inset-0 z-10 flex min-h-0 flex-col bg-sidebar outline-none"
       data-subagent-execution-panel={call.id}
     >
-      <header className="flex min-h-11 items-center gap-2 border-b border-border/70 px-2.5">
+      <header className="flex h-(--frame-header-h) shrink-0 items-center gap-2 border-b border-border px-2.5">
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -130,8 +98,9 @@ export function SubagentExecutionPanel({ call, onClose }: SubagentExecutionPanel
 
       <div
         ref={scrollRef}
-        onScroll={handleScroll}
-        className="scroll-slim min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-3 py-3"
+        {...scrollProps}
+        tabIndex={0}
+        className="scroll-slim min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-3 py-3 outline-none focus-visible:focus-ring"
       >
         <div ref={contentRef} className="min-w-0">
           {presentation ? (
@@ -149,7 +118,7 @@ export function SubagentExecutionPanel({ call, onClose }: SubagentExecutionPanel
         </div>
       </div>
 
-      {!following ? (
+      {canJumpToLatest ? (
         <Button
           variant="secondary"
           size="sm"

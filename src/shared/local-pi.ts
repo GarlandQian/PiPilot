@@ -4,9 +4,10 @@ import {
   sessionCatalogSelectionTokenSchema,
 } from './conversation-scope'
 
-export const SUPPORTED_PI_VERSION = '0.84.2' as const
+export const SUPPORTED_PI_VERSION = '0.85.1' as const
 export const LOCAL_PI_RUNTIME_EVENT_PROJECTION_FAILED_CODE =
   'RUNTIME_EVENT_PROJECTION_FAILED' as const
+export const LOCAL_PI_RUNTIME_SESSION_PENDING_MAX = 10_000
 
 
 export const localPiRuntimeStateSchema = z.enum([
@@ -29,6 +30,12 @@ export const localPiRuntimeSessionStatusSchema = z
     sessionId: z.string().min(1).max(256),
     selectionToken: sessionCatalogSelectionTokenSchema.optional(),
     status: z.enum(['running', 'completed', 'failed']),
+    pendingMessageCount: z.number()
+      .int()
+      .nonnegative()
+      .max(LOCAL_PI_RUNTIME_SESSION_PENDING_MAX)
+      .optional(),
+    selected: z.literal(true).optional(),
   })
   .strict()
 
@@ -469,6 +476,13 @@ export const localPiRpcCommandSchema = z.discriminatedUnion('type', [
     steering: z.array(localPiQueuedMessagePayloadSchema),
     followUp: z.array(localPiQueuedMessagePayloadSchema),
   }).strict(),
+  z.object({
+    type: z.literal('remove_queued_message'),
+    kind: z.enum(['steering', 'followUp']),
+    itemIndex: z.number().int().nonnegative(),
+    steering: z.array(localPiQueuedMessagePayloadSchema),
+    followUp: z.array(localPiQueuedMessagePayloadSchema),
+  }).strict(),
   z.object({ type: z.literal('compact'), customInstructions: z.string().optional() }).strict(),
   z.object({ type: z.literal('set_auto_compaction'), enabled: z.boolean() }).strict(),
   z.object({ type: z.literal('set_auto_retry'), enabled: z.boolean() }).strict(),
@@ -754,6 +768,7 @@ export const localPiRpcSuccessResponseSchema = z.discriminatedUnion('command', [
   localPiNoDataSuccessSchema('set_steering_mode'),
   localPiNoDataSuccessSchema('set_follow_up_mode'),
   localPiNoDataSuccessSchema('promote_follow_up'),
+  localPiNoDataSuccessSchema('remove_queued_message'),
   z.object({ ...localPiSuccessResponseBase, command: z.literal('compact'), data: localPiCompactionResultSchema }).strict(),
   localPiNoDataSuccessSchema('set_auto_compaction'),
   localPiNoDataSuccessSchema('set_auto_retry'),
@@ -1045,10 +1060,18 @@ export const localPiRuntimeSnapshotSchema = z
 
 export type LocalPiRuntimeSnapshot = z.infer<typeof localPiRuntimeSnapshotSchema>
 
+export const sessionCatalogInvalidationSchema = z.object({
+  scope: conversationScopeSchema,
+  revision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+}).strict()
+
+export type SessionCatalogInvalidation = z.infer<typeof sessionCatalogInvalidationSchema>
+
 export const localPiRuntimeChangedEventSchema = z
   .object({
     eventId: z.uuid(),
     snapshot: localPiRuntimeSnapshotSchema,
+    catalogInvalidation: sessionCatalogInvalidationSchema.optional(),
   })
   .strict()
 

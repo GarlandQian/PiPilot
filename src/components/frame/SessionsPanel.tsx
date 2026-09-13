@@ -1,11 +1,18 @@
 import * as React from 'react'
-import { TbMessagePlus, TbPlus, TbSearch } from 'react-icons/tb'
+import { TbArrowsSort, TbLoader2, TbMessagePlus, TbPlus, TbSearch, TbX } from 'react-icons/tb'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useT } from '@/i18n'
+import { cn } from '@/lib/utils'
 import {
-  expandedProjectIdsNeedingCatalogLoad,
   readProjectExpansionPreferences,
   writeProjectExpansionPreferences,
 } from '@/renderer/layout-preferences'
@@ -18,7 +25,8 @@ import { usePiRuntime } from '@/store/pi-rpc'
 import { conversationScopeKey, useWorkspaceStore } from '@/store/workspace'
 import {
   deriveSessionActivityState,
-  runtimeStatusForOfficialSession,
+  isOfficialSessionActiveRow,
+  runtimeStateForOfficialSession,
 } from '@/store/workspace-state'
 import {
   ProjectNavigationGroup,
@@ -26,14 +34,18 @@ import {
   type SidebarConversationItem,
   type SidebarProjectNavigation,
 } from '@/components/layout/SessionList'
+import {
+  presentSidebarSessions,
+  sortSidebarProjects,
+  type SidebarSessionFilter,
+  type SidebarSessionSort,
+} from '@/components/layout/session-navigation'
+import { sessionCatalogLoadTargets } from './session-catalog-search'
 
 const INITIAL_SESSION_LIMIT = 6
 const SESSION_PAGE_SIZE = 10
 
-/** Case-insensitive search haystack matching the session row's title basis. */
-function sessionSearchText(summary: OfficialPiSessionSummary) {
-  return (summary.name?.trim() || summary.preview.trim()).toLowerCase()
-}
+const SESSION_SORT_PREFERENCE = 'pipilot.sidebar.sessionSort'
 
 export interface SessionsPanelProps {
   /**
@@ -83,10 +95,10 @@ function NewConversationControl({
     : 'sidebar.newProjectless')
 
   return (
-    <div className="flex w-full">
+    <div className="flex w-full gap-1">
       <Button
-        variant="secondary"
-        className="h-[var(--control-h)] min-w-0 flex-1 justify-start rounded-r-none"
+        variant="ghost"
+        className="h-(--control-h) min-w-0 flex-1 justify-start bg-surface text-foreground hover:bg-accent"
         disabled={primaryDisabled}
         onClick={onNewPrimary}
       >
@@ -96,9 +108,9 @@ function NewConversationControl({
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
-            variant="secondary"
+            variant="ghost"
             size="icon"
-            className="size-[var(--control-h)] rounded-l-none border-l border-border/70"
+            className="size-(--control-h) bg-surface text-muted-foreground"
             aria-label={t('sidebar.quickChat')}
             onClick={onNewProjectless}
           >
@@ -134,8 +146,17 @@ export function SessionsPanel({
   const runtimeSessionStatuses = pi.runtime?.sessionStatuses
   const t = useT()
   const [query, setQuery] = React.useState('')
+  const searchRef = React.useRef<HTMLInputElement>(null)
+  const [sessionFilter, setSessionFilter] = React.useState<SidebarSessionFilter>('all')
+  const [sessionSort, setSessionSort] = React.useState<SidebarSessionSort>(() => {
+    try {
+      return localStorage.getItem(SESSION_SORT_PREFERENCE) === 'name' ? 'name' : 'recent'
+    } catch {
+      return 'recent'
+    }
+  })
   const normalizedQuery = query.trim().toLowerCase()
-  const filtering = normalizedQuery.length > 0
+  const filtering = normalizedQuery.length > 0 || sessionFilter !== 'all'
   const [projectExpansion, setProjectExpansion] = React.useState<ReadonlyMap<string, boolean>>(
     () => readProjectExpansionPreferences(),
   )
@@ -145,6 +166,14 @@ export function SessionsPanel({
   const catalogLoadsStarted = React.useRef(new Set<string>())
   const knownProjectIds = React.useRef<ReadonlySet<string> | null>(null)
   const loadSessionCatalog = workspace.loadSessionCatalog
+
+  React.useEffect(() => {
+    try {
+      localStorage.setItem(SESSION_SORT_PREFERENCE, sessionSort)
+    } catch {
+      // Sorting remains available when presentation preferences cannot persist.
+    }
+  }, [sessionSort])
 
   const startProjectCatalogLoad = React.useCallback((
     projectId: string,
@@ -214,17 +243,18 @@ export function SessionsPanel({
   }, [workspace.activeScope])
 
   const expandedProjectsWithoutCatalog = React.useMemo(() =>
-    expandedProjectIdsNeedingCatalogLoad(
-      projectExpansion,
+    sessionCatalogLoadTargets(
       workspace.recentProjects.map((project) => ({
         projectId: project.id,
         available: project.available,
-        hasCatalog: Boolean(workspace.sessionCatalogs[conversationScopeKey({
+        catalogStatus: workspace.sessionCatalogs[conversationScopeKey({
           kind: 'project',
           workspaceId: project.id,
-        })]),
+        })]?.status,
       })),
-    ), [projectExpansion, workspace.recentProjects, workspace.sessionCatalogs])
+      projectExpansion,
+      filtering,
+    ), [filtering, projectExpansion, workspace.recentProjects, workspace.sessionCatalogs])
 
   React.useEffect(() => {
     if (workspace.mode !== 'electron') return
@@ -235,58 +265,62 @@ export function SessionsPanel({
   }, [expandedProjectsWithoutCatalog, startProjectCatalogLoad, workspace.mode])
 
   const sidebarProjects = React.useMemo<SidebarProjectNavigation[]>(() =>
-    workspace.recentProjects.map((project) => {
+    sortSidebarProjects(workspace.recentProjects, sessionSort).map((project) => {
       const scope: ConversationScope = { kind: 'project', workspaceId: project.id }
       const catalog = workspace.sessionCatalogs[conversationScopeKey(scope)]
       const expandedByPreference = projectExpansion.get(project.id) === true
       const expanded = filtering || expandedByPreference
       const limit = projectSessionLimits[project.id] ?? INITIAL_SESSION_LIMIT
       const rows = catalog?.rows ?? []
-      // Local filter: a session matches on its title or its project name; a
-      // matching project name keeps every loaded session of that project.
-      const projectMatches = filtering && project.name.toLowerCase().includes(normalizedQuery)
       const mappedItems = rows.map((summary): SidebarConversationItem => {
-        const runtimeStatus = runtimeStatusForOfficialSession(
+        const runtimeState = runtimeStateForOfficialSession(
           summary,
           runtimeSessionStatuses,
           rows,
         )
-        const duplicateSessionId = rows.some((candidate) =>
-          candidate !== summary && candidate.sessionId === summary.sessionId)
-        const isActive = !duplicateSessionId && summary.sessionId === workspace.activeSessionId &&
-          workspace.activeScope.kind === 'project' &&
-          workspace.activeScope.workspaceId === project.id
-        const status = runtimeStatus ?? (isActive ? pi.status : undefined)
+        const isActive = isOfficialSessionActiveRow(
+          summary,
+          rows,
+          workspace.activeScope,
+          workspace.activeSessionId,
+          runtimeState?.selected === true,
+        )
+        const status = runtimeState?.status ?? (isActive ? pi.status : undefined)
         const opening = isOpeningSessionRow(summary, rows)
-        const loading = opening ||
-          summary.selectionToken === deletingSelectionToken
+        const deleting = summary.selectionToken === deletingSelectionToken
         const activityState = deriveSessionActivityState({
           opening,
           status,
-          pendingMessageCount: isActive ? pi.session?.pendingMessageCount ?? 0 : 0,
+          pendingMessageCount: isActive
+            ? pi.session?.pendingMessageCount ?? runtimeState?.pendingMessageCount ?? 0
+            : runtimeState?.pendingMessageCount ?? 0,
         })
         return {
           summary,
-          loading,
+          loading: opening,
+          disabled: opening || deleting,
           selected: isActive || opening,
           activityState,
           ...(status ? { status } : {}),
         }
       })
-      const matchingItems = mappedItems.filter((item) =>
-        !filtering || projectMatches || sessionSearchText(item.summary).includes(normalizedQuery))
-      const items = filtering
-        ? matchingItems
-        : matchingItems.slice(0, limit)
+      const presentation = presentSidebarSessions(mappedItems, {
+        query: normalizedQuery,
+        filter: sessionFilter,
+        sort: sessionSort,
+        projectName: project.name,
+        limit: filtering ? undefined : limit,
+      })
       const projectCatalog: SidebarProjectNavigation['catalog'] = !catalog
-        ? { status: workspace.mode === 'electron' && project.available && expandedByPreference
+        ? { status: workspace.mode === 'electron' && project.available && expanded
             ? 'loading'
             : 'idle' }
         : catalog.status === 'ready' || (catalog.status === 'loading' && rows.length > 0)
           ? {
               status: 'ready',
-              items,
-              hasMore: !filtering && rows.length > items.length,
+              items: presentation.items,
+              hasMore: presentation.hasMore,
+              loadedCount: presentation.loadedCount,
             }
           : catalog.status === 'error'
             ? { status: 'error', ...(catalog.errorMessage
@@ -309,6 +343,8 @@ export function SessionsPanel({
       filtering,
       isOpeningSessionRow,
       normalizedQuery,
+      sessionFilter,
+      sessionSort,
       pi.session?.pendingMessageCount,
       pi.status,
       runtimeSessionStatuses,
@@ -325,43 +361,56 @@ export function SessionsPanel({
   // matches stay visible; the real expansion state is restored on clear.
   const visibleProjects = React.useMemo(() => filtering
     ? sidebarProjects.filter((navigation) =>
-        navigation.catalog.status === 'ready' && navigation.catalog.items.length > 0)
-    : sidebarProjects, [filtering, sidebarProjects])
+        (navigation.catalog.status === 'ready' && navigation.catalog.items.length > 0) ||
+        (navigation.project.available && navigation.catalog.status !== 'ready' && navigation.catalog.status !== 'idle') ||
+        (sessionFilter === 'all' && normalizedQuery.length > 0 &&
+          navigation.project.name.toLowerCase().includes(normalizedQuery)))
+    : sidebarProjects, [filtering, normalizedQuery, sessionFilter, sidebarProjects])
 
   const recentChats = React.useMemo<SidebarConversationItem[]>(() => {
     const catalog = workspace.sessionCatalogs.projectless
     if (!catalog) return []
-    return catalog.rows.map((summary): SidebarConversationItem => {
-      const runtimeStatus = runtimeStatusForOfficialSession(
+    const mappedItems = catalog.rows.map((summary): SidebarConversationItem => {
+      const runtimeState = runtimeStateForOfficialSession(
         summary,
         runtimeSessionStatuses,
         catalog.rows,
       )
-      const duplicateSessionId = catalog.rows.some((candidate) =>
-        candidate !== summary && candidate.sessionId === summary.sessionId)
-      const isActive = !duplicateSessionId && summary.sessionId === workspace.activeSessionId &&
-        workspace.activeScope.kind === 'projectless'
-      const status = runtimeStatus ?? (isActive ? pi.status : undefined)
+      const isActive = isOfficialSessionActiveRow(
+        summary,
+        catalog.rows,
+        workspace.activeScope,
+        workspace.activeSessionId,
+        runtimeState?.selected === true,
+      )
+      const status = runtimeState?.status ?? (isActive ? pi.status : undefined)
       const opening = isOpeningSessionRow(summary, catalog.rows)
-      const loading = opening ||
-        summary.selectionToken === deletingSelectionToken
+      const deleting = summary.selectionToken === deletingSelectionToken
       return {
         summary,
-        loading,
+        loading: opening,
+        disabled: opening || deleting,
         selected: isActive || opening,
         activityState: deriveSessionActivityState({
           opening,
           status,
-          pendingMessageCount: isActive ? pi.session?.pendingMessageCount ?? 0 : 0,
+          pendingMessageCount: isActive
+            ? pi.session?.pendingMessageCount ?? runtimeState?.pendingMessageCount ?? 0
+            : runtimeState?.pendingMessageCount ?? 0,
         }),
         ...(status ? { status } : {}),
       }
-    }).filter((item) =>
-      !filtering || sessionSearchText(item.summary).includes(normalizedQuery))
+    })
+    return presentSidebarSessions(mappedItems, {
+      query: normalizedQuery,
+      filter: sessionFilter,
+      sort: sessionSort,
+    }).items
   }, [
-    filtering,
     isOpeningSessionRow,
     normalizedQuery,
+    sessionFilter,
+    sessionSort,
     pi.session?.pendingMessageCount,
     pi.status,
     runtimeSessionStatuses,
@@ -389,16 +438,29 @@ export function SessionsPanel({
     }))
   }, [])
 
-  const filterHasResults = visibleProjects.length > 0 || recentChats.length > 0
+  const recentCatalog = workspace.sessionCatalogs.projectless
+  const recentCatalogUnavailable = workspace.mode !== 'electron' ||
+    recentCatalog?.status === 'unavailable' || recentCatalog?.status === 'activationUnavailable'
+  const recentCatalogPending = !recentCatalogUnavailable && (!recentCatalog || recentCatalog.status === 'loading')
+  const showRecentCatalogState = recentChats.length === 0 && recentCatalog?.status !== 'ready'
+  const searchInProgress = filtering && sidebarProjects.some(({ project, catalog }) => project.available && catalog.status === 'loading')
+  const filterHasResults = visibleProjects.length > 0 || recentChats.length > 0 || showRecentCatalogState
 
   return (
-    <div hidden={hidden} className="px-2 pb-3 pt-2">
-      <div className="relative mb-2">
+    <div hidden={hidden} className="min-w-0 px-2 pb-4 pt-3">
+      <NewConversationControl
+        activeScope={workspace.activeScope}
+        projects={sidebarProjects}
+        onNewPrimary={onNewPrimary}
+        onNewProjectless={onNewProjectless}
+      />
+      <div className="relative mb-1.5 mt-3">
         <TbSearch
           aria-hidden
-          className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground/60"
+          className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
         />
         <Input
+          ref={searchRef}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
@@ -409,22 +471,80 @@ export function SessionsPanel({
           }}
           placeholder={t('sidebar.sessions.searchPlaceholder')}
           aria-label={t('sidebar.sessions.search')}
+          title={t('workbenchReview.sessions.searchHint')}
           autoComplete="off"
-          className="pl-8"
+          className="h-8 border-transparent bg-transparent pl-8 pr-8 text-caption shadow-none hover:bg-accent/40 focus-visible:bg-surface"
         />
+        {query.length > 0 && (
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className="absolute right-0.5 top-1/2 size-7 -translate-y-1/2 text-muted-foreground"
+            aria-label={t('sidebar.sessions.clearSearch')}
+            onClick={() => {
+              setQuery('')
+              searchRef.current?.focus()
+            }}
+          >
+            <TbX className="size-3.5" aria-hidden />
+          </Button>
+        )}
       </div>
-      <NewConversationControl
-        activeScope={workspace.activeScope}
-        projects={sidebarProjects}
-        onNewPrimary={onNewPrimary}
-        onNewProjectless={onNewProjectless}
-      />
-      <div className="pt-3">
+      <div className="mb-3 flex items-center justify-between gap-1 px-1">
+        <div role="group" aria-label={t('sidebar.sessions.filter')} className="flex gap-0.5">
+          {(['all', 'running'] as const).map((filter) => (
+            <Button
+              key={filter}
+              variant="ghost"
+              size="xs"
+              className={cn(
+                'h-7 rounded-md px-2 text-caption font-normal',
+                sessionFilter === filter
+                  ? 'bg-selected font-medium text-foreground'
+                  : 'text-muted-foreground',
+              )}
+              aria-pressed={sessionFilter === filter}
+              onClick={() => setSessionFilter(filter)}
+            >
+              {t(filter === 'all' ? 'sidebar.sessions.all' : 'sidebar.sessions.running')}
+            </Button>
+          ))}
+        </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              className="size-7 text-muted-foreground"
+              aria-label={t('sidebar.sessions.sort')}
+              title={t(sessionSort === 'recent' ? 'sidebar.sessions.sortRecent' : 'sidebar.sessions.sortName')}
+            >
+              <TbArrowsSort className="size-3.5" aria-hidden />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuRadioGroup
+              value={sessionSort}
+              onValueChange={(value) => {
+                if (value === 'recent' || value === 'name') setSessionSort(value)
+              }}
+            >
+              <DropdownMenuRadioItem value="recent">{t('sidebar.sessions.sortRecent')}</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="name">{t('sidebar.sessions.sortName')}</DropdownMenuRadioItem>
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+      {searchInProgress ? <p role="status" className="mb-2 flex items-center gap-1.5 px-2 text-micro text-muted-foreground"><TbLoader2 className="size-3 animate-spin motion-reduce:animate-none" aria-hidden />{t('workbenchReview.sessions.searching')}</p> : null}
+      <div>
         {filtering && !filterHasResults ? (
           <div className="flex flex-col items-start gap-2 px-2 py-1.5">
-            <p className="text-caption text-muted-foreground">
-              {t('sidebar.sessions.empty')}
+            <p className="text-caption text-muted-foreground" role="status">
+              {t(sessionFilter === 'running' && !normalizedQuery
+                ? 'sidebar.sessions.runningEmpty'
+                : 'sidebar.sessions.empty')}
             </p>
+            <Button variant="ghost" size="xs" onClick={() => { setQuery(''); setSessionFilter('all'); searchRef.current?.focus() }}>{t('workbenchReview.sessions.reset')}</Button>
           </div>
         ) : (
           <>
@@ -450,7 +570,14 @@ export function SessionsPanel({
                 onRemoveProject={onRemoveWorkspace}
               />
             )}
-            {(!filtering || recentChats.length > 0) && (
+            {showRecentCatalogState ? <section className="mt-4 px-2" aria-label={t('sidebar.generalChats')}>
+              <h2 className="mb-2 text-micro font-medium text-muted-foreground">{t('sidebar.generalChats')}</h2>
+              <div role={recentCatalogPending ? 'status' : 'alert'} className="flex items-center gap-2 text-caption text-muted-foreground">
+                {recentCatalogPending ? <TbLoader2 className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" aria-hidden /> : null}
+                <span className="min-w-0 flex-1">{t(recentCatalogPending ? 'workbenchReview.sessions.loading' : recentCatalogUnavailable ? 'workbenchReview.sessions.unavailable' : 'workbenchReview.sessions.failed')}</span>
+                {!recentCatalogPending && !recentCatalogUnavailable ? <Button variant="ghost" size="xs" onClick={() => { void loadSessionCatalog({ kind: 'projectless' }, true).catch(() => undefined) }}>{t('common.retry')}</Button> : null}
+              </div>
+            </section> : (!filtering || recentChats.length > 0) && (
               <RecentChatGroup
                 items={recentChats}
                 activeSessionId={workspace.activeScope.kind === 'projectless'

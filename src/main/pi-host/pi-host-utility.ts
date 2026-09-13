@@ -33,6 +33,7 @@ import {
   RuntimeManagerError,
   type RuntimeCommandResult,
   type RuntimeDescriptor,
+  type RuntimeReloadResult,
   type RuntimeExternalSubmitManagerResult,
   type RuntimeManagerOptions,
   type RuntimeEventRecord,
@@ -106,7 +107,8 @@ export interface RuntimeManagerLike {
     runtimeId: string,
     expectedGeneration?: number,
     timeoutMs?: number,
-  ): Promise<RuntimeDescriptor>
+    configurationApply?: boolean,
+  ): Promise<RuntimeReloadResult>
   command(
     runtimeId: string,
     command: LocalPiRpcCommand,
@@ -412,12 +414,13 @@ export class PiHostUtility {
       }
       case 'runtime.reload': {
         const runtimeId = request.runtimeId!
-        const runtime = await manager.reloadRuntime(
+        const { interactionRequired, reloadFailed, ...runtime } = await manager.reloadRuntime(
           runtimeId,
           request.runtimeGeneration!,
           request.timeoutMs,
+          request.command.configurationApply === true,
         )
-        return { result: { reloaded: true, runtime }, runtime }
+        return { result: { reloaded: !reloadFailed, runtime, ...(interactionRequired ? { interactionRequired: true } : {}) }, runtime }
       }
       case 'runtime.command': {
         const runtimeId = request.runtimeId!

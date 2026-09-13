@@ -13,7 +13,8 @@ import {
 import { parseMcpConfigDocument } from '../../shared/mcp-config-parser'
 import type { ConversationScope } from '../../shared/conversation-scope'
 import type { ConversationScopeResolver } from '../conversations/conversation-scope-resolver'
-import type { PiRuntimeFrontend } from '../pi-host/pi-runtime-frontend'
+import { configApplySaveFields, type ConfigApplyCoordinator } from '../config-apply/config-apply-coordinator'
+import { displayPiAgentPath } from '../pi-agent-directory'
 
 const DEFAULT_DOCUMENT = '{\n  "mcpServers": {}\n}\n'
 const MISSING_FINGERPRINT = createHash('sha256')
@@ -40,6 +41,7 @@ export class McpConfigError extends Error {
 
 interface McpConfigServiceOptions {
   homeDirectory: string
+  agentDirectory?: string
   getActiveScope(): ConversationScope
   scopeResolver: ConversationScopeResolver
 }
@@ -54,6 +56,7 @@ function isMissing(error: unknown) {
 
 export class McpConfigService {
   private readonly homeDirectory: string
+  private readonly agentDirectory: string
   private readonly getActiveScope: () => ConversationScope
   private readonly scopeResolver: ConversationScopeResolver
 
@@ -61,6 +64,11 @@ export class McpConfigService {
     if (!isAbsolute(options.homeDirectory)) {
       throw new Error('The MCP global configuration home must be absolute.')
     }
+    const agentDirectory = options.agentDirectory ?? join(options.homeDirectory, '.pi', 'agent')
+    if (!isAbsolute(agentDirectory)) {
+      throw new Error('The MCP global configuration Agent directory must be absolute.')
+    }
+    this.agentDirectory = resolve(agentDirectory)
     this.homeDirectory = resolve(options.homeDirectory)
     this.getActiveScope = options.getActiveScope
     this.scopeResolver = options.scopeResolver
@@ -127,6 +135,7 @@ export class McpConfigService {
     return mcpConfigSnapshotSchema.parse({
       target,
       path,
+      displayPath: target.kind === 'global' ? displayPiAgentPath(path, this.homeDirectory) : path,
       exists,
       content,
       fingerprint: exists ? fingerprint(content) : MISSING_FINGERPRINT,
@@ -160,7 +169,7 @@ export class McpConfigService {
 
   private async resolveTargetPath(target: McpConfigTarget) {
     if (target.kind === 'global') {
-      return join(this.homeDirectory, '.pi', 'agent', 'mcp.json')
+      return join(this.agentDirectory, 'mcp.json')
     }
     const activeScope = this.getActiveScope()
     if (
@@ -224,51 +233,16 @@ export class McpConfigService {
 }
 
 export class McpConfigController {
-  private pendingRestartGeneration: number | null = null
-  private pendingRestartTarget: McpConfigTarget | null = null
-  private readonly unsubscribes: readonly (() => void)[]
-
   constructor(
     private readonly service: McpConfigService,
-    private readonly runtimeHost: Pick<
-      PiRuntimeFrontend,
-      'getSnapshot' | 'restart' | 'subscribe' | 'subscribeEvents'
-    >,
-    private readonly restartTarget: (
-      target: McpConfigTarget,
-    ) => Promise<unknown> = () => runtimeHost.restart(),
-  ) {
-    const unsubscribeEvents = runtimeHost.subscribeEvents((event, generation) => {
-      if (
-        event.type !== 'agent_settled' ||
-        this.pendingRestartGeneration !== generation ||
-        generation !== runtimeHost.getSnapshot().generation
-      ) return
-      const target = this.pendingRestartTarget
-      if (!target) return
-      this.pendingRestartGeneration = null
-      this.pendingRestartTarget = null
-      void this.restartTarget(target).catch(() => {
-        if (runtimeHost.getSnapshot().generation === generation) {
-          this.pendingRestartGeneration = generation
-          this.pendingRestartTarget = target
-        }
-      })
-    })
-    const unsubscribeRuntime = runtimeHost.subscribe((snapshot) => {
-      if (
-        this.pendingRestartGeneration !== null &&
-        this.pendingRestartGeneration !== snapshot.generation
-      ) {
-        this.pendingRestartGeneration = null
-        this.pendingRestartTarget = null
-      }
-    })
-    this.unsubscribes = [unsubscribeEvents, unsubscribeRuntime]
-  }
+    private readonly applyCoordinator: ConfigApplyCoordinator,
+    private readonly reloadDetection: () => Promise<void>,
+  ) {}
 
-  load(target: McpConfigTarget) {
-    return this.service.load(target)
+  async load(target: McpConfigTarget) {
+    const snapshot = await this.service.load(target)
+    const applyStatus = this.applyCoordinator.getStatus(snapshot.path, snapshot.fingerprint)
+    return { ...snapshot, ...(applyStatus ? { applyStatus } : {}) }
   }
 
   async save(
@@ -281,47 +255,31 @@ export class McpConfigController {
     if (!restart) {
       return mcpConfigSaveResultSchema.parse({ snapshot, apply: 'saved' })
     }
-    if (!this.service.isTargetActive(target)) {
-      return mcpConfigSaveResultSchema.parse({ snapshot, apply: 'unavailable' })
-    }
-    const runtime = this.runtimeHost.getSnapshot()
-    if (runtime.state !== 'ready') {
-      return mcpConfigSaveResultSchema.parse({ snapshot, apply: 'unavailable' })
-    }
-    if (runtime.sessionState?.isStreaming || runtime.sessionState?.isCompacting) {
-      this.pendingRestartGeneration = runtime.generation
-      this.pendingRestartTarget = target
-      return mcpConfigSaveResultSchema.parse({ snapshot, apply: 'pending' })
-    }
-    this.pendingRestartGeneration = null
-    this.pendingRestartTarget = null
-    try {
-      await this.restartTarget(target)
-      return mcpConfigSaveResultSchema.parse({ snapshot, apply: 'restarted' })
-    } catch (error) {
-      return mcpConfigSaveResultSchema.parse({
-        snapshot,
-        apply: 'failed',
-        applyError: error instanceof Error ? error.message : 'Pi could not restart.',
-      })
-    }
+    const applyStatus = await this.applyCoordinator.apply({
+      path: snapshot.path,
+      fingerprint: snapshot.fingerprint,
+      ...(target.kind === 'project' ? { cwd: dirname(snapshot.path) } : {}),
+    })
+    return mcpConfigSaveResultSchema.parse({
+      snapshot: { ...snapshot, applyStatus },
+      ...configApplySaveFields(applyStatus),
+    })
   }
 
   async restart() {
     try {
-      await this.runtimeHost.restart()
-      this.pendingRestartGeneration = null
-      this.pendingRestartTarget = null
-      return { restarted: true as const }
+      const statuses = await this.applyCoordinator.retryPending()
+      if (statuses.some((status) => status.state !== 'applied' && status.state !== 'unavailable')) {
+        return { restarted: false, applied: false, error: 'Configuration application is pending or failed. No running work was interrupted.' }
+      }
+      if (statuses.length === 0) await this.reloadDetection()
+      return { restarted: false, applied: true }
     } catch (error) {
       return {
         restarted: false as const,
-        error: error instanceof Error ? error.message : 'Pi could not restart.',
+        error: error instanceof Error ? error.message.slice(0, 1_000) : 'Pi configuration could not be applied.',
       }
     }
   }
 
-  dispose() {
-    for (const unsubscribe of this.unsubscribes) unsubscribe()
-  }
 }

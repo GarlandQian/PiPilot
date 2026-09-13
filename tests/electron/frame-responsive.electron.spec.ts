@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import { _electron as electron, expect, test } from '@playwright/test'
 import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from '../../src/shared/settings'
 import { startPiSdkFixture } from './pi-sdk-fixture'
+import { closeFixtureApplication } from './close-fixture-application'
 
 test('keeps the compact conversation usable until Inspector is explicitly opened', async ({}, testInfo) => {
   test.setTimeout(60_000)
@@ -51,6 +52,36 @@ test('keeps the compact conversation usable until Inspector is explicitly opened
     await expect(page.getByRole('button', { name: 'Sessions', exact: true }))
       .toHaveAttribute('aria-current', 'page')
 
+    await page.getByRole('button', { name: 'Settings', exact: true }).click()
+    const settingsNavigationWide = page.getByRole('region', { name: 'Settings', exact: true })
+    await settingsNavigationWide.getByRole('button', { name: 'Models', exact: true }).click()
+    const modelsPage = page.getByRole('main', { name: 'Models', exact: true })
+    await modelsPage.getByRole('button', { name: 'JSON', exact: true }).click()
+    const modelsDraft = '// Retain this unsaved model document\n{ "providers": {} }\n'
+    await modelsPage.getByRole('textbox', { name: 'JSON', exact: true }).fill(modelsDraft)
+    await settingsNavigationWide.getByRole('button', { name: 'Appearance', exact: true }).click()
+    await settingsNavigationWide.getByRole('button', { name: 'Models', exact: true }).click()
+    await expect(modelsPage.getByRole('textbox', { name: 'JSON', exact: true })).toHaveValue(modelsDraft)
+
+    await settingsNavigationWide.getByRole('button', { name: 'Integrations', exact: true }).click()
+    const integrationsPage = page.getByRole('main', { name: 'Integrations', exact: true })
+    await integrationsPage.getByRole('tab', { name: 'MCP', exact: true }).click()
+    await integrationsPage.getByRole('button', { name: 'JSON', exact: true }).click()
+    const mcpDraft = '// Retain this unsaved MCP document\n{ "mcpServers": {} }\n'
+    await integrationsPage.getByRole('textbox', { name: 'JSON', exact: true }).fill(mcpDraft)
+    await page.getByRole('button', { name: 'Sessions', exact: true }).click()
+    await expect(page.getByRole('textbox', { name: 'JSON', exact: true })).toHaveCount(0)
+    await page.getByRole('button', { name: 'Settings', exact: true }).click()
+    await expect(integrationsPage.getByRole('textbox', { name: 'JSON', exact: true })).toHaveValue(mcpDraft)
+    await settingsNavigationWide.getByRole('button', { name: 'Models', exact: true }).click()
+    await expect(modelsPage.getByRole('textbox', { name: 'JSON', exact: true })).toHaveValue(modelsDraft)
+    await expect(settingsNavigationWide.getByRole('button', { name: 'Models', exact: true })).toHaveAttribute('aria-current', 'page')
+    await expect(settingsNavigationWide.getByRole('button', { name: 'Integrations', exact: true })).not.toHaveAttribute('aria-current', 'page')
+    await page.mouse.move(1_400, 800)
+    await page.screenshot({ path: testInfo.outputPath('settings-models-light-wide.png'), animations: 'disabled' })
+    await page.getByRole('button', { name: 'Sessions', exact: true }).click()
+    await page.screenshot({ path: testInfo.outputPath('conversation-light-wide.png') })
+
     await page.setViewportSize({ width: 640, height: 760 })
     const composer = page.getByRole('textbox', { name: 'Message input', exact: true })
     const openInspector = page.getByRole('button', { name: 'Expand panel', exact: true })
@@ -86,8 +117,26 @@ test('keeps the compact conversation usable until Inspector is explicitly opened
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
     await expect(settingsNavigation).toBeVisible()
     await expect(page.getByRole('main', { name: 'Models', exact: true })).toHaveCount(0)
+    await page.setViewportSize({ width: 1_100, height: 680 })
+    await page.screenshot({ path: testInfo.outputPath('settings-navigation-light-minimum.png') })
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+    for (const theme of ['light', 'dark'] as const) {
+      for (const locale of ['en-US', 'zh-CN'] as const) {
+        await page.evaluate(({ theme, locale }) => window.pipilot!.settings.update({
+          locale,
+          appearance: { theme, reducedMotion: true },
+        }), { theme, locale })
+        await expect(page.locator('html')).toHaveAttribute('lang', locale)
+        await page.locator('[data-context-panel-nav-id="appearance"]').click()
+        for (const dimensions of [{ width: 1_100, height: 680 }, { width: 1_440, height: 900 }]) {
+          await page.setViewportSize(dimensions)
+          await page.screenshot({ path: testInfo.outputPath(`settings-${theme}-${locale}-${dimensions.width}.png`) })
+          await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+        }
+      }
+    }
   } finally {
-    await electronApp.close()
+    await closeFixtureApplication(electronApp)
     await piFixture.close()
   }
 })

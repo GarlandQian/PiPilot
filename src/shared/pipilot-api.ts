@@ -73,6 +73,7 @@ import type {
   ExternalControlLauncherSnapshot,
   ExternalControlSettingsSnapshot,
 } from './external-control'
+import type { ApplicationShutdownDecision, ApplicationShutdownEvent } from './application-shutdown'
 
 export interface PiPilotApiError extends AppError {
   readonly name: 'PiPilotApiError'
@@ -165,7 +166,11 @@ export interface PiPilotApi {
     resize(scope: ConversationScope, terminalId: string, cols: number, rows: number): Promise<TerminalResizeResult>
     subscribe(listener: (event: TerminalEvent) => void): () => void
   }
-  readonly app: { getInfo(): Promise<AppInfo> }
+  readonly app: {
+    getInfo(): Promise<AppInfo>
+    subscribeShutdown(listener: (event: ApplicationShutdownEvent) => void): () => void
+    respondToShutdown(shutdownId: string, decision: ApplicationShutdownDecision): Promise<{ accepted: boolean }>
+  }
   readonly shell: { openExternal(url: string): Promise<void> }
   readonly settings: {
     get(): Promise<SettingsSnapshot>

@@ -15,7 +15,7 @@ const response = {
   version: '0.0.1',
   platform: 'darwin',
   arch: 'arm64',
-  electronVersion: '43.4.1',
+  electronVersion: '44.2.0',
   mode: 'development' as const,
 }
 

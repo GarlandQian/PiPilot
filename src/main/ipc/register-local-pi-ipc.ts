@@ -13,6 +13,7 @@ import {
 } from '../../shared/ipc/contracts'
 import type { LocalPiExtensionUiRequest } from '../../shared/local-pi'
 import type { ConversationContextService } from '../conversations/conversation-context-service'
+import type { OfficialPiSessionCatalogObserver } from '../conversations/official-pi-session-catalog-observer'
 import {
   OfficialPiSessionActivationError,
   type OfficialPiSessionActivationService,
@@ -30,6 +31,7 @@ import {
 
 interface RegisterLocalPiIpcOptions {
   activationService: OfficialPiSessionActivationService
+  catalogObserver: OfficialPiSessionCatalogObserver
   contextService: ConversationContextService
   getMainWindow(): BrowserWindow | null
   policy: ApplicationUrlPolicy
@@ -57,6 +59,7 @@ function mainError(error: unknown) {
 export function registerLocalPiIpc(options: RegisterLocalPiIpcOptions) {
   const {
     activationService,
+    catalogObserver,
     contextService,
     getMainWindow,
     policy,
@@ -84,30 +87,22 @@ export function registerLocalPiIpc(options: RegisterLocalPiIpcOptions) {
     )
   })
 
+  const catalogUnsubscribe = catalogObserver.subscribe((catalogInvalidation) => {
+    if (disposed) return
+    const window = getMainWindow()
+    if (!window || window.isDestroyed()) return
+    window.webContents.send(ipcChannels.localPiRuntimeChanged, localPiRuntimeChangedEventSchema.parse({
+      eventId: randomUUID(),
+      snapshot: runtimeHost.getSnapshot(),
+      catalogInvalidation,
+    }))
+  })
+
   const eventUnsubscribe = runtimeHost.subscribeEvents((
     event,
     generation,
-    runtimeId,
   ) => {
     const forward = async () => {
-      if (disposed) return
-      if (event.type === 'agent_settled' && runtimeId) {
-        // Session catalog observation is ancillary metadata work. Keep it
-        // generation-scoped inside the service, but do not hold the Runtime
-        // event credit (or the ordered IPC chain) on filesystem persistence
-        // and a follow-up get_state request after an agent settles.
-        void activationService
-          .onAgentSettled(runtimeId, generation)
-          .catch(() => undefined)
-      } else if (
-        runtimeId &&
-        (
-          event.type === 'entry_appended' ||
-          event.type === 'session_info_changed'
-        )
-      ) {
-        activationService.onSessionCatalogChanged(runtimeId, generation)
-      }
       if (disposed) return
       const window = getMainWindow()
       if (!window || window.isDestroyed()) return
@@ -212,6 +207,8 @@ export function registerLocalPiIpc(options: RegisterLocalPiIpcOptions) {
     dispose() {
       disposed = true
       runtimeUnsubscribe()
+      catalogUnsubscribe()
+      catalogObserver.dispose()
       eventUnsubscribe()
       uiUnsubscribe()
     },

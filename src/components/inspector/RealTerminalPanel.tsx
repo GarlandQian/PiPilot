@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { FitAddon } from '@xterm/addon-fit'
+import { TbArrowDown, TbCheck, TbCopy, TbEraser, TbRefresh } from 'react-icons/tb'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { useT } from '@/i18n'
@@ -12,12 +13,16 @@ import {
 import { useSettings } from '@/store/settings'
 import { resolveTerminalFontStack } from '@/lib/terminal-fonts'
 import { applyTerminalTypography } from './terminal-typography'
+import { Button } from '@/components/ui/button'
+import { InspectorSectionToolbar } from './InspectorSectionToolbar'
+import { cn } from '@/lib/utils'
 
 type TerminalStatus = 'starting' | 'running' | 'exited' | 'error'
 
 interface RealTerminalPanelProps {
   terminalApi: PiPilotApi['terminal']
   scope: ConversationScope
+  visible?: boolean
 }
 
 function scopeKey(scope: ConversationScope) {
@@ -71,6 +76,7 @@ function splitInput(value: string) {
 export function RealTerminalPanel({
   terminalApi,
   scope,
+  visible = true,
 }: RealTerminalPanelProps) {
   const t = useT()
   const { appearance, terminal: terminalSettings } = useSettings()
@@ -79,6 +85,7 @@ export function RealTerminalPanel({
   const fitAddonRef = React.useRef<FitAddon | undefined>(undefined)
   const terminalIdRef = React.useRef<string | undefined>(undefined)
   const scopeRef = React.useRef(scope)
+  const visibleRef = React.useRef(visible)
   const translateRef = React.useRef(t)
   const wordWrapRef = React.useRef(appearance.wordWrap)
   const fontSizeRef = React.useRef(terminalSettings.fontSize)
@@ -86,25 +93,32 @@ export function RealTerminalPanel({
   const pendingCommandRef = React.useRef<string | undefined>(undefined)
   const [command, setCommand] = React.useState('')
   const [status, setStatus] = React.useState<TerminalStatus>('starting')
+  const [shell, setShell] = React.useState('')
   const [dimensions, setDimensions] = React.useState({ cols: 80, rows: 24 })
   const [generation, setGeneration] = React.useState(0)
+  const [hasSelection, setHasSelection] = React.useState(false)
+  const [copyState, setCopyState] = React.useState<'idle' | 'copied' | 'error'>('idle')
+  const commandId = React.useId()
   const activeScopeKey = scopeKey(scope)
   const terminalFontStack = resolveTerminalFontStack(terminalSettings.fontFamily)
 
   scopeRef.current = scope
+  visibleRef.current = visible
   translateRef.current = t
   wordWrapRef.current = appearance.wordWrap
   fontSizeRef.current = terminalSettings.fontSize
 
   const sendInput = React.useCallback((data: string) => {
     const terminalId = terminalIdRef.current
+    const capturedScope = scopeRef.current
+    const capturedTerminal = terminalRef.current
     if (!terminalId || data.length === 0) return
     for (const chunk of splitInput(data)) {
       inputChainRef.current = inputChainRef.current
-        .then(() => terminalApi.input(scopeRef.current, terminalId, chunk))
+        .then(() => terminalApi.input(capturedScope, terminalId, chunk))
         .then(() => undefined)
         .catch(() => {
-          setStatus('error')
+          if (terminalRef.current === capturedTerminal) setStatus('error')
         })
     }
   }, [activeScopeKey, terminalApi])
@@ -116,8 +130,12 @@ export function RealTerminalPanel({
     let lastSequence = 0
     let activeTerminalId: string | undefined
     let resizeFrame = 0
+    const capturedScope = scopeRef.current
     const pendingEvents: TerminalEvent[] = []
     inputChainRef.current = Promise.resolve()
+    setHasSelection(false)
+    setCopyState('idle')
+    setStatus('starting')
 
     const terminal = new Terminal({
       allowTransparency: false,
@@ -142,9 +160,16 @@ export function RealTerminalPanel({
     )
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
+    const themeObserver = new MutationObserver(() => {
+      terminal.options.theme = terminalTheme()
+    })
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class'],
+    })
 
     const fit = () => {
-      if (disposed) return
+      if (disposed || !visibleRef.current || container.clientHeight === 0) return
       const proposed = fitAddon.proposeDimensions()
       if (!proposed) return
       const cols = wordWrapRef.current
@@ -205,12 +230,16 @@ export function RealTerminalPanel({
       else processEvent(event)
     })
     const dataDisposable = terminal.onData(sendInput)
+    const selectionDisposable = terminal.onSelectionChange(() => {
+      setHasSelection(terminal.hasSelection())
+      setCopyState('idle')
+    })
     const resizeDisposable = terminal.onResize(({ cols, rows }) => {
       setDimensions({ cols, rows })
       const terminalId = terminalIdRef.current
       if (!terminalId) return
-      void terminalApi.resize(scopeRef.current, terminalId, cols, rows).catch(() => {
-        setStatus('error')
+      void terminalApi.resize(capturedScope, terminalId, cols, rows).catch(() => {
+        if (!disposed) setStatus('error')
       })
     })
     const observer = new ResizeObserver(scheduleFit)
@@ -221,7 +250,7 @@ export function RealTerminalPanel({
       ? proposed?.cols ?? 80
       : Math.max(120, proposed?.cols ?? 80)
     const initialRows = proposed?.rows ?? 24
-    void terminalApi.create(scopeRef.current, initialCols, initialRows)
+    void terminalApi.create(capturedScope, initialCols, initialRows)
       .then((session) => {
         if (disposed) return
         activeTerminalId = session.terminalId
@@ -230,6 +259,7 @@ export function RealTerminalPanel({
         terminal.write(session.replay)
         terminal.resize(session.cols, session.rows)
         setDimensions({ cols: session.cols, rows: session.rows })
+        setShell(session.shell.split(/[\\/]/u).pop() ?? session.shell)
         setStatus('running')
         for (const event of pendingEvents.sort(
           (left, right) => left.sequence - right.sequence,
@@ -239,7 +269,7 @@ export function RealTerminalPanel({
         pendingCommandRef.current = undefined
         if (pendingCommand) sendInput(`${pendingCommand}\r`)
         scheduleFit()
-        terminal.focus()
+        if (visibleRef.current) terminal.focus()
       })
       .catch(() => {
         if (!disposed) setStatus('error')
@@ -250,8 +280,10 @@ export function RealTerminalPanel({
       cancelAnimationFrame(resizeFrame)
       cancelInitialTypographyFit()
       observer.disconnect()
+      themeObserver.disconnect()
       unsubscribe()
       dataDisposable.dispose()
+      selectionDisposable.dispose()
       resizeDisposable.dispose()
       terminal.dispose()
       terminalRef.current = undefined
@@ -265,7 +297,7 @@ export function RealTerminalPanel({
   React.useLayoutEffect(() => {
     const terminal = terminalRef.current
     const container = containerRef.current
-    if (!terminal || !container) return
+    if (!terminal || !container || !visible) return
     return applyTerminalTypography({
       terminal,
       fitAddon: fitAddonRef.current,
@@ -275,7 +307,7 @@ export function RealTerminalPanel({
       wordWrap: wordWrapRef.current,
       onDimensions: setDimensions,
     })
-  }, [terminalFontStack, terminalSettings.fontSize])
+  }, [terminalFontStack, terminalSettings.fontSize, visible])
 
   React.useLayoutEffect(() => {
     const terminal = terminalRef.current
@@ -291,8 +323,9 @@ export function RealTerminalPanel({
       : "'liga' off, 'calt' off"
     const frame = requestAnimationFrame(() => {
       terminal.options.theme = terminalTheme()
+      if (!visibleRef.current || container.clientHeight === 0) return
       const proposed = fitAddonRef.current?.proposeDimensions()
-      if (!proposed) return
+      if (!proposed || proposed.cols < 2 || proposed.rows < 1) return
       const cols = appearance.wordWrap ? proposed.cols : Math.max(120, proposed.cols)
       if (terminal.element) {
         terminal.element.style.minWidth = appearance.wordWrap
@@ -318,6 +351,18 @@ export function RealTerminalPanel({
     terminalRef.current?.focus()
   }
 
+  const copySelection = async () => {
+    const terminal = terminalRef.current
+    const selection = terminal?.getSelection()
+    if (!terminal || !selection) return
+    try {
+      await navigator.clipboard.writeText(selection)
+      if (terminalRef.current === terminal) setCopyState('copied')
+    } catch {
+      if (terminalRef.current === terminal) setCopyState('error')
+    }
+  }
+
   return (
     <div
       className="flex h-full flex-col"
@@ -330,6 +375,21 @@ export function RealTerminalPanel({
       data-terminal-ligatures={appearance.codeLigatures}
       data-terminal-word-wrap={appearance.wordWrap}
     >
+      <InspectorSectionToolbar
+        title={<span role={status === 'error' ? 'alert' : 'status'} className="flex min-w-0 items-center gap-1.5">
+          <span aria-hidden className={cn('size-1.5 shrink-0 rounded-full', status === 'running' ? 'bg-sage' : status === 'error' ? 'bg-destructive' : 'bg-muted-foreground')} />
+          <span className="truncate">{t(status === 'running' ? 'workbenchReview.terminal.running' : status === 'exited' ? 'workbenchReview.terminal.exited' : status === 'error' ? 'inspector.terminal.error' : 'inspector.terminal.starting')}</span>
+        </span>}
+        description={<span className="tabular-nums">{shell ? `${shell} · ` : ''}{dimensions.cols} × {dimensions.rows}</span>}
+      >
+        <Button variant="ghost" size="icon-xs" disabled={!hasSelection} aria-label={t(copyState === 'copied' ? 'md.copied' : 'workbenchReview.terminal.copy')} title={t('workbenchReview.terminal.copy')} onClick={() => void copySelection()}>
+          {copyState === 'copied' ? <TbCheck aria-hidden /> : <TbCopy aria-hidden />}
+        </Button>
+        <Button variant="ghost" size="icon-xs" disabled={status === 'starting'} aria-label={t('workbenchReview.terminal.clear')} title={t('workbenchReview.terminal.clear')} onClick={() => { terminalRef.current?.clear(); terminalRef.current?.focus() }}><TbEraser aria-hidden /></Button>
+        <Button variant="ghost" size="icon-xs" disabled={status === 'starting'} aria-label={t('workbenchReview.terminal.latest')} title={t('workbenchReview.terminal.latest')} onClick={() => terminalRef.current?.scrollToBottom()}><TbArrowDown aria-hidden /></Button>
+        {status === 'error' || status === 'exited' ? <Button variant="ghost" size="icon-xs" aria-label={t('workbenchReview.terminal.reconnect')} title={t('workbenchReview.terminal.reconnect')} onClick={() => { setStatus('starting'); setGeneration((value) => value + 1) }}><TbRefresh aria-hidden /></Button> : null}
+      </InspectorSectionToolbar>
+      {copyState === 'error' ? <p role="alert" className="px-3 py-1 text-caption text-destructive">{t('md.copyFailed')}</p> : null}
       <div className="scroll-slim terminal-body relative min-h-0 flex-1 overflow-auto p-2">
         <div
           ref={containerRef}
@@ -338,23 +398,13 @@ export function RealTerminalPanel({
           aria-label={t('inspector.terminal.output')}
           onClick={() => terminalRef.current?.focus()}
         />
-        {status === 'starting' && (
-          <p className="pointer-events-none absolute inset-x-2 top-2 text-muted-foreground">
-            {t('inspector.terminal.starting')}
-          </p>
-        )}
-        {status === 'error' && (
-          <p className="pointer-events-none absolute inset-x-2 top-2 text-destructive">
-            {t('inspector.terminal.error')}
-          </p>
-        )}
       </div>
       <form className="border-t border-border p-1.5" onSubmit={submitCommand}>
-        <label htmlFor="terminal-input" className="sr-only">
+        <label htmlFor={commandId} className="sr-only">
           {t('inspector.terminal.input')}
         </label>
         <input
-          id="terminal-input"
+          id={commandId}
           name="terminal-command"
           autoComplete="off"
           spellCheck={false}

@@ -132,7 +132,7 @@ class FakeUtilityProcess extends EventEmitter {
       ok: true,
       sdkVersion: this.sdkVersion,
       nodeVersion: '24.18.1',
-      electronVersion: '43.4.1',
+      electronVersion: '44.2.0',
       capabilities: ['ping', 'shutdown'],
     })
   }
@@ -159,7 +159,7 @@ function createHarness(options: {
   const channels: ReturnType<typeof createFakeChannel>[] = []
   const forkUtility = vi.fn(() => {
     utility = new FakeUtilityProcess(
-      options.sdkVersion ?? '0.84.2',
+      options.sdkVersion ?? '0.85.1',
       options.onRequest,
     )
     return utility as unknown as UtilityProcess
@@ -218,9 +218,9 @@ describe('PiHostController', () => {
       state: 'ready',
       hostEpoch: 1,
       pid: 4_242,
-      sdkVersion: '0.84.2',
+      sdkVersion: '0.85.1',
       nodeVersion: '24.18.1',
-      electronVersion: '43.4.1',
+      electronVersion: '44.2.0',
       capabilities: ['ping', 'shutdown'],
     })
     expect(harness.adapter.waitUntilReady).toHaveBeenCalledOnce()
@@ -235,7 +235,7 @@ describe('PiHostController', () => {
     )
     expect(piHostBootstrapEnvelopeSchema.parse(harness.utility.bootstrap)).toMatchObject({
       hostEpoch: 1,
-      expectedSdkVersion: '0.84.2',
+      expectedSdkVersion: '0.85.1',
     })
 
     await expect(harness.controller.request({ type: 'ping' })).resolves.toEqual({

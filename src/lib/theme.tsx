@@ -33,10 +33,10 @@ export function useApplySettings() {
     root.style.setProperty('--code-font-size', `${appearance.codeFontSize}px`)
     root.style.setProperty('--font-sans', resolveUiFontStack(appearance.uiFontFamily) || UI_STACK)
     root.style.setProperty('--font-mono', resolveMonoFontStack(appearance.monoFontFamily) || MONO_STACK)
-    root.style.setProperty('--control-h', comfortable ? '34px' : '28px')
-    root.style.setProperty('--row-h', comfortable ? '36px' : '28px')
+    root.style.setProperty('--control-h', comfortable ? '36px' : '32px')
+    root.style.setProperty('--row-h', comfortable ? '40px' : '34px')
     root.style.setProperty('--tool-row-h', comfortable ? '44px' : '38px')
-    root.style.setProperty('--tree-row-h', comfortable ? '32px' : '28px')
+    root.style.setProperty('--tree-row-h', comfortable ? '34px' : '30px')
 
     root.dataset.reducedMotion = String(appearance.reducedMotion)
     root.dataset.ligatures = String(appearance.codeLigatures)

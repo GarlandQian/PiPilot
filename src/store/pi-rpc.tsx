@@ -19,7 +19,7 @@ import type {
 import {
   applyLocalPiProjectorEvent,
   createLocalPiProjectorState,
-  replaceLocalPiProjectorSnapshot,
+  hydrateLocalPiProjectorEntrySnapshot,
   resetLocalPiProjectorState,
   setLocalPiRetryCancelling,
   type LocalPiProjectorState,
@@ -46,12 +46,25 @@ import {
   mergeLocalPiEntrySnapshot,
   type LocalPiEntrySnapshot,
 } from '@/renderer/pi-rpc/response-provenance'
+import { createProvenanceRefreshQueue } from '@/renderer/pi-rpc/provenance-refresh-queue'
 import {
+  advancePiSnapshotWatermark,
+  createPiSnapshotWatermark,
+  reconcilePiProjectorSnapshot,
+  reconcilePiSessionSnapshot,
+  refreshPiSnapshot,
+} from '@/renderer/pi-rpc/snapshot-refresh'
+import {
+  PI_QUEUE_MUTATION_SETTLE_MS,
   canPromotePiFollowUp,
+  hasCompletePiQueuePayloads,
+  piQueueItemsMatchSnapshot,
   promotePiFollowUpSnapshot,
   queueTexts,
   reconcilePiQueuedMessages,
+  removePiQueuedMessageSnapshot,
   type PendingPiQueuedMessage,
+  type PiQueueTextSnapshot,
   type PiQueuedMessage,
 } from '@/renderer/pi-rpc/queue-payloads'
 import type {
@@ -81,6 +94,13 @@ export interface PiQueueSnapshot {
   followUpItems: readonly PiQueuedMessage[]
   steeringMode: QueueMode
   followUpMode: QueueMode
+}
+
+interface PiQueueConversion {
+  steering: readonly PiQueuedMessage[]
+  followUp: readonly PiQueuedMessage[]
+  latestOfficial: PiQueueTextSnapshot | null
+  settleTimer: number | null
 }
 
 interface PiTranscriptSnapshot {
@@ -279,6 +299,7 @@ interface PiRpcActions {
     images?: readonly LocalPiImageContent[],
   ): Promise<void>
   promoteFollowUp(itemId: string): Promise<void>
+  removeQueuedMessage(itemId: string): Promise<void>
   setAutoCompaction(enabled: boolean): Promise<void>
   setAutoRetry(enabled: boolean): Promise<void>
   abortRetry(): Promise<void>
@@ -708,6 +729,8 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
   const hydrationRef = React.useRef(initialHydration)
   const refreshNonce = React.useRef(0)
   const conversationRefreshNonce = React.useRef(0)
+  const commandOwnerRevision = React.useRef(0)
+  const snapshotWatermark = React.useRef(createPiSnapshotWatermark())
   const protocolRecoveryPending = React.useRef(false)
   const hydrationKey = React.useRef('')
   const notificationSequence = React.useRef(0)
@@ -726,11 +749,16 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
   const queueRef = React.useRef<PiQueueSnapshot>(EMPTY_QUEUE)
   const queueItemSequence = React.useRef(0)
   const pendingQueuedMessages = React.useRef<PendingPiQueuedMessage[]>([])
-  const queueConversion = React.useRef<{
-    steering: readonly PiQueuedMessage[]
-    followUp: readonly PiQueuedMessage[]
-    latestOfficial: { steering: readonly string[]; followUp: readonly string[] } | null
-  } | null>(null)
+  const queueConversion = React.useRef<PiQueueConversion | null>(null)
+
+  const clearQueueConversion = React.useCallback((expected?: PiQueueConversion) => {
+    const current = queueConversion.current
+    if (!current || (expected && current !== expected)) return false
+    if (current.settleTimer !== null) window.clearTimeout(current.settleTimer)
+    current.settleTimer = null
+    queueConversion.current = null
+    return true
+  }, [])
 
   const nextQueueItemId = React.useCallback(() =>
     `queue-${++queueItemSequence.current}`, [])
@@ -1076,6 +1104,8 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const resetGeneration = React.useCallback((snapshot: LocalPiRuntimeSnapshot) => {
+    commandOwnerRevision.current += 1
+    snapshotWatermark.current = createPiSnapshotWatermark()
     const activeSession = snapshot.state === 'ready' ? snapshot.sessionState : null
     const canHydrate = snapshot.state === 'ready' ||
       snapshot.state === 'starting' ||
@@ -1095,7 +1125,7 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
     setStats(null)
     queueRef.current = EMPTY_QUEUE
     pendingQueuedMessages.current = []
-    queueConversion.current = null
+    clearQueueConversion()
     commitQueue(EMPTY_QUEUE)
     setTranscriptLoading(
       snapshot.state === 'ready' ||
@@ -1133,7 +1163,7 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
       error: canHydrate ? null : runtimeFailureMessage(snapshot),
     })
     commitSession(activeSession)
-  }, [activeScopeKey, commitHydration, commitProjection, commitQueue, commitResponseActivities, commitSession])
+  }, [activeScopeKey, clearQueueConversion, commitHydration, commitProjection, commitQueue, commitResponseActivities, commitSession])
 
   const runCommand = React.useCallback(async <TCommand extends LocalPiRendererRpcCommand,>(
     command: TCommand,
@@ -1141,6 +1171,8 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
     const expectedGeneration = runtimeRef.current?.generation
     const expectedSessionId = sessionRef.current?.sessionId
     const expectedScopeKey = projectionScopeKey.current
+    const expectedOwnerRevision = commandOwnerRevision.current
+    const expectedSessionFile = runtimeRef.current?.sessionFile
     const changesSession = command.type === 'new_session' ||
       command.type === 'fork' ||
       command.type === 'clone'
@@ -1158,7 +1190,6 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
       ) {
         throw new Error('Pi is not connected.')
       }
-      setError(null)
       if (changesSession) {
         setLoading(true)
         setTranscriptLoading(true)
@@ -1167,6 +1198,12 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
       const response = await api.localPi.runtime.command(command)
       if (projectionScopeKey.current !== expectedScopeKey) {
         throw new Error('The Pi conversation scope changed before the operation completed.')
+      }
+      if (!allowsRuntimeReplacement && (
+        commandOwnerRevision.current !== expectedOwnerRevision ||
+        (expectedSessionFile && runtimeRef.current?.sessionFile !== expectedSessionFile)
+      )) {
+        throw new Error('The Pi conversation changed before the operation completed.')
       }
       // Session-changing commands intentionally publish a new per-Runtime
       // generation before their command response resolves. That transition is
@@ -1209,13 +1246,8 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
       }
       return data
     } catch (caught) {
-      if (
-        projectionScopeKey.current === expectedScopeKey &&
-        (changesSession || runtimeRef.current?.generation === expectedGeneration) &&
-        (changesSession || sessionRef.current?.sessionId === expectedSessionId)
-      ) {
-        setError(errorMessage(caught))
-      }
+      // Command callers own action feedback. Transport/hydration errors must
+      // not turn a valid Composer draft or model into an invalid field.
       if (
         changesSession &&
         projectionScopeKey.current === expectedScopeKey &&
@@ -1292,99 +1324,99 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
     const expectedScopeKey = activeScopeKey
     const expectedGeneration = expected.generation
     const expectedSessionId = expected.sessionState?.sessionId
+    const expectedOwnerRevision = commandOwnerRevision.current
     const hydrationRequired = hydrationRef.current.scopeKey !== expectedScopeKey ||
       hydrationRef.current.generation !== expectedGeneration ||
       hydrationRef.current.sessionId !== expectedSessionId ||
       hydrationRef.current.status !== 'ready'
     const nonce = ++refreshNonce.current
+    const isCurrent = () => nonce === refreshNonce.current &&
+      commandOwnerRevision.current === expectedOwnerRevision &&
+      projectionScopeKey.current === expectedScopeKey &&
+      runtimeRef.current?.state === 'ready' &&
+      runtimeRef.current.generation === expectedGeneration &&
+      (!expectedSessionId || sessionRef.current?.sessionId === expectedSessionId)
     setLoading(true)
     setTranscriptLoading(true)
 
     try {
-      const [
-        stateResponse,
-        messagesResponse,
-        modelsResponse,
-        levelsResponse,
-        commandsResponse,
-        statsResponse,
-        entryPage,
-      ] = await Promise.all([
-        api.localPi.runtime.command({ type: 'get_state' }),
-        api.localPi.runtime.command({ type: 'get_messages' }),
+      // Model discovery can be slower than the transcript. Reuse it across
+      // history retries rather than running package discovery for each event.
+      const capabilities = Promise.all([
         api.localPi.runtime.command({ type: 'get_available_models' }),
         api.localPi.runtime.command({ type: 'get_available_thinking_levels' }),
         api.localPi.runtime.command({ type: 'get_commands' }),
-        api.localPi.runtime.command({ type: 'get_session_stats' }),
-        fetchEntryPage(expectedGeneration, expectedSessionId, false),
       ])
-      const nextSession = responseData(stateResponse, 'get_state')
-      const messageData = responseData(messagesResponse, 'get_messages')
-      const modelData = responseData(modelsResponse, 'get_available_models')
-      const levelData = responseData(
-        levelsResponse,
-        'get_available_thinking_levels',
-      )
-      const commandData = responseData(
-        commandsResponse,
-        'get_commands',
-      )
-      const nextStats = responseData(statsResponse, 'get_session_stats')
-      const current = runtimeRef.current
-      if (
-        nonce !== refreshNonce.current ||
-        projectionScopeKey.current !== expectedScopeKey ||
-        current?.state !== 'ready' ||
-        current.generation !== expectedGeneration ||
-        (expectedSessionId && sessionRef.current?.sessionId !== expectedSessionId) ||
-        (expectedSessionId && nextSession.sessionId !== expectedSessionId)
-      ) {
-        return
-      }
+      await refreshPiSnapshot({
+        isCurrent,
+        watermark: () => snapshotWatermark.current,
+        read: () => Promise.all([
+          api.localPi.runtime.command({ type: 'get_state' }),
+          api.localPi.runtime.command({ type: 'get_messages' }),
+          api.localPi.runtime.command({ type: 'get_session_stats' }),
+          fetchEntryPage(expectedGeneration, expectedSessionId, false),
+          capabilities,
+        ]),
+        apply: ([stateResponse, messagesResponse, statsResponse, entryPage, [modelsResponse, levelsResponse, commandsResponse]], startedAt) => {
+          const nextSession = reconcilePiSessionSnapshot(
+            responseData(stateResponse, 'get_state'),
+            sessionRef.current,
+            startedAt,
+            snapshotWatermark.current,
+          )
+          const messageData = responseData(messagesResponse, 'get_messages')
+          const modelData = responseData(modelsResponse, 'get_available_models')
+          const levelData = responseData(
+            levelsResponse,
+            'get_available_thinking_levels',
+          )
+          const commandData = responseData(
+            commandsResponse,
+            'get_commands',
+          )
+          const nextStats = responseData(statsResponse, 'get_session_stats')
+          if (expectedSessionId && nextSession.sessionId !== expectedSessionId) return
 
-      commitSession(nextSession)
-      setModels(modelData.models)
-      setThinkingLevels(levelData.levels)
-      setCommands(commandData.commands)
-      setStats(nextStats)
-      setTranscriptLoading(false)
-      const nextProjection = replaceLocalPiProjectorSnapshot(projectionRef.current, {
-        generation: expectedGeneration,
-        sessionId: nextSession.sessionId,
-        messages: messageData.messages,
-        entrySnapshot: mergeLocalPiEntrySnapshot(entryPage.appendTo, {
-          generation: expectedGeneration,
-          sessionId: nextSession.sessionId,
-          entries: entryPage.entries,
-          leafId: entryPage.leafId,
-          append: entryPage.append,
-        }),
-        pendingMessageCount: nextSession.pendingMessageCount,
-        isStreaming: nextSession.isStreaming,
-        isCompacting: nextSession.isCompacting,
-      })
-      restoreActiveResponseProvenance(
-        nextProjection,
-        expectedScopeKey,
-        nextSession.isStreaming || nextProjection.isTurnActive,
-      )
-      commitProjection(nextProjection)
-      setCompacting(nextSession.isCompacting)
-      setError(null)
-      commitHydration({
-        scopeKey: expectedScopeKey,
-        generation: expectedGeneration,
-        sessionId: nextSession.sessionId,
-        status: 'ready',
-        error: null,
+          commitSession(nextSession)
+          setModels(modelData.models)
+          setThinkingLevels(levelData.levels)
+          setCommands(commandData.commands)
+          setStats(nextStats)
+          setTranscriptLoading(false)
+          const nextProjection = reconcilePiProjectorSnapshot(projectionRef.current, {
+            generation: expectedGeneration,
+            sessionId: nextSession.sessionId,
+            messages: messageData.messages,
+            entrySnapshot: mergeLocalPiEntrySnapshot(entryPage.appendTo, {
+              generation: expectedGeneration,
+              sessionId: nextSession.sessionId,
+              entries: entryPage.entries,
+              leafId: entryPage.leafId,
+              append: entryPage.append,
+            }),
+            pendingMessageCount: nextSession.pendingMessageCount,
+            isStreaming: nextSession.isStreaming,
+            isCompacting: nextSession.isCompacting,
+          }, startedAt, snapshotWatermark.current)
+          restoreActiveResponseProvenance(
+            nextProjection,
+            expectedScopeKey,
+            nextSession.isStreaming || nextProjection.isTurnActive,
+          )
+          commitProjection(nextProjection)
+          setCompacting(nextSession.isCompacting)
+          setError(null)
+          commitHydration({
+            scopeKey: expectedScopeKey,
+            generation: expectedGeneration,
+            sessionId: nextSession.sessionId,
+            status: 'ready',
+            error: null,
+          })
+        },
       })
     } catch (caught) {
-      const current = runtimeRef.current
-      if (
-        nonce === refreshNonce.current &&
-        projectionScopeKey.current === expectedScopeKey &&
-        current?.generation === expectedGeneration
-      ) {
+      if (isCurrent()) {
         const message = errorMessage(caught)
         setError(message)
         setTranscriptLoading(false)
@@ -1400,7 +1432,7 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
       }
       throw caught
     } finally {
-      if (nonce === refreshNonce.current) setLoading(false)
+      if (isCurrent()) setLoading(false)
     }
   }, [activeScopeKey, api, commitHydration, commitProjection, commitSession, fetchEntryPage, restoreActiveResponseProvenance])
 
@@ -1410,62 +1442,117 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
     const expectedScopeKey = activeScopeKey
     const expectedGeneration = expected.generation
     const expectedSessionId = expected.sessionState?.sessionId ?? sessionRef.current?.sessionId
+    const expectedOwnerRevision = commandOwnerRevision.current
     const nonce = ++conversationRefreshNonce.current
+    const isCurrent = () => nonce === conversationRefreshNonce.current &&
+      commandOwnerRevision.current === expectedOwnerRevision &&
+      projectionScopeKey.current === expectedScopeKey &&
+      runtimeRef.current?.state === 'ready' &&
+      runtimeRef.current.generation === expectedGeneration &&
+      (!expectedSessionId || sessionRef.current?.sessionId === expectedSessionId)
     try {
-      const [stateResponse, messagesResponse, statsResponse, entryPage] = await Promise.all([
-        api.localPi.runtime.command({ type: 'get_state' }),
-        api.localPi.runtime.command({ type: 'get_messages' }),
-        api.localPi.runtime.command({ type: 'get_session_stats' }),
-        fetchEntryPage(expectedGeneration, expectedSessionId, true),
-      ])
-      const nextSession = responseData(stateResponse, 'get_state')
-      const messageData = responseData(messagesResponse, 'get_messages')
-      const nextStats = responseData(statsResponse, 'get_session_stats')
-      if (
-        nonce !== conversationRefreshNonce.current ||
-        projectionScopeKey.current !== expectedScopeKey ||
-        runtimeRef.current?.generation !== expectedGeneration ||
-        (expectedSessionId && sessionRef.current?.sessionId !== expectedSessionId) ||
-        (expectedSessionId && nextSession.sessionId !== expectedSessionId)
-      ) {
-        return
-      }
-      commitSession(nextSession)
-      setStats(nextStats)
-      setTranscriptLoading(false)
-      const nextProjection = replaceLocalPiProjectorSnapshot(projectionRef.current, {
-        generation: expectedGeneration,
-        sessionId: nextSession.sessionId,
-        messages: messageData.messages,
-        entrySnapshot: mergeLocalPiEntrySnapshot(entryPage.appendTo, {
-          generation: expectedGeneration,
-          sessionId: nextSession.sessionId,
-          entries: entryPage.entries,
-          leafId: entryPage.leafId,
-          append: entryPage.append,
-        }),
-        pendingMessageCount: nextSession.pendingMessageCount,
-        isStreaming: nextSession.isStreaming,
-        isCompacting: nextSession.isCompacting,
+      await refreshPiSnapshot({
+        isCurrent,
+        watermark: () => snapshotWatermark.current,
+        read: () => Promise.all([
+          api.localPi.runtime.command({ type: 'get_state' }),
+          api.localPi.runtime.command({ type: 'get_messages' }),
+          api.localPi.runtime.command({ type: 'get_session_stats' }),
+          fetchEntryPage(expectedGeneration, expectedSessionId, true),
+        ]),
+        apply: ([stateResponse, messagesResponse, statsResponse, entryPage], startedAt) => {
+          const nextSession = reconcilePiSessionSnapshot(
+            responseData(stateResponse, 'get_state'),
+            sessionRef.current,
+            startedAt,
+            snapshotWatermark.current,
+          )
+          const messageData = responseData(messagesResponse, 'get_messages')
+          const nextStats = responseData(statsResponse, 'get_session_stats')
+          if (expectedSessionId && nextSession.sessionId !== expectedSessionId) return
+          commitSession(nextSession)
+          setStats(nextStats)
+          setTranscriptLoading(false)
+          const nextProjection = reconcilePiProjectorSnapshot(projectionRef.current, {
+            generation: expectedGeneration,
+            sessionId: nextSession.sessionId,
+            messages: messageData.messages,
+            entrySnapshot: mergeLocalPiEntrySnapshot(entryPage.appendTo, {
+              generation: expectedGeneration,
+              sessionId: nextSession.sessionId,
+              entries: entryPage.entries,
+              leafId: entryPage.leafId,
+              append: entryPage.append,
+            }),
+            pendingMessageCount: nextSession.pendingMessageCount,
+            isStreaming: nextSession.isStreaming,
+            isCompacting: nextSession.isCompacting,
+          }, startedAt, snapshotWatermark.current)
+          restoreActiveResponseProvenance(
+            nextProjection,
+            expectedScopeKey,
+            nextSession.isStreaming || nextProjection.isTurnActive,
+          )
+          commitProjection(nextProjection)
+          setError(null)
+        },
       })
-      restoreActiveResponseProvenance(
-        nextProjection,
-        expectedScopeKey,
-        nextSession.isStreaming || nextProjection.isTurnActive,
-      )
-      commitProjection(nextProjection)
-      setError(null)
     } catch (caught) {
-      if (
-        nonce === conversationRefreshNonce.current &&
-        projectionScopeKey.current === expectedScopeKey &&
-        runtimeRef.current?.generation === expectedGeneration &&
-        (!expectedSessionId || sessionRef.current?.sessionId === expectedSessionId)
-      ) {
+      if (isCurrent()) {
         setError(errorMessage(caught))
       }
     }
   }, [activeScopeKey, api, commitProjection, commitSession, fetchEntryPage, restoreActiveResponseProvenance])
+
+  const prepareResponseActivityProvenance = React.useCallback(async () => {
+    const expected = projectionRef.current
+    const expectedScopeKey = projectionScopeKey.current
+    const expectedSnapshot = expected.entrySnapshot
+    const page = await fetchEntryPage(expected.generation, expected.sessionId, true)
+    return () => {
+      if (
+        projectionScopeKey.current !== expectedScopeKey ||
+        runtimeRef.current?.generation !== expected.generation ||
+        sessionRef.current?.sessionId !== expected.sessionId
+      ) return 'stale' as const
+      const current = projectionRef.current
+      const next = hydrateLocalPiProjectorEntrySnapshot(
+        current,
+        mergeLocalPiEntrySnapshot(page.appendTo, {
+          generation: expected.generation,
+          sessionId: expected.sessionId,
+          entries: page.entries,
+          leafId: page.leafId,
+          append: page.append,
+        }),
+        expectedSnapshot,
+      )
+      // A rejected page must not clear or rebind the current response owner.
+      if (next === current) return 'conflict' as const
+      restoreActiveResponseProvenance(
+        next,
+        expectedScopeKey,
+        Boolean(sessionRef.current?.isStreaming || next.isStreaming || next.isTurnActive),
+      )
+      commitProjection(next)
+      return 'applied' as const
+    }
+  }, [commitProjection, fetchEntryPage, restoreActiveResponseProvenance])
+
+  const responseProvenanceRefreshQueue = React.useRef<ReturnType<typeof createProvenanceRefreshQueue> | null>(null)
+  React.useEffect(() => {
+    const queue = createProvenanceRefreshQueue({
+      ownerRevision: () => commandOwnerRevision.current,
+      prepare: prepareResponseActivityProvenance,
+    })
+    responseProvenanceRefreshQueue.current = queue
+    return () => {
+      queue.dispose()
+      if (responseProvenanceRefreshQueue.current === queue) responseProvenanceRefreshQueue.current = null
+    }
+  }, [prepareResponseActivityProvenance])
+  const refreshResponseActivityProvenance = React.useCallback(() =>
+    responseProvenanceRefreshQueue.current?.request(), [])
 
   const applyRuntime = React.useCallback((snapshot: LocalPiRuntimeSnapshot) => {
     // Main already projects only the selected Runtime. Its per-Runtime
@@ -1482,7 +1569,9 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
     const sessionChanged = previous?.generation === snapshot.generation
       && activeSessionId !== undefined
       && snapshot.sessionState?.sessionId !== undefined
-      && snapshot.sessionState.sessionId !== activeSessionId
+      && (snapshot.sessionState.sessionId !== activeSessionId ||
+        (snapshot.sessionFile !== null && previous?.sessionFile !== null &&
+          snapshot.sessionFile !== previous?.sessionFile))
     const processInvalidated = previous?.state === 'ready' && snapshot.state !== 'ready'
     runtimeRef.current = snapshot
     setRuntime(snapshot)
@@ -1553,6 +1642,7 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
     if (envelope.generation !== runtimeRef.current?.generation) return
     const previousProjection = projectionRef.current
     const event = envelope.event
+    snapshotWatermark.current = advancePiSnapshotWatermark(snapshotWatermark.current, event)
     let nextProjection = applyLocalPiProjectorEvent(previousProjection, envelope)
     if (
       event.type === 'entry_appended' &&
@@ -1573,6 +1663,12 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
       }
     }
     commitProjection(nextProjection)
+    if (event.type === 'message_end' && event.message.role === 'user') {
+      // The SDK persists ordinary messages after message_end, without an
+      // entry_appended event. Resolve the user anchor now so pre-token status
+      // and notices leave their pending buffer before the provider replies.
+      void refreshResponseActivityProvenance()
+    }
     if (event.type === 'entry_appended' && event.entry.type === 'message' && event.entry.message.role === 'user') {
       const currentSessionId = sessionRef.current?.sessionId
       if (
@@ -1638,14 +1734,13 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
         const converting = queueConversion.current
         if (converting) {
           converting.latestOfficial = official
-          const reachedTarget = queueTexts(converting.steering).every(
-            (text, index) => official.steering[index] === text,
-          ) && official.steering.length === converting.steering.length &&
-            queueTexts(converting.followUp).every(
-              (text, index) => official.followUp[index] === text,
-            ) && official.followUp.length === converting.followUp.length
+          const reachedTarget = piQueueItemsMatchSnapshot(
+            official,
+            converting.steering,
+            converting.followUp,
+          )
           if (reachedTarget) {
-            queueConversion.current = null
+            clearQueueConversion(converting)
             commitQueue((previous) => ({
               ...previous,
               ...nextProjection.queue,
@@ -1798,10 +1893,12 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
   }, [
     acceptPendingPromptForScope,
     captureResponseActivity,
+    clearQueueConversion,
     commitProjection,
     commitSession,
     flushPendingPromptActivities,
     refreshConversation,
+    refreshResponseActivityProvenance,
     settleResponseActivities,
   ])
 
@@ -2043,11 +2140,12 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
     return () => {
       disposed = true
       refreshNonce.current += 1
+      clearQueueConversion()
       detachRuntime()
       detachEvents()
       detachExtension()
     }
-  }, [api, applyEvent, applyExtensionRequest, applyRuntime, commitHydration])
+  }, [api, applyEvent, applyExtensionRequest, applyRuntime, clearQueueConversion, commitHydration])
 
   React.useEffect(() => {
     document.title = extensionTitle || 'PiPilot'
@@ -2055,6 +2153,100 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
       document.title = 'PiPilot'
     }
   }, [extensionTitle])
+
+  const mutateQueue = React.useCallback(async (
+    current: PiQueueSnapshot,
+    next: {
+      steering: readonly PiQueuedMessage[]
+      followUp: readonly PiQueuedMessage[]
+    },
+    command: Extract<LocalPiRendererRpcCommand,
+      { type: 'promote_follow_up' | 'remove_queued_message' }>,
+  ) => {
+    if (queueConversion.current) {
+      throw new Error('Another pending-message update is still settling.')
+    }
+    const conversion: PiQueueConversion = {
+      steering: next.steering,
+      followUp: next.followUp,
+      latestOfficial: null,
+      settleTimer: null,
+    }
+    queueConversion.current = conversion
+    try {
+      await runCommand(command)
+      if (queueConversion.current === conversion) {
+        // Queue events and command responses are separate IPC streams. Keep
+        // the guard alive until Pi publishes the target queue so locally
+        // retained image payloads survive intermediate clear/rebuild events.
+        commitQueue({
+          ...current,
+          pendingCount: next.steering.length + next.followUp.length,
+          steering: queueTexts(next.steering),
+          followUp: queueTexts(next.followUp),
+          steeringItems: next.steering,
+          followUpItems: next.followUp,
+        })
+        if (sessionRef.current) {
+          const nextSession = {
+            ...sessionRef.current,
+            pendingMessageCount: next.steering.length + next.followUp.length,
+          }
+          sessionRef.current = nextSession
+          setSession(nextSession)
+        }
+        conversion.settleTimer = window.setTimeout(() => {
+          // Main verified the target queue before resolving the command. This
+          // bounded grace period lets its independent queue-event stream catch
+          // up without leaving all future mutations permanently blocked.
+          clearQueueConversion(conversion)
+        }, PI_QUEUE_MUTATION_SETTLE_MS)
+      }
+    } catch (caught) {
+      if (queueConversion.current === conversion) {
+        clearQueueConversion(conversion)
+        const latest = conversion.latestOfficial
+        if (latest) {
+          const steeringItems = reconcilePiQueuedMessages(
+            latest.steering,
+            current.steeringItems,
+            null,
+            nextQueueItemId,
+          )
+          const followUpItems = reconcilePiQueuedMessages(
+            latest.followUp,
+            current.followUpItems,
+            null,
+            nextQueueItemId,
+          )
+          commitQueue({
+            ...current,
+            pendingCount: latest.steering.length + latest.followUp.length,
+            detailsKnown: true,
+            steering: latest.steering,
+            followUp: latest.followUp,
+            steeringItems,
+            followUpItems,
+          })
+        }
+      }
+      throw caught
+    }
+  }, [clearQueueConversion, commitQueue, nextQueueItemId, runCommand])
+
+  const refreshModelCapabilities = React.useCallback(async (ownerRevision: number) => {
+    if (!api || commandOwnerRevision.current !== ownerRevision) return
+    const [stateResponse, levelsResponse] = await Promise.all([
+      api.localPi.runtime.command({ type: 'get_state' }),
+      api.localPi.runtime.command({ type: 'get_available_thinking_levels' }),
+    ])
+    if (commandOwnerRevision.current !== ownerRevision) return
+    const nextSession = responseData(stateResponse, 'get_state')
+    const nextLevels = responseData(levelsResponse, 'get_available_thinking_levels')
+    if (nextSession.sessionId !== sessionRef.current?.sessionId) return
+    commitSession(nextSession)
+    setThinkingLevels(nextLevels.levels)
+  }, [api, commitSession])
 
   const actions = React.useMemo<PiRpcActions>(() => ({
     async abort() {
@@ -2138,13 +2330,18 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
       }
     },
     async selectModel(provider, modelId) {
+      const ownerRevision = commandOwnerRevision.current
       const model = await runCommand({ type: 'set_model', provider, modelId })
+      if (ownerRevision !== commandOwnerRevision.current) return
       if (sessionRef.current) commitSession({ ...sessionRef.current, model })
-      await refresh().catch(() => undefined)
+      setThinkingLevels([])
+      await refreshModelCapabilities(ownerRevision)
     },
     async selectThinking(level) {
+      const ownerRevision = commandOwnerRevision.current
       await runCommand({ type: 'set_thinking_level', level })
-      await refresh().catch(() => undefined)
+      if (ownerRevision !== commandOwnerRevision.current) return
+      await refreshModelCapabilities(ownerRevision)
     },
     async send(text, action, images = []) {
       if (
@@ -2155,7 +2352,6 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
         const settledError = new Error(
           'Pi finished before the queued message was accepted.',
         )
-        setError(settledError.message)
         throw settledError
       }
       if (action !== 'prompt' && !text.trim()) {
@@ -2199,7 +2395,6 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
           }
           if (previousAcceptance) {
             const message = 'Pi is still accepting the previous prompt.'
-            setError(message)
             throw new Error(message)
           }
           if (previousPending) promotePendingPromptActivities(previousPending)
@@ -2283,6 +2478,11 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
       const current = queueRef.current
       if (
         !current.detailsKnown ||
+        !hasCompletePiQueuePayloads(
+          current.pendingCount,
+          current.steeringItems,
+          current.followUpItems,
+        ) ||
         !canPromotePiFollowUp(current.steeringItems, current.followUpItems)
       ) {
         throw new Error('This Follow-up cannot be promoted because its full payload is unavailable.')
@@ -2297,69 +2497,59 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
       )
       if (!promoted) throw new Error('The queued Follow-up no longer exists.')
 
-      const conversion = {
-        steering: promoted.steering,
-        followUp: promoted.followUp,
-        latestOfficial: null as {
-          steering: readonly string[]
-          followUp: readonly string[]
-        } | null,
-      }
-      queueConversion.current = conversion
       const payload = (items: readonly PiQueuedMessage[]) => items.map((item) => ({
         message: item.text,
         ...(item.images.length > 0 ? { images: [...item.images] } : {}),
       }))
-      try {
-        await runCommand({
+      await mutateQueue(
+        current,
+        promoted,
+        {
           type: 'promote_follow_up',
           followUpIndex: promoted.followUpIndex,
           steering: payload(current.steeringItems),
           followUp: payload(current.followUpItems),
-        })
-        if (queueConversion.current === conversion) {
-          // Command responses and queue events travel over separate IPC
-          // channels. Keep the conversion guard until the authoritative
-          // target snapshot arrives so delayed clear/rebuild events cannot
-          // erase locally retained image payloads.
-          commitQueue({
-            ...current,
-            steering: queueTexts(promoted.steering),
-            followUp: queueTexts(promoted.followUp),
-            steeringItems: promoted.steering,
-            followUpItems: promoted.followUp,
-          })
-        }
-      } catch (caught) {
-        if (queueConversion.current === conversion) {
-          queueConversion.current = null
-          const latest = conversion.latestOfficial
-          if (latest) {
-            const steeringItems = reconcilePiQueuedMessages(
-              latest.steering,
-              current.steeringItems,
-              null,
-              nextQueueItemId,
-            )
-            const followUpItems = reconcilePiQueuedMessages(
-              latest.followUp,
-              current.followUpItems,
-              null,
-              nextQueueItemId,
-            )
-            commitQueue({
-              ...current,
-              pendingCount: latest.steering.length + latest.followUp.length,
-              detailsKnown: true,
-              steering: latest.steering,
-              followUp: latest.followUp,
-              steeringItems,
-              followUpItems,
-            })
-          }
-        }
-        throw caught
+        },
+      )
+    },
+    async removeQueuedMessage(itemId) {
+      const current = queueRef.current
+      if (
+        !current.detailsKnown ||
+        !hasCompletePiQueuePayloads(
+          current.pendingCount,
+          current.steeringItems,
+          current.followUpItems,
+        )
+      ) {
+        throw new Error('This message cannot be removed because its full payload is unavailable.')
       }
+      if (!sessionRef.current?.isStreaming) {
+        throw new Error('Pi finished before the queued message could be removed.')
+      }
+      const removed = removePiQueuedMessageSnapshot(
+        current.steeringItems,
+        current.followUpItems,
+        itemId,
+      )
+      if (!removed) {
+        throw new Error('The queued message is unavailable or no longer exists.')
+      }
+      const payload = (items: readonly PiQueuedMessage[]) => items.map((item) => ({
+        message: item.text,
+        ...(item.images.length > 0 ? { images: [...item.images] } : {}),
+      }))
+      await mutateQueue(
+        current,
+        removed,
+        {
+          type: 'remove_queued_message',
+          kind: removed.kind,
+          itemIndex: removed.itemIndex,
+          steering: payload(current.steeringItems),
+          followUp: payload(current.followUpItems),
+        },
+      )
     },
     async setAutoCompaction(enabled) {
       await runCommand({ type: 'set_auto_compaction', enabled })
@@ -2389,9 +2579,11 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
       }
     },
     async setQueueMode(kind, mode) {
+      const ownerRevision = commandOwnerRevision.current
       await runCommand(kind === 'steering'
         ? { type: 'set_steering_mode', mode }
         : { type: 'set_follow_up_mode', mode })
+      if (ownerRevision !== commandOwnerRevision.current) return
       if (sessionRef.current) {
         commitSession({
           ...sessionRef.current,
@@ -2416,9 +2608,11 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
     commands,
     dialogs,
     nextQueueItemId,
+    mutateQueue,
     promotePendingPromptActivities,
     refresh,
     refreshConversation,
+    refreshModelCapabilities,
     restoreActiveResponseProvenance,
     runCommand,
   ])

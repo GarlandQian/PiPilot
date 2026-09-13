@@ -1,8 +1,7 @@
 import * as React from 'react'
 import {
   TbArrowUp,
-  TbBrain,
-  TbChevronDown,
+  TbLoader2,
   TbListDetails,
   TbPlayerStop,
   TbPlus,
@@ -10,24 +9,7 @@ import {
   TbX,
 } from 'react-icons/tb'
 import { Button } from '@/components/ui/button'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { MarkdownContent } from './markdown/MarkdownContent'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
@@ -37,7 +19,10 @@ import type {
   LocalPiSlashCommand,
   LocalPiThinkingLevel,
 } from '@/shared/local-pi'
-import type { ComposerSendShortcut } from '@/shared/settings'
+import type {
+  ComposerSendShortcut,
+  RunningSubmitPreference,
+} from '@/shared/settings'
 import type { WorkspacePathSearchResult } from '@/shared/workspace-content'
 import {
   attachmentsToPiImagesIfCurrent,
@@ -86,8 +71,15 @@ import {
   transitionComposerPickerActiveId,
   type ComposerPickerRow,
 } from '@/renderer/composer/composer-picker'
-import type { PiQueuedMessage } from '@/renderer/pi-rpc/queue-payloads'
+import {
+  deriveComposerActionState,
+  type ComposerQueueMode,
+  type ComposerQueueState,
+  type ComposerSubmitAction,
+} from '@/renderer/composer/composer-controls'
+import { useConversationOperationFeedback } from '@/renderer/composer/use-operation-feedback'
 import { ModelPicker, type PiModelOption } from './ModelPicker'
+import { PendingMessageRail } from './PendingMessageRail'
 import {
   ComposerEditor,
   type ComposerEditorChange,
@@ -99,44 +91,15 @@ import {
 } from './ComposerMentionPicker'
 import { COMPOSER_SLASH_LISTBOX_ID, SkillPicker } from './SkillPicker'
 
-type SubmitAction = 'prompt' | 'follow_up' | 'steer'
-type QueueMode = 'all' | 'one-at-a-time'
+type SubmitAction = ComposerSubmitAction
 
-export interface ComposerSubmitMode {
-  action: Extract<SubmitAction, 'prompt' | 'follow_up'>
-  allowsSteer: boolean
-  kind: 'send' | 'queue' | 'run-now'
-}
-
-export function deriveComposerSubmitMode(
-  isStreaming: boolean,
-  hasExtensionCommand: boolean,
-): ComposerSubmitMode {
-  if (!isStreaming) {
-    return { action: 'prompt', allowsSteer: false, kind: 'send' }
-  }
-  if (hasExtensionCommand) {
-    return { action: 'prompt', allowsSteer: false, kind: 'run-now' }
-  }
-  return { action: 'follow_up', allowsSteer: true, kind: 'queue' }
-}
+export type { ComposerQueueState } from '@/renderer/composer/composer-controls'
 
 export type ComposerCommandCatalogState =
   | { state: 'unavailable' }
   | { state: 'loading' }
   | { state: 'error'; message: string }
   | { state: 'ready' }
-
-export interface ComposerQueueState {
-  pendingCount: number
-  detailsKnown: boolean
-  steering: readonly string[]
-  followUp: readonly string[]
-  steeringItems: readonly PiQueuedMessage[]
-  followUpItems: readonly PiQueuedMessage[]
-  steeringMode: QueueMode
-  followUpMode: QueueMode
-}
 
 export interface ComposerMentionInsertionRequest {
   candidate: ComposerPathMentionCandidate
@@ -148,6 +111,7 @@ export interface ComposerProps {
   connected: boolean
   loadingModels: boolean
   modelError?: string | null
+  availabilityError?: string | null
   selectedModel: PiModelOption | null
   models: readonly PiModelOption[]
   isStreaming: boolean
@@ -159,7 +123,9 @@ export interface ComposerProps {
   draftReplacement?: { revision: number; text: string } | null
   mentionInsertionRequest?: ComposerMentionInsertionRequest | null
   scopeKey: string
+  operationOwnerKey?: string
   sendShortcut: ComposerSendShortcut
+  runningSubmitPreference: RunningSubmitPreference
   supportsImages: boolean
   onModelChange(providerId: string, modelId: string): void | Promise<void>
   onSubmit(
@@ -169,8 +135,10 @@ export interface ComposerProps {
   ): Promise<void>
   onStop(): void | Promise<void>
   onThinkingChange(level: LocalPiThinkingLevel): void | Promise<void>
-  onSetQueueMode(kind: 'steering' | 'followUp', mode: QueueMode): Promise<void>
+  onRunningSubmitPreferenceChange(value: RunningSubmitPreference): void
+  onSetQueueMode(kind: 'steering' | 'followUp', mode: ComposerQueueMode): Promise<void>
   onPromoteFollowUp(itemId: string): Promise<void>
+  onRemoveQueuedMessage(itemId: string): Promise<void>
   onCompleteCommandArguments?(
     commandName: string,
     argumentPrefix: string,
@@ -466,262 +434,6 @@ function commandName(text: string) {
   return token?.startsWith('/') ? token.slice(1) : ''
 }
 
-function QueueList({
-  label,
-  items,
-  busy,
-  canPromote,
-  onPromote,
-}: {
-  label: string
-  items: readonly PiQueuedMessage[]
-  busy: boolean
-  canPromote: boolean
-  onPromote?: (itemId: string) => void
-}) {
-  const t = useT()
-  if (items.length === 0) return null
-  return (
-    <section>
-      <h3 className="px-1 pb-1 text-micro font-medium text-muted-foreground">
-        {label}
-      </h3>
-      <ul className="divide-y divide-border/70">
-        {items.map((item) => (
-          <li
-            key={item.id}
-            className="flex min-w-0 items-start gap-2 px-1 py-1.5"
-          >
-            <div className="min-w-0 flex-1">
-              <p title={item.text} className="truncate text-caption text-foreground">
-                {item.text}
-              </p>
-              {item.images.length > 0 ? (
-                <div className="mt-1 flex gap-1" data-queue-image-list>
-                  {item.images.map((image, index) => (
-                    <img
-                      key={`${image.mimeType}:${index}`}
-                      src={`data:${image.mimeType};base64,${image.data}`}
-                      alt={t('composer.queueImageAlt', { index: index + 1 })}
-                      className="h-8 w-8 rounded-sm border border-border object-cover"
-                      data-queue-image
-                    />
-                  ))}
-                </div>
-              ) : null}
-            </div>
-            {onPromote ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-xs"
-                    className="shrink-0"
-                    disabled={busy || !canPromote}
-                    aria-label={t('composer.promoteToSteer')}
-                    onClick={() => onPromote(item.id)}
-                  >
-                    <TbRoute aria-hidden />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {canPromote
-                    ? t('composer.promoteToSteer')
-                    : t('composer.promoteUnavailable')}
-                </TooltipContent>
-              </Tooltip>
-            ) : null}
-          </li>
-        ))}
-      </ul>
-    </section>
-  )
-}
-
-function QueueModeControl({
-  label,
-  value,
-  onChange,
-}: {
-  label: string
-  value: QueueMode
-  onChange(mode: QueueMode): void
-}) {
-  const t = useT()
-  return (
-    <div className="flex items-center justify-between gap-2">
-      <span className="text-micro text-muted-foreground">{label}</span>
-      <div className="flex rounded-md border border-border p-0.5" role="group" aria-label={label}>
-        {(['one-at-a-time', 'all'] as const).map((mode) => (
-          <button
-            key={mode}
-            type="button"
-            aria-pressed={value === mode}
-            className="h-6 rounded-sm px-1.5 text-micro text-muted-foreground outline-none transition-colors duration-(--duration-fast) hover:text-foreground focus-visible:focus-ring aria-pressed:bg-accent aria-pressed:text-foreground motion-reduce:transition-none"
-            onClick={() => onChange(mode)}
-          >
-            {t(mode === 'all' ? 'composer.queueMode.all' : 'composer.queueMode.one')}
-          </button>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function QueuePopover({
-  queue,
-  onSetQueueMode,
-  onPromoteFollowUp,
-}: {
-  queue: ComposerQueueState
-  onSetQueueMode: ComposerProps['onSetQueueMode']
-  onPromoteFollowUp: ComposerProps['onPromoteFollowUp']
-}) {
-  const t = useT()
-  const [busy, setBusy] = React.useState(false)
-  const [error, setError] = React.useState<string | null>(null)
-  if (queue.pendingCount === 0) return null
-
-  const setMode = (kind: 'steering' | 'followUp', mode: QueueMode) => {
-    if (busy) return
-    setBusy(true)
-    setError(null)
-    void onSetQueueMode(kind, mode)
-      .catch(() => setError(t('composer.queueActionFailed')))
-      .finally(() => setBusy(false))
-  }
-
-  const promote = (itemId: string) => {
-    if (busy) return
-    setBusy(true)
-    setError(null)
-    void onPromoteFollowUp(itemId)
-      .catch(() => setError(t('composer.queueActionFailed')))
-      .finally(() => setBusy(false))
-  }
-
-  const canPromote = queue.detailsKnown &&
-    [...queue.steeringItems, ...queue.followUpItems]
-      .every((item) => item.locallyOwned)
-
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="relative tabular-nums"
-          aria-label={t('composer.queueOpen', { count: queue.pendingCount })}
-        >
-          <TbListDetails aria-hidden />
-          <span
-            aria-hidden
-            className="absolute -right-0.5 -top-0.5 grid min-w-4 place-items-center rounded-full bg-muted px-1 text-micro leading-4 text-foreground"
-          >
-            {queue.pendingCount > 99 ? '99+' : queue.pendingCount}
-          </span>
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent
-        align="end"
-        collisionPadding={12}
-        className="w-[min(340px,calc(100vw-24px))] p-2"
-      >
-        <div className="scroll-slim flex max-h-48 flex-col gap-2 overflow-y-auto">
-          {queue.detailsKnown ? (
-            <>
-              <QueueList
-                label={t('composer.steering')}
-                items={queue.steeringItems}
-                busy={busy}
-                canPromote={canPromote}
-              />
-              <QueueList
-                label={t('composer.followUp')}
-                items={queue.followUpItems}
-                busy={busy}
-                canPromote={canPromote}
-                onPromote={promote}
-              />
-            </>
-          ) : (
-            <p className="px-1 py-2 text-caption text-muted-foreground">
-              {t('composer.queueCountOnly', { count: queue.pendingCount })}
-            </p>
-          )}
-        </div>
-        {error ? (
-          <p role="alert" className="mt-2 border-t border-border px-1 pt-2 text-micro text-destructive">
-            {error}
-          </p>
-        ) : null}
-        <div className="mt-2 flex flex-col gap-1.5 border-t border-border pt-2 aria-disabled:opacity-50" aria-disabled={busy}>
-          <QueueModeControl
-            label={t('composer.steering')}
-            value={queue.steeringMode}
-            onChange={(mode) => setMode('steering', mode)}
-          />
-          <QueueModeControl
-            label={t('composer.followUp')}
-            value={queue.followUpMode}
-            onChange={(mode) => setMode('followUp', mode)}
-          />
-        </div>
-      </PopoverContent>
-    </Popover>
-  )
-}
-
-function ThinkingPicker({
-  connected,
-  levels,
-  selected,
-  onSelect,
-}: {
-  connected: boolean
-  levels: readonly LocalPiThinkingLevel[]
-  selected: LocalPiThinkingLevel | null
-  onSelect(level: LocalPiThinkingLevel): void | Promise<void>
-}) {
-  const t = useT()
-  const [selecting, setSelecting] = React.useState(false)
-
-  if (!selected || levels.length === 0) return null
-
-  return (
-    <Select
-      value={selected}
-      disabled={!connected || selecting}
-      onValueChange={(value) => {
-        if (selecting || value === selected) return
-        setSelecting(true)
-        void Promise.resolve(onSelect(value as LocalPiThinkingLevel))
-          .catch(() => undefined)
-          .finally(() => setSelecting(false))
-      }}
-    >
-      <SelectTrigger
-        size="sm"
-        aria-label={t('settings.models.thinkingTitle')}
-        className="h-8 min-w-0 max-w-28 gap-1 border-0 bg-transparent px-2 py-0 text-caption shadow-none hover:bg-accent focus-visible:focus-ring dark:bg-transparent dark:hover:bg-accent/50"
-      >
-        <TbBrain className="size-3.5" aria-hidden />
-        <SelectValue>
-          {t(`settings.models.thinking.${selected}`)}
-        </SelectValue>
-      </SelectTrigger>
-      <SelectContent side="top" align="start" position="popper" sideOffset={8}>
-        {levels.map((level) => (
-          <SelectItem key={level} value={level}>
-            {t(`settings.models.thinking.${level}`)}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  )
-}
-
 function imageValidationMessage(
   error: ComposerImageValidationError,
   t: ReturnType<typeof useT>,
@@ -749,6 +461,7 @@ export function Composer({
   connected,
   loadingModels,
   modelError,
+  availabilityError,
   selectedModel,
   models,
   isStreaming,
@@ -760,14 +473,18 @@ export function Composer({
   draftReplacement,
   mentionInsertionRequest,
   scopeKey,
+  operationOwnerKey = scopeKey,
   sendShortcut,
+  runningSubmitPreference,
   supportsImages,
   onModelChange,
   onSubmit,
   onStop,
   onThinkingChange,
+  onRunningSubmitPreferenceChange,
   onSetQueueMode,
   onPromoteFollowUp,
+  onRemoveQueuedMessage,
   onCompleteCommandArguments,
   onSearchContext,
 }: ComposerProps) {
@@ -776,8 +493,10 @@ export function Composer({
   const [editorChange, setEditorChange] = React.useState(initialEditorChange)
   const [attachments, setAttachments] = React.useState<ComposerImageAttachment[]>([])
   const [dragging, setDragging] = React.useState(false)
-  const [submitting, setSubmitting] = React.useState(false)
   const [submitError, setSubmitError] = React.useState<string | null>(null)
+  const submitFeedback = useConversationOperationFeedback(operationOwnerKey)
+  const stopFeedback = useConversationOperationFeedback(operationOwnerKey)
+  const submitting = Boolean(submitFeedback.pending)
   const [commandPickerOpen, setCommandPickerOpen] = React.useState(false)
   const [slashActiveId, setSlashActiveId] = React.useState<string | null>(null)
   const [commandArgumentState, setCommandArgumentState] =
@@ -811,7 +530,6 @@ export function Composer({
     // mentions and async candidate results are reset below.
     editorRef.current?.removeMentions()
     setSubmitError(null)
-    setSubmitting(false)
     setCommandPickerOpen(false)
     setSlashActiveId(null)
     setCommandArgumentState({ state: 'absent' })
@@ -1140,9 +858,7 @@ export function Composer({
   }, [hasContextSource, mentionSuggestion, onSearchContext, scopeKey])
 
   const focusEditor = React.useCallback((position: 'current' | 'end' = 'end') => {
-    window.requestAnimationFrame(() => {
-      editorRef.current?.focus(position)
-    })
+    editorRef.current?.focus(position)
   }, [])
 
   React.useEffect(() => {
@@ -1373,6 +1089,7 @@ export function Composer({
   }, [])
 
   const dispatch = React.useCallback(async (action: SubmitAction) => {
+    if (!connected || submitting) return
     const capturedDocument: ComposerDocumentSnapshot = editorRef.current?.capture() ?? editorChange
     const message = serializeComposerDocument(capturedDocument)
     const capturedAttachments = attachmentSnapshot.current
@@ -1397,16 +1114,15 @@ export function Composer({
       return
     }
     const capturedScopeKey = scopeKeyRef.current
-    setSubmitting(true)
     setSubmitError(null)
-    try {
+    await submitFeedback.run(action, async (isCurrent) => {
       const images = await attachmentsToPiImagesIfCurrent(
         capturedAttachments,
-        () => scopeKeyRef.current === capturedScopeKey,
+        () => isCurrent() && scopeKeyRef.current === capturedScopeKey,
       )
-      if (!images) return
+      if (!images || !isCurrent()) return
       await onSubmit(message, action, images)
-      if (scopeKeyRef.current !== capturedScopeKey) return
+      if (!isCurrent() || scopeKeyRef.current !== capturedScopeKey) return
       const currentDocument = editorRef.current?.capture()
       if (currentDocument && shouldClearCapturedComposer(
         capturedScopeKey,
@@ -1424,26 +1140,32 @@ export function Composer({
       })
       attachmentSnapshot.current = remainingAttachments
       setAttachments(remainingAttachments)
-    } catch (error) {
-      if (scopeKeyRef.current === capturedScopeKey) {
-        setSubmitError(error instanceof Error ? error.message : t('composer.sendFailed'))
-      }
-    } finally {
-      if (scopeKeyRef.current === capturedScopeKey) setSubmitting(false)
-    }
+    }, t('composer.sendFailed'))
   }, [
-    attachments,
+    connected,
     editorChange,
     officialExecutableNames,
     onSubmit,
     submitting,
+    submitFeedback.run,
     supportsImages,
     t,
   ])
 
-  const submitMode = deriveComposerSubmitMode(isStreaming, Boolean(extensionCommand))
+  const actionState = deriveComposerActionState({
+    ready: connected,
+    isStreaming,
+    hasExtensionCommand: Boolean(extensionCommand),
+    runningSubmitPreference,
+    hasContent: editorChange.hasContent,
+    imageCount: attachments.length,
+    supportsImages,
+    hasConflict: Boolean(submissionConflict),
+    submitting,
+    stopping: Boolean(stopFeedback.pending),
+  })
+  const submitMode = actionState.submit
   const primaryAction = submitMode.action
-  const hasSubmission = Boolean(editorChange.hasContent || attachments.length > 0)
 
   const handleEditorKeyDown = React.useCallback((event: KeyboardEvent) => {
     if (commandPickerOpen) {
@@ -1486,10 +1208,11 @@ export function Composer({
       }
     }
     if (!isComposerSendShortcut(event, sendShortcut)) return false
-    void dispatch(primaryAction)
+    if (actionState.canSubmit) void dispatch(primaryAction)
     return true
   }, [
     activeSlashId,
+    actionState.canSubmit,
     closeCommandPicker,
     commandPickerOpen,
     commandArgumentCandidateById,
@@ -1504,25 +1227,48 @@ export function Composer({
   ])
 
   const stop = React.useCallback(async () => {
-    setSubmitError(null)
-    try {
-      await onStop()
-    } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : t('composer.sendFailed'))
-    }
-  }, [onStop, t])
+    if (!actionState.canStop) return
+    await stopFeedback.run('stop', () => onStop(), t('composer.stopFailed'))
+  }, [actionState.canStop, onStop, stopFeedback.run, t])
 
-  const visibleError = submitError ?? (submissionConflict ? conflictMessage : modelError)
+  const visibleError = submitError ?? submitFeedback.error ??
+    (submissionConflict ? conflictMessage : null) ??
+    (attachments.length > 0 && !supportsImages
+      ? t('composer.imageUnsupportedModel')
+      : primaryAction !== 'prompt' && attachments.length > 0 && !editorChange.hasContent
+        ? t('composer.queueImageNeedsText')
+        : null)
+  const submitLabel = t(submitMode.kind === 'queue'
+    ? 'composer.queue'
+    : submitMode.kind === 'steer'
+      ? 'composer.steer'
+      : submitMode.kind === 'run-now'
+        ? 'composer.runNow'
+        : 'composer.send')
+  const SubmitIcon = submitMode.kind === 'queue'
+    ? TbListDetails
+    : submitMode.kind === 'steer' ? TbRoute : TbArrowUp
 
   return (
-    <div data-composer-root className="shrink-0 bg-background px-3 pb-3 pt-2">
-      <div className="mx-auto min-w-0 w-full max-w-[920px]">
+    <div data-composer-root className="shrink-0 bg-background px-6 pb-4 pt-3">
+      <div className="mx-auto min-w-0 w-full max-w-(--conversation-width)">
+        <PendingMessageRail
+          key={operationOwnerKey}
+          operationOwnerKey={operationOwnerKey}
+          queue={queue}
+          runningSubmitPreference={runningSubmitPreference}
+          onRunningSubmitPreferenceChange={onRunningSubmitPreferenceChange}
+          onSetQueueMode={onSetQueueMode}
+          onPromoteFollowUp={onPromoteFollowUp}
+          onRemoveQueuedMessage={onRemoveQueuedMessage}
+        />
         <div
           data-composer-surface
           data-composer-mode={isStreaming ? 'running' : 'idle'}
           aria-busy={submitting}
           className={cn(
-            'min-w-0 rounded-lg border border-input bg-card transition-[border-color,box-shadow] duration-(--duration-fast) focus-within:border-sage/50 focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--color-sage)_10%,transparent)] motion-reduce:transition-none',
+            'min-w-0 border border-input/70 bg-composer shadow-(--shadow-composer) transition-colors duration-(--duration-fast) focus-within:border-ring/70 motion-reduce:transition-none',
+            queue.pendingCount > 0 ? 'rounded-b-(--radius-composer) rounded-t-none' : 'rounded-(--radius-composer)',
             dragging && 'border-sage bg-sage/5',
           )}
           onDragEnter={(event) => {
@@ -1659,7 +1405,7 @@ export function Composer({
           />
           <div
             data-composer-toolbar
-            className="flex min-h-10 min-w-0 items-center gap-1 px-2 pb-2 pt-0.5"
+            className="flex min-h-11 min-w-0 items-center gap-1 px-3 pb-2.5 pt-1"
           >
             <input
               ref={fileInput}
@@ -1690,107 +1436,82 @@ export function Composer({
                 {supportsImages ? t('composer.addFile') : t('composer.imageUnsupportedModel')}
               </TooltipContent>
             </Tooltip>
+            <div className="min-w-1 flex-1" />
             <ModelPicker
+              key={operationOwnerKey}
+              operationOwnerKey={operationOwnerKey}
               models={models}
               selected={selectedModel}
+              thinkingLevels={thinkingLevels}
+              selectedThinkingLevel={selectedThinkingLevel}
               connected={connected}
               loading={loadingModels}
               error={modelError}
               onSelect={onModelChange}
-            />
-            <ThinkingPicker
-              connected={connected}
-              levels={thinkingLevels}
-              selected={selectedThinkingLevel}
-              onSelect={onThinkingChange}
-            />
-            <QueuePopover
-              queue={queue}
-              onSetQueueMode={onSetQueueMode}
-              onPromoteFollowUp={onPromoteFollowUp}
+              onThinkingSelect={onThinkingChange}
             />
 
-            <div className="min-w-1 flex-1" />
-
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="default"
+                  size="icon-sm"
+                  className="shrink-0 rounded-full"
+                  onClick={() => void dispatch(submitMode.action)}
+                  disabled={!actionState.canSubmit}
+                  aria-label={submitLabel}
+                  data-composer-submit={submitMode.kind}
+                >
+                  {submitting
+                    ? <TbLoader2 className="animate-spin motion-reduce:animate-none" aria-hidden />
+                    : <SubmitIcon aria-hidden />}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{submitLabel}</TooltipContent>
+            </Tooltip>
             {isStreaming ? (
-              <div
-                className="flex h-8 shrink-0 items-center gap-1.5"
-                data-composer-running-actions
-              >
-                <div className="flex h-8 shrink-0 overflow-hidden rounded-md border border-border bg-background/60">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 rounded-none border-0 px-2.5 text-caption"
-                    disabled={!hasSubmission || submitting || Boolean(submissionConflict)}
-                    aria-label={submitMode.kind === 'run-now' ? t('composer.runNow') : t('composer.queue')}
-                    onClick={() => void dispatch(primaryAction)}
-                  >
-                    {submitMode.kind === 'run-now'
-                      ? <TbArrowUp aria-hidden />
-                      : <TbListDetails aria-hidden />}
-                    {submitMode.kind === 'run-now' ? t('composer.runNow') : t('composer.queue')}
-                  </Button>
-                  {submitMode.allowsSteer ? (
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon-xs"
-                          className="h-8 w-7 rounded-none border-l border-border"
-                          disabled={!hasSubmission || submitting || Boolean(submissionConflict)}
-                          aria-label={t('composer.moreSubmitActions')}
-                        >
-                          <TbChevronDown aria-hidden />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onSelect={() => void dispatch('steer')}>
-                          <TbRoute aria-hidden />
-                          {t('composer.steer')}
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  ) : null}
-                </div>
+              <div className="flex h-8 shrink-0 items-center" data-composer-running-actions>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
-                      variant="accent"
+                      variant="outline"
                       size="icon-sm"
-                      className="rounded-lg"
+                      className="rounded-full"
                       onClick={() => void stop()}
+                      disabled={!actionState.canStop}
                       aria-label={t('composer.stop')}
+                      aria-busy={Boolean(stopFeedback.pending)}
                     >
-                      <TbPlayerStop aria-hidden />
+                      {stopFeedback.pending
+                        ? <TbLoader2 className="animate-spin motion-reduce:animate-none" aria-hidden />
+                        : <TbPlayerStop aria-hidden />}
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>{t('composer.stop')}</TooltipContent>
                 </Tooltip>
               </div>
-            ) : (
-              <Button
-                variant="accent"
-                size="icon-sm"
-                className="rounded-lg"
-                onClick={() => void dispatch(submitMode.action)}
-                disabled={!hasSubmission || submitting || !connected || Boolean(submissionConflict)}
-                aria-label={t('composer.send')}
-              >
-                <TbArrowUp aria-hidden />
-              </Button>
-            )}
+            ) : null}
           </div>
         </div>
 
         {visibleError ? (
-          <p
+          <div
             id="composer-input-error"
-            className="mt-1.5 px-2 text-caption text-destructive"
+            className="mt-1.5 px-2 text-caption text-destructive [&_.md-body]:text-caption [&_.md-body]:text-destructive"
             role="alert"
           >
-            {visibleError}
-          </p>
+            <MarkdownContent markdown={visibleError} />
+          </div>
+        ) : null}
+        {stopFeedback.error ? (
+          <div className="mt-1.5 px-2 text-caption text-destructive [&_.md-body]:text-caption [&_.md-body]:text-destructive" role="alert" data-composer-stop-error>
+            <MarkdownContent markdown={stopFeedback.error} />
+          </div>
+        ) : null}
+        {availabilityError ? (
+          <div className="mt-1.5 px-2 text-caption text-destructive [&_.md-body]:text-caption [&_.md-body]:text-destructive" role="status" data-composer-availability-error>
+            <MarkdownContent markdown={availabilityError} />
+          </div>
         ) : null}
         <p className="mt-1.5 px-2 text-center text-micro text-muted-foreground">
           {t('composer.disclaimer')}

@@ -5,24 +5,19 @@ import {
   type ConversationScope,
   type SessionCatalogSelectionToken,
 } from '../../shared/conversation-scope'
-import type { PiRuntimeFrontend } from '../pi-host/pi-runtime-frontend'
+import type { LocalPiRuntimeSnapshot } from '../../shared/local-pi'
 import type { ConversationNavigationRepository } from '../repositories/conversation-navigation-repository'
 import {
   ConversationScopeError,
   conversationScopeKey,
   type ConversationScopeResolver,
 } from './conversation-scope-resolver'
-import type { OfficialPiSessionActivationService } from './official-pi-session-activation-service'
+import { OfficialPiSessionActivationError, type OfficialPiSessionActivationService } from './official-pi-session-activation-service'
 import type { OfficialPiSessionDeletionService } from './official-pi-session-deletion-service'
 
 type SessionActivationService = Pick<
   OfficialPiSessionActivationService,
   'open' | 'rename' | 'start'
->
-
-type ConversationRuntimeHost = Pick<
-  PiRuntimeFrontend,
-  'getState'
 >
 
 type SessionDeletionService = Pick<OfficialPiSessionDeletionService, 'delete'>
@@ -31,9 +26,9 @@ interface ConversationContextServiceOptions {
   activationService: SessionActivationService
   deletionService: SessionDeletionService
   navigationRepository: ConversationNavigationRepository
-  runtimeHost: ConversationRuntimeHost
   scopeResolver: ConversationScopeResolver
   disposeScope?(scope: ConversationScope): Promise<void>
+  onScopeDisposalError?(): void
 }
 
 export class ConversationContextService {
@@ -41,17 +36,17 @@ export class ConversationContextService {
   private readonly activationService: SessionActivationService
   private readonly deletionService: SessionDeletionService
   private readonly navigationRepository: ConversationNavigationRepository
-  private readonly runtimeHost: ConversationRuntimeHost
   private readonly scopeResolver: ConversationScopeResolver
   private readonly disposeScope: (scope: ConversationScope) => Promise<void>
+  private readonly onScopeDisposalError: () => void
 
   constructor(options: ConversationContextServiceOptions) {
     this.activationService = options.activationService
     this.deletionService = options.deletionService
     this.navigationRepository = options.navigationRepository
-    this.runtimeHost = options.runtimeHost
     this.scopeResolver = options.scopeResolver
     this.disposeScope = options.disposeScope ?? (async () => undefined)
+    this.onScopeDisposalError = options.onScopeDisposalError ?? (() => undefined)
   }
 
   getSnapshot() {
@@ -69,6 +64,7 @@ export class ConversationContextService {
       const persistedScope = this.navigationRepository.get().activeScope
       const scope = await this.availableStartupScope(persistedScope)
       const runtime = await this.activationService.start(scope)
+      this.confirmedActivation(scope, runtime)
       this.navigationRepository.setActiveScope(scope)
       return runtime
     })
@@ -81,16 +77,9 @@ export class ConversationContextService {
     return this.enqueue(async () => {
       const previousScope = this.navigationRepository.get().activeScope
       const runtime = await this.activationService.start(scope)
-      if (conversationScopeKey(previousScope) !== conversationScopeKey(scope)) {
-        await this.disposeScope(previousScope)
-      }
-      const state = await this.runtimeHost.getState()
-      this.navigationRepository.setActiveScope(scope)
-      return conversationActivationResultSchema.parse({
-        scope,
-        sessionId: state.sessionId,
-        generation: runtime.generation,
-      })
+      const result = this.confirmedActivation(scope, runtime)
+      await this.commitScope(scope, previousScope)
+      return result
     })
   }
 
@@ -105,10 +94,7 @@ export class ConversationContextService {
         scope,
         selectionToken,
       )
-      if (conversationScopeKey(previousScope) !== conversationScopeKey(scope)) {
-        await this.disposeScope(previousScope)
-      }
-      this.navigationRepository.setActiveScope(scope)
+      await this.commitScope(scope, previousScope)
       return result
     })
   }
@@ -129,6 +115,32 @@ export class ConversationContextService {
     const scope = conversationScopeSchema.parse(rawScope)
     return this.enqueue(() =>
       this.activationService.rename(scope, selectionToken, name))
+  }
+
+  private confirmedActivation(scope: ConversationScope, runtime: LocalPiRuntimeSnapshot) {
+    const result = conversationActivationResultSchema.safeParse({
+      scope,
+      generation: runtime.generation,
+      sessionId: runtime.sessionState?.sessionId,
+    })
+    if (runtime.state !== 'ready' || !result.success) {
+      throw new OfficialPiSessionActivationError(
+        'PI_SESSION_CONFIRMATION_FAILED',
+        'Pi did not confirm the activated conversation.',
+      )
+    }
+    return result.data
+  }
+
+  private async commitScope(scope: ConversationScope, previousScope: ConversationScope) {
+    this.navigationRepository.setActiveScope(scope)
+    if (conversationScopeKey(previousScope) === conversationScopeKey(scope)) return
+    try {
+      await this.disposeScope(previousScope)
+    } catch {
+      // Activation is already committed. Cleanup cannot restore the old scope.
+      try { this.onScopeDisposalError() } catch { /* isolate diagnostics */ }
+    }
   }
 
   private async availableStartupScope(scope: ConversationScope) {

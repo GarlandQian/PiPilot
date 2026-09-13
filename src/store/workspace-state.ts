@@ -104,7 +104,24 @@ export function isOfficialSessionOpeningRow(
     candidate.sessionId === summary.sessionId)
 }
 
-export function runtimeStatusForOfficialSession(
+export function isOfficialSessionActiveRow(
+  summary: OfficialPiSessionSummary,
+  siblings: readonly OfficialPiSessionSummary[],
+  activeScope: ConversationScope,
+  activeSessionId: string,
+  runtimeSelected = false,
+) {
+  if (!sameConversationScope(summary.scope, activeScope)) return false
+  if (runtimeSelected) return true
+  if (!activeSessionId || summary.sessionId !== activeSessionId) return false
+
+  return !siblings.some((candidate) =>
+    candidate !== summary &&
+    sameConversationScope(candidate.scope, summary.scope) &&
+    candidate.sessionId === summary.sessionId)
+}
+
+export function runtimeStateForOfficialSession(
   summary: OfficialPiSessionSummary,
   statuses: readonly LocalPiRuntimeSessionStatus[] | undefined,
   siblings: readonly OfficialPiSessionSummary[],
@@ -113,14 +130,22 @@ export function runtimeStatusForOfficialSession(
     sameConversationScope(status.scope, summary.scope)) ?? []
   const exact = scoped.find((status) =>
     status.selectionToken === summary.selectionToken)
-  if (exact) return exact.status
+  if (exact) return exact
 
   const duplicateSessionId = siblings.some((candidate) =>
     candidate !== summary && candidate.sessionId === summary.sessionId)
   if (duplicateSessionId) return undefined
 
   return scoped.find((status) =>
-    status.selectionToken === undefined && status.sessionId === summary.sessionId)?.status
+    status.selectionToken === undefined && status.sessionId === summary.sessionId)
+}
+
+export function runtimeStatusForOfficialSession(
+  summary: OfficialPiSessionSummary,
+  statuses: readonly LocalPiRuntimeSessionStatus[] | undefined,
+  siblings: readonly OfficialPiSessionSummary[],
+) {
+  return runtimeStateForOfficialSession(summary, statuses, siblings)?.status
 }
 
 export function deriveSessionActivityState({

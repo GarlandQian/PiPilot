@@ -93,6 +93,7 @@ async function fixture() {
     }
   })
   const disposeScope = vi.fn(async () => undefined)
+  const onScopeDisposalError = vi.fn()
   const rename = vi.fn(async (
     scope: ConversationScope,
     _selectionToken: string,
@@ -116,16 +117,15 @@ async function fixture() {
     },
     deletionService: { delete: deleteSession },
     navigationRepository: navigation,
-    runtimeHost: {
-      getState: async () => structuredClone(currentState),
-    },
     scopeResolver,
     disposeScope,
+    onScopeDisposalError,
   })
   return {
     deleteSession,
     disposeScope,
     navigation,
+    onScopeDisposalError,
     open,
     projectlessPath,
     rename,
@@ -176,6 +176,42 @@ describe('ConversationContextService', () => {
 
     expect(context.disposeScope).not.toHaveBeenCalled()
     expect(context.navigation.get().activeScope).toEqual(projectlessScope)
+  })
+
+  it('uses the exact confirmed activation result instead of rereading selected state', async () => {
+    const context = await fixture()
+    context.start.mockResolvedValueOnce(runtimeSnapshot(7, sessionState({ sessionId: 'confirmed-session' })))
+    context.setRuntimeState(sessionState({ sessionId: 'unrelated-selected-session' }))
+
+    await expect(context.service.newConversation(projectScope)).resolves.toEqual({
+      scope: projectScope, generation: 7, sessionId: 'confirmed-session',
+    })
+  })
+
+  it.each(['new', 'open'] as const)('keeps committed %s navigation when old terminal cleanup fails', async (operation) => {
+    const context = await fixture()
+    context.disposeScope.mockImplementationOnce(async () => {
+      expect(context.navigation.get().activeScope).toEqual(projectScope)
+      throw new Error('Terminal cleanup failed after activation.')
+    })
+    const activated = operation === 'new'
+      ? context.service.newConversation(projectScope)
+      : context.service.openConversation(projectScope, `sel_${'a'.repeat(32)}`)
+
+    await expect(activated).resolves.toMatchObject({ scope: projectScope })
+    expect(context.navigation.get().activeScope).toEqual(projectScope)
+    expect(context.onScopeDisposalError).toHaveBeenCalledOnce()
+  })
+
+  it('rejects an incomplete activation snapshot before changing navigation or terminals', async () => {
+    const context = await fixture()
+    context.start.mockResolvedValueOnce({ ...runtimeSnapshot(7, sessionState()), state: 'starting' })
+
+    await expect(context.service.newConversation(projectScope)).rejects.toMatchObject({
+      code: 'PI_SESSION_CONFIRMATION_FAILED',
+    })
+    expect(context.navigation.get().activeScope).toEqual(projectlessScope)
+    expect(context.disposeScope).not.toHaveBeenCalled()
   })
 
   it('does not stop or reject a running conversation when another one is opened', async () => {

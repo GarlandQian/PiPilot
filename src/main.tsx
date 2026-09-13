@@ -5,6 +5,7 @@ import { PiRpcProvider } from '@/store/pi-rpc'
 import { PiIntegrationsProvider } from '@/store/pi-integrations'
 import { ApplicationUpdateProvider } from '@/store/application-update'
 import { ExternalControlProvider } from '@/store/external-control'
+import { ConfigurationDocumentsProvider } from '@/store/configuration-documents'
 import { RendererErrorBoundary } from '@/components/frame/RendererErrorBoundary'
 import App from './App'
 import '@/styles/globals.css'
@@ -19,7 +20,9 @@ root.render(window.pipilot ? (
           <ExternalControlProvider>
             <ApplicationUpdateProvider>
               <PiRpcProvider>
-                <App />
+                <ConfigurationDocumentsProvider>
+                  <App />
+                </ConfigurationDocumentsProvider>
               </PiRpcProvider>
             </ApplicationUpdateProvider>
           </ExternalControlProvider>

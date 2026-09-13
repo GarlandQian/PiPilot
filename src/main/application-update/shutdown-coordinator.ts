@@ -1,8 +1,10 @@
 import type { Event as ElectronEvent } from 'electron'
-
-export type ApplicationShutdownIntent = 'quit' | 'install-update'
+import type { ApplicationShutdownIntent } from '../../shared/application-shutdown'
+export type { ApplicationShutdownIntent } from '../../shared/application-shutdown'
 
 export interface ApplicationShutdownCoordinatorOptions {
+  confirm(intent: ApplicationShutdownIntent): Promise<boolean>
+  cancelConfirmation(): void
   dispose(): Promise<void> | void
   quit(): void
 }
@@ -15,7 +17,7 @@ export interface ApplicationShutdownCoordinatorOptions {
 export class ApplicationShutdownCoordinator {
   private intent: ApplicationShutdownIntent | null = null
   private finalizing = false
-  private cleanupPromise: Promise<void> | null = null
+  private shutdownPromise: Promise<void> | null = null
 
   constructor(private readonly options: ApplicationShutdownCoordinatorOptions) {}
 
@@ -30,51 +32,46 @@ export class ApplicationShutdownCoordinator {
   handleBeforeQuit(event: ElectronEvent) {
     if (this.finalizing) return
     event.preventDefault()
-    void this.request('quit')
+    void this.requestQuit()
   }
 
   requestInstall(install: () => void) {
     if (this.intent === 'quit') {
       return Promise.reject(new Error('Application quit is already in progress.'))
     }
-    if (this.intent === 'install-update' || this.finalizing) return this.cleanupPromise ?? Promise.resolve()
-    this.intent = 'install-update'
-    this.cleanupPromise = this.disposeThen(() => install(), 'install-update')
-    return this.cleanupPromise
+    return this.request('install-update', install)
   }
 
   requestQuit() {
-    if (this.intent === 'install-update') return this.cleanupPromise ?? Promise.resolve()
-    if (this.finalizing) return this.cleanupPromise ?? Promise.resolve()
-    this.intent = 'quit'
-    this.cleanupPromise = this.disposeThen(() => this.options.quit(), 'quit')
-    return this.cleanupPromise
+    return this.request('quit', this.options.quit)
   }
 
-  private async request(intent: ApplicationShutdownIntent) {
-    if (intent === 'quit') await this.requestQuit()
-  }
-
-  private async disposeThen(
-    finalAction: () => void,
-    intent: ApplicationShutdownIntent,
-  ) {
-    if (this.finalizing) return
-    this.finalizing = true
-    try {
-      await this.options.dispose()
-    } catch (error) {
-      if (intent === 'install-update') {
-        this.finalizing = false
-        this.intent = null
-        this.cleanupPromise = null
-        throw error
+  private request(intent: ApplicationShutdownIntent, finalAction: () => void) {
+    if (this.shutdownPromise) return this.shutdownPromise
+    if (this.finalizing) return Promise.resolve()
+    this.intent = intent
+    // Install the latch before a synchronous/reentrant confirmation can run.
+    const operation = Promise.resolve().then(async () => {
+      if (!await this.options.confirm(intent)) return
+      this.finalizing = true
+      try {
+        await this.options.dispose()
+      } catch (error) {
+        if (intent === 'install-update') throw error
+        // Existing cleanup owners are bounded; normal Quit remains best effort.
       }
-      // Normal quit still has to terminate if a best-effort cleanup owner
-      // unexpectedly rejects. Existing owners use bounded cleanup, but this
-      // keeps Electron from being left in a half-quit state.
-    } finally {
-      if (intent === 'quit' || this.finalizing) finalAction()
-    }
+      finalAction()
+    }).catch((error: unknown) => {
+      this.finalizing = false
+      if (intent === 'install-update') throw error
+    }).finally(() => {
+      if (!this.finalizing) {
+        this.options.cancelConfirmation()
+        this.intent = null
+        this.shutdownPromise = null
+      }
+    })
+    this.shutdownPromise = operation
+    return operation
   }
 }

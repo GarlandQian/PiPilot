@@ -16,7 +16,7 @@ import {
   unlinkSync,
   writeSync,
 } from 'node:fs'
-import { delimiter, dirname, isAbsolute, resolve, win32 } from 'node:path'
+import { dirname, isAbsolute, resolve, win32 } from 'node:path'
 import {
   externalControlLauncherSnapshotSchema,
   type ExternalControlLauncherError,
@@ -31,6 +31,16 @@ const MAX_RECEIPT_BYTES = 16 * 1024
 const MAX_REGISTRY_OUTPUT_BYTES = 64 * 1024
 const MAX_REGISTRY_FILE_BYTES = 4 * 1024 * 1024
 const MAX_WINDOWS_ENVIRONMENT_CHARS = 32_767
+const LAUNCHCTL_EXECUTABLE = '/bin/launchctl'
+const MAX_DARWIN_ENVIRONMENT_BYTES = 64 * 1024
+const LAUNCHCTL_TIMEOUT_MS = 5_000
+const POSIX_PATH_DELIMITER = ':'
+
+export interface DarwinUserPathAdapter {
+  read(): string | null
+  write(value: string): void
+  remove(): void
+}
 
 export interface WindowsUserPathValue {
   type: 'REG_SZ' | 'REG_EXPAND_SZ'
@@ -53,6 +63,8 @@ export interface ExternalControlLauncherServiceOptions {
   receiptPath: string
   testTargetDirectory?: string
   uid?: number
+  darwinPrivateTargetDirectory?: string
+  darwinUserPath?: DarwinUserPathAdapter
   windowsUserPath?: WindowsUserPathAdapter
 }
 
@@ -70,6 +82,7 @@ interface LauncherReceipt {
   platform: NodeJS.Platform
   launcherPath: string
   fingerprint: string
+  darwin?: DarwinLauncherReceiptMetadata
   windows?: {
     insertedSeparator: boolean
     pathValueCreated: boolean
@@ -88,6 +101,9 @@ interface Inspection {
   targetIdentity?: FileIdentity
   receipt?: ReceiptRead
   windowsPath?: WindowsUserPathValue | null
+  darwinPath?: string | null
+  darwinPathNeedsRegistration?: boolean
+  darwinReceiptNeedsMetadata?: boolean
 }
 
 export class ExternalControlLauncherServiceError extends Error {
@@ -432,6 +448,270 @@ export function persistWindowsLauncherDirectoryRemoval(
   return true
 }
 
+export interface DarwinLauncherReceiptMetadata {
+  insertedSeparator: boolean
+  pathEntryAdded: boolean
+  pathValueCreated: boolean
+  registeredPathFingerprint: string
+}
+
+function normalizePosixPathEntry(value: string) {
+  return resolve(value)
+}
+
+function assertValidDarwinPathValue(value: string) {
+  if (
+    !value ||
+    /[\0\r\n]/u.test(value) ||
+    Buffer.byteLength(value, 'utf8') > MAX_DARWIN_ENVIRONMENT_BYTES
+  ) {
+    throw new ExternalControlLauncherServiceError(
+      'launcher_unsafe_target',
+      'The current-user PATH is invalid.',
+    )
+  }
+}
+
+function matchingDarwinPathEntries(currentValue: string, directory: string) {
+  const normalizedDirectory = normalizePosixPathEntry(directory)
+  const matches: Array<{ end: number; start: number }> = []
+  let start = 0
+  for (let index = 0; index <= currentValue.length; index += 1) {
+    if (index !== currentValue.length && currentValue[index] !== POSIX_PATH_DELIMITER) continue
+    const entry = currentValue.slice(start, index)
+    if (
+      entry &&
+      isAbsolute(entry) &&
+      normalizePosixPathEntry(entry) === normalizedDirectory
+    ) {
+      matches.push({ start, end: index })
+    }
+    start = index + 1
+  }
+  return matches
+}
+
+export function mergeDarwinUserPath(
+  currentValue: string | null,
+  fallbackValue: string | undefined,
+  directory: string,
+) {
+  if (
+    !directory ||
+    /[\0\r\n:]/u.test(directory) ||
+    !isAbsolute(directory)
+  ) {
+    throw new ExternalControlLauncherServiceError(
+      'launcher_unsafe_target',
+      'The packaged PiPilot launcher directory is invalid.',
+    )
+  }
+  const baseValue = currentValue ?? fallbackValue
+  if (baseValue === undefined) {
+    throw new ExternalControlLauncherServiceError(
+      'launcher_unsafe_target',
+      'The current-user PATH is unavailable.',
+    )
+  }
+  assertValidDarwinPathValue(baseValue)
+  const firstEntry = baseValue.split(POSIX_PATH_DELIMITER, 1)[0]!
+  const pathEntryAdded = !isAbsolute(firstEntry) ||
+    normalizePosixPathEntry(firstEntry) !== normalizePosixPathEntry(directory)
+  const insertedSeparator = pathEntryAdded
+  const value = pathEntryAdded
+    ? `${directory}${POSIX_PATH_DELIMITER}${baseValue}`
+    : baseValue
+  if (Buffer.byteLength(value, 'utf8') > MAX_DARWIN_ENVIRONMENT_BYTES) {
+    throw new ExternalControlLauncherServiceError(
+      'launcher_install_failed',
+      'The current-user PATH is too large to update safely.',
+    )
+  }
+  return {
+    changed: currentValue === null || pathEntryAdded,
+    metadata: {
+      insertedSeparator,
+      pathEntryAdded,
+      pathValueCreated: currentValue === null,
+      registeredPathFingerprint: fingerprint(value),
+    } satisfies DarwinLauncherReceiptMetadata,
+    value,
+  }
+}
+
+export function removeDarwinLauncherDirectory(
+  currentValue: string | null,
+  directory: string,
+  metadata: DarwinLauncherReceiptMetadata,
+) {
+  if (
+    !directory ||
+    /[\0\r\n:]/u.test(directory) ||
+    !isAbsolute(directory) ||
+    !/^[a-f0-9]{64}$/u.test(metadata.registeredPathFingerprint)
+  ) {
+    throw new ExternalControlLauncherServiceError(
+      'launcher_unsafe_target',
+      'The packaged PiPilot launcher PATH receipt is invalid.',
+    )
+  }
+  if (currentValue === null) return { changed: false, value: null }
+  assertValidDarwinPathValue(currentValue)
+  if (
+    metadata.pathValueCreated &&
+    fingerprint(currentValue) === metadata.registeredPathFingerprint
+  ) {
+    return { changed: true, value: null }
+  }
+  if (!metadata.pathEntryAdded) return { changed: false, value: currentValue }
+  const matches = matchingDarwinPathEntries(currentValue, directory)
+  const match = matches[0]
+  if (!match) return { changed: false, value: currentValue }
+  if (match.start !== 0) {
+    throw new ExternalControlLauncherServiceError(
+      'launcher_conflict',
+      'The managed PiPilot launcher is no longer the first PATH entry.',
+    )
+  }
+  if (metadata.insertedSeparator) {
+    if (currentValue[match.end] !== POSIX_PATH_DELIMITER) {
+      throw new ExternalControlLauncherServiceError(
+        'launcher_conflict',
+        'The managed PiPilot launcher PATH entry changed unexpectedly.',
+      )
+    }
+  }
+  return {
+    changed: true,
+    value: currentValue.slice(match.end + (metadata.insertedSeparator ? 1 : 0)),
+  }
+}
+
+function restoreDarwinUserPath(adapter: DarwinUserPathAdapter, original: string | null) {
+  if (original === null) adapter.remove()
+  else adapter.write(original)
+  if (adapter.read() !== original) {
+    throw new Error('The current-user PATH rollback did not persist exactly.')
+  }
+}
+
+export function persistDarwinLauncherDirectory(
+  adapter: DarwinUserPathAdapter,
+  fallbackValue: string | undefined,
+  directory: string,
+  afterPersist: (metadata: DarwinLauncherReceiptMetadata) => void = () => undefined,
+) {
+  const original = adapter.read()
+  const merged = mergeDarwinUserPath(original, fallbackValue, directory)
+  try {
+    if (merged.changed) {
+      adapter.write(merged.value)
+      if (adapter.read() !== merged.value) {
+        throw new Error('The current-user PATH update did not persist exactly.')
+      }
+    }
+    afterPersist(merged.metadata)
+  } catch (error) {
+    if (merged.changed) {
+      try {
+        restoreDarwinUserPath(adapter, original)
+      } catch {
+        throw new Error('The current-user PATH rollback did not persist exactly.')
+      }
+    }
+    throw error
+  }
+  return merged.changed
+}
+
+export function persistDarwinLauncherDirectoryRemoval(
+  adapter: DarwinUserPathAdapter,
+  directory: string,
+  metadata: DarwinLauncherReceiptMetadata,
+  afterPersist: () => void = () => undefined,
+) {
+  const original = adapter.read()
+  const removed = removeDarwinLauncherDirectory(original, directory, metadata)
+  try {
+    if (removed.changed) {
+      if (removed.value === null) adapter.remove()
+      else adapter.write(removed.value)
+      if (adapter.read() !== removed.value) {
+        throw new Error('The current-user PATH removal did not persist exactly.')
+      }
+    }
+    afterPersist()
+  } catch (error) {
+    if (removed.changed) {
+      try {
+        restoreDarwinUserPath(adapter, original)
+      } catch {
+        throw new Error('The current-user PATH rollback did not persist exactly.')
+      }
+    }
+    throw error
+  }
+  return removed.changed
+}
+
+function runLaunchctl(args: readonly string[]) {
+  return spawnSync(LAUNCHCTL_EXECUTABLE, [...args], {
+    encoding: 'buffer',
+    maxBuffer: MAX_DARWIN_ENVIRONMENT_BYTES,
+    shell: false,
+    timeout: LAUNCHCTL_TIMEOUT_MS,
+    windowsHide: true,
+  })
+}
+
+export function createDarwinUserPathAdapter(): DarwinUserPathAdapter {
+  try {
+    const details = lstatSync(LAUNCHCTL_EXECUTABLE)
+    if (
+      details.isSymbolicLink() ||
+      !details.isFile() ||
+      details.uid !== 0 ||
+      (details.mode & 0o022) !== 0
+    ) throw new Error('Invalid launchctl executable.')
+  } catch {
+    throw new ExternalControlLauncherServiceError(
+      'launcher_unavailable',
+      'The trusted macOS launchctl executable is unavailable.',
+    )
+  }
+  const run = (args: readonly string[]) => {
+    const result = runLaunchctl(args)
+    if (result.error) throw result.error
+    if (result.status !== 0) throw new Error('The current-user PATH could not be updated.')
+    return result.stdout
+  }
+  return {
+    read() {
+      const stdout = run(['getenv', 'PATH'])
+      if (stdout.length === 0) return null
+      let value = stdout.toString('utf8')
+      if (value.endsWith('\n')) value = value.slice(0, -1)
+      if (value.endsWith('\r')) value = value.slice(0, -1)
+      assertValidDarwinPathValue(value)
+      return value
+    },
+    write(value) {
+      assertValidDarwinPathValue(value)
+      run(['setenv', 'PATH', value])
+    },
+    remove() {
+      run(['unsetenv', 'PATH'])
+    },
+  }
+}
+
+export function isSafePosixResolutionDirectoryOwner(
+  directoryUid: number,
+  currentUid: number,
+) {
+  return directoryUid === 0 || directoryUid === currentUid
+}
+
 function runRegistry(executable: string, args: string[]) {
   return spawnSync(executable, args, {
     maxBuffer: MAX_REGISTRY_OUTPUT_BYTES,
@@ -717,12 +997,29 @@ export class ExternalControlLauncherService {
   private readonly platform: NodeJS.Platform
   private readonly environment: NodeJS.ProcessEnv
   private readonly uid: number | undefined
+  private readonly darwinUserPath: DarwinUserPathAdapter | null
   private readonly windowsUserPath: WindowsUserPathAdapter | null
+  private requiresClientRestart = false
 
   constructor(private readonly options: ExternalControlLauncherServiceOptions) {
     this.platform = options.platform ?? process.platform
     this.environment = options.environment ?? process.env
     this.uid = options.uid ?? process.getuid?.()
+    if (options.darwinUserPath) {
+      this.darwinUserPath = options.darwinUserPath
+    } else if (
+      this.platform === 'darwin' &&
+      options.darwinPrivateTargetDirectory &&
+      !options.testTargetDirectory
+    ) {
+      try {
+        this.darwinUserPath = createDarwinUserPathAdapter()
+      } catch {
+        this.darwinUserPath = null
+      }
+    } else {
+      this.darwinUserPath = null
+    }
     if (options.windowsUserPath) {
       this.windowsUserPath = options.windowsUserPath
     } else if (this.platform === 'win32') {
@@ -740,7 +1037,49 @@ export class ExternalControlLauncherService {
   }
 
   inspect() {
-    return structuredClone(this.inspectInternal().snapshot)
+    const snapshot = this.inspectInternal().snapshot
+    return structuredClone(this.withRestartState(snapshot))
+  }
+
+  initialize() {
+    if (
+      this.platform !== 'darwin' ||
+      !this.options.darwinPrivateTargetDirectory ||
+      this.options.testTargetDirectory
+    ) return this.inspect()
+    const inspection = this.inspectInternal()
+    if (
+      inspection.snapshot.state !== 'repair' ||
+      !inspection.targetPath ||
+      !inspection.wrapper ||
+      !inspection.targetIdentity ||
+      inspection.receipt?.state !== 'valid' ||
+      inspection.targetIdentity.contents !== inspection.wrapper ||
+      (inspection.targetIdentity.mode & 0o100) === 0 ||
+      (!inspection.darwinPathNeedsRegistration && !inspection.darwinReceiptNeedsMetadata)
+    ) return structuredClone(this.withRestartState(inspection.snapshot))
+    try {
+      const changed = persistDarwinLauncherDirectory(
+        this.darwinUserPath!,
+        this.environment.PATH,
+        dirname(inspection.targetPath),
+        (metadata) => {
+          this.writeReceipt(
+            inspection.targetPath!,
+            inspection.wrapper!,
+            undefined,
+            metadata,
+          )
+          if (this.inspectDarwin().snapshot.state !== 'installed') {
+            throw new Error('The recovered PiPilot MCP launcher could not be verified.')
+          }
+        },
+      )
+      this.requiresClientRestart ||= changed
+    } catch {
+      // Recovery is best effort; Settings exposes the remaining repair state.
+    }
+    return this.inspect()
   }
 
   install() {
@@ -754,9 +1093,11 @@ export class ExternalControlLauncherService {
       )
     }
     try {
-      return this.platform === 'win32'
-        ? this.installWindows(inspection)
-        : this.installPosix(inspection)
+      if (this.platform === 'win32') return this.installWindows(inspection)
+      if (this.platform === 'darwin' && this.options.darwinPrivateTargetDirectory) {
+        return this.installDarwin(inspection)
+      }
+      return this.installPosix(inspection)
     } catch (error) {
       if (error instanceof ExternalControlLauncherServiceError) throw error
       throw new ExternalControlLauncherServiceError(
@@ -783,9 +1124,13 @@ export class ExternalControlLauncherService {
       )
     }
     try {
-      return this.platform === 'win32'
-        ? this.uninstallWindows(receipt)
-        : this.uninstallPosix(receipt)
+      if (this.platform === 'win32') return this.uninstallWindows(receipt)
+      if (
+        this.platform === 'darwin' &&
+        this.options.darwinPrivateTargetDirectory &&
+        receipt.receipt.darwin
+      ) return this.uninstallDarwin(receipt)
+      return this.uninstallPosix(receipt)
     } catch (error) {
       if (error instanceof ExternalControlLauncherServiceError) throw error
       throw new ExternalControlLauncherServiceError(
@@ -833,7 +1178,18 @@ export class ExternalControlLauncherService {
         'The stable MCP launcher is unsupported on this platform.',
       ) }
     }
+    if (this.platform === 'darwin' && this.options.darwinPrivateTargetDirectory) {
+      return this.inspectDarwin()
+    }
     return this.inspectPosix()
+  }
+
+  private withRestartState(snapshot: ExternalControlLauncherSnapshot) {
+    if (!this.requiresClientRestart || snapshot.requiresClientRestart) return snapshot
+    return externalControlLauncherSnapshotSchema.parse({
+      ...snapshot,
+      requiresClientRestart: true,
+    })
   }
 
   private inspectWindows(): Inspection {
@@ -893,6 +1249,109 @@ export class ExternalControlLauncherService {
     }
   }
 
+  private inspectDarwin(): Inspection {
+    const targetDirectory = this.options.darwinPrivateTargetDirectory
+    if (
+      this.uid === undefined ||
+      !this.darwinUserPath ||
+      !targetDirectory ||
+      !isAbsolute(targetDirectory) ||
+      /[\0\r\n:]/u.test(targetDirectory) ||
+      resolve(targetDirectory) !== targetDirectory ||
+      dirname(targetDirectory) === targetDirectory ||
+      !this.isInstallableDirectory(targetDirectory) ||
+      !this.isResolutionSafe(targetDirectory)
+    ) {
+      return { snapshot: unsupported(
+        'launcher_unsafe_target',
+        'The private macOS launcher directory is unavailable or unsafe.',
+      ) }
+    }
+    let wrapper: string
+    try {
+      wrapper = renderExternalControlLauncherWrapper(
+        this.options.executablePath!,
+        this.options.descriptorPath,
+      )
+    } catch (error) {
+      return { snapshot: unsupported(
+        'launcher_unavailable',
+        error instanceof Error ? error.message : 'The launcher source is invalid.',
+      ) }
+    }
+    const receipt = this.readReceipt()
+    if (receipt.state === 'invalid') {
+      return { snapshot: unsupported(
+        'launcher_conflict',
+        'The existing PiPilot MCP launcher receipt is invalid.',
+      ) }
+    }
+    const targetPath = resolve(targetDirectory, LAUNCHER_NAME)
+    if (
+      receipt.state === 'valid' &&
+      resolve(receipt.receipt.launcherPath) !== targetPath
+    ) {
+      return { snapshot: unsupported(
+        'launcher_conflict',
+        'The existing PiPilot MCP launcher receipt belongs to another target.',
+      ) }
+    }
+    let darwinPath: string | null
+    let pathValue: string
+    try {
+      darwinPath = this.darwinUserPath.read()
+      pathValue = darwinPath ?? this.environment.PATH ?? ''
+      assertValidDarwinPathValue(pathValue)
+    } catch {
+      return { snapshot: unsupported(
+        'launcher_unavailable',
+        'The current-user macOS PATH could not be inspected.',
+      ) }
+    }
+    const firstDirectory = pathValue.split(POSIX_PATH_DELIMITER, 1)[0]!
+    const targetIsFirst = isAbsolute(firstDirectory) &&
+      normalizePosixPathEntry(firstDirectory) === targetDirectory
+    let inspected: Inspection
+    try {
+      lstatSync(targetPath)
+      inspected = this.inspectExistingPosix(targetPath, wrapper, receipt)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        return { snapshot: unsupported(
+          'launcher_conflict',
+          'The private pipilot-mcp command could not be inspected safely.',
+        ) }
+      }
+      inspected = {
+        targetPath,
+        wrapper,
+        receipt,
+        snapshot: externalControlLauncherSnapshotSchema.parse({
+          state: 'missing',
+          managed: false,
+          requiresClientRestart: false,
+        }),
+      }
+    }
+    if (inspected.snapshot.state === 'unsupported') return inspected
+    const receiptNeedsMetadata = receipt.state === 'valid' && !receipt.receipt.darwin
+    const pathNeedsRegistration = darwinPath === null || !targetIsFirst
+    const state = inspected.snapshot.state === 'installed' &&
+      (pathNeedsRegistration || receiptNeedsMetadata)
+      ? 'repair'
+      : inspected.snapshot.state
+    return {
+      ...inspected,
+      darwinPath,
+      darwinPathNeedsRegistration: pathNeedsRegistration,
+      darwinReceiptNeedsMetadata: receiptNeedsMetadata,
+      snapshot: externalControlLauncherSnapshotSchema.parse({
+        ...inspected.snapshot,
+        state,
+      }),
+    }
+  }
+
   private inspectPosix(): Inspection {
     if (this.uid === undefined || !isAbsolute(this.options.homeDirectory)) {
       return { snapshot: unsupported(
@@ -937,7 +1396,7 @@ export class ExternalControlLauncherService {
       stableTargets.add(resolve(this.options.homeDirectory, 'bin', LAUNCHER_NAME))
     }
 
-    for (const rawDirectory of pathValue.split(delimiter)) {
+    for (const rawDirectory of pathValue.split(POSIX_PATH_DELIMITER)) {
       if (!rawDirectory || !isAbsolute(rawDirectory) || /[\0\r\n]/u.test(rawDirectory)) {
         return { snapshot: unsupported(
           'launcher_unsafe_target',
@@ -1049,9 +1508,12 @@ export class ExternalControlLauncherService {
         const writableByAnotherPrincipal = (details.mode & 0o022) !== 0
         const protectedSharedAncestor = !isPathDirectory &&
           (details.mode & 0o1000) !== 0
+        const unexpectedPathOwner = isPathDirectory &&
+          !isSafePosixResolutionDirectoryOwner(details.uid, this.uid!)
         if (
           details.isSymbolicLink() ||
           !details.isDirectory() ||
+          unexpectedPathOwner ||
           (writableByAnotherPrincipal && !protectedSharedAncestor)
         ) return false
       } catch { return false }
@@ -1078,8 +1540,12 @@ export class ExternalControlLauncherService {
     }
   }
 
-  private installPosix(inspection: Inspection) {
-    const fresh = this.inspectPosix()
+  private installPosix(
+    inspection: Inspection,
+    darwin?: DarwinLauncherReceiptMetadata,
+    inspect: () => Inspection = () => this.inspectPosix(),
+  ) {
+    const fresh = inspect()
     if (
       fresh.snapshot.state !== inspection.snapshot.state ||
       fresh.targetPath !== inspection.targetPath ||
@@ -1116,7 +1582,7 @@ export class ExternalControlLauncherService {
     const previous = fresh.targetIdentity
     if (!receiptOnlyRecovery) writeAtomic(fresh.targetPath, fresh.wrapper, 0o755, false)
     try {
-      this.writeReceipt(fresh.targetPath, fresh.wrapper)
+      this.writeReceipt(fresh.targetPath, fresh.wrapper, undefined, darwin)
     } catch (error) {
       if (!receiptOnlyRecovery) {
         if (previous) {
@@ -1133,7 +1599,7 @@ export class ExternalControlLauncherService {
       }
       throw error
     }
-    const verified = this.inspectPosix().snapshot
+    const verified = inspect().snapshot
     if (verified.state !== 'installed') {
       throw new ExternalControlLauncherServiceError(
         'launcher_install_failed',
@@ -1141,6 +1607,34 @@ export class ExternalControlLauncherService {
       )
     }
     return verified
+  }
+
+  private installDarwin(inspection: Inspection) {
+    if (!this.darwinUserPath || !inspection.targetPath) {
+      throw new ExternalControlLauncherServiceError(
+        'launcher_unavailable',
+        'The current-user macOS PATH is unavailable.',
+      )
+    }
+    let installed: ExternalControlLauncherSnapshot | null = null
+    const changed = persistDarwinLauncherDirectory(
+      this.darwinUserPath,
+      this.environment.PATH,
+      dirname(inspection.targetPath),
+      (metadata) => {
+        const fresh = this.inspectDarwin()
+        installed = this.installPosix(
+          fresh,
+          metadata,
+          () => this.inspectDarwin(),
+        )
+      },
+    )
+    this.requiresClientRestart ||= changed
+    return externalControlLauncherSnapshotSchema.parse({
+      ...installed!,
+      requiresClientRestart: changed,
+    })
   }
 
   private installWindows(inspection: Inspection) {
@@ -1181,6 +1675,34 @@ export class ExternalControlLauncherService {
       receipt.receipt.windows,
       () => this.removeReceipt(receipt.identity),
     )
+    return externalControlLauncherSnapshotSchema.parse({
+      state: 'missing',
+      managed: false,
+      requiresClientRestart: changed,
+    })
+  }
+
+  private uninstallDarwin(receipt: Extract<ReceiptRead, { state: 'valid' }>) {
+    const targetPath = resolve(receipt.receipt.launcherPath)
+    const targetDirectory = this.options.darwinPrivateTargetDirectory
+    if (
+      !this.darwinUserPath ||
+      !targetDirectory ||
+      targetPath !== resolve(targetDirectory, LAUNCHER_NAME) ||
+      !receipt.receipt.darwin
+    ) {
+      throw new ExternalControlLauncherServiceError(
+        'launcher_conflict',
+        'The PiPilot MCP launcher receipt does not match this installation.',
+      )
+    }
+    const changed = persistDarwinLauncherDirectoryRemoval(
+      this.darwinUserPath,
+      targetDirectory,
+      receipt.receipt.darwin,
+      () => { this.uninstallPosix(receipt) },
+    )
+    this.requiresClientRestart ||= changed
     return externalControlLauncherSnapshotSchema.parse({
       state: 'missing',
       managed: false,
@@ -1293,7 +1815,9 @@ export class ExternalControlLauncherService {
       const keys = Object.keys(raw).sort()
       const expectedKeys = raw.platform === 'win32'
         ? ['fingerprint', 'launcherPath', 'platform', 'version', 'windows']
-        : ['fingerprint', 'launcherPath', 'platform', 'version']
+        : raw.platform === 'darwin' && raw.darwin !== undefined
+          ? ['darwin', 'fingerprint', 'launcherPath', 'platform', 'version']
+          : ['fingerprint', 'launcherPath', 'platform', 'version']
       if (
         raw.version !== 2 ||
         raw.platform !== this.platform ||
@@ -1312,7 +1836,20 @@ export class ExternalControlLauncherService {
           typeof raw.windows.insertedSeparator !== 'boolean' ||
           typeof raw.windows.pathValueCreated !== 'boolean'
         )) ||
-        (raw.platform !== 'win32' && raw.windows !== undefined)
+        (raw.platform === 'darwin' && raw.darwin !== undefined && (
+          typeof raw.darwin !== 'object' ||
+          raw.darwin === null ||
+          Object.keys(raw.darwin).sort().join(',') !==
+            'insertedSeparator,pathEntryAdded,pathValueCreated,registeredPathFingerprint' ||
+          typeof raw.darwin.insertedSeparator !== 'boolean' ||
+          typeof raw.darwin.pathEntryAdded !== 'boolean' ||
+          raw.darwin.insertedSeparator !== raw.darwin.pathEntryAdded ||
+          typeof raw.darwin.pathValueCreated !== 'boolean' ||
+          typeof raw.darwin.registeredPathFingerprint !== 'string' ||
+          !/^[a-f0-9]{64}$/u.test(raw.darwin.registeredPathFingerprint)
+        )) ||
+        (raw.platform !== 'win32' && raw.windows !== undefined) ||
+        (raw.platform !== 'darwin' && raw.darwin !== undefined)
       ) return { state: 'invalid' }
       return { state: 'valid', identity: file, receipt: raw as LauncherReceipt }
     } catch (error) {
@@ -1326,6 +1863,7 @@ export class ExternalControlLauncherService {
     targetPath: string,
     installedContent: string,
     windows?: WindowsLauncherReceiptMetadata,
+    darwin?: DarwinLauncherReceiptMetadata,
   ) {
     const receiptDirectory = dirname(this.options.receiptPath)
     mkdirSync(receiptDirectory, { recursive: true, mode: 0o700 })
@@ -1348,6 +1886,7 @@ export class ExternalControlLauncherService {
       platform: this.platform,
       launcherPath: targetPath,
       fingerprint: fingerprint(installedContent),
+      ...(darwin ? { darwin } : {}),
       ...(windows ? { windows } : {}),
     }
     writeAtomic(

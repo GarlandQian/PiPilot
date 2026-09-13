@@ -22,9 +22,11 @@ import {
   type ConversationScope,
 } from '../../src/shared/conversation-scope'
 import type {
+  LocalPiRpcEvent,
   LocalPiRuntimeSnapshot,
   LocalPiSessionState,
 } from '../../src/shared/local-pi'
+import { OfficialPiSessionCatalogObserver } from '../../src/main/conversations/official-pi-session-catalog-observer'
 import { ConversationScopeResolver } from '../../src/main/conversations/conversation-scope-resolver'
 import {
   OfficialPiSessionCatalog,
@@ -37,7 +39,7 @@ import {
   OfficialPiSessionActivationService,
 } from '../../src/main/conversations/official-pi-session-activation-service'
 import { ObservedPiSessionDirectoryRepository } from '../../src/main/repositories/observed-pi-session-directory-repository'
-import type { PiRuntimeFrontend } from '../../src/main/pi-host/pi-runtime-frontend'
+import type { PiRuntimeControlHandle, PiRuntimeFrontend } from '../../src/main/pi-host/pi-runtime-frontend'
 
 const workspaceId = '00000000-0000-4000-8000-000000000001'
 const scope: ConversationScope = { kind: 'project', workspaceId }
@@ -141,6 +143,15 @@ function deferred<T>() {
     reject = rejectPromise
   })
   return { promise, reject, resolve }
+}
+
+function observeCatalog(fixture: Awaited<ReturnType<typeof createCatalogFixture>>, state: () => Promise<LocalPiSessionState>) {
+  let listener!: (event: LocalPiRpcEvent, handle: PiRuntimeControlHandle) => void | Promise<void>
+  const observer = new OfficialPiSessionCatalogObserver({
+    subscribeAllEvents: (callback) => { listener = callback; return () => true },
+    getControlRuntimeState: state,
+  }, fixture.catalog, fixture.observations)
+  return { observer, emit: (event: LocalPiRpcEvent, handle: PiRuntimeControlHandle) => listener(event, handle) }
 }
 
 function sessionState(
@@ -1368,11 +1379,14 @@ describe('OfficialPiSessionCatalog', () => {
       })
       state = sessionState('settled-session', sessionFile)
       snapshot = runtimeSnapshot(fixture.cwd, state)
-      await activation.onAgentSettled('rt-test', snapshot.generation)
-
-      expect(fixture.observations.get(scope)?.directory).toBe(
-        fixture.sessionDirectory,
-      )
+      const watching = observeCatalog(fixture, async () => state)
+      try {
+        watching.emit({ type: 'agent_settled' }, {
+          hostEpoch: 1, runtimeId: 'rt-test', generation: snapshot.generation,
+          scope, sessionId: state.sessionId, sessionFile: null,
+        })
+        await vi.waitFor(() => expect(fixture.observations.get(scope)?.directory).toBe(fixture.sessionDirectory))
+      } finally { watching.observer.dispose() }
     } finally {
       await rm(fixture.root, { recursive: true, force: true })
     }
@@ -1414,22 +1428,20 @@ describe('OfficialPiSessionCatalog', () => {
       await activation.start(scope)
       const invalidate = vi.spyOn(fixture.catalog, 'invalidate')
       invalidate.mockClear()
-      activation.onSessionCatalogChanged('rt-test', snapshot.generation + 1)
-      expect(invalidate).not.toHaveBeenCalled()
-      activation.onSessionCatalogChanged('rt-test', snapshot.generation)
-      expect(invalidate).toHaveBeenCalledWith(scope)
       await activation.afterSuccessfulCommand(
         'set_session_name',
         runtimeIdentity(host, snapshot.generation + 1),
         runtimeIdentity(host, snapshot.generation + 1),
       )
       expect(getStateCalls).toBe(0)
+      expect(invalidate).not.toHaveBeenCalled()
       await activation.afterSuccessfulCommand(
         'set_session_name',
         runtimeIdentity(host),
         runtimeIdentity(host),
       )
       expect(getStateCalls).toBe(1)
+      expect(invalidate).toHaveBeenCalledWith(scope)
       await expect(activation.afterSuccessfulCommand(
         'fork',
         runtimeIdentity(host),
@@ -1495,9 +1507,40 @@ describe('OfficialPiSessionCatalog', () => {
       expect(activation.getActiveScope()).toEqual(scope)
       const invalidate = vi.spyOn(fixture.catalog, 'invalidate')
       invalidate.mockClear()
-      activation.onSessionCatalogChanged('rt-test', snapshot.generation)
+      await activation.afterSuccessfulCommand('set_session_name', runtimeIdentity(host), runtimeIdentity(host))
       expect(invalidate).toHaveBeenCalledWith(scope)
     } finally {
+      await rm(fixture.root, { recursive: true, force: true })
+    }
+  })
+
+  it('refreshes a background appended name without changing duplicate selection identities', async () => {
+    const fixture = await createCatalogFixture()
+    const first = join(fixture.sessionDirectory, 'background.jsonl')
+    const second = join(fixture.sessionDirectory, 'selected.jsonl')
+    const watching = observeCatalog(fixture, async () => sessionState('duplicate-id', first))
+    try {
+      await writeSession(first, { cwd: fixture.cwd, id: 'duplicate-id', name: 'Background' })
+      await writeSession(second, { cwd: fixture.cwd, id: 'duplicate-id', name: 'Selected' })
+      await fixture.observations.observe(scope, first)
+      const before = await fixture.catalog.list(scope)
+      const token = before.rows.find((row) => row.name === 'Background')!.selectionToken
+      const selectedToken = before.rows.find((row) => row.name === 'Selected')!.selectionToken
+      const changed = vi.fn()
+      watching.observer.subscribe(changed)
+      await appendFile(first, `${JSON.stringify({ type: 'session_info', id: randomUUID(), parentId: null,
+        timestamp: '2026-09-06T00:00:00.000Z', name: 'Background updated' })}\n`)
+      watching.emit({ type: 'session_info_changed', name: 'Background updated' }, {
+        hostEpoch: 1, runtimeId: 'rt_background', generation: 1, scope,
+        sessionId: 'duplicate-id', sessionFile: first,
+      })
+      await vi.waitFor(() => expect(changed).toHaveBeenCalledOnce())
+      expect(changed.mock.calls[0]![0]).toEqual({ scope, revision: 1 })
+      const after = await fixture.catalog.list(scope)
+      expect(after.rows.find((row) => row.name === 'Background updated')?.selectionToken).toBe(token)
+      expect(after.rows.find((row) => row.name === 'Selected')?.selectionToken).toBe(selectedToken)
+    } finally {
+      watching.observer.dispose()
       await rm(fixture.root, { recursive: true, force: true })
     }
   })

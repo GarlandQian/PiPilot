@@ -4,6 +4,7 @@ export type {
   AppearanceSettings,
   ComposerSendShortcut,
   ComposerSettings,
+  RunningSubmitPreference,
   Density,
   Locale,
   TerminalSettings,

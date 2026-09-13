@@ -442,15 +442,7 @@ export class LocalPiIntegrationService {
         await this.options.reloadHosts(target.scope, target.cwd)
         runtimeSync = 'synchronized'
       } catch (reloadError) {
-        try {
-          await this.options.restartHosts(target.scope, target.cwd)
-          runtimeSync = 'synchronized'
-        } catch (restartError) {
-          runtimeError = [
-            `Runtime reload failed: ${errorMessage(reloadError)}`,
-            `Host restart failed: ${errorMessage(restartError)}`,
-          ].join('\n')
-        }
+        runtimeError = `Runtime reload deferred or failed: ${errorMessage(reloadError)}`
       }
       this.assertCurrent(target)
       if (runtimeSync === 'synchronized') {

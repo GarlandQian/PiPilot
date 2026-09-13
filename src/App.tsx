@@ -1,10 +1,10 @@
 import * as React from 'react'
-import { TbLoader2, TbX } from 'react-icons/tb'
+import { createPortal } from 'react-dom'
+import { TbLoader2 } from 'react-icons/tb'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
-  DialogClose,
   DialogContent,
   DialogDescription,
   DialogTitle,
@@ -19,15 +19,17 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import {
-  ActivityRail,
-  type RailDestination,
-} from '@/components/frame/ActivityRail'
-import { ContextPanel, ContextPanelNav } from '@/components/frame/ContextPanel'
+import { ActivityRail } from '@/components/frame/ActivityRail'
+import { ContextPanel } from '@/components/frame/ContextPanel'
+import { SettingsNavigation } from '@/components/frame/SettingsNavigation'
+import { useWorkbenchNavigation } from '@/components/frame/useWorkbenchNavigation'
+import { useSessionOpening } from '@/components/frame/useSessionOpening'
 import { CommandPalette } from '@/components/frame/CommandPalette'
 import { SessionsPanel } from '@/components/frame/SessionsPanel'
 import type { SidebarConversationItem } from '@/components/layout/SessionList'
 import { ChatHeader } from '@/components/chat/ChatHeader'
+import { ConversationWelcome } from '@/components/chat/ConversationWelcome'
+import { MarkdownContent } from '@/components/chat/markdown/MarkdownContent'
 import {
   MessageList,
   type ConversationJumpRequest,
@@ -45,13 +47,11 @@ import {
   type InspectorPreviewState,
   type InspectorTab,
 } from '@/components/inspector/InspectorPanel'
+import { InspectorPortalHost } from '@/components/inspector/InspectorPortalHost'
 import { PanelResizeHandle } from '@/components/layout/PanelResizeHandle'
 import {
-  SETTINGS_GROUPS,
   SettingsLayout,
-  isSettingsSectionId,
   type IntegrationsTabId,
-  type SettingsSectionId,
 } from '@/components/settings/SettingsLayout'
 import {
   type CommandContext,
@@ -59,10 +59,9 @@ import {
 } from '@/lib/commands'
 import { useApplySettings } from '@/lib/theme'
 import { useT } from '@/i18n'
+import { useUpdateSettings } from '@/store/settings'
 import {
-  cancelPiGenerationHydrationWaiter,
   derivePiConversationPresentation,
-  piGenerationHydrationOutcome,
   usePiExtensionUi,
   usePiRpcActions,
   usePiRuntime,
@@ -80,20 +79,8 @@ import {
   INSPECTOR_DEFAULT_WIDTH,
   INSPECTOR_MAX_WIDTH,
   INSPECTOR_MIN_WIDTH,
-  deriveFrameLayoutMode,
-  readAppRoute,
-  readContextPanelOpen,
-  readPanelLayout,
-  writeAppRoute,
-  writeContextPanelOpen,
-  writePanelLayout,
-  type AppRoute,
 } from '@/renderer/layout-preferences'
 import type { LocalPiImageContent } from '@/shared/local-pi'
-import type {
-  ConversationActivationResult,
-  ConversationScope,
-} from '@/shared/conversation-scope'
 import type { WorkspacePathSearchEntry } from '@/shared/workspace-content'
 import type { WorkspaceSummary } from '@/shared/schemas/workspace'
 import type {
@@ -107,7 +94,11 @@ import {
   type PlanActionId,
 } from '@/renderer/pi-rpc/adapters'
 import { projectComposerMentionCandidates } from '@/renderer/composer/composer-mentions'
-import { isOfficialSessionOpeningRow } from '@/store/workspace-state'
+import { useConversationOperationFeedback } from '@/renderer/composer/use-operation-feedback'
+import {
+  isOfficialSessionOpeningRow,
+  sameConversationScope,
+} from '@/store/workspace-state'
 
 const EMPTY_COMPOSER_QUEUE: ComposerQueueState = Object.freeze({
   pendingCount: 0,
@@ -120,27 +111,6 @@ const EMPTY_COMPOSER_QUEUE: ComposerQueueState = Object.freeze({
   followUpMode: 'one-at-a-time',
 })
 
-interface FrameNav {
-  route: AppRoute
-  contextPanelOpen: boolean
-  paletteOpen: boolean
-}
-
-interface SessionOpening {
-  operationId: number
-  scope: ConversationScope
-  scopeKey: string
-  selectionToken: string
-  activation: ConversationActivationResult | null
-  title: string
-  error: string | null
-}
-
-interface SessionOpeningHandle extends SessionOpening {
-  hydration: Promise<boolean>
-  resolveHydration(success: boolean): void
-}
-
 function errorMessage(error: unknown) {
   return error instanceof Error && error.message.trim()
     ? error.message
@@ -149,6 +119,7 @@ function errorMessage(error: unknown) {
 
 export default function App() {
   const settings = useApplySettings()
+  const { update: updateSettings } = useUpdateSettings()
   const t = useT()
   const workspace = useWorkspaceStore()
   const pi = usePiRuntime()
@@ -156,32 +127,27 @@ export default function App() {
   const actions = usePiRpcActions()
   const extension = usePiExtensionUi()
 
-  const [frameNav, setFrameNav] = React.useState<FrameNav>(() => ({
-    route: readAppRoute(),
-    contextPanelOpen: readContextPanelOpen(),
-    paletteOpen: false,
-  }))
-  const [lastSettingsSection, setLastSettingsSection] = React.useState<SettingsSectionId>(
-    () => {
-      const route = readAppRoute()
-      return route.workspace === 'settings' ? route.section : 'appearance'
-    },
-  )
+  const {
+    frameNav, rail, settingsSection, conversationWorkspace, frameLayoutMode,
+    compactConversation, panelLayout, setPanelLayout, compactSettingsDetailOpen,
+    closeCompactSettingsDetail, compactInspectorOpen, setCompactInspectorOpen,
+    compactInspectorReturnFocusRef, setRail, setSettingsSection, setPaletteOpen,
+    openPalette, toggleContextPanel, toggleInspector,
+  } = useWorkbenchNavigation()
   const [integrationsTab, setIntegrationsTab] = React.useState<IntegrationsTabId>('overview')
   const [renamingToken, setRenamingToken] = React.useState<string | null>(null)
-  const [openingSession, setOpeningSession] = React.useState<SessionOpening | null>(null)
-  const openingSessionRef = React.useRef<SessionOpeningHandle | null>(null)
-  const openingSessionSequence = React.useRef(0)
-  const [panelLayout, setPanelLayout] = React.useState(readPanelLayout)
+  const {
+    openingSession, selectionRevision, abandonSessionOpening,
+    requestSwitch, requestSessionOpening,
+  } = useSessionOpening({ workspace, pi, transcriptLoading: transcript.loading })
   const [inspectorTab, setInspectorTab] = React.useState<InspectorTab>('files')
+  const [inspectorContainer] = React.useState(() => {
+    const container = document.createElement('div')
+    container.className = 'h-full min-h-0'
+    return container
+  })
   const [inspectorPreview, setInspectorPreview] =
     React.useState<InspectorPreviewState | null>(null)
-  const [compactSettingsDetailOpen, setCompactSettingsDetailOpen] = React.useState(false)
-  const compactSettingsReturnFocusRef = React.useRef<SettingsSectionId | null>(null)
-  const [compactInspectorOpen, setCompactInspectorOpen] = React.useState(false)
-  const compactInspectorReturnFocusRef = React.useRef<HTMLElement | null>(null)
-  const [frameWidth, setFrameWidth] = React.useState(() =>
-    typeof window === 'undefined' ? 1_440 : window.innerWidth)
   const [pendingDeletion, setPendingDeletion] = React.useState<
     SidebarConversationItem | null
   >(null)
@@ -210,297 +176,16 @@ export default function App() {
   const subagentSelectionSequence = React.useRef(0)
   const subagentFocusSequence = React.useRef(0)
 
-  const rail: RailDestination = frameNav.route.workspace === 'settings'
-    ? 'settings'
-    : frameNav.route.context
-  const settingsSection = frameNav.route.workspace === 'settings'
-    ? frameNav.route.section
-    : lastSettingsSection
-  const frameLayoutMode = deriveFrameLayoutMode(frameNav.route, frameWidth)
-  const conversationWorkspace = frameNav.route.workspace === 'conversation'
-  const compactConversation = frameLayoutMode === 'conversation-compact'
-
-  React.useEffect(() => () => {
-    cancelPiGenerationHydrationWaiter(openingSessionRef)
-  }, [])
-
-  React.useEffect(() => {
-    writeContextPanelOpen(frameNav.contextPanelOpen)
-  }, [frameNav.contextPanelOpen])
-
-  React.useEffect(() => {
-    writeAppRoute(frameNav.route)
-  }, [frameNav.route])
-
-  React.useEffect(() => {
-    writePanelLayout(panelLayout)
-  }, [panelLayout])
-
-  React.useLayoutEffect(() => {
-    const updateFrameWidth = () => setFrameWidth(window.innerWidth)
-    updateFrameWidth()
-    window.addEventListener('resize', updateFrameWidth)
-    return () => window.removeEventListener('resize', updateFrameWidth)
-  }, [])
-
-  const setRail = React.useCallback((destination: RailDestination) => {
-    setCompactSettingsDetailOpen(false)
-    setFrameNav((current) => {
-      const route: AppRoute = destination === 'settings'
-        ? { workspace: 'settings', section: lastSettingsSection }
-        : { workspace: 'conversation', context: destination }
-      if (
-        current.route.workspace === route.workspace &&
-        (route.workspace === 'settings'
-          ? current.route.workspace === 'settings' && current.route.section === route.section
-          : current.route.workspace === 'conversation' && current.route.context === route.context)
-      ) return current
-      return { ...current, route }
-    })
-  }, [lastSettingsSection])
-
-  const setSettingsSection = React.useCallback((section: SettingsSectionId) => {
-    const route: AppRoute = { workspace: 'settings', section }
-    if (deriveFrameLayoutMode(route, frameWidth) === 'settings-compact') {
-      compactSettingsReturnFocusRef.current = section
-      setCompactSettingsDetailOpen(true)
-    }
-    setLastSettingsSection(section)
-    setFrameNav((current) => ({
-      ...current,
-      route,
-    }))
-  }, [frameWidth])
-
-  const closeCompactSettingsDetail = React.useCallback(() => {
-    setCompactSettingsDetailOpen(false)
-    const targetId = compactSettingsReturnFocusRef.current
-    compactSettingsReturnFocusRef.current = null
-    requestAnimationFrame(() => {
-      if (!targetId) return
-      document.querySelector<HTMLElement>(
-        `[data-context-panel-nav-id="${targetId}"]`,
-      )?.focus()
-    })
-  }, [])
-
-  const toggleContextPanel = React.useCallback(() => {
-    setFrameNav((current) => ({ ...current, contextPanelOpen: !current.contextPanelOpen }))
-  }, [])
-  const toggleInspector = React.useCallback(() => {
-    if (compactConversation) {
-      setCompactInspectorOpen((current) => {
-        if (!current) {
-          compactInspectorReturnFocusRef.current = document.activeElement instanceof HTMLElement
-            ? document.activeElement
-            : null
-        }
-        return !current
-      })
-      return
-    }
-    setPanelLayout((current) => ({ ...current, inspectorOpen: !current.inspectorOpen }))
-  }, [compactConversation])
-  const openPalette = React.useCallback(() => {
-    setFrameNav((current) => ({ ...current, paletteOpen: true }))
-  }, [])
-
-  React.useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      const mod = event.metaKey || event.ctrlKey
-      if (!mod) return
-      const key = event.key.toLowerCase()
-      if (key === 'b') {
-        event.preventDefault()
-        setFrameNav((current) => ({ ...current, contextPanelOpen: !current.contextPanelOpen }))
-      } else if (key === 'j') {
-        event.preventDefault()
-        toggleInspector()
-      } else if (key === 'k') {
-        event.preventDefault()
-        setFrameNav((current) => ({ ...current, paletteOpen: !current.paletteOpen }))
-      } else if (event.key === '1') {
-        event.preventDefault()
-        setCompactSettingsDetailOpen(false)
-        setFrameNav((current) => ({
-          ...current,
-          route: { workspace: 'conversation', context: 'sessions' },
-        }))
-      } else if (event.key === '2') {
-        event.preventDefault()
-        setCompactSettingsDetailOpen(false)
-        setFrameNav((current) => ({
-          ...current,
-          route: { workspace: 'settings', section: lastSettingsSection },
-        }))
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [lastSettingsSection, toggleInspector])
-
   const run = React.useCallback((operation: () => Promise<void>) => {
     void operation().catch(() => undefined)
   }, [])
 
-  const abandonSessionOpening = React.useCallback((preserveOperationId?: number) => {
-    const opening = openingSessionRef.current
-    if (!opening) {
-      setOpeningSession((current) => current?.error ? null : current)
-      return
-    }
-    if (opening.operationId === preserveOperationId) return
-    cancelPiGenerationHydrationWaiter(openingSessionRef)
-    setOpeningSession((current) =>
-      current?.operationId === opening.operationId ? null : current)
-  }, [])
-
-  const requestSwitch = React.useCallback(
-    (
-      operation: () => Promise<void>,
-      sessionOpeningOperationId?: number,
-    ) => {
-      abandonSessionOpening(sessionOpeningOperationId)
-      run(operation)
-    },
-    [abandonSessionOpening, run],
-  )
-
-  const beginSessionOpening = React.useCallback((item: SidebarConversationItem) => {
-    abandonSessionOpening()
-    const operationId = ++openingSessionSequence.current
-    let resolveHydration: (success: boolean) => void = () => undefined
-    const hydration = new Promise<boolean>((resolve) => {
-      resolveHydration = resolve
-    })
-    const opening: SessionOpeningHandle = {
-      operationId,
-      scope: item.summary.scope,
-      scopeKey: conversationScopeKey(item.summary.scope),
-      selectionToken: item.summary.selectionToken,
-      activation: null,
-      title: item.summary.name?.trim() || item.summary.preview.trim() ||
-        t('sidebar.session.untitled'),
-      error: null,
-      hydration,
-      resolveHydration,
-    }
-    openingSessionRef.current = opening
-    setOpeningSession({
-      operationId: opening.operationId,
-      scope: opening.scope,
-      scopeKey: opening.scopeKey,
-      selectionToken: opening.selectionToken,
-      activation: opening.activation,
-      title: opening.title,
-      error: opening.error,
-    })
-    return opening
-  }, [abandonSessionOpening, t])
-
-  const confirmSessionOpeningActivation = React.useCallback((
-    operationId: number,
-    activation: ConversationActivationResult,
-  ) => {
-    const opening = openingSessionRef.current
-    if (!opening || opening.operationId !== operationId) return false
-    if (conversationScopeKey(activation.scope) !== opening.scopeKey) {
-      throw new Error('Pi activated a session in another conversation scope.')
-    }
-    opening.activation = activation
-    setOpeningSession((current) => current?.operationId === operationId
-      ? { ...current, activation }
-      : current)
-    return true
-  }, [])
-
-  const settleSessionOpening = React.useCallback((
-    operationId: number,
-    outcome: { status: 'ready' | 'cancelled' } | { status: 'error'; error: string },
-  ) => {
-    const opening = openingSessionRef.current
-    if (!opening || opening.operationId !== operationId) return
-    openingSessionRef.current = null
-    opening.resolveHydration(outcome.status === 'ready')
-    setOpeningSession((current) => {
-      if (current?.operationId !== operationId) return current
-      return outcome.status === 'error'
-        ? { ...current, error: outcome.error }
-        : null
-    })
-  }, [])
-
-  React.useEffect(() => {
-    const opening = openingSession
-    if (!opening || opening.error || !opening.activation) return
-    const outcome = piGenerationHydrationOutcome(
-      {
-        scopeKey: conversationScopeKey(opening.activation.scope),
-        generation: opening.activation.generation,
-        sessionId: opening.activation.sessionId,
-      },
-      conversationScopeKey(workspace.activeScope),
-      workspace.activeSessionId,
-      pi.runtime,
-      pi.session,
-      pi.hydration,
-      pi.loading,
-      transcript.loading,
-    )
-    if (outcome === 'ready') {
-      settleSessionOpening(opening.operationId, { status: 'ready' })
-    } else if (outcome === 'error') {
-      settleSessionOpening(opening.operationId, {
-        status: 'error',
-        error: pi.hydration.error || pi.error || 'Pi failed to load the selected session.',
-      })
-    }
-  }, [
-    openingSession,
-    pi.hydration,
-    pi.loading,
-    pi.runtime,
-    pi.session,
-    settleSessionOpening,
-    transcript.loading,
-    workspace.activeSessionId,
-  ])
-
-  const requestSessionOpening = React.useCallback((
-    item: SidebarConversationItem,
-    afterHydration?: () => Promise<void>,
-  ) => {
-    const opening = beginSessionOpening(item)
-    if (!opening) return
-    requestSwitch(
-      async () => {
-        try {
-          const activation = await workspace.openSession(
-            item.summary.scope,
-            item.summary.selectionToken,
-          )
-          if (!confirmSessionOpeningActivation(opening.operationId, activation)) return
-          if (await opening.hydration) await afterHydration?.()
-        } catch (error) {
-          settleSessionOpening(opening.operationId, {
-            status: 'error',
-            error: errorMessage(error) || 'Pi failed to open the selected session.',
-          })
-          throw error
-        }
-      },
-      opening.operationId,
-    )
-  }, [
-    beginSessionOpening,
-    confirmSessionOpeningActivation,
-    requestSwitch,
-    settleSessionOpening,
-    workspace,
-  ])
-
-  const active = workspace.sessions.find((session) =>
-    session.id === workspace.activeSessionId)
+  const activeRuntimeSelectionToken = pi.runtime?.sessionStatuses?.find((status) =>
+    status.selected &&
+    sameConversationScope(status.scope, workspace.activeScope))?.selectionToken
+  const active = workspace.sessions.find((session) => activeRuntimeSelectionToken
+    ? session.selectionToken === activeRuntimeSelectionToken
+    : session.id === workspace.activeSessionId)
   const conversation = derivePiConversationPresentation({
     activeScopeKey: conversationScopeKey(workspace.activeScope),
     activeSessionId: workspace.activeSessionId,
@@ -522,12 +207,20 @@ export default function App() {
   const conversationSessionKey = conversationReady
     ? `${conversationScopeKey(workspace.activeScope)}:${conversation.sessionId}:${pi.runtime?.generation ?? 'none'}`
     : null
+  const operationOwnerKey = JSON.stringify([
+    composerScopeKey,
+    activeRuntimeSelectionToken ?? null,
+    selectionRevision,
+    conversationReady,
+  ])
+  const compactFeedback = useConversationOperationFeedback(operationOwnerKey)
+  const paletteStopFeedback = useConversationOperationFeedback(operationOwnerKey)
 
   React.useEffect(() => {
     setInspectorPreview((current) => (
-      current?.sessionKey === conversationSessionKey ? current : null
+      current?.workspaceId === workspace.workspace?.id ? current : null
     ))
-  }, [conversationSessionKey])
+  }, [workspace.workspace?.id])
   const addWorkspaceReferenceToComposer = React.useCallback((
     entry: WorkspacePathSearchEntry,
   ) => {
@@ -579,10 +272,6 @@ export default function App() {
       ? current
       : { ...current, inspectorOpen: true })
   }, [compactConversation, conversationWorkspace, selectedSubagentCall])
-
-  React.useEffect(() => {
-    if (!compactConversation) setCompactInspectorOpen(false)
-  }, [compactConversation])
 
   React.useEffect(() => {
     setConversationJump(null)
@@ -694,18 +383,23 @@ export default function App() {
       setIntegrationsTab(tab)
       setSettingsSection('integrations')
     },
-    stopGeneration: () => void actions.abort(),
+    stopGeneration: () => {
+      if (!conversationReady) return
+      void paletteStopFeedback.run('stop', () => actions.abort(), t('composer.stopFailed'))
+    },
     selectSession: openConversationFromPalette,
   }), [
     actions,
     conversationReady,
     newPrimarySession,
     openConversationFromPalette,
+    paletteStopFeedback.run,
     pi.session?.isStreaming,
     setRail,
     setSettingsSection,
     toggleContextPanel,
     toggleInspector,
+    t,
   ])
 
   const paletteSessions = React.useMemo<SessionCommandEntry[]>(() => {
@@ -765,14 +459,20 @@ export default function App() {
   const inspectorPanel = (
     <InspectorPanel
       width={panelLayout.inspectorWidth}
+      visible={conversationWorkspace && (compactConversation
+        ? compactInspectorVisible
+        : panelLayout.inspectorOpen)}
+      onClose={() => {
+        if (compactConversation) setCompactInspectorOpen(false)
+        else setPanelLayout((current) => ({ ...current, inspectorOpen: false }))
+        if (selectedSubagentCall) closeSubagentExecution()
+      }}
       activeTab={inspectorTab}
       onActiveTabChange={setInspectorTab}
       previewState={inspectorPreview}
       onPreviewStateChange={setInspectorPreview}
       conversation={conversation}
-      outline={conversationReady ? transcript.outline : []}
-      outlineSessionKey={conversationSessionKey}
-      onNavigateOutline={navigateConversationOutline}
+      sessionKey={conversationSessionKey}
       onAddWorkspaceReference={conversationReady && workspace.activeScope.kind === 'project'
         ? addWorkspaceReferenceToComposer
         : undefined}
@@ -780,6 +480,8 @@ export default function App() {
       onCloseSubagent={closeSubagentExecution}
     />
   )
+  const compactSettingsDetailVisible = frameLayoutMode === 'settings-compact' && compactSettingsDetailOpen
+  const contextPanelVisible = frameNav.contextPanelOpen && !compactSettingsDetailVisible
 
   return (
     <TooltipProvider delayDuration={350}>
@@ -788,111 +490,90 @@ export default function App() {
           <ActivityRail
             rail={rail}
             onRailChange={setRail}
-            contextPanelOpen={frameNav.contextPanelOpen}
-            onToggleContextPanel={toggleContextPanel}
+            contextPanelOpen={contextPanelVisible}
+            onToggleContextPanel={compactSettingsDetailVisible ? () => {
+              closeCompactSettingsDetail()
+              if (!frameNav.contextPanelOpen) toggleContextPanel()
+            } : toggleContextPanel}
             onOpenPalette={openPalette}
             onOpenAbout={() => setSettingsSection('about')}
-          />
-          <ContextPanel
-            rail={rail}
-            hidden={!frameNav.contextPanelOpen || (
-              frameLayoutMode === 'settings-compact' && compactSettingsDetailOpen
-            )}
             width={panelLayout.contextPanelWidth}
           >
-            <SessionsPanel
-              hidden={!conversationWorkspace}
-              renamingSelectionToken={renamingToken}
-              deletingSelectionToken={deletingSelectionToken}
-              isOpeningSessionRow={isOpeningSessionRow}
-              onSelect={openConversation}
-              onNewPrimary={newPrimarySession}
-              onNewProjectless={() => {
-                requestSwitch(() => workspace.newSession({ kind: 'projectless' }))
-                setRail('sessions')
-              }}
-              onRenameStart={(item) => setRenamingToken(item.summary.selectionToken)}
-              onRenameCommit={(item, nextTitle) => {
-                const currentTitle = item.summary.name?.trim() || item.summary.preview.trim()
-                if (nextTitle.trim() && nextTitle.trim() !== currentTitle) {
-                  requestSwitch(() =>
-                    workspace.renameSession(
-                      item.summary.scope,
-                      item.summary.selectionToken,
-                      nextTitle,
-                    ))
-                }
-                setRenamingToken(null)
-              }}
-              onDuplicate={(item) => {
-                requestSwitch(() => workspace.duplicateSession(
-                  item.summary.scope,
-                  item.summary.selectionToken,
-                ))
-                setRail('sessions')
-              }}
-              onDelete={(item) => {
-                if (deletingSelectionToken) return
-                setDeletionError(null)
-                setPendingDeletion(item)
-              }}
-              onActivateProject={(workspaceId) => {
-                requestSwitch(() => workspace.openWorkspace(workspaceId))
-                setRail('sessions')
-              }}
-              onStartProjectTask={(workspaceId) => {
-                requestSwitch(() => workspace.newSession({
-                  kind: 'project',
-                  workspaceId,
-                }))
-                setRail('sessions')
-              }}
-              onChooseWorkspace={() => {
-                requestSwitch(async () => {
-                  await workspace.chooseWorkspace()
-                })
-                setRail('sessions')
-              }}
-              onPinWorkspace={(workspaceId, pinned) => {
-                run(() => workspace.setWorkspacePinned(workspaceId, pinned))
-              }}
-              onRemoveWorkspace={(project) => {
-                if (removingProjectId) return
-                setProjectRemovalError(null)
-                setPendingProjectRemoval(project)
-              }}
-            />
-            {frameNav.route.workspace === 'settings' && !(
-              frameLayoutMode === 'settings-compact' && compactSettingsDetailOpen
-            ) && (
-              <div className="p-2">
-                {SETTINGS_GROUPS.map((group) => (
-                  <section key={group.id} className="mb-3 last:mb-0">
-                    <h3 className="px-2.5 pb-1 text-micro font-medium uppercase text-muted-foreground">
-                      {t(group.labelKey)}
-                    </h3>
-                    <ContextPanelNav
-                      ariaLabel={t(group.labelKey)}
-                      className="p-0"
-                      items={group.sections.map((meta) => ({
-                        id: meta.id,
-                        label: t(meta.labelKey),
-                        icon: <meta.icon />,
-                      }))}
-                      activeId={settingsSection}
-                      onSelect={(id) => {
-                        if (isSettingsSectionId(id)) setSettingsSection(id)
-                      }}
-                    />
-                  </section>
-                ))}
-              </div>
-            )}
-          </ContextPanel>
+            <ContextPanel
+              rail={rail}
+              hidden={!contextPanelVisible}
+              showHeader={false}
+              className="min-h-0 w-full flex-1 border-r-0"
+            >
+              <SessionsPanel
+                hidden={!conversationWorkspace}
+                renamingSelectionToken={renamingToken}
+                deletingSelectionToken={deletingSelectionToken}
+                isOpeningSessionRow={isOpeningSessionRow}
+                onSelect={openConversation}
+                onNewPrimary={newPrimarySession}
+                onNewProjectless={() => {
+                  requestSwitch(() => workspace.newSession({ kind: 'projectless' }))
+                  setRail('sessions')
+                }}
+                onRenameStart={(item) => setRenamingToken(item.summary.selectionToken)}
+                onRenameCommit={(item, nextTitle) => {
+                  const currentTitle = item.summary.name?.trim() || item.summary.preview.trim()
+                  if (nextTitle.trim() && nextTitle.trim() !== currentTitle) {
+                    run(() =>
+                      workspace.renameSession(
+                        item.summary.scope,
+                        item.summary.selectionToken,
+                        nextTitle,
+                      ))
+                  }
+                  setRenamingToken(null)
+                }}
+                onDuplicate={(item) => {
+                  requestSwitch(() => workspace.duplicateSession(
+                    item.summary.scope,
+                    item.summary.selectionToken,
+                  ))
+                  setRail('sessions')
+                }}
+                onDelete={(item) => {
+                  if (deletingSelectionToken) return
+                  setDeletionError(null)
+                  setPendingDeletion(item)
+                }}
+                onActivateProject={(workspaceId) => {
+                  requestSwitch(() => workspace.openWorkspace(workspaceId))
+                  setRail('sessions')
+                }}
+                onStartProjectTask={(workspaceId) => {
+                  requestSwitch(() => workspace.newSession({
+                    kind: 'project',
+                    workspaceId,
+                  }))
+                  setRail('sessions')
+                }}
+                onChooseWorkspace={() => {
+                  requestSwitch(async () => {
+                    await workspace.chooseWorkspace()
+                  })
+                  setRail('sessions')
+                }}
+                onPinWorkspace={(workspaceId, pinned) => {
+                  run(() => workspace.setWorkspacePinned(workspaceId, pinned))
+                }}
+                onRemoveWorkspace={(project) => {
+                  if (removingProjectId) return
+                  setProjectRemovalError(null)
+                  setPendingProjectRemoval(project)
+                }}
+              />
+              {frameNav.route.workspace === 'settings' && !compactSettingsDetailVisible && (
+                <SettingsNavigation section={settingsSection} onSelect={setSettingsSection} />
+              )}
+            </ContextPanel>
+          </ActivityRail>
 
-          {frameNav.contextPanelOpen && !(
-            frameLayoutMode === 'settings-compact' && compactSettingsDetailOpen
-          ) && (
+          {contextPanelVisible && (
             <PanelResizeHandle
               width={panelLayout.contextPanelWidth}
               min={CONTEXT_PANEL_MIN_WIDTH}
@@ -908,10 +589,22 @@ export default function App() {
 
           <main
             hidden={!conversationWorkspace}
-            className="relative flex min-w-0 flex-1 flex-col overflow-x-hidden"
+            className="relative flex min-w-0 flex-1 flex-col overflow-x-hidden bg-surface"
           >
             <ChatHeader
               title={title}
+              ownerKey={conversationSessionKey}
+              projectName={workspace.activeScope.kind === 'project' ? workspace.workspace?.name : undefined}
+              status={conversationReady ? pi.status : undefined}
+              outline={conversationReady ? transcript.outline : []}
+              onNavigate={navigateConversationOutline}
+              onNewConversation={newPrimarySession}
+              onShowChanges={() => {
+                if (selectedSubagentCall) closeSubagentExecution()
+                setInspectorTab('diff')
+                if (compactConversation) setCompactInspectorOpen(true)
+                else setPanelLayout((current) => ({ ...current, inspectorOpen: true }))
+              }}
               sessionVisible={conversationReady}
               inspectorOpen={compactConversation
                 ? compactInspectorOpen
@@ -919,9 +612,32 @@ export default function App() {
               branch={conversationReady ? workspace.workspace?.branch ?? '' : ''}
               stats={conversationReady ? pi.stats : null}
               onToggleInspector={toggleInspector}
-              onCompact={() => run(() => actions.compact())}
+              compacting={Boolean(compactFeedback.pending)}
+              onCompact={() => {
+                if (!conversationReady) return
+                void compactFeedback.run('compact', () => actions.compact(), t('chat.compactionFailed'))
+              }}
             />
+            {compactFeedback.error ? (
+              <div role="alert" data-conversation-action-error="compact" className="shrink-0 break-words px-4 py-2 text-caption text-destructive [&_.md-body]:text-caption [&_.md-body]:text-destructive">
+                <MarkdownContent markdown={compactFeedback.error} />
+              </div>
+            ) : compactFeedback.pending ? (
+              <p role="status" className="shrink-0 px-4 py-2 text-caption text-muted-foreground">
+                {t('chat.compacting')}
+              </p>
+            ) : null}
+            {paletteStopFeedback.error ? (
+              <div role="alert" data-conversation-action-error="stop" className="shrink-0 break-words px-4 py-2 text-caption text-destructive [&_.md-body]:text-caption [&_.md-body]:text-destructive">
+                <MarkdownContent markdown={paletteStopFeedback.error} />
+              </div>
+            ) : null}
             <MessageList
+              emptyState={<ConversationWelcome
+                selected={conversationReady}
+                projectName={workspace.activeScope.kind === 'project' ? workspace.workspace?.name : undefined}
+                onOpenProject={() => { requestSwitch(async () => { await workspace.chooseWorkspace() }); setRail('sessions') }}
+              />}
               turns={transcript.turns}
               revision={transcript.revision}
               presentation={conversation}
@@ -948,7 +664,7 @@ export default function App() {
             <Composer
               connected={conversationReady}
               loadingModels={conversation.status === 'loading'}
-              modelError={conversationReady || conversation.status === 'error'
+              availabilityError={conversationReady || conversation.status === 'error'
                 ? pi.error
                 : null}
               selectedModel={selectedModel}
@@ -964,14 +680,20 @@ export default function App() {
               draftReplacement={conversationReady ? extension.draftReplacement : null}
               mentionInsertionRequest={composerMentionInsertionRequest}
               scopeKey={composerScopeKey}
+              operationOwnerKey={operationOwnerKey}
               sendShortcut={settings.composer.sendShortcut}
+              runningSubmitPreference={settings.composer.runningSubmit}
               supportsImages={selectedModel?.input.includes('image') ?? false}
               onModelChange={actions.selectModel}
               onThinkingChange={actions.selectThinking}
               onSubmit={submitComposer}
               onStop={actions.abort}
+              onRunningSubmitPreferenceChange={(runningSubmit) => {
+                updateSettings({ composer: { runningSubmit } })
+              }}
               onSetQueueMode={actions.setQueueMode}
               onPromoteFollowUp={actions.promoteFollowUp}
+              onRemoveQueuedMessage={actions.removeQueuedMessage}
               onCompleteCommandArguments={conversationReady
                 ? actions.completeCommandArguments
                 : undefined}
@@ -981,8 +703,10 @@ export default function App() {
             />
           </main>
 
-          {frameNav.route.workspace === 'settings' && (
+          {frameNav.settingsVisited && (
             <SettingsLayout
+              hidden={conversationWorkspace}
+              operationOwnerKey={operationOwnerKey}
               section={settingsSection}
               integrationsTab={integrationsTab}
               onIntegrationsTab={setIntegrationsTab}
@@ -1005,7 +729,7 @@ export default function App() {
                 }}
                 side="right"
               />
-              {inspectorPanel}
+              <InspectorPortalHost container={inspectorContainer} />
             </>
           )}
         </div>
@@ -1022,6 +746,11 @@ export default function App() {
           <DialogContent
             showCloseButton={false}
             className="flex flex-col translate-x-0 translate-y-0 gap-0 rounded-none border-y-0 border-r-0 bg-sidebar p-0"
+            onInteractOutside={(event) => {
+              // The retained portal has stable React ancestry but moves into this dialog's DOM.
+              const target = event.detail.originalEvent.target
+              if (target instanceof Node && inspectorContainer.contains(target)) event.preventDefault()
+            }}
             onCloseAutoFocus={(event) => {
               event.preventDefault()
               const returnTarget = compactInspectorReturnFocusRef.current
@@ -1043,26 +772,16 @@ export default function App() {
             <DialogDescription className="sr-only">
               {t('inspector.title')}
             </DialogDescription>
-            <div className="flex h-8 shrink-0 items-center justify-between border-b border-border/60 px-2 pl-3">
-              <span className="text-caption font-medium text-foreground">
-                {t('inspector.title')}
-              </span>
-              <DialogClose asChild>
-                <Button variant="ghost" size="icon-sm" aria-label={t('inspector.close')}>
-                  <TbX aria-hidden />
-                </Button>
-              </DialogClose>
-            </div>
-            <div className="min-h-0 flex-1">{inspectorPanel}</div>
+            <InspectorPortalHost container={inspectorContainer} />
           </DialogContent>
         </Dialog>
       )}
 
+      {createPortal(inspectorPanel, inspectorContainer)}
+
       <CommandPalette
         open={frameNav.paletteOpen}
-        onOpenChange={(open) => {
-          setFrameNav((current) => ({ ...current, paletteOpen: open }))
-        }}
+        onOpenChange={setPaletteOpen}
         ctx={commandContext}
         sessions={paletteSessions}
       />
@@ -1239,7 +958,6 @@ export default function App() {
                   onClick={() => {
                     workspace.clearError()
                     setSettingsSection('general')
-                    setRail('settings')
                   }}
                 >
                   {t('sidebar.operationError.openPiSettings')}

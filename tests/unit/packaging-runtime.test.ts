@@ -1,3 +1,4 @@
+import { realpathSync } from 'node:fs'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -44,7 +45,11 @@ describe('packaged runtime storage', () => {
       isPackaged: true,
       packagedSmoke: '1',
       temporaryDirectory,
-    })).toBe(allowed)
+    })).toBe(join(
+      realpathSync.native(tmpdir()),
+      'pipilot-storage-test',
+      'pipilot-packaged-smoke-123',
+    ))
     expect(resolveTestUserDataOverride({
       candidate: join(temporaryDirectory, 'unrelated'),
       isPackaged: true,

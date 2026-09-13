@@ -2,9 +2,9 @@ import type { RailDestination } from '@/components/frame/ActivityRail'
 import type { SidebarConversationItem } from '@/components/layout/SessionList'
 import {
   SETTINGS_SECTIONS,
-  type IntegrationsTabId,
   type SettingsSectionId,
-} from '@/components/settings/SettingsLayout'
+} from '@/components/settings/settings-navigation'
+import type { IntegrationsTabId } from '@/components/settings/IntegrationsSettings'
 import type { MessageKey } from '@/i18n'
 
 /**
@@ -108,6 +108,7 @@ export function buildSettingsCommands(): readonly AppCommand[] {
   return SETTINGS_SECTIONS.map((meta) => ({
     id: `settings:${meta.id}`,
     titleKey: meta.labelKey,
+    keywords: meta.searchTerms,
     run: (ctx) => ctx.openSettingsSection(meta.id),
   }))
 }

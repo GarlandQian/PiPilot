@@ -176,7 +176,7 @@ test('manages bundled Pi SDK integrations and MCP drafts across responsive Setti
     }), projectScope)
     expect(snapshots.global).toMatchObject({
       state: 'ready',
-      executable: { version: '0.84.2' },
+      executable: { version: '0.85.1' },
       packages: [expect.objectContaining({
         displayName: 'fixture-global-package',
         installedVersion: '1.2.3',
@@ -274,11 +274,11 @@ test('manages bundled Pi SDK integrations and MCP drafts across responsive Setti
     await settingsNavigation.getByRole('button', { name: 'Integrations', exact: true }).click()
     await page.getByRole('button', { name: 'Current project', exact: true }).click()
     await expect(page.getByRole('heading', { name: 'Integrations', exact: true })).toBeVisible()
-    await expect(page.getByText(/Pi 0\.84\.2/)).toBeVisible()
+    await expect(page.getByText(/Pi 0\.85\.1/)).toBeVisible()
     await expect(page.getByText(
-      'Package changes are saved but not confirmed loaded. Restart Pi to try again.',
+      'Package changes are saved but not confirmed loaded. Apply changes to try again.',
     )).toHaveCount(0)
-    const overview = page.getByRole('region', { name: 'Overview', exact: true })
+    const overview = page.getByRole('tabpanel', { name: 'Overview', exact: true })
     const packageSummary = overview.getByRole('button', { name: /Installed packages/u })
     const resourceSummary = overview.getByRole('button', { name: /Resolved resources/u })
     await expect(packageSummary).toContainText(String(mutation.result.snapshot.packages.length))
@@ -348,6 +348,23 @@ test('manages bundled Pi SDK integrations and MCP drafts across responsive Setti
       fullPage: true,
     })
 
+    await page.getByRole('button', { name: 'View resources', exact: true }).click()
+    const resourcesPanel = page.getByRole('tabpanel', { name: 'Resources', exact: true })
+    await expect(resourcesPanel.getByText('Resources from fixture-project-package', { exact: true })).toBeVisible()
+    await expect(resourcesPanel.getByRole('button', { name: /global-fixture-skill/u })).toHaveCount(0)
+    const resourceSearch = resourcesPanel.getByRole('searchbox', { name: 'Search integrations', exact: true })
+    await resourceSearch.fill('/skill:project-fixture-skill')
+    await resourceSearch.press('ArrowDown')
+    await expect(resourcesPanel.getByRole('button', { name: /project-fixture-skill/u })).toBeFocused()
+    await page.getByRole('tab', { name: 'Packages', exact: true }).click()
+    await expect(page.getByText('Installed version', { exact: true })).toBeVisible()
+    await page.getByRole('tab', { name: 'Resources', exact: true }).click()
+    await expect(resourceSearch).toHaveValue('/skill:project-fixture-skill')
+    await resourceSearch.press('Escape')
+    await expect(resourceSearch).toHaveValue('')
+    await resourcesPanel.getByRole('button', { name: 'Show all resources', exact: true }).click()
+    await page.getByRole('tab', { name: 'Packages', exact: true }).click()
+
     await electronApp.evaluate(({ BrowserWindow }) => {
       BrowserWindow.getAllWindows()[0]?.setSize(1100, 680)
     })
@@ -410,6 +427,21 @@ test('manages bundled Pi SDK integrations and MCP drafts across responsive Setti
 
     await page.setViewportSize({ width: 1100, height: 680 })
     await page.getByRole('tab', { name: 'MCP', exact: true }).click()
+    const mcpPanel = page.getByRole('tabpanel', { name: 'MCP', exact: true })
+    const serverSearch = mcpPanel.getByRole('searchbox', { name: 'Search servers', exact: true })
+    await serverSearch.fill('mux')
+    await page.setViewportSize({ width: 960, height: 700 })
+    await serverSearch.press('ArrowDown')
+    const muxDetails = mcpPanel.getByRole('button', { name: 'mux details', exact: true })
+    await expect(muxDetails).toBeFocused()
+    await muxDetails.press('Enter')
+    await expect(mcpPanel.locator('[data-mcp-server-detail="mux"]')).toBeVisible()
+    await mcpPanel.getByRole('button', { name: 'Back', exact: true }).click()
+    await expect(muxDetails).toBeFocused()
+    await serverSearch.focus()
+    await serverSearch.press('Escape')
+    await expect(serverSearch).toHaveValue('')
+    await page.setViewportSize({ width: 1100, height: 680 })
     const docsEdit = page.getByRole('button', {
       name: 'Edit server docs',
       exact: true,
@@ -427,11 +459,14 @@ test('manages bundled Pi SDK integrations and MCP drafts across responsive Setti
       exact: true,
     }).click()
     await expect(urlInput).toHaveAttribute('aria-invalid', 'true')
+    await expect(urlInput).toHaveAttribute('aria-describedby', /-error$/u)
     await expect(page.getByText('URL is required.', { exact: true })).toBeVisible()
     await expect(page.getByText(/exactly one non-empty command/u)).toHaveCount(0)
     await urlInput.fill('https://example.test/mcp')
     await expect(page.getByText('URL is required.', { exact: true })).toHaveCount(0)
     await page.getByRole('button', { name: 'stdio', exact: true }).click()
+    await expect(page.getByRole('dialog').getByRole('textbox', { name: 'Command', exact: true })).toHaveValue('node')
+    await expect(page.getByRole('dialog').getByRole('textbox', { name: 'Arguments 1', exact: true })).toHaveValue('server.js')
     await page.getByRole('dialog').getByRole('textbox', {
       name: 'Command',
       exact: true,
@@ -442,7 +477,7 @@ test('manages bundled Pi SDK integrations and MCP drafts across responsive Setti
     }).click()
     await page.getByRole('button', { name: 'Save', exact: true }).click()
     await expect(page.getByText(
-      'Configuration saved. Restart Pi when you are ready to apply it.',
+      'Configuration saved. Apply it when you are ready.',
     )).toBeVisible()
     await expect.poll(async () => readFile(mcpPath, 'utf8')).toContain('node-updated')
     const structuredSaved = await readFile(mcpPath, 'utf8')
@@ -465,15 +500,14 @@ test('manages bundled Pi SDK integrations and MCP drafts across responsive Setti
       '"futureTop": true,\n  "rawRoundTrip": true',
     ))
     await page.getByRole('button', {
-      name: 'Save and restart Pi',
+      name: 'Save and apply',
       exact: true,
     }).click()
     await expect.poll(async () => readFile(mcpPath, 'utf8'))
       .toContain('"rawRoundTrip": true')
-    await expect(page.getByText(
-      'Configuration saved and Pi restarted.',
-      { exact: true },
-    )).toBeVisible()
+    await expect(page.getByRole('status').filter({
+      hasText: 'Saved configuration is applied.',
+    })).toBeVisible()
     await expect.poll(() => page.evaluate(() => (
       window.pipilot!.localPi.runtime.status()
     ))).toMatchObject({ state: 'ready' })
@@ -486,7 +520,7 @@ test('manages bundled Pi SDK integrations and MCP drafts across responsive Setti
       runtimeSync: 'synchronized',
       snapshot: {
         state: 'ready',
-        executable: { version: '0.84.2' },
+        executable: { version: '0.85.1' },
         restartRequired: false,
       },
     })

@@ -1,6 +1,8 @@
 import * as React from 'react'
 import {
   TbCheck,
+  TbArrowLeft,
+  TbLoader2,
   TbCpu,
   TbLayoutSidebar,
   TbLayoutSidebarRight,
@@ -20,7 +22,7 @@ import {
   CommandList,
   CommandShortcut,
 } from '@/components/ui/command'
-import { SETTINGS_SECTIONS } from '@/components/settings/SettingsLayout'
+import { SETTINGS_SECTIONS } from '@/components/settings/settings-navigation'
 import { useT } from '@/i18n'
 import {
   ACTION_COMMANDS,
@@ -36,6 +38,8 @@ import { groupModelsByProvider } from '@/lib/model-groups'
 import { primaryShortcut } from '@/lib/keyboard-shortcuts'
 import { cn } from '@/lib/utils'
 import { type PiRpcModel, usePiRpcActions, usePiRuntime } from '@/store/pi-rpc'
+import { Button } from '@/components/ui/button'
+import { useConversationOperationFeedback } from '@/renderer/composer/use-operation-feedback'
 
 export interface CommandPaletteProps {
   open: boolean
@@ -71,10 +75,11 @@ type PalettePage = 'root' | 'models'
  */
 export function CommandPalette({ open, onOpenChange, ctx, sessions }: CommandPaletteProps) {
   const t = useT()
-  const { models, selectedModel } = usePiRuntime()
+  const { models, selectedModel, runtime, session } = usePiRuntime()
   const piActions = usePiRpcActions()
   const [page, setPage] = React.useState<PalettePage>('root')
   const [search, setSearch] = React.useState('')
+  const modelFeedback = useConversationOperationFeedback(`palette:${open}:${page}:${runtime?.generation ?? 0}:${session?.sessionId ?? ''}`)
 
   // Closed dialogs unmount their content; reset the page so the next open
   // always starts on the root page with a clean filter.
@@ -98,11 +103,15 @@ export function CommandPalette({ open, onOpenChange, ctx, sessions }: CommandPal
   }, [])
 
   const chooseModel = React.useCallback((model: PiRpcModel) => {
-    onOpenChange(false)
-    void piActions.selectModel(model.provider, model.id).catch(() => {
-      // The shared Pi runtime error state stays visible on the chat surface.
-    })
-  }, [onOpenChange, piActions])
+    if (model.provider === selectedModel?.provider && model.id === selectedModel.id) {
+      onOpenChange(false)
+      return
+    }
+    void modelFeedback.run(`${model.provider}/${model.id}`, async (isCurrent) => {
+      await piActions.selectModel(model.provider, model.id)
+      if (isCurrent()) onOpenChange(false)
+    }, t('workbenchReview.palette.modelFailed'))
+  }, [modelFeedback, onOpenChange, piActions, selectedModel, t])
 
   const actionCommands = ACTION_COMMANDS.filter((command) =>
     command.enabled ? command.enabled(ctx) : true)
@@ -114,8 +123,8 @@ export function CommandPalette({ open, onOpenChange, ctx, sessions }: CommandPal
     return (
       <CommandItem
         key={command.id}
-        value={t(command.titleKey)}
-        keywords={command.keywords?.split(' ')}
+        value={command.id}
+        keywords={[t(command.titleKey), ...(command.keywords?.split(' ') ?? [])]}
         onSelect={() => {
           if (command.id === CHANGE_MODEL_COMMAND_ID) {
             setSearch('')
@@ -152,9 +161,15 @@ export function CommandPalette({ open, onOpenChange, ctx, sessions }: CommandPal
         }
       }}
     >
+      {page === 'models' ? <div className="flex min-h-10 items-center gap-2 border-b border-border px-2">
+        <Button variant="ghost" size="icon-xs" aria-label={t('common.back')} onClick={goToRoot}><TbArrowLeft aria-hidden /></Button>
+        <span className="text-caption font-medium">{t('palette.changeModel')}</span>
+        {modelFeedback.pending ? <span role="status" className="ml-auto flex items-center gap-1.5 text-micro text-muted-foreground"><TbLoader2 className="size-3 animate-spin motion-reduce:animate-none" aria-hidden />{t('workbenchReview.palette.changingModel')}</span> : null}
+      </div> : null}
       <CommandInput
         placeholder={page === 'models' ? t('palette.changeModel.hint') : t('palette.placeholder')}
         value={search}
+        disabled={modelFeedback.pending !== null}
         onValueChange={setSearch}
         onKeyDown={(event) => {
           if (page === 'models' && event.key === 'Backspace' && search === '') {
@@ -162,6 +177,7 @@ export function CommandPalette({ open, onOpenChange, ctx, sessions }: CommandPal
           }
         }}
       />
+      {page === 'models' && modelFeedback.error ? <p role="alert" className="border-b border-border px-3 py-2 text-caption text-destructive">{modelFeedback.error}</p> : null}
       {page === 'models' ? (
         <CommandList>
           <CommandEmpty>
@@ -176,6 +192,7 @@ export function CommandPalette({ open, onOpenChange, ctx, sessions }: CommandPal
                   <CommandItem
                     key={`${model.provider}/${model.id}`}
                     value={`${model.name || model.id} ${model.provider}/${model.id}`}
+                    disabled={modelFeedback.pending !== null}
                     onSelect={() => chooseModel(model)}
                   >
                     <TbCheck
@@ -200,7 +217,8 @@ export function CommandPalette({ open, onOpenChange, ctx, sessions }: CommandPal
               {sessionCommands.map((command) => (
                 <CommandItem
                   key={command.id}
-                  value={`${command.title} ${command.subtitle}`}
+                  value={command.id}
+                  keywords={[command.title, command.subtitle]}
                   onSelect={() => runCommand(command.run)}
                 >
                   <TbMessage aria-hidden />

@@ -17,6 +17,8 @@ export interface ContextPanelProps {
   hidden?: boolean
   /** Panel-specific action rendered at the trailing edge of the header row. */
   headerAction?: React.ReactNode
+  /** Allows the enclosing sidebar to provide its own shared header. */
+  showHeader?: boolean
   /** Destination body (conversation inventory or settings nav). */
   children: React.ReactNode
   className?: string
@@ -24,7 +26,7 @@ export interface ContextPanelProps {
   width?: number
 }
 
-export function ContextPanel({ rail, hidden = false, headerAction, children, className, width }: ContextPanelProps) {
+export function ContextPanel({ rail, hidden = false, headerAction, showHeader = true, children, className, width }: ContextPanelProps) {
   const t = useT()
   const label = t(LABEL_KEYS[rail])
   return (
@@ -38,10 +40,14 @@ export function ContextPanel({ rail, hidden = false, headerAction, children, cla
         className,
       )}
     >
-      <header className="flex h-8 shrink-0 items-center gap-2 border-b border-border/60 px-3">
-        <h2 className="min-w-0 flex-1 truncate text-caption font-medium text-foreground">{label}</h2>
-        {headerAction}
-      </header>
+      {showHeader && (
+        <header className="flex h-(--frame-header-h) shrink-0 items-center gap-2 px-4">
+          <h2 className="min-w-0 flex-1 truncate text-title text-foreground">
+            {rail === 'sessions' ? t('app.name') : label}
+          </h2>
+          {headerAction}
+        </header>
+      )}
       <div className="scroll-slim min-h-0 flex-1 overflow-y-auto">
         {children}
       </div>
@@ -77,7 +83,7 @@ export function ContextPanelNav({
 }: ContextPanelNavProps) {
   return (
     <nav aria-label={ariaLabel} className={cn('p-2', className)}>
-      <ul className="flex flex-col gap-px">
+      <ul className="flex flex-col gap-1">
         {items.map((item) => {
           const active = item.id === activeId
           return (
@@ -90,7 +96,7 @@ export function ContextPanelNav({
                 className={cn(
                   'density-row flex w-full cursor-pointer items-center gap-2 rounded-md px-2.5 text-left text-app outline-none transition-colors duration-(--duration-fast) focus-visible:focus-ring',
                   active
-                    ? 'bg-accent font-medium text-accent-foreground'
+                    ? 'bg-selected font-medium text-foreground'
                     : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
                 )}
               >

@@ -29,6 +29,19 @@ describe('workspace file viewer classification', () => {
     expect(classifyWorkspaceFile('constructor')).toEqual({ kind: 'plain' })
   })
 
+  it('recognizes configuration basenames and environment variants across platform paths', () => {
+    for (const path of ['.env', 'config/.env.production.local', 'C:\\project\\.env.local', '/home/user/.bashrc']) {
+      expect(classifyWorkspaceFile(path)).toEqual({ kind: 'source', language: 'shell' })
+    }
+    expect(classifyWorkspaceFile('C:\\project\\Dockerfile')).toEqual({ kind: 'source', language: 'bash' })
+  })
+
+  it('keeps explicit Markdown documents and text reports outside configuration classification', () => {
+    expect(classifyWorkspaceFile('docs/.env.md')).toEqual({ kind: 'markdown', language: 'markdown' })
+    expect(classifyWorkspaceFile('docs/environment.markdown')).toEqual({ kind: 'markdown', language: 'markdown' })
+    expect(classifyWorkspaceFile('reports/build.txt')).toEqual({ kind: 'plain' })
+  })
+
   it('bounds long relative paths while retaining both ends', () => {
     const path = `packages/${'nested/'.repeat(30)}WorkspaceFileViewer.tsx`
     const display = displayWorkspacePath(path, 80)

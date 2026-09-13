@@ -39,6 +39,25 @@ function tool(value: ToolCall): Turn {
 }
 
 describe('tool activity presentation', () => {
+  it('aggregates long adjacent runs with linear status work and preserves call identity', () => {
+    let statusReads = 0
+    const calls = Array.from({ length: 2_000 }, (_, index) => ({
+      ...call(`bash-${index}`, 'shell'),
+      get status(): ToolCall['status'] {
+        statusReads += 1
+        return index === 1_999 ? 'failed' : 'success'
+      },
+    }))
+    const sequence = projectToolActivitySequence(calls.map(tool))
+    const run = sequence[0]
+    expect(run?.kind).toBe('activity-run')
+    if (run?.kind !== 'activity-run') return
+    expect(run.run.sections[0]?.status).toBe('failed')
+    expect(run.run.sections[0]?.failedCount).toBe(1)
+    expect(run.run.sections[0]?.items[500]?.call).toBe(calls[500])
+    expect(statusReads).toBeLessThanOrEqual(calls.length * 4)
+  })
+
   it('groups only contiguous compatible tool activity and preserves narrative order', () => {
     const sequence = projectToolActivitySequence([
       { kind: 'agent', id: 'a1', markdown: 'Starting.' },
@@ -192,5 +211,23 @@ describe('tool activity presentation', () => {
     expect(markup).toContain('data-subagent-call-id="subagent-one"')
     expect(markup).toContain('aria-controls="subagent-execution-panel"')
     expect(markup).not.toContain('<h2>Review</h2>')
+  })
+
+  it('exposes individual command rows while a grouped run is active', () => {
+    const sequence = projectToolActivitySequence([
+      tool(call('bash-finished', 'shell')),
+      tool(call('bash-active', 'shell', 'running')),
+    ])
+    const item = sequence[0]
+    if (item?.kind !== 'activity-run') throw new Error('Expected an activity run')
+    const markup = renderToStaticMarkup(createElement(
+      TooltipProvider,
+      null,
+      createElement(ToolActivityRegion, { run: item.run, sessionKey: 'session:1' }),
+    ))
+
+    expect(markup).toContain('data-tool-id="bash-finished"')
+    expect(markup).toContain('data-tool-id="bash-active"')
+    expect(markup).toContain('aria-expanded="true"')
   })
 })

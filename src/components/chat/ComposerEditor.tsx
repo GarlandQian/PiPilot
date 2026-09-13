@@ -34,6 +34,7 @@ import {
   type ComposerMentionCandidate,
   type ComposerMentionSuggestionIdentity,
 } from '@/renderer/composer/composer-mentions'
+import { normalizeComposerClipboard } from '@/renderer/composer/composer-clipboard'
 import { composerSlashQuery } from '@/renderer/composer/skill-commands'
 
 const mentionPluginKey = new PluginKey('composerMentionSuggestion')
@@ -170,16 +171,25 @@ function plainTextSlice(schema: Schema, text: string) {
   return Slice.maxOpen(Fragment.from(paragraphs), false)
 }
 
-function syncCollapsedDomSelection(view: Editor['view']) {
+function syncDomSelection(view: Editor['view']) {
+  if (view.composing) return false
   const domSelection = view.dom.ownerDocument.getSelection()
-  if (!domSelection?.isCollapsed || !domSelection.anchorNode) return false
+  if (
+    !domSelection?.anchorNode ||
+    !domSelection.focusNode ||
+    !view.dom.contains(domSelection.anchorNode) ||
+    !view.dom.contains(domSelection.focusNode)
+  ) return false
   try {
-    const position = view.posAtDOM(domSelection.anchorNode, domSelection.anchorOffset)
-    if (position < 0 || position > view.state.doc.content.size) return false
-    if (!view.state.selection.empty) {
-      view.dispatch(view.state.tr.setSelection(
-        TextSelection.near(view.state.doc.resolve(position)),
-      ))
+    const anchor = view.posAtDOM(domSelection.anchorNode, domSelection.anchorOffset)
+    const head = view.posAtDOM(domSelection.focusNode, domSelection.focusOffset)
+    const { doc } = view.state
+    if (Math.min(anchor, head) < 0 || Math.max(anchor, head) > doc.content.size) return false
+    const selection = Math.min(anchor, head) === 0 && Math.max(anchor, head) === doc.content.size
+      ? new AllSelection(doc)
+      : TextSelection.between(doc.resolve(anchor), doc.resolve(head))
+    if (!view.state.selection.eq(selection)) {
+      view.dispatch(view.state.tr.setSelection(selection))
     }
     return true
   } catch {
@@ -461,7 +471,7 @@ export const ComposerEditor = React.forwardRef<ComposerEditorHandle, ComposerEdi
           'aria-invalid': String(ariaInvalid),
           'aria-label': ariaLabel,
           'aria-multiline': 'true',
-          class: 'scroll-slim min-h-12 max-h-40 overflow-y-auto whitespace-pre-wrap break-words px-3 pb-2 pt-3 text-app text-foreground outline-none',
+          class: 'scroll-slim min-h-16 max-h-48 overflow-y-auto whitespace-pre-wrap break-words px-4 pb-2 pt-4 text-app text-foreground outline-none',
           id: 'composer-input',
           role: 'textbox',
           spellcheck: 'true',
@@ -469,23 +479,25 @@ export const ComposerEditor = React.forwardRef<ComposerEditorHandle, ComposerEdi
         handleDOMEvents: {
           keydown(view, event) {
             if (event.isComposing || event.keyCode === 229 || view.composing) return false
+            if (!view.editable) return false
             if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
               event.preventDefault()
               view.dispatch(view.state.tr.setSelection(new AllSelection(view.state.doc)))
               return true
             }
-            if (
-              (event.key === 'Backspace' || event.key === 'Delete') &&
-              view.state.selection instanceof AllSelection
-            ) {
-              event.preventDefault()
-              view.dispatch(view.state.tr.deleteSelection().scrollIntoView())
-              return true
+            if (event.key === 'Backspace' || event.key === 'Delete') {
+              // Chromium may deliver deletion before its queued selectionchange.
+              syncDomSelection(view)
+              if (!view.state.selection.empty) {
+                event.preventDefault()
+                view.dispatch(view.state.tr.deleteSelection().scrollIntoView())
+                return true
+              }
             }
             return false
           },
           copy(view, event) {
-            if (view.state.selection.empty || syncCollapsedDomSelection(view)) return false
+            if (!syncDomSelection(view) || view.state.selection.empty) return false
             const clipboardEvent = event as ClipboardEvent
             const text = serializeSlice(view.state.selection.content())
             if (text === null || !clipboardEvent.clipboardData) return false
@@ -494,7 +506,7 @@ export const ComposerEditor = React.forwardRef<ComposerEditorHandle, ComposerEdi
             return true
           },
           cut(view, event) {
-            if (view.state.selection.empty || syncCollapsedDomSelection(view)) return false
+            if (!syncDomSelection(view) || view.state.selection.empty) return false
             const clipboardEvent = event as ClipboardEvent
             const text = serializeSlice(view.state.selection.content())
             if (text === null || !clipboardEvent.clipboardData) return false
@@ -515,16 +527,17 @@ export const ComposerEditor = React.forwardRef<ComposerEditorHandle, ComposerEdi
           return callbacks.current.onKeyDown(event)
         },
         handlePaste(view, event) {
-          const files = [...(event.clipboardData?.files ?? [])]
-          if (files.length > 0) {
-            event.preventDefault()
-            callbacks.current.onPasteFiles(files)
-            return true
-          }
-          const text = event.clipboardData?.getData('text/plain')
-          if (text === undefined) return false
+          const payload = normalizeComposerClipboard(event.clipboardData)
+          if (!payload.handled) return false
+
           event.preventDefault()
-          view.dispatch(view.state.tr.replaceSelection(plainTextSlice(view.state.schema, text)))
+          if (payload.text !== null) {
+            syncDomSelection(view)
+            view.dispatch(view.state.tr
+              .replaceSelection(plainTextSlice(view.state.schema, payload.text))
+              .scrollIntoView())
+          }
+          if (payload.files.length > 0) callbacks.current.onPasteFiles(payload.files)
           return true
         },
       },
@@ -682,7 +695,7 @@ export const ComposerEditor = React.forwardRef<ComposerEditorHandle, ComposerEdi
         {empty ? (
           <span
             aria-hidden
-            className="pointer-events-none absolute left-3 top-3 text-app text-muted-foreground/60"
+            className="pointer-events-none absolute left-4 top-4 text-app text-muted-foreground"
           >
             {placeholder}
           </span>

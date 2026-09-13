@@ -210,7 +210,8 @@ export function tokenFieldValid(value: string): boolean {
   const trimmed = value.trim()
   if (trimmed === '') return true
   if (!/^\d+$/.test(trimmed)) return false
-  return Number.parseInt(trimmed, 10) >= 1
+  const parsed = Number(trimmed)
+  return Number.isSafeInteger(parsed) && parsed >= 1
 }
 
 /** Cost fields accept "unset" (empty) or a finite number ≥ 0. */

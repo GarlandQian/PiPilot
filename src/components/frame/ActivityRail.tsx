@@ -1,9 +1,9 @@
 import type * as React from 'react'
 import {
-  TbCommand,
   TbLayoutSidebarLeftCollapse,
   TbLayoutSidebarLeftExpand,
   TbMessages,
+  TbSearch,
   TbSettings,
 } from 'react-icons/tb'
 import { PiLogo } from '@/components/PiLogo'
@@ -24,30 +24,24 @@ export interface ActivityRailProps {
   onToggleContextPanel: () => void
   onOpenPalette: () => void
   onOpenAbout: () => void
+  width?: number
+  children?: React.ReactNode
 }
-
-interface RailDestinationDefinition {
-  id: RailDestination
-  icon: React.ComponentType<{ className?: string }>
-  labelKey: 'rail.sessions' | 'rail.settings'
-  shortcutKey: string
-}
-
-const DESTINATIONS: readonly RailDestinationDefinition[] = [
-  { id: 'sessions', icon: TbMessages, labelKey: 'rail.sessions', shortcutKey: '1' },
-  { id: 'settings', icon: TbSettings, labelKey: 'rail.settings', shortcutKey: '2' },
-]
 
 function RailButton({
   label,
   shortcut,
   active,
+  expanded,
+  side = 'right',
   onClick,
   children,
 }: {
   label: string
   shortcut?: string
   active?: boolean
+  expanded?: boolean
+  side?: 'right' | 'top'
   onClick: () => void
   children: React.ReactNode
 }) {
@@ -59,6 +53,7 @@ function RailButton({
           size="icon-sm"
           aria-label={label}
           aria-current={active ? 'page' : undefined}
+          aria-expanded={expanded}
           onClick={onClick}
           className={cn(
             'text-muted-foreground hover:text-foreground',
@@ -68,7 +63,7 @@ function RailButton({
           {children}
         </Button>
       </TooltipTrigger>
-      <TooltipContent side="right" className="flex items-center gap-2">
+      <TooltipContent side={side} className="flex items-center gap-2">
         {label}
         {shortcut ? <Kbd>{shortcut}</Kbd> : null}
       </TooltipContent>
@@ -83,64 +78,102 @@ export function ActivityRail({
   onToggleContextPanel,
   onOpenPalette,
   onOpenAbout,
+  width,
+  children,
 }: ActivityRailProps) {
   const t = useT()
+  const expanded = contextPanelOpen && children !== undefined
   return (
-    <nav
-      aria-label={t('rail.nav')}
-      className="flex h-full w-12 shrink-0 flex-col items-center border-r border-border bg-sidebar"
+    <aside
+      data-navigation-layout={expanded ? 'sidebar' : 'rail'}
+      style={expanded && width !== undefined ? { width } : undefined}
+      className={cn(
+        'flex h-full shrink-0 flex-col border-r border-border bg-sidebar',
+        expanded ? 'w-60' : 'w-12 items-center',
+      )}
     >
-      <div className="flex h-8 shrink-0 items-center justify-center border-b border-border/60">
-        <PiLogo className="size-4 text-sage" />
-      </div>
-
-      <div className="flex flex-col items-center pt-1 pb-0.5">
+      <header className={cn(
+        'flex w-full shrink-0 items-center',
+        expanded ? 'h-(--frame-header-h) gap-2 px-3' : 'flex-col gap-3 py-3',
+      )}>
+        {expanded ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                aria-label={t('rail.sessions')}
+                aria-current={rail === 'sessions' ? 'page' : undefined}
+                onClick={() => onRailChange('sessions')}
+                className="h-8 min-w-0 flex-1 justify-start gap-2 px-1 text-foreground"
+              >
+                <PiLogo className="size-5 shrink-0 text-foreground" />
+                <span className="truncate text-title font-semibold">{t('app.name')}</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="flex items-center gap-2">
+              {t('rail.sessions')}
+              <Kbd>{primaryShortcut('1')}</Kbd>
+            </TooltipContent>
+          </Tooltip>
+        ) : <PiLogo className="size-5 text-foreground" />}
         <RailButton
           label={t('rail.togglePanel')}
           shortcut={primaryShortcut('B')}
+          expanded={contextPanelOpen}
           onClick={onToggleContextPanel}
         >
           {contextPanelOpen
             ? <TbLayoutSidebarLeftCollapse className="size-4.5" aria-hidden />
             : <TbLayoutSidebarLeftExpand className="size-4.5" aria-hidden />}
         </RailButton>
+      </header>
+
+      <div hidden={!expanded} className="flex min-h-0 flex-1 flex-col">
+        {children}
       </div>
 
-      <ul className="flex flex-col items-center gap-1">
-        {DESTINATIONS.map(({ id, icon: Icon, labelKey, shortcutKey }) => {
-          const active = rail === id
-          return (
-            <li key={id} className="relative flex items-center">
-              <span
-                aria-hidden
-                className={cn(
-                  'absolute -left-2 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-r-full bg-sage transition-opacity duration-(--duration-fast) motion-reduce:transition-none',
-                  active ? 'opacity-100' : 'opacity-0',
-                )}
-              />
-              <RailButton
-                label={t(labelKey)}
-                shortcut={primaryShortcut(shortcutKey)}
-                active={active}
-                onClick={() => onRailChange(id)}
-              >
-                <Icon className="size-4.5" aria-hidden />
-              </RailButton>
-            </li>
-          )
-        })}
-      </ul>
-
-      <div className="mt-auto flex flex-col items-center gap-1 border-t border-border py-2">
+      <nav
+        aria-label={t('rail.nav')}
+        className={cn(
+          'mt-auto flex items-center gap-1',
+          expanded
+            ? 'mx-3 shrink-0 border-t border-border/60 py-2'
+            : 'w-full flex-1 flex-col px-2 pb-2',
+        )}
+      >
+        {!expanded && (
+          <RailButton
+            label={t('rail.sessions')}
+            shortcut={primaryShortcut('1')}
+            active={rail === 'sessions'}
+            onClick={() => onRailChange('sessions')}
+          >
+            <TbMessages className="size-4.5" aria-hidden />
+          </RailButton>
+        )}
+        <div className={expanded ? undefined : 'mt-auto pt-2'}>
+          <RailButton
+            label={t('rail.settings')}
+            shortcut={primaryShortcut('2')}
+            active={rail === 'settings'}
+            side={expanded ? 'top' : 'right'}
+            onClick={() => onRailChange('settings')}
+          >
+            <TbSettings className="size-4.5" aria-hidden />
+          </RailButton>
+        </div>
         <GlobalNotifications onOpenAbout={onOpenAbout} />
-        <RailButton
-          label={t('rail.palette')}
-          shortcut={primaryShortcut('K')}
-          onClick={onOpenPalette}
-        >
-          <TbCommand className="size-4.5" aria-hidden />
-        </RailButton>
-      </div>
-    </nav>
+        <div className={expanded ? 'ml-auto' : undefined}>
+          <RailButton
+            label={t('rail.palette')}
+            shortcut={primaryShortcut('K')}
+            side={expanded ? 'top' : 'right'}
+            onClick={onOpenPalette}
+          >
+            <TbSearch className="size-4.5" aria-hidden />
+          </RailButton>
+        </div>
+      </nav>
+    </aside>
   )
 }

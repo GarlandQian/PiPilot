@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
-import { existsSync, readdirSync } from 'node:fs'
+import { existsSync, readdirSync, realpathSync } from 'node:fs'
 import {
   mkdir,
   mkdtemp,
@@ -30,6 +30,7 @@ import { startPiSdkFixture } from '../electron/pi-sdk-fixture'
 
 const require = createRequire(import.meta.url)
 const packagedWorkspaceId = '11111111-1111-4111-8111-111111111111'
+const packagedTemporaryDirectory = realpathSync.native(tmpdir())
 
 function readWindowsPeSubsystem(executable: Buffer) {
   if (executable.length < 0x40) throw new Error('PE executable is too small.')
@@ -226,16 +227,11 @@ function inspectPackagedApplication(executable: string) {
     ? readdirSync(unpackedPty, { recursive: true }).map(String)
     : []
   const rootOnlyExclusions = [
-    '.agents',
-    '.claude',
     '.codex',
     '.env',
     '.mcp.json',
     '.pi',
     '.playwright-mcp',
-    '.trellis',
-    'AGENTS.md',
-    'docs',
     'src',
     'tests',
     'test-results',
@@ -398,9 +394,9 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
   expect(fuseWire[FuseV1Options.EnableNodeCliInspectArguments])
     .toBe(FuseState.DISABLE)
 
-  const userDataPath = await mkdtemp(join(tmpdir(), 'pipilot-packaged-smoke-'))
-  const workspacePath = await mkdtemp(join(tmpdir(), 'PiPilot 项目 (A) & Notes-'))
-  const fixtureRoot = await mkdtemp(join(tmpdir(), 'pipilot-sdk-fixture-'))
+  const userDataPath = await mkdtemp(join(packagedTemporaryDirectory, 'pipilot-packaged-smoke-'))
+  const workspacePath = await mkdtemp(join(packagedTemporaryDirectory, 'PiPilot 项目 (A) & Notes-'))
+  const fixtureRoot = await mkdtemp(join(packagedTemporaryDirectory, 'pipilot-sdk-fixture-'))
   const agentDir = join(fixtureRoot, 'agent-data')
   const hostFailureMarker = join(fixtureRoot, 'host-failure.marker')
   const writeProjectionPrompt = 'Packaged official write result remains live'
@@ -635,7 +631,7 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
       window.pipilot!.piIntegrations.load({ kind: 'global' })
     ))).toMatchObject({
       state: 'ready',
-      executable: { version: '0.84.2' },
+      executable: { version: '0.85.1' },
       packages: [expect.objectContaining({
         displayName: 'packaged-fixture-package',
         installedVersion: '1.0.0',
@@ -669,7 +665,7 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
       name: 'Integrations',
       exact: true,
     })).toBeVisible()
-    await expect(integrationsMain.getByText(/Pi 0\.84\.2/u)).toBeVisible()
+    await expect(integrationsMain.getByText(/Pi 0\.85\.1/u)).toBeVisible()
     await integrationsMain.getByRole('tab', {
       name: 'Packages',
       exact: true,
@@ -950,11 +946,92 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
   }
 })
 
+test('offers the macOS launcher from a Finder-style packaged environment', async () => {
+  test.skip(process.platform !== 'darwin', 'macOS launchd PATH behavior is platform-native')
+  test.setTimeout(60_000)
+  const executable = resolvePackagedExecutable()
+  const temporaryDirectory = realpathSync.native(tmpdir())
+  const userDataPath = await mkdtemp(join(
+    temporaryDirectory,
+    'pipilot-packaged-smoke-macos-launcher-',
+  ))
+  const fixtureRoot = await mkdtemp(join(temporaryDirectory, 'pipilot-packaged-macos-pi-'))
+  const piFixture = await startPiSdkFixture({
+    agentDir: join(fixtureRoot, 'agent-data'),
+  })
+  await writeFile(
+    join(userDataPath, 'settings.json'),
+    `${JSON.stringify({
+      version: SETTINGS_SCHEMA_VERSION,
+      settings: { ...DEFAULT_SETTINGS, locale: 'en-US' },
+    }, null, 2)}\n`,
+    'utf8',
+  )
+
+  const debugPort = await reserveDebugPort()
+  let launchOutput = ''
+  const appProcess = spawn(executable, [
+    `--remote-debugging-port=${debugPort}`,
+    `--user-data-dir=${join(userDataPath, 'browser-data')}`,
+  ], {
+    env: {
+      ...process.env,
+      ...piFixture.env,
+      PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
+      PIPILOT_E2E_EXTERNAL_CONTROL_LAUNCHER_DIRECTORY: '',
+      PIPILOT_E2E_USER_DATA: userDataPath,
+      PIPILOT_PACKAGED_SMOKE: '1',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  const collectLaunchOutput = (chunk: Buffer) => {
+    launchOutput = `${launchOutput}${chunk.toString('utf8')}`.slice(-16_384)
+  }
+  appProcess.stdout?.on('data', collectLaunchOutput)
+  appProcess.stderr?.on('data', collectLaunchOutput)
+
+  let browser: Browser | null = null
+  let page: Page | null = null
+  try {
+    browser = await connectToPackagedApp(debugPort, appProcess, () => launchOutput)
+    page = await findPiPilotPage(browser)
+    await page.waitForLoadState('domcontentloaded')
+
+    await expect(page.evaluate(() => (
+      window.pipilot!.externalControl.getLauncher()
+    ))).resolves.toEqual({
+      state: 'missing',
+      managed: false,
+      requiresClientRestart: false,
+    })
+    const launcherDirectory = join(userDataPath, 'external-control', 'bin')
+    expect((await stat(launcherDirectory)).mode & 0o077).toBe(0)
+    expect(existsSync(join(launcherDirectory, 'pipilot-mcp'))).toBe(false)
+  } finally {
+    await stopPackagedApp(page, browser, appProcess)
+    await piFixture.close()
+    await Promise.all([
+      rm(userDataPath, {
+        recursive: true,
+        force: true,
+        maxRetries: 10,
+        retryDelay: 200,
+      }),
+      rm(fixtureRoot, {
+        recursive: true,
+        force: true,
+        maxRetries: 10,
+        retryDelay: 200,
+      }),
+    ])
+  }
+})
+
 test('runs the installed stable MCP command headlessly through the private bridge', async () => {
   test.setTimeout(180_000)
   const executable = resolvePackagedExecutable()
-  const userDataPath = await mkdtemp(join(tmpdir(), 'pipilot-packaged-smoke-mcp-'))
-  const fixtureRoot = await mkdtemp(join(tmpdir(), 'pipilot-packaged-mcp-fixture-'))
+  const userDataPath = await mkdtemp(join(packagedTemporaryDirectory, 'pipilot-packaged-smoke-mcp-'))
+  const fixtureRoot = await mkdtemp(join(packagedTemporaryDirectory, 'pipilot-packaged-mcp-fixture-'))
   const launcherDirectory = process.platform === 'win32'
     ? dirname(executable)
     : join(userDataPath, 'launcher-bin')

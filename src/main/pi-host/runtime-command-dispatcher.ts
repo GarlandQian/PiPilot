@@ -83,66 +83,150 @@ function enqueueQueueSnapshot(
   runtime: AgentSessionRuntime,
   steering: readonly LocalPiQueuedMessagePayload[],
   followUp: readonly LocalPiQueuedMessagePayload[],
+  completions: Promise<void>[],
 ) {
-  const operations = [
-    ...steering.map((item) => runtime.session.steer(item.message, item.images)),
-    ...followUp.map((item) => runtime.session.followUp(item.message, item.images)),
-  ]
-  return Promise.all(operations)
+  // The pinned SDK enqueues synchronously, but returns promises. Do not yield
+  // inside the rewrite: the agent can consume a message at the next microtask.
+  for (const item of steering) {
+    completions.push(runtime.session.steer(item.message, item.images))
+  }
+  for (const item of followUp) {
+    completions.push(runtime.session.followUp(item.message, item.images))
+  }
+}
+
+interface RuntimeQueueSnapshot {
+  steering: readonly LocalPiQueuedMessagePayload[]
+  followUp: readonly LocalPiQueuedMessagePayload[]
+}
+
+function runtimeQueueMatches(
+  runtime: AgentSessionRuntime,
+  snapshot: RuntimeQueueSnapshot,
+) {
+  return sameQueueTexts(runtime.session.getSteeringMessages(), snapshot.steering) &&
+    sameQueueTexts(runtime.session.getFollowUpMessages(), snapshot.followUp)
+}
+
+async function rewriteRuntimeQueue(
+  runtime: AgentSessionRuntime,
+  before: RuntimeQueueSnapshot,
+  after: RuntimeQueueSnapshot,
+  operation: string,
+) {
+  const { session } = runtime
+  if (!session.isStreaming) {
+    throw new Error(`${operation} requires a running conversation.`)
+  }
+  if (!runtimeQueueMatches(runtime, before)) {
+    throw new Error(`The Pi queue changed before ${operation.toLowerCase()}.`)
+  }
+
+  const completions: Promise<void>[] = []
+  let failure: unknown
+  try {
+    rewriteQueueSynchronously(runtime, before, after, operation, completions)
+  } catch (error) {
+    failure = error
+  }
+  // Once we yield, missing entries may already have executed. Never clear or
+  // replay the original snapshot after awaiting SDK completions.
+  const outcomes = await Promise.allSettled(completions)
+  if (failure) throw failure
+  const rejected = outcomes.find((outcome) => outcome.status === 'rejected')
+  if (rejected?.status === 'rejected') throw rejected.reason
+}
+
+function rewriteQueueSynchronously(
+  runtime: AgentSessionRuntime,
+  before: RuntimeQueueSnapshot,
+  after: RuntimeQueueSnapshot,
+  operation: string,
+  completions: Promise<void>[],
+) {
+  const { session } = runtime
+  const cleared = session.clearQueue()
+  if (
+    !sameQueueTexts(cleared.steering, before.steering) ||
+    !sameQueueTexts(cleared.followUp, before.followUp)
+  ) {
+    try {
+      enqueueQueueSnapshot(runtime, before.steering, before.followUp, completions)
+      if (!runtimeQueueMatches(runtime, before)) {
+        throw new Error('Pi did not preserve the restored queue order.')
+      }
+    } catch (rollbackError) {
+      const detail = rollbackError instanceof Error
+        ? rollbackError.message
+        : String(rollbackError)
+      throw new Error(`${operation} detected a changed queue and could not restore it: ${detail}`)
+    }
+    throw new Error(`The Pi queue changed while ${operation.toLowerCase()}.`)
+  }
+
+  try {
+    enqueueQueueSnapshot(runtime, after.steering, after.followUp, completions)
+    if (!runtimeQueueMatches(runtime, after)) {
+      throw new Error(`Pi did not preserve the queue order after ${operation.toLowerCase()}.`)
+    }
+  } catch (error) {
+    try {
+      session.clearQueue()
+      enqueueQueueSnapshot(runtime, before.steering, before.followUp, completions)
+      if (!runtimeQueueMatches(runtime, before)) {
+        throw new Error('Pi did not preserve the restored queue order.')
+      }
+    } catch (rollbackError) {
+      const detail = rollbackError instanceof Error
+        ? rollbackError.message
+        : String(rollbackError)
+      throw new Error(`${operation} failed and the queue could not be restored: ${detail}`)
+    }
+    throw error
+  }
 }
 
 export async function promoteRuntimeFollowUp(
   runtime: AgentSessionRuntime,
   command: Extract<LocalPiRpcCommand, { type: 'promote_follow_up' }>,
 ) {
-  const { session } = runtime
-  if (!session.isStreaming) {
-    throw new Error('Follow-up promotion requires a running conversation.')
-  }
   if (command.followUpIndex >= command.followUp.length) {
     throw new Error('The queued Follow-up no longer exists.')
   }
-  if (
-    !sameQueueTexts(session.getSteeringMessages(), command.steering) ||
-    !sameQueueTexts(session.getFollowUpMessages(), command.followUp)
-  ) {
-    throw new Error('The Pi queue changed before the Follow-up could be promoted.')
-  }
 
   const target = command.followUp[command.followUpIndex]!
-  const nextSteering = [...command.steering, target]
-  const nextFollowUp = command.followUp.filter(
-    (_, index) => index !== command.followUpIndex,
+  await rewriteRuntimeQueue(
+    runtime,
+    { steering: command.steering, followUp: command.followUp },
+    {
+      steering: [...command.steering, target],
+      followUp: command.followUp.filter((_, index) => index !== command.followUpIndex),
+    },
+    'Follow-up promotion',
   )
-  const cleared = session.clearQueue()
-  if (
-    !sameQueueTexts(cleared.steering, command.steering) ||
-    !sameQueueTexts(cleared.followUp, command.followUp)
-  ) {
-    await enqueueQueueSnapshot(runtime, command.steering, command.followUp)
-    throw new Error('The Pi queue changed while the Follow-up was being promoted.')
-  }
+}
 
-  try {
-    await enqueueQueueSnapshot(runtime, nextSteering, nextFollowUp)
-    if (
-      !sameQueueTexts(session.getSteeringMessages(), nextSteering) ||
-      !sameQueueTexts(session.getFollowUpMessages(), nextFollowUp)
-    ) {
-      throw new Error('Pi did not preserve the promoted queue order.')
-    }
-  } catch (error) {
-    session.clearQueue()
-    try {
-      await enqueueQueueSnapshot(runtime, command.steering, command.followUp)
-    } catch (rollbackError) {
-      const detail = rollbackError instanceof Error
-        ? rollbackError.message
-        : String(rollbackError)
-      throw new Error(`Follow-up promotion failed and the queue could not be restored: ${detail}`)
-    }
-    throw error
+export async function removeRuntimeQueuedMessage(
+  runtime: AgentSessionRuntime,
+  command: Extract<LocalPiRpcCommand, { type: 'remove_queued_message' }>,
+) {
+  const source = command.kind === 'steering' ? command.steering : command.followUp
+  if (command.itemIndex >= source.length) {
+    throw new Error('The queued message no longer exists.')
   }
+  await rewriteRuntimeQueue(
+    runtime,
+    { steering: command.steering, followUp: command.followUp },
+    {
+      steering: command.kind === 'steering'
+        ? command.steering.filter((_, index) => index !== command.itemIndex)
+        : command.steering,
+      followUp: command.kind === 'followUp'
+        ? command.followUp.filter((_, index) => index !== command.itemIndex)
+        : command.followUp,
+    },
+    'Queued-message removal',
+  )
 }
 
 function getState(runtime: AgentSessionRuntime): LocalPiRpcResponse {
@@ -510,6 +594,9 @@ export async function dispatchRuntimeCommand(
       case 'promote_follow_up':
         await promoteRuntimeFollowUp(runtime, command)
         return { replaced: false, response: noDataSuccess('promote_follow_up') }
+      case 'remove_queued_message':
+        await removeRuntimeQueuedMessage(runtime, command)
+        return { replaced: false, response: noDataSuccess('remove_queued_message') }
       case 'compact': {
         const result = await session.compact(command.customInstructions)
         return {

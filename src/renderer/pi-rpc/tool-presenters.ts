@@ -36,11 +36,10 @@ export interface ToolPresentationInput {
 
 type ToolPresenter = (input: ToolPresentationInput, base: ToolCall) => ToolCall
 
-const INTERNAL_TASK_LINE = /^(?:you are an agent in a team|message type:|task name:|sender:|payload:|active task:|scheduler|workflow(?:\s+(?:id|uuid|instructions?))?|trellis|subagent_wait|wait(?:ing)? guidance|fan[- ]?out|do not revert|you are not alone)/iu
-const INTERNAL_TASK_PATH = /\.trellis[\\/]/iu
+const INTERNAL_TASK_LINE = /^(?:you are an agent in a team|message type:|task name:|sender:|payload:|active task:|internal task:|scheduler|workflow(?:\s+(?:id|uuid|instructions?))?|subagent_wait|wait(?:ing)? guidance|fan[- ]?out|do not revert|you are not alone)/iu
 const SENSITIVE_SUMMARY_LINE = /\b(?:api[-_ ]?key|access[-_ ]?token|password|secret|credential|private[-_ ]?key)\b/iu
 const SUBAGENT_ENVELOPE_LINE = /^(?:you are an agent in a team(?: of agents)?\.?|message type:.*|task name:.*|sender:.*)$/iu
-const SUBAGENT_ACTIVE_TASK_LINE = /^active task:\s*\.trellis[\\/]/iu
+const SUBAGENT_ACTIVE_TASK_LINE = /^active task:/iu
 const SUBAGENT_PAYLOAD_LINE = /^payload:\s*(.*)$/iu
 const SUBAGENT_SCHEDULER_LINE = /^(?:run fan[- ]?out:|async workflow\s*\[[^\]]+\])/iu
 const MAX_SUBAGENT_TASKS = 32
@@ -162,8 +161,7 @@ function taskSummary(markdown: string) {
       .trim()
     if (
       !line ||
-      INTERNAL_TASK_LINE.test(line) ||
-      INTERNAL_TASK_PATH.test(line)
+      INTERNAL_TASK_LINE.test(line)
     ) {
       continue
     }

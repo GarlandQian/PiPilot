@@ -313,32 +313,6 @@ export class OfficialPiSessionActivationService {
     }
   }
 
-  async onAgentSettled(runtimeId: string, generation: number) {
-    const active = this.getCurrentActiveRuntimeScope({
-      runtimeId,
-      generation,
-    })
-    if (!active) return
-    this.catalog.invalidate(active.scope)
-    try {
-      const state = await this.runtimeHost.getState()
-      if (!this.isActive(active)) return
-      await this.recordActivation(active.scope, state)
-    } catch {
-      // Settled notifications race controlled replacement. Cache invalidation
-      // is still valid, while the prior observation remains usable.
-    }
-  }
-
-  onSessionCatalogChanged(runtimeId: string, generation: number) {
-    const active = this.getCurrentActiveRuntimeScope({
-      runtimeId,
-      generation,
-    })
-    if (!active) return
-    this.catalog.invalidate(active.scope)
-  }
-
   private async recordActivation(
     scope: ConversationScope,
     state: LocalPiSessionState | undefined,

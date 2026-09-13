@@ -128,7 +128,7 @@ describe('LocalPiIntegrationService', () => {
     try {
         await expect(service.load({ kind: 'global' })).resolves.toMatchObject({
           state: 'ready',
-          executable: { path: 'bundled', version: '0.84.2' },
+          executable: { path: 'bundled', version: '0.85.1' },
         packages: [],
       })
       expect(runtimeHost.restart).not.toHaveBeenCalled()
@@ -173,7 +173,7 @@ describe('LocalPiIntegrationService', () => {
     }
   })
 
-  it('falls back to the affected Host restart only when Runtime reload fails', async () => {
+  it('retains pending synchronization without restarting Hosts after reload is deferred or fails', async () => {
     const { reloadHosts, restartHosts, service } = await fixture()
     reloadHosts.mockRejectedValueOnce(new Error('Reload failed'))
     try {
@@ -182,10 +182,10 @@ describe('LocalPiIntegrationService', () => {
         'npm:project-fixture',
       )
       expect(installed).toMatchObject({
-        runtimeSync: 'synchronized',
-        snapshot: { restartRequired: false },
+        runtimeSync: 'persisted-only',
+        snapshot: { restartRequired: true },
       })
-      expect(restartHosts).toHaveBeenCalledOnce()
+      expect(restartHosts).not.toHaveBeenCalled()
     } finally {
       await service.dispose()
     }

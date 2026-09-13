@@ -3,6 +3,7 @@ import { BrowserWindow, screen } from 'electron'
 import type { ApplicationUrlPolicy } from '../security/url-policy'
 import { APP_URL } from '../security/url-policy'
 import { installNavigationGuards } from '../security/navigation'
+import { installEditableContextMenu } from './editable-context-menu'
 import {
   MIN_WINDOW_SIZE,
   normalizeWindowBounds,
@@ -77,6 +78,7 @@ export async function createMainWindow({
   })
 
   installNavigationGuards(window, policy)
+  installEditableContextMenu(window)
   const stateController = trackWindowState(window, stateRepository)
 
   window.once('ready-to-show', () => {

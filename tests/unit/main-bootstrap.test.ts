@@ -1,4 +1,5 @@
 import { PassThrough } from 'node:stream'
+import { realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -162,11 +163,19 @@ describe('Main bootstrap', () => {
       importMcpStdio: async () => ({ runConversationMcpStdio }),
     })
 
-    expect(app.setPath).toHaveBeenCalledWith('userData', override)
+    expect(app.setPath).toHaveBeenCalledWith(
+      'userData',
+      join(realpathSync.native(tmpdir()), 'pipilot-packaged-smoke-bootstrap'),
+    )
     expect(runConversationMcpStdio).toHaveBeenCalledWith(
       expect.any(Array),
       expect.objectContaining({
-        descriptorPath: `${override}/external-control/descriptor.json`,
+        descriptorPath: join(
+          realpathSync.native(tmpdir()),
+          'pipilot-packaged-smoke-bootstrap',
+          'external-control',
+          'descriptor.json',
+        ),
       }),
     )
   })

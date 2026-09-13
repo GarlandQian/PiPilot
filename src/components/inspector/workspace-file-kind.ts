@@ -12,13 +12,22 @@ export interface WorkspaceFileClassification {
 }
 
 const SOURCE_LANGUAGES = new Map(Object.entries({
+  '.bash': 'shell',
+  '.bat': 'dos',
   '.c': 'c',
   '.cc': 'cpp',
+  '.cfg': 'ini',
+  '.cjs': 'javascript',
+  '.cmd': 'dos',
+  '.conf': 'ini',
   '.cpp': 'cpp',
   '.cs': 'csharp',
   '.css': 'css',
+  '.cts': 'typescript',
   '.cxx': 'cpp',
   '.diff': 'diff',
+  '.env': 'shell',
+  '.fish': 'shell',
   '.go': 'go',
   '.graphql': 'graphql',
   '.gql': 'graphql',
@@ -32,6 +41,7 @@ const SOURCE_LANGUAGES = new Map(Object.entries({
   '.json': 'json',
   '.jsonc': 'json',
   '.jsx': 'javascript',
+  '.kt': 'kotlin',
   '.kotlin': 'kotlin',
   '.kts': 'kotlin',
   '.less': 'less',
@@ -46,6 +56,9 @@ const SOURCE_LANGUAGES = new Map(Object.entries({
   '.pl': 'perl',
   '.pm': 'perl',
   '.properties': 'ini',
+  '.ps1': 'powershell',
+  '.psd1': 'powershell',
+  '.psm1': 'powershell',
   '.py': 'python',
   '.r': 'r',
   '.rb': 'ruby',
@@ -56,6 +69,7 @@ const SOURCE_LANGUAGES = new Map(Object.entries({
   '.sh': 'shell',
   '.sql': 'sql',
   '.svelte': 'xml',
+  '.svg': 'xml',
   '.swift': 'swift',
   '.toml': 'ini',
   '.ts': 'typescript',
@@ -72,11 +86,24 @@ const SOURCE_LANGUAGES = new Map(Object.entries({
 
 const MARKDOWN_EXTENSIONS = new Set(['.md', '.markdown', '.mdown', '.mkdn', '.mdx'])
 const SOURCE_BASENAMES = new Map(Object.entries({
+  '.bash_login': 'shell',
+  '.bash_profile': 'shell',
+  '.bashrc': 'shell',
+  '.dockerignore': 'bash',
   '.editorconfig': 'ini',
+  '.envrc': 'shell',
+  '.gitattributes': 'bash',
+  '.gitconfig': 'ini',
   '.gitignore': 'bash',
   '.npmrc': 'ini',
   '.prettierignore': 'bash',
   '.prettierrc': 'json',
+  '.profile': 'shell',
+  '.yarnrc': 'ini',
+  '.zlogin': 'shell',
+  '.zprofile': 'shell',
+  '.zshenv': 'shell',
+  '.zshrc': 'shell',
   'bashrc': 'shell',
   'dockerfile': 'bash',
   'makefile': 'makefile',
@@ -84,7 +111,7 @@ const SOURCE_BASENAMES = new Map(Object.entries({
 }))
 
 function basename(path: string) {
-  const slash = path.lastIndexOf('/')
+  const slash = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
   return (slash >= 0 ? path.slice(slash + 1) : path).toLowerCase()
 }
 
@@ -98,6 +125,7 @@ export function classifyWorkspaceFile(path: string): WorkspaceFileClassification
   const name = basename(path)
   const ext = extension(path)
   if (MARKDOWN_EXTENSIONS.has(ext)) return { kind: 'markdown', language: 'markdown' }
+  if (name === '.env' || name.startsWith('.env.')) return { kind: 'source', language: 'shell' }
 
   const language = SOURCE_BASENAMES.get(name) ?? SOURCE_LANGUAGES.get(ext)
   return language ? { kind: 'source', language } : { kind: 'plain' }

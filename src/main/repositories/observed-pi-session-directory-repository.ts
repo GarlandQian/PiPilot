@@ -211,7 +211,7 @@ export class ObservedPiSessionDirectoryRepository {
           throw new Error('The session file is outside its canonical directory.')
         }
       } catch (error) {
-        // Pi 0.84.2 assigns a sessionFile before its first persisted assistant
+        // Pi 0.85.1 assigns a sessionFile before its first persisted assistant
         // message. Its canonical parent is still the authoritative directory.
         if (!isMissingFile(error)) throw error
       }

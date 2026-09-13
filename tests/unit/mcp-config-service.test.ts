@@ -17,77 +17,18 @@ import {
   McpConfigService,
 } from '../../src/main/mcp/mcp-config-service'
 import type { ConversationScope } from '../../src/shared/conversation-scope'
-import type {
-  LocalPiRpcEvent,
-  LocalPiRuntimeSnapshot,
-} from '../../src/shared/local-pi'
+import { ConfigApplyCoordinator } from '../../src/main/config-apply/config-apply-coordinator'
+import { FakeConfigApplyRuntime } from './helpers/config-apply-runtime'
 
 const workspaceId = '00000000-0000-4000-8000-000000000901'
 const roots: string[] = []
-
-function readyRuntime(generation: number): LocalPiRuntimeSnapshot {
-  return {
-    state: 'ready',
-    generation,
-    cwd: '/private/project',
-    sessionFile: null,
-    sessionState: {
-      thinkingLevel: 'medium',
-      isStreaming: true,
-      isCompacting: false,
-      steeringMode: 'one-at-a-time',
-      followUpMode: 'one-at-a-time',
-      sessionId: `session-${generation}`,
-      autoCompactionEnabled: true,
-      messageCount: 0,
-      pendingMessageCount: 0,
-    },
-    commands: [],
-    stderr: '',
-    diagnostics: [],
-  }
-}
-
-class FakeRuntimeHost {
-  private snapshotListeners = new Set<(snapshot: LocalPiRuntimeSnapshot) => void>()
-  private eventListeners = new Set<(event: LocalPiRpcEvent, generation: number) => void>()
-  private snapshot: LocalPiRuntimeSnapshot
-  readonly restart = vi.fn(async () => this.getSnapshot())
-
-  constructor(snapshot: LocalPiRuntimeSnapshot) {
-    this.snapshot = snapshot
-  }
-
-  getSnapshot() {
-    return structuredClone(this.snapshot)
-  }
-
-  subscribe(listener: (snapshot: LocalPiRuntimeSnapshot) => void) {
-    this.snapshotListeners.add(listener)
-    return () => this.snapshotListeners.delete(listener)
-  }
-
-  subscribeEvents(listener: (event: LocalPiRpcEvent, generation: number) => void) {
-    this.eventListeners.add(listener)
-    return () => this.eventListeners.delete(listener)
-  }
-
-  publish(snapshot: LocalPiRuntimeSnapshot) {
-    this.snapshot = snapshot
-    for (const listener of this.snapshotListeners) listener(this.getSnapshot())
-  }
-
-  emit(event: LocalPiRpcEvent, generation: number) {
-    for (const listener of this.eventListeners) listener(event, generation)
-  }
-}
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) =>
     rm(root, { recursive: true, force: true })))
 })
 
-async function fixture() {
+async function fixture({ customAgentDirectory = false } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'pipilot-mcp-config-'))
   roots.push(root)
   const home = join(root, 'home')
@@ -109,6 +50,7 @@ async function fixture() {
   }, projectless)
   const service = new McpConfigService({
     homeDirectory: join(home, 'unused', '..'),
+    ...(customAgentDirectory ? { agentDirectory: join(root, 'custom-agent') } : {}),
     getActiveScope: () => activeScope,
     scopeResolver: resolver,
   })
@@ -123,6 +65,23 @@ async function fixture() {
 }
 
 describe('McpConfigService', () => {
+  it('uses the authoritative Agent directory without changing the project MCP path', async () => {
+    const { home, project, service } = await fixture({ customAgentDirectory: true })
+    const agentDirectory = join(home, '..', 'custom-agent')
+    const defaultDirectory = join(home, '.pi', 'agent')
+    await mkdir(defaultDirectory, { recursive: true })
+    const defaultContent = '{ "mcpServers": { "untouched": { "command": "node" } } }'
+    await writeFile(join(defaultDirectory, 'mcp.json'), defaultContent)
+    const initial = await service.load({ kind: 'global' })
+    expect(initial).toMatchObject({ path: join(agentDirectory, 'mcp.json'), exists: false })
+    const content = '{ "mcpServers": { "custom": { "command": "node" } } }'
+    await service.save({ kind: 'global' }, content, initial.fingerprint)
+    await expect(readFile(join(agentDirectory, 'mcp.json'), 'utf8')).resolves.toBe(content)
+    await expect(readFile(join(defaultDirectory, 'mcp.json'), 'utf8')).resolves.toBe(defaultContent)
+    await expect(service.load({ kind: 'project', workspaceId }))
+      .resolves.toMatchObject({ path: join(project, '.mcp.json'), exists: false })
+  })
+
   it('uses only the selected-project file and the exact Pi Agent global file', async () => {
     const { home, project, service } = await fixture()
     const projectTarget = { kind: 'project' as const, workspaceId }
@@ -198,12 +157,13 @@ describe('McpConfigService', () => {
       .rejects.toMatchObject({ code: 'ENOENT' })
   })
 
-  it('applies a queued restart only to the runtime generation that requested it', async () => {
-    const { service } = await fixture()
+  it('retains saved target application across selection and applies only the latest fingerprint', async () => {
+    const { service, setActiveScope } = await fixture()
     const target = { kind: 'project' as const, workspaceId }
     const initial = await service.load(target)
-    const runtime = new FakeRuntimeHost(readyRuntime(7))
-    const controller = new McpConfigController(service, runtime)
+    const runtime = new FakeConfigApplyRuntime()
+    const coordinator = new ConfigApplyCoordinator(runtime)
+    const controller = new McpConfigController(service, coordinator, vi.fn())
 
     try {
       await expect(controller.save(
@@ -212,9 +172,9 @@ describe('McpConfigService', () => {
         initial.fingerprint,
       )).resolves.toMatchObject({ apply: 'pending' })
 
-      runtime.publish(readyRuntime(8))
-      runtime.emit({ type: 'agent_settled' }, 8)
-      expect(runtime.restart).not.toHaveBeenCalled()
+      runtime.selectedGeneration = 8
+      runtime.emitChange()
+      expect(runtime.reload).not.toHaveBeenCalled()
 
       const current = await service.load(target)
       await expect(controller.save(
@@ -222,10 +182,16 @@ describe('McpConfigService', () => {
         '{ "mcpServers": { "second": { "command": "node" } } }',
         current.fingerprint,
       )).resolves.toMatchObject({ apply: 'pending' })
-      runtime.emit({ type: 'agent_settled' }, 8)
-      await vi.waitFor(() => expect(runtime.restart).toHaveBeenCalledTimes(1))
+      const saved = await controller.load(target)
+      setActiveScope({ kind: 'projectless' })
+      runtime.busy = false
+      runtime.emitChange()
+      await vi.waitFor(() => expect(coordinator.getStatus(saved.path)).toMatchObject({
+        state: 'applied', fingerprint: saved.fingerprint,
+      }))
+      expect(runtime.reload).toHaveBeenCalledTimes(1)
     } finally {
-      controller.dispose()
+      coordinator.dispose()
     }
   })
 

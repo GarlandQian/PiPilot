@@ -21,7 +21,7 @@ export type ReadOnlyDiffStyle = CSSProperties & {
 
 export function createReadOnlyDiffOptions(
   preferences: Pick<ReadOnlyDiffPreferences, 'themeType' | 'wordWrap' | 'showLineNumbers'>,
-): NonNullable<PatchDiffProps<undefined>['options']> {
+): NonNullable<PatchDiffProps<undefined, undefined>['options']> {
   return {
     diffStyle: 'unified',
     theme: {

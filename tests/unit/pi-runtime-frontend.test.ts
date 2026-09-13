@@ -15,6 +15,7 @@ import {
   type ProjectRuntimeTarget,
 } from '../../src/main/pi-host/project-host-pool'
 import { PiHostControllerError } from '../../src/main/pi-host/pi-host-controller'
+import { RuntimeMaintenanceGate, type RuntimeMaintenancePermit } from '../../src/main/pi-host/runtime-maintenance-gate'
 import type { ConversationScope } from '../../src/shared/conversation-scope'
 import type {
   LocalPiExtensionUiResponse,
@@ -25,7 +26,10 @@ import type {
   LocalPiSessionState,
   LocalPiRuntimeSessionStatus,
 } from '../../src/shared/local-pi'
-import { LOCAL_PI_RUNTIME_SESSION_STATUS_MAX_ITEMS } from '../../src/shared/local-pi'
+import {
+  LOCAL_PI_RUNTIME_SESSION_PENDING_MAX,
+  LOCAL_PI_RUNTIME_SESSION_STATUS_MAX_ITEMS,
+} from '../../src/shared/local-pi'
 import {
   PI_HOST_PROTOCOL_VERSION,
   type PiHostDtoRecord,
@@ -66,6 +70,16 @@ function sessionState(
 }
 
 class FakeFrontendPool {
+  readonly maintenanceGate = new RuntimeMaintenanceGate()
+  assertAdmission(cwd: string) {
+    this.maintenanceGate.assertAdmission(cwd)
+  }
+  withMaintenance<T>(cwd: string | undefined, operation: (permit: RuntimeMaintenancePermit) => Promise<T>) {
+    return this.maintenanceGate.maintenance(cwd, operation)
+  }
+  subscribeAdmission(listener: () => void) {
+    return this.maintenanceGate.subscribeAdmission(listener)
+  }
   readonly commandCalls: Array<{
     runtimeId: string
     command: LocalPiRpcCommand
@@ -81,6 +95,9 @@ class FakeFrontendPool {
     timeoutMs?: number
   }> = []
   readonly restartCalls: ProjectHostScope[] = []
+  readonly reloadCalls: string[] = []
+  readonly interactionRequired = new Set<string>()
+  readonly reloadFailed = new Set<string>()
   readonly acknowledgedEvents: Array<
     PiHostEventEnvelope | PiHostUiRequestEventEnvelope
   > = []
@@ -90,6 +107,7 @@ class FakeFrontendPool {
   createError: Error | null = null
   externalSubmitError: Error | null = null
   abortError: Error | null = null
+  abortDelay: Promise<void> | null = null
   createWithoutSessionFile = false
   rebindOnPrompt = false
   promptDelay: Promise<void> | null = null
@@ -110,6 +128,7 @@ class FakeFrontendPool {
     state: LocalPiSessionState
   }>()
   private hostScope: ProjectHostScope | null = null
+  private readonly hostScopes = new Map<string, ProjectHostScope>()
   private snapshot: ProjectHostPoolSnapshot = { state: 'ready', hosts: [] }
   private readonly snapshotListeners = new Set<(snapshot: ProjectHostPoolSnapshot) => void>()
   private readonly eventListeners = new Set<(event: PiHostEventEnvelope) => void>()
@@ -143,9 +162,11 @@ class FakeFrontendPool {
     scope: ProjectHostScope,
     target: ProjectRuntimeTarget,
   ): Promise<ProjectRuntimeDescriptor> {
+    this.assertAdmission(scope.cwd)
     this.createCount += 1
     if (this.createError) throw this.createError
     this.hostScope = structuredClone(scope)
+    this.hostScopes.set(scope.cwd, structuredClone(scope))
     const runtimeId = `rt_frontend_${this.createCount}`
     const sessionFile = this.createWithoutSessionFile
       ? null
@@ -209,9 +230,13 @@ class FakeFrontendPool {
   async reloadRuntime(
     runtimeId: string,
     expectedGeneration?: number,
-  ): Promise<ProjectRuntimeDescriptor> {
+    _timeoutMs?: number,
+    maintenancePermit?: RuntimeMaintenancePermit,
+  ): Promise<ProjectRuntimeDescriptor & { interactionRequired?: true; reloadFailed?: true }> {
     const runtimeState = this.runtimeStates.get(runtimeId)
     if (!runtimeState) throw new Error(`Runtime not found: ${runtimeId}`)
+    this.maintenanceGate.assertAdmission(runtimeState.descriptor.cwd, maintenancePermit)
+    this.reloadCalls.push(runtimeId)
     if (
       expectedGeneration !== undefined &&
       runtimeState.descriptor.generation !== expectedGeneration
@@ -229,7 +254,11 @@ class FakeFrontendPool {
       this.runtime = runtimeState.descriptor
     }
     this.publishCurrentHost()
-    return structuredClone(runtimeState.descriptor)
+    return {
+      ...structuredClone(runtimeState.descriptor),
+      ...(this.interactionRequired.has(runtimeId) ? { interactionRequired: true as const } : {}),
+      ...(this.reloadFailed.has(runtimeId) ? { reloadFailed: true as const } : {}),
+    }
   }
 
   async command(
@@ -237,6 +266,7 @@ class FakeFrontendPool {
     command: LocalPiRpcCommand,
     expectedGeneration?: number,
     timeoutMs?: number,
+    maintenancePermit?: RuntimeMaintenancePermit,
   ): Promise<{ runtime: ProjectRuntimeDescriptor; response: LocalPiRpcResponse }> {
     this.commandCalls.push({
       runtimeId,
@@ -248,6 +278,7 @@ class FakeFrontendPool {
     if (!runtimeState) {
       throw new Error(`Runtime not found: ${runtimeId}`)
     }
+    this.maintenanceGate.assertAdmission(runtimeState.descriptor.cwd, maintenancePermit)
     if (
       expectedGeneration !== undefined &&
       expectedGeneration !== runtimeState.descriptor.generation
@@ -360,6 +391,7 @@ class FakeFrontendPool {
         }
         break
       case 'abort':
+        if (this.abortDelay) await this.abortDelay
         if (this.abortError) throw this.abortError
         response = {
           type: 'response',
@@ -500,13 +532,12 @@ class FakeFrontendPool {
   async restart(scope: ProjectHostScope) {
     this.restartCalls.push(structuredClone(scope))
     this.hostScope = structuredClone(scope)
-    this.runtimeStates.clear()
-    this.runtime = null
-    const host = this.hostSnapshot(scope, 'ready', null)
-    this.emitSnapshot({
-      state: 'ready',
-      hosts: [host],
-    })
+    for (const [runtimeId, runtime] of this.runtimeStates) {
+      if (runtime.descriptor.cwd === scope.cwd) this.runtimeStates.delete(runtimeId)
+    }
+    this.runtime = [...this.runtimeStates.values()].pop()?.descriptor ?? null
+    this.publishCurrentHost()
+    const host = this.snapshot.hosts.find((entry) => entry.cwd === scope.cwd)!
     return host
   }
 
@@ -543,9 +574,9 @@ class FakeFrontendPool {
         hostEpoch: 1,
         pid: state === 'crashed' ? null : 1_001,
         cwd: scope.cwd,
-        sdkVersion: '0.84.2',
+        sdkVersion: '0.85.1',
         nodeVersion: '24.18.1',
-        electronVersion: '43.4.1',
+        electronVersion: '44.2.0',
         capabilities: [],
         stderr: '',
         error: state === 'crashed'
@@ -567,11 +598,12 @@ class FakeFrontendPool {
     if (!this.hostScope) return
     this.emitSnapshot({
       state: 'ready',
-      hosts: [this.hostSnapshot(
-        this.hostScope,
+      hosts: [...this.hostScopes.values()].map((scope) => this.hostSnapshot(
+        scope,
         'ready',
-        [...this.runtimeStates.values()].map((entry) => entry.descriptor),
-      )],
+        [...this.runtimeStates.values()].filter((entry) => entry.descriptor.cwd === scope.cwd)
+          .map((entry) => entry.descriptor),
+      )),
     })
   }
 }
@@ -591,6 +623,193 @@ function createHarness(options: PiRuntimeFrontendOptions = {}) {
   )
   return { frontend, pool }
 }
+
+const configurationAttempt = (cwd?: string) => ({
+  ...(cwd === undefined ? {} : { cwd }),
+  isCurrent: async () => true,
+  isApplied: () => false,
+  didApply: () => undefined,
+})
+
+describe('Pi Runtime safe configuration apply', () => {
+  it('hydrates a failed reload descriptor without confirming or replaying the failed application', async () => {
+    const { frontend, pool } = createHarness()
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/partial-reload.jsonl' })
+    const target = pool.runtime!
+    pool.reloadFailed.add(target.runtimeId)
+    const didApply = vi.fn()
+    expect(await frontend.applyConfiguration({ ...configurationAttempt(), didApply })).toMatchObject({ state: 'failed', applied: 0 })
+    expect(frontend.getSnapshot()).toMatchObject({ state: 'ready', generation: 2, sessionFile: '/sessions/partial-reload.jsonl' })
+    expect(didApply).not.toHaveBeenCalled()
+    expect(pool.commandCalls.some((entry) => entry.command.type === 'prompt')).toBe(false)
+    pool.reloadFailed.delete(target.runtimeId)
+    expect((await frontend.applyConfiguration({ ...configurationAttempt(), didApply })).state).toBe('applied')
+    expect(didApply).toHaveBeenCalledOnce()
+    expect(frontend.getActiveRuntimeIdentity()!.runtimeId).toBe(target.runtimeId)
+    await frontend.dispose()
+  })
+  it.each([true, false])('reports interactive setup as failed while hydrating the exact target (selected=%s)', async (selected) => {
+    const { frontend, pool } = createHarness()
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/interaction.jsonl' })
+    const target = pool.runtime!
+    if (!selected) await frontend.start({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' })
+    const activeId = frontend.getActiveRuntimeIdentity()!.runtimeId
+    pool.interactionRequired.add(target.runtimeId)
+    const didApply = vi.fn()
+    expect(await frontend.applyConfiguration({ ...configurationAttempt(), didApply })).toMatchObject({
+      state: 'failed', reason: 'interaction-required', failed: 1, applied: 0,
+    })
+    expect(didApply).not.toHaveBeenCalled()
+    expect(frontend.getSnapshot()).toMatchObject({ state: 'ready' })
+    expect(frontend.getActiveRuntimeIdentity()!.runtimeId).toBe(activeId)
+    if (!selected) {
+      await frontend.replace({ scope: projectScope, sessionFile: '/sessions/interaction.jsonl' })
+      expect(frontend.getActiveRuntimeIdentity()!.runtimeId).toBe(target.runtimeId)
+      expect(frontend.getSnapshot().state).toBe('ready')
+    }
+    await expect(frontend.request({ type: 'prompt', message: 'Next ordinary prompt' })).resolves.toMatchObject({ success: true })
+    expect(pool.restartCalls).toEqual([])
+    await frontend.dispose()
+  })
+  it.each<LocalPiRpcEvent>([
+    { type: 'agent_start' },
+    { type: 'queue_update', steering: [], followUp: ['later'] },
+    { type: 'compaction_start', reason: 'manual' },
+    { type: 'auto_retry_start', attempt: 1, maxAttempts: 3, delayMs: 100, errorMessage: 'retry' },
+    { type: 'summarization_retry_scheduled', attempt: 1, maxAttempts: 3, delayMs: 100, errorMessage: 'retry' },
+    { type: 'tool_execution_start', toolCallId: 'tool-1', toolName: 'bash', args: {} },
+  ])('defers with idle selected plus protected background $type', async (event) => {
+    const { frontend, pool } = createHarness()
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/background.jsonl' })
+    const background = pool.runtime!
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' })
+    pool.emitEvent(runtimeEvent(background.runtimeId, background.generation, event))
+    expect(await frontend.applyConfiguration(configurationAttempt())).toMatchObject({ state: 'pending' })
+    expect(pool.reloadCalls).toEqual([])
+    expect(pool.restartCalls).toEqual([])
+    expect(pool.runtimeCount).toBe(2)
+    await frontend.dispose()
+  })
+
+  it('blocks transient control pins but permits normal retained Session-file ownership', async () => {
+    const { frontend, pool } = createHarness()
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' })
+    const lease = await frontend.acquireControlRuntime({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' })
+    expect(await frontend.applyConfiguration(configurationAttempt())).toMatchObject({ state: 'pending' })
+    expect(pool.reloadCalls).toEqual([])
+    frontend.releaseControlRuntime(lease)
+    expect(await frontend.applyConfiguration(configurationAttempt())).toMatchObject({ state: 'applied', total: 1, applied: 1 })
+    expect(pool.reloadCalls).toEqual([lease.runtimeId])
+    expect(frontend.getSnapshot()).toMatchObject({ state: 'ready', generation: 2, sessionFile: '/sessions/selected.jsonl' })
+    await frontend.dispose()
+  })
+
+  it('protects pending extension interaction before any shutdown', async () => {
+    const { frontend, pool } = createHarness()
+    await frontend.start({ scope: projectScope })
+    const runtime = pool.runtime!
+    pool.emitUiRequest({
+      kind: 'ui_request', protocolVersion: PI_HOST_PROTOCOL_VERSION, hostEpoch: 1,
+      runtimeId: runtime.runtimeId, runtimeGeneration: runtime.generation, sequence: 1,
+      request: { type: 'extension_ui_request', id: 'dialog', method: 'confirm', title: 'Continue?', message: 'Confirm' },
+    })
+    expect((await frontend.applyConfiguration(configurationAttempt())).state).toBe('pending')
+    expect(pool.reloadCalls).toEqual([])
+    await frontend.respondToExtensionUi({ type: 'extension_ui_response', id: 'dialog', confirmed: true }, runtime.generation)
+    expect((await frontend.applyConfiguration(configurationAttempt())).state).toBe('applied')
+    await frontend.dispose()
+  })
+
+  it('revalidates authoritative queue state even when activity events have not arrived', async () => {
+    const { frontend, pool } = createHarness()
+    await frontend.start({ scope: projectScope })
+    pool.setRuntimeSessionState(pool.runtime!.runtimeId, { pendingMessageCount: 1 })
+    expect((await frontend.applyConfiguration(configurationAttempt())).state).toBe('pending')
+    expect(pool.reloadCalls).toEqual([])
+    await frontend.dispose()
+  })
+
+  it('prevents desktop submit and cold/control acquisition during the check-to-reload interval', async () => {
+    const { frontend, pool } = createHarness()
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' })
+    const entered = deferred()
+    const checking = deferred()
+    const applying = frontend.applyConfiguration({
+      ...configurationAttempt(),
+      isCurrent: async () => { entered.resolve(); await checking.promise; return true },
+    })
+    await entered.promise
+    await expect(frontend.request({ type: 'prompt', message: 'must not enter' })).rejects.toMatchObject({
+      code: 'PI_RUNTIME_MAINTENANCE_PENDING', recoverable: true,
+    })
+    await expect(frontend.acquireControlRuntime({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' }))
+      .rejects.toMatchObject({ code: 'PI_RUNTIME_MAINTENANCE_PENDING' })
+    await expect(frontend.start({ scope: projectScope })).rejects.toMatchObject({ code: 'PI_RUNTIME_MAINTENANCE_PENDING' })
+    expect(pool.createCount).toBe(1)
+    checking.resolve()
+    expect((await applying).state).toBe('applied')
+    expect(pool.commandCalls.some((entry) => entry.command.type === 'prompt')).toBe(false)
+    await frontend.dispose()
+  })
+
+  it('blocks global apply for a busy other Host but permits project-only apply', async () => {
+    const pool = new FakeFrontendPool()
+    const frontend = new PiRuntimeFrontend(pool as unknown as ProjectHostPool, {
+      prepare: async (scope) => ({
+        scope, cwd: scope.kind === 'project' ? projectCwd : '/projectless', label: 'Project',
+      }),
+    })
+    await frontend.start({ scope: { kind: 'projectless' }, sessionFile: '/sessions/other.jsonl' })
+    const background = pool.runtime!
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' })
+    pool.emitEvent(runtimeEvent(background.runtimeId, background.generation, { type: 'agent_start' }))
+    expect((await frontend.applyConfiguration(configurationAttempt())).state).toBe('pending')
+    expect(pool.reloadCalls).toEqual([])
+    expect(await frontend.applyConfiguration(configurationAttempt(projectCwd))).toMatchObject({ state: 'applied', total: 1 })
+    expect(pool.reloadCalls).toEqual([frontend.getActiveRuntimeIdentity()!.runtimeId])
+    expect(pool.runtimeForSession('/sessions/other.jsonl')?.generation).toBe(1)
+    await frontend.dispose()
+  })
+
+  it('publishes a retryable hydration error and retries without reloading an already-confirmed Runtime', async () => {
+    const { frontend, pool } = createHarness()
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' })
+    const confirmed = new Map<string, number>()
+    const attempt = {
+      ...configurationAttempt(),
+      isApplied: (identity: { runtimeId: string; generation: number }) =>
+        confirmed.get(identity.runtimeId) === identity.generation,
+      didApply: (identity: { runtimeId: string; generation: number }) => {
+        confirmed.set(identity.runtimeId, identity.generation)
+      },
+    }
+    pool.failNextHydration = true
+    expect(await frontend.applyConfiguration(attempt)).toMatchObject({ state: 'failed', applied: 1 })
+    expect(frontend.getSnapshot()).toMatchObject({ state: 'error', generation: 2, sessionState: null })
+    expect(pool.reloadCalls).toHaveLength(1)
+    expect(await frontend.applyConfiguration(attempt)).toMatchObject({ state: 'applied', applied: 1 })
+    expect(frontend.getSnapshot()).toMatchObject({ state: 'ready', generation: 2, sessionFile: '/sessions/selected.jsonl' })
+    expect(pool.reloadCalls).toHaveLength(1)
+    expect(pool.restartCalls).toEqual([])
+    await frontend.dispose()
+  })
+
+  it('publishes an availability change when an otherwise silent read releases admission', async () => {
+    const { frontend, pool } = createHarness()
+    await frontend.start({ scope: projectScope })
+    const listeners = vi.fn()
+    frontend.subscribeControlRuntimes(listeners)
+    const readGate = deferred()
+    const read = pool.maintenanceGate.operation(projectCwd, () => readGate.promise)
+    expect((await frontend.applyConfiguration(configurationAttempt())).state).toBe('pending')
+    expect(listeners).not.toHaveBeenCalled()
+    readGate.resolve()
+    await read
+    expect(listeners).toHaveBeenCalledOnce()
+    expect((await frontend.applyConfiguration(configurationAttempt())).state).toBe('applied')
+    await frontend.dispose()
+  })
+})
 
 function uiRequest(
   runtimeId: string,
@@ -686,8 +905,49 @@ describe('PiRuntimeFrontend', () => {
       sessionId: 'session-running',
       selectionToken,
       status: 'running',
+      pendingMessageCount: 1,
     })
     expect(JSON.stringify(status)).not.toContain('should-not-cross-ipc')
+  })
+
+  it('bounds the queued count projected to Renderer Session rows', () => {
+    const summary = {
+      hostEpoch: 1,
+      runtimeId: 'runtime-large-queue',
+      generation: 1,
+      scope: projectScope,
+      sessionFile: '/sessions/large-queue.jsonl',
+      sessionId: 'session-large-queue',
+      selected: false,
+      lifecycle: 'queued' as const,
+      queueCount: LOCAL_PI_RUNTIME_SESSION_PENDING_MAX + 1,
+    }
+
+    expect(projectRuntimeSessionStatuses([summary], [])[0]?.pendingMessageCount)
+      .toBe(LOCAL_PI_RUNTIME_SESSION_PENDING_MAX)
+  })
+
+  it('projects the selected runtime marker only on its exact opaque row', () => {
+    const selectionToken = `sel_${'s'.repeat(32)}` as const
+    const summary = {
+      hostEpoch: 1,
+      runtimeId: 'runtime-selected',
+      generation: 1,
+      scope: projectScope,
+      sessionFile: '/private/selected.jsonl',
+      sessionId: 'shared-session-id',
+      selectionToken,
+      selected: true,
+      lifecycle: 'idle' as const,
+      queueCount: 0,
+    }
+
+    expect(projectRuntimeSessionStatuses([summary], [])[0]).toMatchObject({
+      scope: projectScope,
+      sessionId: 'shared-session-id',
+      selectionToken,
+      selected: true,
+    })
   })
 
   it('bounds retained status history without dropping a live Runtime', () => {
@@ -786,6 +1046,7 @@ describe('PiRuntimeFrontend', () => {
       sessionId: 'session-1',
       selectionToken,
       status: 'failed',
+      selected: true,
     })
     await frontend.dispose()
   })
@@ -1384,6 +1645,98 @@ describe('PiRuntimeFrontend', () => {
     })
     await frontend.dispose()
   }, 1_000)
+
+  it('recovers the aborted Host without restarting or selecting a newer project conversation', async () => {
+    const pool = new FakeFrontendPool()
+    const frontend = new PiRuntimeFrontend(pool as unknown as ProjectHostPool, {
+      prepare: async (scope) => ({
+        scope, cwd: scope.kind === 'project' ? projectCwd : '/projectless', label: 'Project',
+      }),
+    })
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/aborted.jsonl' })
+    const original = frontend.getActiveRuntimeIdentity()!
+    const abortGate = deferred()
+    pool.abortDelay = abortGate.promise
+    pool.abortError = new PiHostControllerError('TIMEOUT', 'Abort grace expired.')
+    const abort = frontend.request({ type: 'abort' })
+    await vi.waitFor(() => expect(pool.commandCalls).toContainEqual(expect.objectContaining({
+      runtimeId: original.runtimeId, command: { type: 'abort' },
+    })))
+    await frontend.start({ scope: { kind: 'projectless' }, sessionFile: '/sessions/new-selection.jsonl' })
+    const selected = frontend.getActiveRuntimeIdentity()!
+    abortGate.resolve()
+
+    await expect(abort).resolves.toMatchObject({ command: 'abort', success: true })
+    expect(pool.restartCalls).toEqual([{ kind: 'project', cwd: projectCwd }])
+    expect(frontend.getActiveRuntimeIdentity()).toEqual(selected)
+    expect(frontend.getSnapshot()).toMatchObject({ state: 'ready', sessionFile: '/sessions/new-selection.jsonl' })
+    expect(pool.runtimeForSession('/sessions/aborted.jsonl')?.runtimeId).not.toBe(original.runtimeId)
+    expect(pool.runtimeForSession('/sessions/new-selection.jsonl')?.runtimeId).toBe(selected.runtimeId)
+    expect(pool.commandCalls.filter(({ command }) => command.type === 'prompt')).toEqual([])
+    await frontend.dispose()
+  })
+
+  it('rehydrates a later selected sibling when a background abort replaces their shared Host', async () => {
+    const { frontend, pool } = createHarness()
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/abort-a.jsonl' })
+    const original = frontend.getActiveRuntimeIdentity()!
+    const abortGate = deferred()
+    pool.abortDelay = abortGate.promise
+    pool.abortError = new PiHostControllerError('TIMEOUT', 'Abort grace expired.')
+    const abort = frontend.request({ type: 'abort' })
+    await vi.waitFor(() => expect(pool.commandCalls).toContainEqual(expect.objectContaining({
+      runtimeId: original.runtimeId, command: { type: 'abort' },
+    })))
+    const selectionToken = `sel_${'b'.repeat(32)}` as const
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/selected-b.jsonl', selectionToken })
+    const selected = frontend.getActiveRuntimeIdentity()!
+    abortGate.resolve()
+    await expect(abort).resolves.toMatchObject({ command: 'abort', success: true })
+    expect(pool.restartCalls).toHaveLength(1)
+    expect(frontend.getActiveRuntimeIdentity()).toMatchObject({ sessionFile: '/sessions/selected-b.jsonl' })
+    expect(frontend.listControlRuntimes().find((entry) => entry.selected)).toMatchObject({ selectionToken })
+    expect(frontend.getActiveRuntimeIdentity()?.runtimeId).not.toBe(selected.runtimeId)
+    expect(frontend.getSnapshot()).toMatchObject({ state: 'ready', sessionFile: '/sessions/selected-b.jsonl' })
+    await expect(frontend.request({ type: 'get_state' })).resolves.toMatchObject({ success: true })
+    expect(pool.runtimeForSession('/sessions/abort-a.jsonl')?.runtimeId).not.toBe(original.runtimeId)
+    expect(pool.commandCalls.filter(({ command }) => command.type === 'prompt')).toEqual([])
+    await frontend.dispose()
+  })
+
+  it('does not discard an unpersisted selected sibling during background abort recovery', async () => {
+    const { frontend, pool } = createHarness()
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/abort-persisted.jsonl' })
+    const abortGate = deferred()
+    pool.abortDelay = abortGate.promise
+    pool.abortError = new PiHostControllerError('TIMEOUT', 'Abort grace expired.')
+    const abort = frontend.request({ type: 'abort' })
+    pool.createWithoutSessionFile = true
+    await frontend.start({ scope: projectScope })
+    const selected = frontend.getActiveRuntimeIdentity()
+    abortGate.resolve()
+    await expect(abort).rejects.toMatchObject({ code: 'PI_RUNTIME_HOST_RECOVERY_FAILED' })
+    expect(pool.restartCalls).toEqual([])
+    expect(frontend.getActiveRuntimeIdentity()).toEqual(selected)
+    await frontend.dispose()
+  })
+
+  it('does not repeat abort recovery after its exact Runtime was explicitly replaced', async () => {
+    const { frontend, pool } = createHarness()
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/replaced-abort.jsonl' })
+    const abortGate = deferred()
+    pool.abortDelay = abortGate.promise
+    pool.abortError = new PiHostControllerError('TIMEOUT', 'The old abort expired.')
+    const abort = frontend.request({ type: 'abort' })
+    await frontend.restart()
+    const replacement = frontend.getActiveRuntimeIdentity()
+    abortGate.resolve()
+
+    await expect(abort).rejects.toMatchObject({ code: 'PI_RUNTIME_STALE_GENERATION' })
+    expect(pool.restartCalls).toHaveLength(1)
+    expect(frontend.getActiveRuntimeIdentity()).toEqual(replacement)
+    expect(frontend.getSnapshot().state).toBe('ready')
+    await frontend.dispose()
+  })
 
   it('fails closed when a timed-out abort has no persisted Session to recover', async () => {
     const { frontend, pool } = createHarness()

@@ -295,9 +295,9 @@ describe('Pi Host utility entry', () => {
       parentPort: parent,
       cwd: '/tmp/pipilot-project',
       agentDir: '/tmp/pipilot-agent',
-      sdkVersion: '0.84.2',
+      sdkVersion: '0.85.1',
       nodeVersion: '24.14.0',
-      electronVersion: '43.4.1',
+      electronVersion: '44.2.0',
       createRuntimeManager: () => manager,
       exit: (code) => exits.push(code),
     })
@@ -306,14 +306,14 @@ describe('Pi Host utility entry', () => {
     parent.bootstrap(piHostBootstrapEnvelopeSchema.parse({
       kind: 'bootstrap',
       ...requestMetadata('bootstrap-1'),
-      expectedSdkVersion: '0.84.2',
+      expectedSdkVersion: '0.85.1',
     }), port)
 
     expect(port.started).toBe(true)
     expect(port.sent[0]).toMatchObject({
       kind: 'handshake',
       ok: true,
-      sdkVersion: '0.84.2',
+      sdkVersion: '0.85.1',
     })
 
     port.receive(piHostRequestEnvelopeSchema.parse({
@@ -482,7 +482,7 @@ describe('Pi Host utility entry', () => {
       parentPort: parent,
       cwd: '/tmp/pipilot-project',
       agentDir: '/tmp/pipilot-agent',
-      sdkVersion: '0.84.2',
+      sdkVersion: '0.85.1',
       createRuntimeManager: () => manager,
       exit: (code) => exits.push(code),
     })
@@ -490,7 +490,7 @@ describe('Pi Host utility entry', () => {
     parent.bootstrap(piHostBootstrapEnvelopeSchema.parse({
       kind: 'bootstrap',
       ...requestMetadata('bootstrap-ui'),
-      expectedSdkVersion: '0.84.2',
+      expectedSdkVersion: '0.85.1',
     }), port)
     port.receive(piHostRequestEnvelopeSchema.parse({
       kind: 'request',
@@ -561,7 +561,7 @@ describe('Pi Host utility entry', () => {
       parentPort: parent,
       cwd: '/tmp/pipilot-project',
       agentDir: '/tmp/pipilot-agent',
-      sdkVersion: '0.84.2',
+      sdkVersion: '0.85.1',
       createRuntimeManager: () => manager,
       exit: (code) => exits.push(code),
     })
@@ -569,7 +569,7 @@ describe('Pi Host utility entry', () => {
     parent.bootstrap(piHostBootstrapEnvelopeSchema.parse({
       kind: 'bootstrap',
       ...requestMetadata('bootstrap-events'),
-      expectedSdkVersion: '0.84.2',
+      expectedSdkVersion: '0.85.1',
     }), port)
     port.receive(piHostRequestEnvelopeSchema.parse({
       kind: 'request',
@@ -617,7 +617,7 @@ describe('Pi Host utility entry', () => {
       parentPort: parent,
       cwd: '/tmp/pipilot-project',
       agentDir: '/tmp/pipilot-agent',
-      sdkVersion: '0.84.2',
+      sdkVersion: '0.85.1',
       createRuntimeManager: () => manager,
       exit: () => undefined,
     })
@@ -625,7 +625,7 @@ describe('Pi Host utility entry', () => {
     parent.bootstrap(piHostBootstrapEnvelopeSchema.parse({
       kind: 'bootstrap',
       ...requestMetadata('bootstrap-ui-credit'),
-      expectedSdkVersion: '0.84.2',
+      expectedSdkVersion: '0.85.1',
     }), port)
     port.receive(piHostRequestEnvelopeSchema.parse({
       kind: 'request',
@@ -689,7 +689,7 @@ describe('Pi Host utility entry', () => {
       parentPort: parent,
       cwd: '/tmp/pipilot-project',
       agentDir: '/tmp/pipilot-agent',
-      sdkVersion: '0.84.2',
+      sdkVersion: '0.85.1',
       createRuntimeManager: () => manager,
       exit: (code) => exits.push(code),
     }).start()
@@ -697,7 +697,7 @@ describe('Pi Host utility entry', () => {
     parent.bootstrap(piHostBootstrapEnvelopeSchema.parse({
       kind: 'bootstrap',
       ...requestMetadata('bootstrap-timeout'),
-      expectedSdkVersion: '0.84.2',
+      expectedSdkVersion: '0.85.1',
     }), port)
     await manager.create({
       runtimeId: 'rt_timeout',
@@ -740,7 +740,7 @@ describe('Pi Host utility entry', () => {
       parentPort: parent,
       cwd: '/tmp/pipilot-project',
       agentDir: '/tmp/pipilot-agent',
-      sdkVersion: '0.84.2',
+      sdkVersion: '0.85.1',
       createRuntimeManager: () => manager,
       exit: (code) => exits.push(code),
     }).start()
@@ -748,7 +748,7 @@ describe('Pi Host utility entry', () => {
     parent.bootstrap(piHostBootstrapEnvelopeSchema.parse({
       kind: 'bootstrap',
       ...requestMetadata('bootstrap-fatal'),
-      expectedSdkVersion: '0.84.2',
+      expectedSdkVersion: '0.85.1',
     }), port)
     manager.emitFatalError(Object.assign(
       new Error('token=secret /Users/private/session.jsonl prompt contents'),
@@ -807,7 +807,7 @@ describe('Pi Host utility entry', () => {
       parentPort: parent,
       cwd: '/tmp/pipilot-project',
       agentDir: '/tmp/pipilot-agent',
-      sdkVersion: '0.84.2',
+      sdkVersion: '0.85.1',
       exit: (code) => exits.push(code),
     }).start()
 

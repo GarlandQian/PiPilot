@@ -14,6 +14,13 @@ export interface PendingPiQueuedMessage extends PiQueuedMessage {
   before: readonly string[]
 }
 
+export interface PiQueueTextSnapshot {
+  steering: readonly string[]
+  followUp: readonly string[]
+}
+
+export const PI_QUEUE_MUTATION_SETTLE_MS = 1_500
+
 function sameStrings(left: readonly string[], right: readonly string[]) {
   return left.length === right.length &&
     left.every((value, index) => value === right[index])
@@ -21,6 +28,15 @@ function sameStrings(left: readonly string[], right: readonly string[]) {
 
 export function queueTexts(items: readonly PiQueuedMessage[]) {
   return items.map((item) => item.text)
+}
+
+export function piQueueItemsMatchSnapshot(
+  snapshot: PiQueueTextSnapshot,
+  steering: readonly PiQueuedMessage[],
+  followUp: readonly PiQueuedMessage[],
+) {
+  return sameStrings(snapshot.steering, queueTexts(steering)) &&
+    sameStrings(snapshot.followUp, queueTexts(followUp))
 }
 
 export function reconcilePiQueuedMessages(
@@ -81,6 +97,23 @@ export function canPromotePiFollowUp(
     [...steering, ...followUp].every((item) => item.locallyOwned)
 }
 
+export function canMutatePiQueue(
+  steering: readonly PiQueuedMessage[],
+  followUp: readonly PiQueuedMessage[],
+) {
+  return steering.length + followUp.length > 0 &&
+    [...steering, ...followUp].every((item) => item.locallyOwned)
+}
+
+export function hasCompletePiQueuePayloads(
+  pendingCount: number,
+  steering: readonly PiQueuedMessage[],
+  followUp: readonly PiQueuedMessage[],
+) {
+  return steering.length + followUp.length === pendingCount &&
+    canMutatePiQueue(steering, followUp)
+}
+
 export function promotePiFollowUpSnapshot(
   steering: readonly PiQueuedMessage[],
   followUp: readonly PiQueuedMessage[],
@@ -94,5 +127,32 @@ export function promotePiFollowUpSnapshot(
     steering: [...steering, promoted],
     followUp: followUp.filter((_, itemIndex) => itemIndex !== index),
     followUpIndex: index,
+  }
+}
+
+export function removePiQueuedMessageSnapshot(
+  steering: readonly PiQueuedMessage[],
+  followUp: readonly PiQueuedMessage[],
+  itemId: string,
+) {
+  if (!canMutatePiQueue(steering, followUp)) return null
+
+  const steeringIndex = steering.findIndex((item) => item.id === itemId)
+  if (steeringIndex !== -1) {
+    return {
+      kind: 'steering' as const,
+      itemIndex: steeringIndex,
+      steering: steering.filter((_, index) => index !== steeringIndex),
+      followUp: [...followUp],
+    }
+  }
+
+  const followUpIndex = followUp.findIndex((item) => item.id === itemId)
+  if (followUpIndex === -1) return null
+  return {
+    kind: 'followUp' as const,
+    itemIndex: followUpIndex,
+    steering: [...steering],
+    followUp: followUp.filter((_, index) => index !== followUpIndex),
   }
 }

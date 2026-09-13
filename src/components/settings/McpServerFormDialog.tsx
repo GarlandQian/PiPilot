@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { TbAdjustmentsHorizontal, TbPlug, TbTerminal2, TbWorld } from 'react-icons/tb'
 
 import { cn } from '@/lib/utils'
 import { useT } from '@/i18n'
@@ -22,6 +23,7 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
+import { getMcpFormErrors, type McpFormErrorField } from './mcp-server-form-model'
 
 /**
  * Shared MCP server Add/Edit form dialog (design §9). One component serves
@@ -82,24 +84,7 @@ function cloneValue(value: McpServerFormValue): McpServerFormValue {
   }
 }
 
-function isHttpUrl(value: string): boolean {
-  try {
-    const parsed = new URL(value)
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
-  } catch {
-    return false
-  }
-}
-
-interface FormErrors {
-  name?: string
-  command?: string
-  url?: string
-  env?: string
-  headers?: string
-}
-
-type ErrorField = keyof FormErrors
+type ErrorField = McpFormErrorField
 
 function McpServerFormDialog({
   open,
@@ -122,6 +107,8 @@ function McpServerFormDialog({
   const cwdId = React.useId()
   const enabledId = React.useId()
   const descriptionId = React.useId()
+  const envId = React.useId()
+  const headersId = React.useId()
 
   // Re-initialize the draft once per dialog opening; `initial` is the
   // snapshot for that editing session and intentionally not a dependency.
@@ -145,41 +132,12 @@ function McpServerFormDialog({
     setTouched((prev) => (prev[field] ? prev : { ...prev, [field]: true }))
   }
 
-  const errors = React.useMemo<FormErrors>(() => {
-    const next: FormErrors = {}
-    const name = draft.name.trim()
-    if (name.length === 0) {
-      next.name = t('mcp.form.name.required')
-    } else {
-      const lowered = name.toLowerCase()
-      const own = mode === 'edit' ? initial?.name.trim().toLowerCase() : undefined
-      if (
-        existingNames.some((existing) => {
-          const candidate = existing.trim().toLowerCase()
-          return candidate === lowered && candidate !== own
-        })
-      ) {
-        next.name = t('mcp.form.name.duplicate')
-      }
-    }
-    if (draft.transport === 'stdio' && draft.command.trim().length === 0) {
-      next.command = t('mcp.form.command.required')
-    }
-    if (draft.transport === 'http') {
-      const url = draft.url.trim()
-      if (url.length === 0) next.url = t('mcp.form.url.required')
-      else if (!isHttpUrl(url)) next.url = t('mcp.form.url.invalid')
-    }
-    if (draft.env.some((row) => row.key.trim().length === 0)) {
-      next.env = t('mcp.form.kv.emptyKey')
-    }
-    if (draft.headers.some((row) => row.key.trim().length === 0)) {
-      next.headers = t('mcp.form.kv.emptyKey')
-    }
-    return next
-  }, [draft, existingNames, initial, mode, t])
+  const errors = React.useMemo(() => getMcpFormErrors(draft, existingNames, mode === 'edit' ? initial?.name : undefined), [draft, existingNames, initial?.name, mode])
 
   const showError = (field: ErrorField) => submitAttempted || touched[field] === true
+  const fieldError = (field: ErrorField, id: string) => showError(field) && errors[field]
+    ? <span id={`${id}-error`} role="alert">{t(errors[field]!)}</span>
+    : undefined
 
   const isDirty = JSON.stringify(draft) !== baseline
 
@@ -196,13 +154,20 @@ function McpServerFormDialog({
     if (Object.keys(errors).length > 0) {
       setSubmitAttempted(true)
       setTouched({ name: true, command: true, url: true, env: true, headers: true })
+      const field = (Object.keys(errors) as ErrorField[])[0]
+      const id = field && ({ name: nameId, command: commandId, url: urlId, env: envId, headers: headersId })[field]
+      requestAnimationFrame(() => {
+        const target = id ? document.getElementById(id) : null
+        if (target?.matches('input')) target.focus()
+        else target?.querySelector<HTMLInputElement>('input')?.focus()
+      })
       return
     }
     onSubmit({
       ...draft,
       name: draft.name.trim(),
       command: draft.command.trim(),
-      args: draft.args.map((arg) => arg.trim()).filter((arg) => arg.length > 0),
+      args: [...draft.args],
       env: draft.env.map((row) => ({ key: row.key.trim(), value: row.value })),
       cwd: draft.cwd.trim(),
       url: draft.url.trim(),
@@ -227,197 +192,248 @@ function McpServerFormDialog({
         submitLabel={mode === 'add' ? t('mcp.form.submit.add') : t('mcp.form.submit.edit')}
         onSubmit={handleSubmit}
       >
-        <div className="flex flex-col gap-4">
-          <FormRow
-            label={
-              <span>
-                {t('mcp.form.name')}
-                {requiredMark}
-              </span>
-            }
-            htmlFor={nameId}
-            error={showError('name') ? errors.name : undefined}
-          >
-            <Input
-              id={nameId}
-              value={draft.name}
-              placeholder={t('mcp.form.name.placeholder')}
-              aria-invalid={(showError('name') && errors.name !== undefined) || undefined}
-              onChange={(event) => update({ name: event.target.value })}
-              onBlur={() => touch('name')}
-            />
-          </FormRow>
+        <div className="@container/mcp-form flex min-w-0 flex-col gap-6">
+          <fieldset className="min-w-0 space-y-4">
+            <legend className="mb-4 flex items-center gap-2 text-app font-semibold text-foreground">
+              <TbPlug className="size-4 text-muted-foreground" aria-hidden />
+              {t('settings.integrations.mcp.form.connection')}
+            </legend>
+            <FormRow
+              label={
+                <span>
+                  {t('mcp.form.name')}
+                  {requiredMark}
+                </span>
+              }
+              htmlFor={nameId}
+              error={fieldError('name', nameId)}
+            >
+              <Input
+                id={nameId}
+                value={draft.name}
+                placeholder={t('mcp.form.name.placeholder')}
+                aria-invalid={(showError('name') && errors.name !== undefined) || undefined}
+                aria-describedby={showError('name') && errors.name ? `${nameId}-error` : undefined}
+                onChange={(event) => update({ name: event.target.value })}
+                onBlur={() => touch('name')}
+              />
+            </FormRow>
 
-          <FormRow label={t('mcp.form.transport')}>
-            <div className="flex min-h-[var(--control-h)] items-center">
+            <FormRow
+              label={t('mcp.form.transport')}
+              hint={t(
+                draft.transport === 'stdio'
+                  ? 'settings.integrations.mcp.form.stdioHint'
+                  : 'settings.integrations.mcp.form.httpHint',
+              )}
+            >
               <div
-                className="inline-flex rounded-md bg-muted p-0.5"
+                className="grid min-w-0 grid-cols-1 gap-2 @min-[360px]/mcp-form:grid-cols-2"
                 role="group"
                 aria-label={t('mcp.form.transport')}
               >
                 {(['stdio', 'http'] as const).map((candidate) => (
                   <Button
                     key={candidate}
-                    variant="ghost"
-                    size="sm"
+                    variant="outline"
                     aria-pressed={draft.transport === candidate}
                     className={cn(
-                      'h-7 px-3 text-caption',
+                      'h-auto min-w-0 justify-start gap-2 px-3 py-2.5 text-caption',
                       draft.transport === candidate
-                        ? 'bg-background text-foreground hover:bg-background'
+                        ? 'border-primary/50 bg-primary/5 text-foreground hover:bg-primary/10'
                         : 'text-muted-foreground hover:text-foreground',
                     )}
                     onClick={() => update({ transport: candidate })}
                   >
-                    {t(`mcp.form.transport.${candidate}`)}
+                    {candidate === 'stdio' ? (
+                      <TbTerminal2 className="size-4 shrink-0" aria-hidden />
+                    ) : (
+                      <TbWorld className="size-4 shrink-0" aria-hidden />
+                    )}
+                    <span className="min-w-0 whitespace-normal text-left">
+                      {t(`mcp.form.transport.${candidate}`)}
+                    </span>
+                    <span
+                      aria-hidden
+                      className={cn(
+                        'ml-auto size-3 shrink-0 rounded-full border',
+                        draft.transport === candidate
+                          ? 'border-primary bg-primary ring-2 ring-primary/15'
+                          : 'border-border',
+                      )}
+                    />
                   </Button>
                 ))}
               </div>
-            </div>
-          </FormRow>
+            </FormRow>
+          </fieldset>
 
-          {draft.transport === 'stdio' ? (
-            <>
-              <FormRow
-                label={
-                  <span>
-                    {t('mcp.form.command')}
-                    {requiredMark}
-                  </span>
-                }
-                htmlFor={commandId}
-                error={showError('command') ? errors.command : undefined}
-              >
-                <Input
-                  id={commandId}
-                  value={draft.command}
-                  placeholder={t('mcp.form.command.placeholder')}
-                  aria-invalid={(showError('command') && errors.command !== undefined) || undefined}
-                  className="font-mono"
-                  onChange={(event) => update({ command: event.target.value })}
-                  onBlur={() => touch('command')}
-                />
-              </FormRow>
-
-              <FormRow label={t('mcp.form.args')}>
-                <DynamicRows
-                  rows={draft.args}
-                  onAdd={(index) => {
-                    const next = [...draft.args]
-                    next.splice(index, 0, '')
-                    update({ args: next })
-                  }}
-                  onRemove={(index) =>
-                    update({ args: draft.args.filter((_, rowIndex) => rowIndex !== index) })
+          <div className="border-t border-border pt-5">
+            {draft.transport === 'stdio' ? (
+              <fieldset key="stdio" className="min-w-0 space-y-4">
+                <legend className="mb-4 flex items-center gap-2 text-app font-semibold text-foreground">
+                  <TbTerminal2 className="size-4 text-muted-foreground" aria-hidden />
+                  {t('settings.integrations.mcp.form.stdio')}
+                </legend>
+                <FormRow
+                  label={
+                    <span>
+                      {t('mcp.form.command')}
+                      {requiredMark}
+                    </span>
                   }
-                  addLabel={t('mcp.form.rows.add')}
-                  removeLabel={t('mcp.form.rows.remove')}
-                  renderRow={(row, index) => (
-                    <Input
-                      value={row}
-                      placeholder={t('mcp.form.args.placeholder')}
-                      aria-label={`${t('mcp.form.args')} ${index + 1}`}
-                      className="font-mono"
-                      onChange={(event) =>
-                        update({
-                          args: draft.args.map((arg, rowIndex) =>
-                            rowIndex === index ? event.target.value : arg,
-                          ),
-                        })
-                      }
-                    />
-                  )}
-                />
+                  htmlFor={commandId}
+                  error={fieldError('command', commandId)}
+                >
+                  <Input
+                    id={commandId}
+                    value={draft.command}
+                    placeholder={t('mcp.form.command.placeholder')}
+                    aria-invalid={(showError('command') && errors.command !== undefined) || undefined}
+                    aria-describedby={showError('command') && errors.command ? `${commandId}-error` : undefined}
+                    className="font-mono"
+                    onChange={(event) => update({ command: event.target.value })}
+                    onBlur={() => touch('command')}
+                  />
+                </FormRow>
+
+                <FormRow label={t('mcp.form.args')}>
+                  <DynamicRows
+                    rows={draft.args}
+                    onAdd={(index) => {
+                      const next = [...draft.args]
+                      next.splice(index, 0, '')
+                      update({ args: next })
+                    }}
+                    onRemove={(index) =>
+                      update({ args: draft.args.filter((_, rowIndex) => rowIndex !== index) })
+                    }
+                    addLabel={t('mcp.form.rows.add')}
+                    removeLabel={t('mcp.form.rows.remove')}
+                    renderRow={(row, index) => (
+                      <Input
+                        value={row}
+                        placeholder={t('mcp.form.args.placeholder')}
+                        aria-label={`${t('mcp.form.args')} ${index + 1}`}
+                        className="font-mono"
+                        onChange={(event) =>
+                          update({
+                            args: draft.args.map((arg, rowIndex) =>
+                              rowIndex === index ? event.target.value : arg,
+                            ),
+                          })
+                        }
+                      />
+                    )}
+                  />
+                </FormRow>
+
+                <FormRow label={t('mcp.form.env')} error={fieldError('env', envId)}>
+                  <div id={envId} role="group" aria-label={t('mcp.form.env')} aria-invalid={showError('env') && Boolean(errors.env)} aria-describedby={showError('env') && errors.env ? `${envId}-error` : undefined}>
+                  <KeyValueRows
+                    rows={draft.env}
+                    onChange={(rows) => {
+                      touch('env')
+                      update({ env: rows })
+                    }}
+                    addLabel={t('mcp.form.rows.add')}
+                    removeLabel={t('mcp.form.rows.remove')}
+                    keyPlaceholder={t('mcp.form.kv.keyPlaceholder')}
+                    valuePlaceholder={t('mcp.form.kv.valuePlaceholder')}
+                  />
+                  </div>
+                </FormRow>
+
+                <FormRow label={t('mcp.form.cwd')} htmlFor={cwdId}>
+                  <Input
+                    id={cwdId}
+                    value={draft.cwd}
+                    placeholder={t('mcp.form.cwd.placeholder')}
+                    className="font-mono"
+                    onChange={(event) => update({ cwd: event.target.value })}
+                  />
+                </FormRow>
+              </fieldset>
+            ) : (
+              <fieldset key="http" className="min-w-0 space-y-4">
+                <legend className="mb-4 flex items-center gap-2 text-app font-semibold text-foreground">
+                  <TbWorld className="size-4 text-muted-foreground" aria-hidden />
+                  {t('settings.integrations.mcp.form.http')}
+                </legend>
+                <FormRow
+                  label={
+                    <span>
+                      {t('mcp.form.url')}
+                      {requiredMark}
+                    </span>
+                  }
+                  htmlFor={urlId}
+                  error={fieldError('url', urlId)}
+                >
+                  <Input
+                    id={urlId}
+                    value={draft.url}
+                    placeholder={t('mcp.form.url.placeholder')}
+                    aria-invalid={(showError('url') && errors.url !== undefined) || undefined}
+                    aria-describedby={showError('url') && errors.url ? `${urlId}-error` : undefined}
+                    className="font-mono"
+                    onChange={(event) => update({ url: event.target.value })}
+                    onBlur={() => touch('url')}
+                  />
+                </FormRow>
+
+                <FormRow
+                  label={t('mcp.form.headers')}
+                  error={fieldError('headers', headersId)}
+                >
+                  <div id={headersId} role="group" aria-label={t('mcp.form.headers')} aria-invalid={showError('headers') && Boolean(errors.headers)} aria-describedby={showError('headers') && errors.headers ? `${headersId}-error` : undefined}>
+                  <KeyValueRows
+                    rows={draft.headers}
+                    onChange={(rows) => {
+                      touch('headers')
+                      update({ headers: rows })
+                    }}
+                    addLabel={t('mcp.form.rows.add')}
+                    removeLabel={t('mcp.form.rows.remove')}
+                    keyPlaceholder={t('mcp.form.kv.keyPlaceholder')}
+                    valuePlaceholder={t('mcp.form.kv.valuePlaceholder')}
+                  />
+                  </div>
+                </FormRow>
+              </fieldset>
+            )}
+          </div>
+
+          <div className="border-t border-border pt-5">
+            <fieldset className="min-w-0 space-y-4">
+              <legend className="mb-4 flex items-center gap-2 text-app font-semibold text-foreground">
+                <TbAdjustmentsHorizontal className="size-4 text-muted-foreground" aria-hidden />
+                {t('settings.integrations.mcp.form.preferences')}
+              </legend>
+              <FormRow label={t('mcp.form.enabled')} htmlFor={enabledId}>
+                <div className="flex min-h-[var(--control-h)] items-center">
+                  <Switch
+                    id={enabledId}
+                    checked={draft.enabled}
+                    onCheckedChange={(enabled) => update({ enabled })}
+                  />
+                </div>
               </FormRow>
 
-              <FormRow label={t('mcp.form.env')} error={showError('env') ? errors.env : undefined}>
-                <KeyValueRows
-                  rows={draft.env}
-                  onChange={(rows) => {
-                    touch('env')
-                    update({ env: rows })
-                  }}
-                  addLabel={t('mcp.form.rows.add')}
-                  removeLabel={t('mcp.form.rows.remove')}
-                  keyPlaceholder={t('mcp.form.kv.keyPlaceholder')}
-                  valuePlaceholder={t('mcp.form.kv.valuePlaceholder')}
-                />
-              </FormRow>
-
-              <FormRow label={t('mcp.form.cwd')} htmlFor={cwdId}>
-                <Input
-                  id={cwdId}
-                  value={draft.cwd}
-                  placeholder={t('mcp.form.cwd.placeholder')}
-                  className="font-mono"
-                  onChange={(event) => update({ cwd: event.target.value })}
-                />
-              </FormRow>
-            </>
-          ) : (
-            <>
               <FormRow
-                label={
-                  <span>
-                    {t('mcp.form.url')}
-                    {requiredMark}
-                  </span>
-                }
-                htmlFor={urlId}
-                error={showError('url') ? errors.url : undefined}
+                label={t('mcp.form.description')}
+                htmlFor={descriptionId}
+                hint={t('mcp.form.description.hint')}
               >
                 <Input
-                  id={urlId}
-                  value={draft.url}
-                  placeholder={t('mcp.form.url.placeholder')}
-                  aria-invalid={(showError('url') && errors.url !== undefined) || undefined}
-                  className="font-mono"
-                  onChange={(event) => update({ url: event.target.value })}
-                  onBlur={() => touch('url')}
+                  id={descriptionId}
+                  value={draft.description}
+                  placeholder={t('mcp.form.description.placeholder')}
+                  onChange={(event) => update({ description: event.target.value })}
                 />
               </FormRow>
-
-              <FormRow
-                label={t('mcp.form.headers')}
-                error={showError('headers') ? errors.headers : undefined}
-              >
-                <KeyValueRows
-                  rows={draft.headers}
-                  onChange={(rows) => {
-                    touch('headers')
-                    update({ headers: rows })
-                  }}
-                  addLabel={t('mcp.form.rows.add')}
-                  removeLabel={t('mcp.form.rows.remove')}
-                  keyPlaceholder={t('mcp.form.kv.keyPlaceholder')}
-                  valuePlaceholder={t('mcp.form.kv.valuePlaceholder')}
-                />
-              </FormRow>
-            </>
-          )}
-
-          <FormRow label={t('mcp.form.enabled')} htmlFor={enabledId}>
-            <div className="flex min-h-[var(--control-h)] items-center">
-              <Switch
-                id={enabledId}
-                checked={draft.enabled}
-                onCheckedChange={(enabled) => update({ enabled })}
-              />
-            </div>
-          </FormRow>
-
-          <FormRow
-            label={t('mcp.form.description')}
-            htmlFor={descriptionId}
-            hint={t('mcp.form.description.hint')}
-          >
-            <Input
-              id={descriptionId}
-              value={draft.description}
-              placeholder={t('mcp.form.description.placeholder')}
-              onChange={(event) => update({ description: event.target.value })}
-            />
-          </FormRow>
+            </fieldset>
+          </div>
         </div>
       </FormDialog>
 

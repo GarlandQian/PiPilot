@@ -27,10 +27,12 @@ export interface WorkspaceFileViewerProps {
   path: string
   preview?: WorkspaceFilePreview
   loading: boolean
+  refreshing?: boolean
   errorMessage?: string
   onBack: () => void
   onClose: () => void
   onRetry?: () => void
+  onRefresh?: () => void
 }
 
 function typeLabel(
@@ -80,10 +82,12 @@ export function WorkspaceFileViewer({
   path,
   preview,
   loading,
+  refreshing = false,
   errorMessage,
   onBack,
   onClose,
   onRetry,
+  onRefresh,
 }: WorkspaceFileViewerProps) {
   const t = useT()
   const classification = React.useMemo(() => classifyWorkspaceFile(path), [path])
@@ -91,7 +95,7 @@ export function WorkspaceFileViewer({
   const [copyState, setCopyState] = React.useState<'idle' | 'copied' | 'failed'>('idle')
   const copyReset = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const boundedPath = displayWorkspacePath(path)
-  const textPreview = !loading && !errorMessage && preview?.kind === 'text'
+  const textPreview = !loading && preview?.kind === 'text'
     ? preview
     : undefined
   const markdown = classification.kind === 'markdown' && textPreview
@@ -129,7 +133,7 @@ export function WorkspaceFileViewer({
       <TbLoader2 className="size-4 animate-spin" aria-hidden />
       <span>{t('inspector.preview.loading')}</span>
     </PreviewState>
-  ) : errorMessage ? (
+  ) : errorMessage && !preview ? (
     <PreviewState role="alert">
       <TbFile className="size-5" aria-hidden />
       <span className="text-destructive">{errorMessage}</span>
@@ -159,6 +163,7 @@ export function WorkspaceFileViewer({
   return (
     <section
       aria-label={path}
+      aria-busy={loading || refreshing}
       className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden"
       data-workspace-file-viewer
     >
@@ -202,6 +207,25 @@ export function WorkspaceFileViewer({
           </Tooltip>
         ) : null}
 
+        {onRefresh && preview ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label={t('common.refresh')}
+                disabled={loading || refreshing}
+                onClick={onRefresh}
+              >
+                {refreshing
+                  ? <TbLoader2 className="animate-spin motion-reduce:animate-none" aria-hidden />
+                  : <TbRefresh aria-hidden />}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('common.refresh')}</TooltipContent>
+          </Tooltip>
+        ) : null}
+
         <Tooltip>
           <TooltipTrigger asChild>
             <Button variant="ghost" size="icon-xs" aria-label={t('common.close')} onClick={onClose}>
@@ -211,6 +235,14 @@ export function WorkspaceFileViewer({
           <TooltipContent>{t('common.close')}</TooltipContent>
         </Tooltip>
       </header>
+
+      {refreshing ? <span role="status" className="sr-only">{t('inspector.preview.loading')}</span> : null}
+      {errorMessage && preview ? (
+        <div role="alert" className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2 text-caption text-destructive">
+          <span className="min-w-0 flex-1">{errorMessage}</span>
+          {onRetry ? <Button variant="outline" size="xs" onClick={onRetry}>{t('inspector.preview.retry')}</Button> : null}
+        </div>
+      ) : null}
 
       {markdown ? (
         <Tabs

@@ -13,70 +13,11 @@ import {
   ModelsConfigError,
   ModelsConfigService,
 } from '../../src/main/models-config/models-config-service'
-import type {
-  LocalPiRpcEvent,
-  LocalPiRuntimeSnapshot,
-} from '../../src/shared/local-pi'
+import { ConfigApplyCoordinator } from '../../src/main/config-apply/config-apply-coordinator'
+import { FakeConfigApplyRuntime } from './helpers/config-apply-runtime'
 import type { PiManagementModelsPayload } from '../../src/shared/pi-integrations'
 
 const roots: string[] = []
-
-function readyRuntime(generation: number): LocalPiRuntimeSnapshot {
-  return {
-    state: 'ready',
-    generation,
-    cwd: '/private/project',
-    sessionFile: null,
-    sessionState: {
-      thinkingLevel: 'medium',
-      isStreaming: true,
-      isCompacting: false,
-      steeringMode: 'one-at-a-time',
-      followUpMode: 'one-at-a-time',
-      sessionId: `session-${generation}`,
-      autoCompactionEnabled: true,
-      messageCount: 0,
-      pendingMessageCount: 0,
-    },
-    commands: [],
-    stderr: '',
-    diagnostics: [],
-  }
-}
-
-class FakeRuntimeHost {
-  private snapshotListeners = new Set<(snapshot: LocalPiRuntimeSnapshot) => void>()
-  private eventListeners = new Set<(event: LocalPiRpcEvent, generation: number) => void>()
-  private snapshot: LocalPiRuntimeSnapshot
-  readonly restart = vi.fn(async () => this.getSnapshot())
-
-  constructor(snapshot: LocalPiRuntimeSnapshot) {
-    this.snapshot = snapshot
-  }
-
-  getSnapshot() {
-    return structuredClone(this.snapshot)
-  }
-
-  subscribe(listener: (snapshot: LocalPiRuntimeSnapshot) => void) {
-    this.snapshotListeners.add(listener)
-    return () => this.snapshotListeners.delete(listener)
-  }
-
-  subscribeEvents(listener: (event: LocalPiRpcEvent, generation: number) => void) {
-    this.eventListeners.add(listener)
-    return () => this.eventListeners.delete(listener)
-  }
-
-  publish(snapshot: LocalPiRuntimeSnapshot) {
-    this.snapshot = snapshot
-    for (const listener of this.snapshotListeners) listener(this.getSnapshot())
-  }
-
-  emit(event: LocalPiRpcEvent, generation: number) {
-    for (const listener of this.eventListeners) listener(event, generation)
-  }
-}
 
 function managementPayload(overrides?: Partial<PiManagementModelsPayload>): PiManagementModelsPayload {
   return {
@@ -93,7 +34,7 @@ afterEach(async () => {
     rm(root, { recursive: true, force: true })))
 })
 
-async function fixture({ helperAvailable = true } = {}) {
+async function fixture({ helperAvailable = true, customAgentDirectory = false } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'pipilot-models-config-'))
   roots.push(root)
   const home = join(root, 'home')
@@ -118,12 +59,37 @@ async function fixture({ helperAvailable = true } = {}) {
   })
   const service = new ModelsConfigService({
     homeDirectory: home,
+    ...(customAgentDirectory ? { agentDirectory: join(root, 'custom-agent') } : {}),
     management: { modelsDefaults, setDefaultModel, testModel },
   })
   return { home, service, modelsDefaults, setDefaultModel, testModel }
 }
 
 describe('ModelsConfigService', () => {
+  it('uses the authoritative Agent directory for models and fallback defaults', async () => {
+    const { home, service } = await fixture({ helperAvailable: false, customAgentDirectory: true })
+    const agentDirectory = join(home, '..', 'custom-agent')
+    const defaultDirectory = join(home, '.pi', 'agent')
+    await mkdir(agentDirectory, { recursive: true })
+    await mkdir(defaultDirectory, { recursive: true })
+    await writeFile(join(agentDirectory, 'settings.json'), '{ "defaultProvider": "fixture", "defaultModel": "custom" }')
+    await writeFile(join(defaultDirectory, 'settings.json'), '{ "defaultProvider": "ignored", "defaultModel": "default" }')
+    const defaultModels = '{ "providers": { "untouched": {} } }'
+    await writeFile(join(defaultDirectory, 'models.json'), defaultModels)
+
+    const initial = await service.load({ kind: 'global' })
+    expect(initial).toMatchObject({
+      path: join(agentDirectory, 'models.json'),
+      exists: false,
+      defaultProvider: 'fixture',
+      defaultModel: 'custom',
+    })
+    const content = '{ "providers": { "custom": {} } }'
+    await service.save({ kind: 'global' }, content, initial.fingerprint)
+    await expect(readFile(join(agentDirectory, 'models.json'), 'utf8')).resolves.toBe(content)
+    await expect(readFile(join(defaultDirectory, 'models.json'), 'utf8')).resolves.toBe(defaultModels)
+  })
+
   it('reads only the exact Pi Agent global models file and attaches defaults', async () => {
     const { home, service } = await fixture()
 
@@ -268,11 +234,12 @@ describe('ModelsConfigService', () => {
     expect(testModel).not.toHaveBeenCalled()
   })
 
-  it('applies a queued restart only to the runtime generation that requested it', async () => {
+  it('retains global application across selected Runtime generations and coalesces saved revisions', async () => {
     const { service } = await fixture()
     const initial = await service.load({ kind: 'global' })
-    const runtime = new FakeRuntimeHost(readyRuntime(7))
-    const controller = new ModelsConfigController(service, runtime)
+    const runtime = new FakeConfigApplyRuntime()
+    const coordinator = new ConfigApplyCoordinator(runtime)
+    const controller = new ModelsConfigController(service, coordinator)
 
     try {
       await expect(controller.save(
@@ -281,9 +248,9 @@ describe('ModelsConfigService', () => {
         initial.fingerprint,
       )).resolves.toMatchObject({ apply: 'pending' })
 
-      runtime.publish(readyRuntime(8))
-      runtime.emit({ type: 'agent_settled' }, 8)
-      expect(runtime.restart).not.toHaveBeenCalled()
+      runtime.selectedGeneration = 8
+      runtime.emitChange()
+      expect(runtime.reload).not.toHaveBeenCalled()
 
       const current = await service.load({ kind: 'global' })
       await expect(controller.save(
@@ -291,10 +258,15 @@ describe('ModelsConfigService', () => {
         '{ "providers": { "second": { "baseUrl": "https://b.example.test" } } }',
         current.fingerprint,
       )).resolves.toMatchObject({ apply: 'pending' })
-      runtime.emit({ type: 'agent_settled' }, 8)
-      await vi.waitFor(() => expect(runtime.restart).toHaveBeenCalledTimes(1))
+      const saved = await controller.load({ kind: 'global' })
+      runtime.busy = false
+      runtime.emitChange()
+      await vi.waitFor(() => expect(coordinator.getStatus(saved.path)).toMatchObject({
+        state: 'applied', fingerprint: saved.fingerprint,
+      }))
+      expect(runtime.reload).toHaveBeenCalledTimes(1)
     } finally {
-      controller.dispose()
+      coordinator.dispose()
     }
   })
 })

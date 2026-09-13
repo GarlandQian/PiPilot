@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { CatalogInvalidationQueue } from '@/renderer/catalog-invalidation-queue'
 import {
   createDefaultWorkspaceAdapter,
   loadOfficialSessionCatalog,
@@ -187,6 +188,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const workspaceRevision = React.useRef(-1)
   const navigationRevision = React.useRef(0)
   const catalogRequests = React.useRef(new Map<string, number>())
+  const catalogLoads = React.useRef(new Map<string, Promise<void>>())
   const contentRequest = React.useRef(0)
   const workspaceSignal = React.useRef(0)
   const navigationSignal = React.useRef(0)
@@ -388,99 +390,106 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     }))
   }, [invalidateCatalogRequest, updateState])
 
-  const refreshCatalogFor = React.useCallback(async (
+  const refreshCatalogFor = React.useCallback((
     scope: ConversationScope,
     refresh = false,
   ) => {
-    if (!adapter) return
+    if (!adapter) return Promise.resolve()
     const key = conversationScopeKey(scope)
-    const requestId = invalidateCatalogRequest(scope)
-    updateState((previous) => ({
-      ...previous,
-      ...(sameConversationScope(scope, previous.activeScope)
-        ? { catalogStatus: 'loading' as const }
-        : {}),
-      sessionCatalogs: {
-        ...previous.sessionCatalogs,
-        [key]: {
-          status: 'loading',
-          rows: previous.sessionCatalogs[key]?.rows ?? [],
-          errorMessage: null,
-        },
-      },
-    }))
-
-    try {
-      const result = await loadOfficialSessionCatalog(
-        adapter.sessionCatalog,
-        scope,
-        refresh,
-      )
-      if (requestId !== catalogRequests.current.get(key)) return
-
-      updateState((previous) => {
-        const active = sameConversationScope(scope, previous.activeScope)
-        const nextCatalog: ScopedSessionCatalog = {
-          status: result.status,
-          rows: result.status === 'ready' ? result.rows : [],
-          errorMessage: null,
-        }
-        if (!active) {
-          return {
-            ...previous,
-            sessionCatalogs: {
-              ...previous.sessionCatalogs,
-              [key]: nextCatalog,
-            },
-          }
-        }
-        if (result.status !== 'ready') {
-          return {
-            ...previous,
-            sessions: [],
-            activeId: '',
-            catalogStatus: result.status,
-            sessionCatalogs: {
-              ...previous.sessionCatalogs,
-              [key]: nextCatalog,
-            },
-          }
-        }
-        const sessionState = deriveOfficialSessionState(
-          result.rows,
-          previous.workspace?.name ?? '',
-          previous.activeSessionId,
-        )
-        return {
-          ...previous,
-          ...sessionState,
-          catalogStatus: 'ready',
-          sessionCatalogs: {
-            ...previous.sessionCatalogs,
-            [key]: nextCatalog,
-          },
-        }
-      })
-    } catch (error) {
-      if (requestId !== catalogRequests.current.get(key)) return
-
-      const details = errorDetails(error)
+    const operation = (async () => {
+      const requestId = invalidateCatalogRequest(scope)
       updateState((previous) => ({
         ...previous,
         ...(sameConversationScope(scope, previous.activeScope)
-          ? { catalogStatus: 'error' as const }
+          ? { catalogStatus: 'loading' as const }
           : {}),
         sessionCatalogs: {
           ...previous.sessionCatalogs,
           [key]: {
-            status: 'error',
-            rows: [],
-            errorMessage: details.message,
+            status: 'loading',
+            rows: previous.sessionCatalogs[key]?.rows ?? [],
+            errorMessage: null,
           },
         },
       }))
-      throw error
-    }
+
+      try {
+        const result = await loadOfficialSessionCatalog(
+          adapter.sessionCatalog,
+          scope,
+          refresh,
+        )
+        if (requestId !== catalogRequests.current.get(key)) return
+
+        updateState((previous) => {
+          const active = sameConversationScope(scope, previous.activeScope)
+          const nextCatalog: ScopedSessionCatalog = {
+            status: result.status,
+            rows: result.status === 'ready' ? result.rows : [],
+            errorMessage: null,
+          }
+          if (!active) {
+            return {
+              ...previous,
+              sessionCatalogs: {
+                ...previous.sessionCatalogs,
+                [key]: nextCatalog,
+              },
+            }
+          }
+          if (result.status !== 'ready') {
+            return {
+              ...previous,
+              sessions: [],
+              activeId: '',
+              catalogStatus: result.status,
+              sessionCatalogs: {
+                ...previous.sessionCatalogs,
+                [key]: nextCatalog,
+              },
+            }
+          }
+          const sessionState = deriveOfficialSessionState(
+            result.rows,
+            previous.workspace?.name ?? '',
+            previous.activeSessionId,
+          )
+          return {
+            ...previous,
+            ...sessionState,
+            catalogStatus: 'ready',
+            sessionCatalogs: {
+              ...previous.sessionCatalogs,
+              [key]: nextCatalog,
+            },
+          }
+        })
+      } catch (error) {
+        if (requestId !== catalogRequests.current.get(key)) return
+
+        const details = errorDetails(error)
+        updateState((previous) => ({
+          ...previous,
+          ...(sameConversationScope(scope, previous.activeScope)
+            ? { catalogStatus: 'error' as const }
+            : {}),
+          sessionCatalogs: {
+            ...previous.sessionCatalogs,
+            [key]: {
+              status: 'error',
+              rows: [],
+              errorMessage: details.message,
+            },
+          },
+        }))
+        throw error
+      }
+    })()
+    catalogLoads.current.set(key, operation)
+    void operation.finally(() => {
+      if (catalogLoads.current.get(key) === operation) catalogLoads.current.delete(key)
+    }).catch(() => undefined)
+    return operation
   }, [adapter, invalidateCatalogRequest, updateState])
 
   const refreshWorkspaceContentFor = React.useCallback(async (
@@ -579,6 +588,17 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       })
     }
 
+    const catalogInvalidations = new CatalogInvalidationQueue({
+      eligible: (scope) => Boolean(stateRef.current.sessionCatalogs[conversationScopeKey(scope)]) && (
+        scope.kind === 'projectless' || stateRef.current.recentProjects.some((project) =>
+          project.id === scope.workspaceId && project.available)
+      ),
+      invalidate: invalidateCatalogRequest,
+      inFlight: (scope) => catalogLoads.current.get(conversationScopeKey(scope)),
+      reload: (scope) => refreshCatalogFor(scope),
+      onError: (error) => { if (!disposed) fail(error) },
+    })
+
     const detachWorkspace = adapter.workspace.subscribe((snapshot) => {
       if (disposed) return
       workspaceSignal.current += 1
@@ -598,6 +618,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     const detachRuntime = adapter.localPi.runtime.subscribe((event) => {
       if (disposed) return
       runtimeSignal.current += 1
+      if (event.catalogInvalidation) catalogInvalidations.notify(event.catalogInvalidation)
       if (applyRuntimeSnapshot(event.snapshot)) {
         report(refreshCatalogFor(stateRef.current.activeScope, true))
       }
@@ -610,12 +631,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         return
       }
       if (event.event.type === 'agent_settled') {
-        report(refreshConversation(stateRef.current.activeScope))
-      } else if (
-        event.event.type === 'entry_appended' ||
-        event.event.type === 'session_info_changed'
-      ) {
-        report(refreshCatalogFor(stateRef.current.activeScope, true))
+        report(refreshRuntimeState(stateRef.current.activeScope))
       }
     })
     const initialWorkspaceSignal = workspaceSignal.current
@@ -666,6 +682,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
     return () => {
       disposed = true
+      catalogInvalidations.dispose()
       detachWorkspace()
       detachConversation()
       detachRuntime()
@@ -677,8 +694,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     applyRuntimeSnapshot,
     applyWorkspaceSnapshot,
     fail,
+    invalidateCatalogRequest,
     refreshCatalogFor,
-    refreshConversation,
     refreshRuntimeState,
     refreshWorkspaceContentFor,
   ])
