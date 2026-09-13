@@ -10,6 +10,8 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { MarkdownContent } from './markdown/MarkdownContent'
+import { InlineMarkdown } from './markdown/InlineMarkdown'
 import { useT } from '@/i18n'
 import type {
   LocalPiExtensionUiRequest,
@@ -65,10 +67,12 @@ export function ExtensionUiDialog({
         showCloseButton={!busy}
       >
         <DialogHeader>
-          <DialogTitle>{request.title}</DialogTitle>
+          <DialogTitle><InlineMarkdown markdown={request.title} /></DialogTitle>
           {request.method === 'confirm' && (
-            <DialogDescription className="whitespace-pre-wrap">
-              {request.message}
+            <DialogDescription asChild>
+              <div>
+                <MarkdownContent markdown={request.message} />
+              </div>
             </DialogDescription>
           )}
         </DialogHeader>
@@ -87,7 +91,7 @@ export function ExtensionUiDialog({
                   value: option,
                 })}
               >
-                {option}
+                <InlineMarkdown markdown={option} />
               </Button>
             ))}
           </div>

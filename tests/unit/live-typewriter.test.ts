@@ -25,10 +25,10 @@ describe('live response typewriter', () => {
     expect(target.startsWith(next)).toBe(true)
   })
 
-  it('uses a faster bounded catch-up after the stream settles', () => {
+  it('shows the authoritative complete response immediately after settlement', () => {
     const target = 'x'.repeat(600)
-    expect(nextTypewriterText('', target, true).length)
-      .toBeGreaterThan(nextTypewriterText('', target, false).length)
+    expect(nextTypewriterText('', target, true)).toBe(target)
+    expect(nextTypewriterText('stale prefix', target, true)).toBe(target)
   })
 
   it('starts from empty only for a newly observed live response', () => {
@@ -39,8 +39,8 @@ describe('live response typewriter', () => {
     expect(shouldStartTypewriterFromEmpty(false, true, true)).toBe(false)
   })
 
-  it('auto-collapses settled reasoning while preserving a manual disclosure', () => {
-    expect(thinkingDisclosureAfterPhaseChange(true, false, null)).toBe(false)
+  it('keeps settled reasoning in place while preserving manual disclosure choices', () => {
+    expect(thinkingDisclosureAfterPhaseChange(true, false, null)).toBe(true)
     expect(thinkingDisclosureAfterPhaseChange(true, false, true)).toBe(true)
     expect(thinkingDisclosureAfterPhaseChange(true, false, false)).toBe(false)
   })

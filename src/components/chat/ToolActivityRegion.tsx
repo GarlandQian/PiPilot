@@ -41,6 +41,7 @@ const categoryLabelKey = {
 interface ToolActivityRegionProps {
   run: ToolActivityRun
   sessionKey: string | null
+  visible?: boolean
   selectedSubagentId?: string | null
   focusRequest?: SubagentInspectorFocusRequest | null
   onOpenSubagent?: (toolCallId: string) => void
@@ -50,24 +51,33 @@ function SubagentActivityRow({
   call,
   sessionKey,
   selected,
+  visible,
   focusRequest,
+  onFocusReturned,
   onOpen,
 }: {
   call: ToolCall
   sessionKey: string | null
   selected: boolean
+  visible: boolean
   focusRequest?: SubagentInspectorFocusRequest | null
+  onFocusReturned(sequence: number): void
   onOpen?: (toolCallId: string) => void
 }) {
   const t = useT()
   const buttonRef = React.useRef<HTMLButtonElement>(null)
   React.useEffect(() => {
     if (
+      visible &&
       focusRequest &&
       focusRequest.sessionKey === sessionKey &&
       focusRequest.toolCallId === call.id
-    ) buttonRef.current?.focus()
-  }, [call.id, focusRequest, sessionKey])
+    ) {
+      const button = buttonRef.current
+      button?.focus()
+      if (button && document.activeElement === button) onFocusReturned(focusRequest.sequence)
+    }
+  }, [call.id, focusRequest, onFocusReturned, sessionKey, visible])
 
   return (
     <button
@@ -84,17 +94,17 @@ function SubagentActivityRow({
       onClick={() => onOpen?.(call.id)}
       disabled={!onOpen}
       className={cn(
-        'flex h-[var(--tool-row-h)] w-full min-w-0 items-center gap-2 rounded-md border border-border/50 bg-card/70 px-2 text-left outline-none transition-colors duration-(--duration-fast) hover:border-border hover:bg-accent/40 focus-visible:focus-ring disabled:cursor-default disabled:opacity-100 motion-reduce:transition-none',
-        selected && 'border-sage/40 bg-accent/45',
+        'flex min-h-[var(--tool-row-h)] w-full min-w-0 items-center gap-2 rounded-sm px-1.5 py-1 text-left outline-none transition-colors duration-(--duration-fast) hover:bg-accent/35 focus-visible:focus-ring disabled:cursor-default disabled:opacity-100 motion-reduce:transition-none',
+        selected && 'bg-accent/45',
       )}
     >
-      <TbChevronRight className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+      <TbChevronRight className={cn('size-3.5 shrink-0 text-muted-foreground', selected && 'rotate-90')} aria-hidden />
       <span className="flex w-4 shrink-0 justify-center">
         <TbRobot className="size-3.5 text-muted-foreground" aria-hidden />
       </span>
-      <span className="shrink-0 text-caption font-medium text-foreground">{call.title}</span>
+      <span className="shrink-0 text-caption font-medium text-muted-foreground">{call.title}</span>
       {call.summary ? (
-        <span className="min-w-0 flex-1 truncate text-micro text-muted-foreground" title={call.summary}>
+        <span className="min-w-0 flex-1 truncate text-caption text-muted-foreground" title={call.summary}>
           {call.summary}
         </span>
       ) : <span className="min-w-0 flex-1" />}
@@ -112,16 +122,20 @@ function ActivityItem({
   call,
   sessionKey,
   selectedSubagentId,
+  visible = true,
   focusRequest,
+  onFocusReturned,
   onOpenSubagent,
-}: Omit<ToolActivityRegionProps, 'run'> & { call: ToolCall }) {
+}: Omit<ToolActivityRegionProps, 'run'> & { call: ToolCall; onFocusReturned(sequence: number): void }) {
   if (call.subagent) {
     return (
       <SubagentActivityRow
         call={call}
         sessionKey={sessionKey}
         selected={selectedSubagentId === call.id}
+        visible={visible}
         focusRequest={focusRequest}
+        onFocusReturned={onFocusReturned}
         onOpen={onOpenSubagent}
       />
     )
@@ -131,31 +145,58 @@ function ActivityItem({
 
 function ActivitySection({
   section,
+  visible = true,
   ...props
 }: Omit<ToolActivityRegionProps, 'run'> & { section: ToolActivitySection }) {
   const t = useT()
-  const [open, setOpen] = React.useState(section.failedCount > 0)
+  const single = section.items.length === 1
+  const active = section.items.some(({ call }) => call.status === 'running' || call.status === 'queued')
+  const [open, setOpen] = React.useState(single || active || section.failedCount > 0)
+  const manuallyToggledRef = React.useRef(false)
   const previousFailedCountRef = React.useRef(section.failedCount)
+  const lastFocusSequenceRef = React.useRef<number | null>(null)
+  // Keep consumption above the disclosure: its rows unmount when a category
+  // closes, but reopening it must not replay an earlier return-focus request.
+  const returnedFocusSequenceRef = React.useRef<number | null>(null)
+  const onFocusReturned = React.useCallback((sequence: number) => {
+    returnedFocusSequenceRef.current = sequence
+  }, [])
   const Icon = categoryIcon[section.category]
+
+  const { focusRequest, sessionKey } = props
+  const pendingFocusRequest = focusRequest?.sequence === returnedFocusSequenceRef.current
+    ? null : focusRequest
+  const containsFocusTarget = focusRequest?.sessionKey === sessionKey &&
+    section.items.some(({ call }) => call.id === focusRequest.toolCallId)
+  React.useLayoutEffect(() => {
+    if (
+      !visible || !containsFocusTarget || !focusRequest ||
+      lastFocusSequenceRef.current === focusRequest.sequence
+    ) return
+    lastFocusSequenceRef.current = focusRequest.sequence
+    setOpen(true)
+  }, [containsFocusTarget, focusRequest, visible])
 
   React.useEffect(() => {
     if (section.failedCount > previousFailedCountRef.current) setOpen(true)
     previousFailedCountRef.current = section.failedCount
   }, [section.failedCount])
 
-  if (section.items.length === 1) {
-    const item = section.items[0]
-    return item ? <ActivityItem call={item.call} {...props} /> : null
-  }
+  React.useEffect(() => {
+    if (active && !manuallyToggledRef.current) setOpen(true)
+  }, [active])
 
   const contentId = `${section.id}:content`
   return (
-    <Collapsible open={open} onOpenChange={setOpen}>
-      <div data-tool-activity-category={section.category}>
-        <CollapsibleTrigger asChild>
+    <Collapsible open={single || open} onOpenChange={(nextOpen) => {
+      manuallyToggledRef.current = true
+      setOpen(nextOpen)
+    }}>
+      <div data-tool-activity-category={single ? undefined : section.category}>
+        {!single ? <CollapsibleTrigger asChild>
           <button
             type="button"
-            className="flex h-[var(--tool-row-h)] w-full min-w-0 items-center gap-2 rounded-md border border-border/50 bg-card/70 px-2 text-left outline-none transition-colors duration-(--duration-fast) hover:border-border hover:bg-accent/40 focus-visible:focus-ring motion-reduce:transition-none"
+            className="flex min-h-[var(--tool-row-h)] w-full min-w-0 items-center gap-2 rounded-sm px-1.5 py-1 text-left outline-none transition-colors duration-(--duration-fast) hover:bg-accent/35 focus-visible:focus-ring motion-reduce:transition-none"
             aria-expanded={open}
             aria-controls={contentId}
           >
@@ -169,7 +210,7 @@ function ActivitySection({
             <span className="flex w-4 shrink-0 justify-center">
               <Icon className="size-3.5 text-muted-foreground" aria-hidden />
             </span>
-            <span className="min-w-0 flex-1 truncate text-caption font-medium text-foreground">
+            <span className="min-w-0 flex-1 truncate text-caption text-muted-foreground">
               {t(categoryLabelKey[section.category], { count: section.items.length })}
             </span>
             {section.failedCount > 0 ? (
@@ -179,11 +220,18 @@ function ActivitySection({
             ) : null}
             <ToolCallStatus status={section.status} />
           </button>
-        </CollapsibleTrigger>
+        </CollapsibleTrigger> : null}
         <CollapsibleContent id={contentId}>
-          <div className="ml-3.5 border-l border-border/70 py-0.5 pl-3">
+          <div className={single ? undefined : 'min-w-0 space-y-0.5 pl-4'}>
             {section.items.map((item) => (
-              <ActivityItem key={item.id} call={item.call} {...props} />
+              <ActivityItem
+                key={item.id}
+                call={item.call}
+                {...props}
+                focusRequest={pendingFocusRequest}
+                onFocusReturned={onFocusReturned}
+                visible={visible && (single || open)}
+              />
             ))}
           </div>
         </CollapsibleContent>
@@ -194,6 +242,7 @@ function ActivitySection({
 
 export const ToolActivityRegion = React.memo(function ToolActivityRegion({
   run,
+  visible = true,
   ...props
 }: ToolActivityRegionProps) {
   return (
@@ -202,7 +251,7 @@ export const ToolActivityRegion = React.memo(function ToolActivityRegion({
       data-tool-activity-run={run.id}
     >
       {run.sections.map((section) => (
-        <ActivitySection key={section.id} section={section} {...props} />
+        <ActivitySection key={section.id} section={section} {...props} visible={visible} />
       ))}
     </div>
   )

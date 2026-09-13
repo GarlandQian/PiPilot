@@ -1,7 +1,7 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import { WorkspaceFileViewer } from '../../src/components/inspector/WorkspaceFileViewer'
+import { WorkspaceFileViewer, type WorkspaceFileViewerProps } from '../../src/components/inspector/WorkspaceFileViewer'
 import { TooltipProvider } from '../../src/components/ui/tooltip'
 import type { WorkspaceFilePreview } from '../../src/shared/workspace-content'
 
@@ -31,7 +31,7 @@ const callbacks = {
   onClose: () => undefined,
 }
 
-function renderViewer(path: string, preview: WorkspaceFilePreview, loading = false) {
+function renderViewer(path: string, preview: WorkspaceFilePreview, loading = false, props: Partial<WorkspaceFileViewerProps> = {}) {
   return renderToStaticMarkup(createElement(
     TooltipProvider,
     null,
@@ -40,6 +40,7 @@ function renderViewer(path: string, preview: WorkspaceFilePreview, loading = fal
       path,
       preview,
       loading,
+      ...props,
     }),
   ))
 }
@@ -89,6 +90,31 @@ describe('WorkspaceFileViewer', () => {
 
     expect(markup).toContain('inspector.preview.loading')
     expect(markup).not.toContain('Stale heading')
+  })
+
+  it('exposes refresh on a ready preview and keeps its document visible during refresh', () => {
+    const preview = {
+      ...previewBase, path: 'README.md', kind: 'text' as const, size: 21, content: '# Last loaded heading',
+    }
+    const ready = renderViewer('README.md', preview, false, { onRefresh: () => undefined })
+    expect(ready).toMatch(/<button[^>]*aria-label="common.refresh"[^>]*>/u)
+    const refreshing = renderViewer('README.md', preview, false, { refreshing: true, onRefresh: () => undefined })
+    expect(refreshing).toContain('<h1>Last loaded heading</h1>')
+    expect(refreshing).toContain('aria-busy="true"')
+    expect(refreshing).toMatch(/<button[^>]*aria-label="common.refresh"[^>]*disabled=""/u)
+    expect(refreshing).toContain('inspector.preview.mode.source')
+    expect(refreshing).toContain('inspector.preview.loading')
+  })
+
+  it('retains the last loaded document and shows a retryable alert when refresh fails', () => {
+    const markup = renderViewer('README.md', {
+      ...previewBase, path: 'README.md', kind: 'text', size: 21, content: '# Last loaded heading',
+    }, false, { errorMessage: 'Cannot reload this file.', onRetry: () => undefined, onRefresh: () => undefined })
+    expect(markup).toContain('<h1>Last loaded heading</h1>')
+    expect(markup).toContain('role="alert"')
+    expect(markup).toContain('Cannot reload this file.')
+    expect(markup).toContain('inspector.preview.retry')
+    expect(markup).toContain('aria-busy="false"')
   })
 
   it.each([

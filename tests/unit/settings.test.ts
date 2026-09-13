@@ -84,6 +84,22 @@ describe('current settings schema', () => {
     expect(() => parseSettingsDocument({ version: 99, settings: {} })).toThrow()
   })
 
+  it('migrates the previous Composer shape to queueing by default', () => {
+    const current = darkEnglishSettings()
+    const legacy = {
+      ...current,
+      composer: { sendShortcut: current.composer.sendShortcut },
+    }
+
+    expect(parseSettingsDocument({
+      version: SETTINGS_SCHEMA_VERSION,
+      settings: legacy,
+    }).settings.composer).toEqual({
+      sendShortcut: 'enter',
+      runningSubmit: 'queue',
+    })
+  })
+
   it('uses terminal defaults for missing or malformed cached fields', () => {
     const malformed = sanitizeSettings({
       ...darkEnglishSettings(),
@@ -118,11 +134,12 @@ describe('SettingsRepository', () => {
       const changed = repository.update({
         locale: 'en-US',
         appearance: { theme: 'dark', uiFontSize: 16 },
-        composer: { sendShortcut: 'mod-enter' },
+        composer: { sendShortcut: 'mod-enter', runningSubmit: 'steer' },
         terminal: { fontFamily: 'Fira Code', fontSize: 16 },
       })
       expect(changed.settings.appearance.theme).toBe('dark')
       expect(changed.settings.composer.sendShortcut).toBe('mod-enter')
+      expect(changed.settings.composer.runningSubmit).toBe('steer')
       expect(changed.settings.terminal).toEqual({ fontFamily: 'Fira Code', fontSize: 16 })
       const beforeFlush = JSON.parse(await readFile(filePath, 'utf8')) as {
         settings: AppSettings
@@ -137,6 +154,7 @@ describe('SettingsRepository', () => {
       expect(afterFlush).toMatchObject({ version: SETTINGS_SCHEMA_VERSION })
       expect(afterFlush.settings.appearance.theme).toBe('dark')
       expect(afterFlush.settings.composer.sendShortcut).toBe('mod-enter')
+      expect(afterFlush.settings.composer.runningSubmit).toBe('steer')
       expect(afterFlush.settings.terminal).toEqual({ fontFamily: 'Fira Code', fontSize: 16 })
     } finally {
       repository.dispose()
@@ -247,6 +265,88 @@ describe('SettingsRepository', () => {
 })
 
 describe('settings adapters and store', () => {
+  function controlledAdapter() {
+    const pending: { resolve(snapshot: SettingsSnapshot): void; reject(reason: Error): void }[] = []
+    const adapter: SettingsAdapter = {
+      mode: 'electron',
+      getBootstrapSettings: () => cloneSettings(DEFAULT_SETTINGS),
+      load: vi.fn(async () => ({ revision: 1, settings: cloneSettings(DEFAULT_SETTINGS) })),
+      reset: () => new Promise((resolve, reject) => pending.push({ resolve, reject })),
+      update: () => new Promise((resolve, reject) => pending.push({ resolve, reject })),
+      subscribe: () => () => undefined,
+    }
+    return { adapter, pending }
+  }
+
+  it('reports saving until all outstanding preferences have been confirmed', async () => {
+    const { adapter, pending } = controlledAdapter()
+    const store = createSettingsStore(adapter)
+    await store.whenReady()
+    const changes: string[] = []
+    store.subscribeSaveStatus(() => changes.push(store.getSaveStatus()))
+    expect(store.getSaveStatus()).toBe('idle')
+    store.updateAppearance({ theme: 'dark' })
+    store.update({ locale: 'en-US' })
+    expect(store.getSaveStatus()).toBe('saving')
+    pending[1].resolve({ revision: 3, settings: darkEnglishSettings() })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(store.getSaveStatus()).toBe('saving')
+    pending[0].resolve({ revision: 2, settings: cloneSettings(DEFAULT_SETTINGS) })
+    await vi.waitFor(() => expect(store.getSaveStatus()).toBe('saved'))
+    expect(changes).toEqual(['saving', 'saved'])
+    expect(store.get()).toEqual(darkEnglishSettings())
+    store.dispose()
+  })
+
+  it('does not mask an earlier failed preference when a later save succeeds', async () => {
+    const { adapter, pending } = controlledAdapter()
+    const store = createSettingsStore(adapter)
+    await store.whenReady()
+    store.updateAppearance({ theme: 'dark' })
+    store.update({ locale: 'en-US' })
+    pending[0].reject(new Error('storage unavailable'))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(store.getSaveStatus()).toBe('saving')
+    pending[1].resolve({ revision: 2, settings: { ...cloneSettings(DEFAULT_SETTINGS), locale: 'en-US' } })
+    await vi.waitFor(() => expect(store.getSaveStatus()).toBe('error'))
+    expect(store.get().appearance.theme).toBe('system')
+    expect(store.get().locale).toBe('en-US')
+    store.updateAppearance({ theme: 'dark' })
+    expect(store.getSaveStatus()).toBe('saving')
+    pending[2].resolve({ revision: 3, settings: darkEnglishSettings() })
+    await vi.waitFor(() => expect(store.getSaveStatus()).toBe('saved'))
+    store.dispose()
+  })
+
+  it('restores confirmed preferences and shows failure even if recovery cannot reload', async () => {
+    const { adapter, pending } = controlledAdapter()
+    const store = createSettingsStore(adapter)
+    await store.whenReady()
+    vi.mocked(adapter.load).mockRejectedValueOnce(new Error('read failed'))
+    store.updateAppearance({ theme: 'dark' })
+    pending[0].reject(new Error('write failed'))
+    await vi.waitFor(() => expect(store.getSaveStatus()).toBe('error'))
+    expect(store.get()).toEqual(DEFAULT_SETTINGS)
+    store.dispose()
+  })
+
+  it('settles synchronous adapter failures and does not publish after disposal', async () => {
+    const { adapter, pending } = controlledAdapter()
+    adapter.update = () => { throw new Error('IPC unavailable') }
+    const store = createSettingsStore(adapter)
+    await store.whenReady()
+    expect(() => store.update({ locale: 'en-US' })).not.toThrow()
+    await vi.waitFor(() => expect(store.getSaveStatus()).toBe('error'))
+    store.resetTerminal()
+    expect(store.getSaveStatus()).toBe('saving')
+    const statusListener = vi.fn()
+    store.subscribeSaveStatus(statusListener)
+    store.dispose()
+    pending[0].resolve({ revision: 2, settings: cloneSettings(DEFAULT_SETTINGS) })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(statusListener).not.toHaveBeenCalled()
+  })
+
   it('treats localStorage as a cache while Electron API remains authoritative', async () => {
     const storage = new MemoryStorage()
     storage.setItem(SETTINGS_CACHE_KEY, JSON.stringify(darkEnglishSettings()))

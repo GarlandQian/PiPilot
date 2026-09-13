@@ -95,6 +95,14 @@ describe('renderer layout preferences', () => {
     )).toBe('settings-wide')
     expect(deriveFrameLayoutMode(
       { workspace: 'settings', section: 'appearance' },
+      1_100,
+    )).toBe('settings-wide')
+    expect(deriveFrameLayoutMode(
+      { workspace: 'settings', section: 'appearance' },
+      640,
+    )).toBe('settings-compact')
+    expect(deriveFrameLayoutMode(
+      { workspace: 'settings', section: 'appearance' },
       Number.NaN,
     )).toBe('settings-compact')
   })

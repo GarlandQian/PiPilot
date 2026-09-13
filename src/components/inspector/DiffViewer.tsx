@@ -5,6 +5,8 @@ import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
 import type { WorkspaceFileStatus } from '@/shared/workspace-content'
 import type { ContinuousDiffFile } from './continuous-diff-controller'
+import { InspectorSectionToolbar } from './InspectorSectionToolbar'
+import { DiffFileNavigator } from './DiffFileNavigator'
 
 export type DiffViewerFile = ContinuousDiffFile
 
@@ -13,6 +15,7 @@ interface DiffViewerProps {
   emptyMessage?: string
   listLoading?: boolean
   listTruncated?: boolean
+  listErrorMessage?: string
   onRefresh?: () => void
   onRequestFile?: (paths: string | readonly string[]) => void
   onRetryFile?: (path: string) => void
@@ -100,7 +103,7 @@ function DiffInlineState({
   return (
     <div className="flex min-h-28 items-center justify-center gap-2 px-4 py-6 text-center text-caption text-muted-foreground">
       {loading ? (
-        <TbLoader2 className="size-4 shrink-0 animate-spin" aria-hidden />
+        <TbLoader2 className="size-4 shrink-0 animate-spin motion-reduce:animate-none" aria-hidden />
       ) : onRetry ? (
         <TbAlertCircle className="size-4 shrink-0" aria-hidden />
       ) : null}
@@ -245,6 +248,7 @@ export function DiffViewer({
   emptyMessage,
   listLoading = false,
   listTruncated = false,
+  listErrorMessage,
   onRefresh,
   onRequestFile,
   onRetryFile,
@@ -303,35 +307,41 @@ export function DiffViewer({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex min-h-12 items-center gap-2 border-b border-border px-2.5 py-1.5">
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-caption font-medium text-foreground">
-            {t('inspector.diff.uncommitted')}
-          </p>
-          <p className="mt-0.5 text-micro text-muted-foreground">
-            {t('inspector.diff.summary', { count: files.length })}
-          </p>
-        </div>
+      <InspectorSectionToolbar title={t('inspector.diff.uncommitted')} description={t('inspector.diff.summary', { count: files.length })}>
+        <DiffFileNavigator files={files} onSelect={(path) => {
+          requestFile(path)
+          const section = sectionNodes.current.get(path)
+          section?.scrollIntoView({ block: 'start', behavior: 'instant' })
+          section?.setAttribute('tabindex', '-1')
+          section?.focus({ preventScroll: true })
+        }} />
         <Button
           variant="ghost"
           size="icon-sm"
           aria-label={t('inspector.diff.refresh')}
           title={t('inspector.diff.refresh')}
-          disabled={listLoading}
+          disabled={listLoading || !onRefresh}
           onClick={onRefresh}
         >
-          {listLoading ? <TbLoader2 className="animate-spin" aria-hidden /> : <TbRefresh aria-hidden />}
+          {listLoading ? <TbLoader2 className="animate-spin motion-reduce:animate-none" aria-hidden /> : <TbRefresh aria-hidden />}
         </Button>
-      </div>
+      </InspectorSectionToolbar>
+      {listErrorMessage && files.length > 0 ? <div role="alert" className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2 text-caption text-destructive">
+        <span className="min-w-0 flex-1">{listErrorMessage}</span>
+        {onRefresh ? <Button variant="ghost" size="xs" onClick={onRefresh} disabled={listLoading}>{t('common.retry')}</Button> : null}
+      </div> : null}
 
       {files.length === 0 ? (
         <div className="grid min-h-0 flex-1 place-items-center p-4 text-center text-caption text-muted-foreground">
           {listLoading ? (
-            <span className="flex items-center gap-2">
-              <TbLoader2 className="size-4 animate-spin" aria-hidden />
+            <span className="flex items-center gap-2" role="status">
+              <TbLoader2 className="size-4 animate-spin motion-reduce:animate-none" aria-hidden />
               {t('inspector.diff.loading')}
             </span>
-          ) : empty}
+          ) : listErrorMessage ? <div role="alert" className="flex flex-col items-center gap-2">
+            <p className="text-destructive">{listErrorMessage}</p>
+            {onRefresh ? <Button variant="outline" size="xs" onClick={onRefresh}><TbRefresh aria-hidden />{t('common.retry')}</Button> : null}
+          </div> : <span role="status">{empty}</span>}
         </div>
       ) : (
         <DiffRenderErrorBoundary

@@ -15,6 +15,7 @@ import {
 import type { SettingsSnapshot } from '@/shared/ipc/contracts'
 
 type Listener = (settings: AppSettings) => void
+export type SettingsSaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 
 export function createSettingsStore(
   adapter: SettingsAdapter = createDefaultSettingsAdapter(),
@@ -25,6 +26,14 @@ export function createSettingsStore(
   let pendingOperations = 0
   let disposed = false
   const listeners = new Set<Listener>()
+  const statusListeners = new Set<() => void>()
+  let saveStatus: SettingsSaveStatus = 'idle'
+  let batchFailed = false
+  const publishStatus = (next: SettingsSaveStatus) => {
+    if (disposed || saveStatus === next) return
+    saveStatus = next
+    for (const listener of statusListeners) listener()
+  }
 
   const notify = () => {
     if (disposed) return
@@ -55,16 +64,27 @@ export function createSettingsStore(
     optimisticSettings: AppSettings,
     operation: () => Promise<SettingsSnapshot>,
   ) => {
+    if (disposed) return
+    if (pendingOperations === 0) batchFailed = false
     pendingOperations += 1
     settings = optimisticSettings
+    publishStatus('saving')
     notify()
 
-    void operation()
+    let result: Promise<SettingsSnapshot>
+    try { result = operation() } catch (error) { result = Promise.reject(error) }
+    void result
       .then(acceptSnapshot)
-      .catch(recover)
+      .catch(async () => {
+        batchFailed = true
+        await recover()
+      })
       .finally(() => {
         pendingOperations -= 1
-        if (pendingOperations === 0) publishConfirmed()
+        if (pendingOperations === 0) {
+          publishConfirmed()
+          publishStatus(batchFailed ? 'error' : 'saved')
+        }
       })
   }
 
@@ -75,6 +95,11 @@ export function createSettingsStore(
     mode: adapter.mode,
     get(): AppSettings {
       return settings
+    },
+    getSaveStatus(): SettingsSaveStatus { return saveStatus },
+    subscribeSaveStatus(listener: () => void) {
+      statusListeners.add(listener)
+      return () => { statusListeners.delete(listener) }
     },
     update(patch: AppSettingsPatch) {
       const next = mergeSettings(settings, patch)
@@ -118,6 +143,7 @@ export function createSettingsStore(
       disposed = true
       detachAdapter()
       listeners.clear()
+      statusListeners.clear()
     },
   }
 }
@@ -157,4 +183,9 @@ export function useUpdateSettings() {
     }),
     [store],
   )
+}
+
+export function useSettingsSaveStatus(): SettingsSaveStatus {
+  const store = useStore()
+  return React.useSyncExternalStore(store.subscribeSaveStatus, store.getSaveStatus, store.getSaveStatus)
 }

@@ -13,6 +13,7 @@ import {
   app,
   BrowserWindow,
   crashReporter,
+  dialog,
   Menu,
   nativeImage,
   session,
@@ -24,6 +25,8 @@ import {
   resolveTestUserDataOverride,
 } from './application-storage'
 import { MainDiagnostics } from './diagnostics/main-diagnostics'
+import { ConfigApplyCoordinator } from './config-apply/config-apply-coordinator'
+import { OfficialPiSessionCatalogObserver } from './conversations/official-pi-session-catalog-observer'
 import { registerAppIpc } from './ipc/register-app-ipc'
 import { registerTerminalIpc } from './ipc/register-terminal-ipc'
 import { registerWorkspaceIpc } from './ipc/register-workspace-ipc'
@@ -44,7 +47,9 @@ import { createApplicationUrlPolicy } from './security/url-policy'
 import { createMainWindow } from './windows/create-main-window'
 import { TerminalService } from './terminal/terminal-service'
 import { ProjectHostPool } from './pi-host/project-host-pool'
+import { PiHostController } from './pi-host/pi-host-controller'
 import { PiRuntimeFrontend } from './pi-host/pi-runtime-frontend'
+import { resolvePiAgentDirectory } from './pi-agent-directory'
 import {
   ConversationScopeResolver,
 } from './conversations/conversation-scope-resolver'
@@ -69,6 +74,9 @@ import { LocalPiIntegrationService } from './local-pi-management/local-pi-integr
 import { createProductionApplicationUpdateProvider } from './application-update/providers'
 import { ApplicationUpdateService } from './application-update/service'
 import { ApplicationShutdownCoordinator } from './application-update/shutdown-coordinator'
+import { ConfigurationShutdownGuard } from './application-update/configuration-shutdown-guard'
+import enUS from '../i18n/locales/en-US.json'
+import zhCN from '../i18n/locales/zh-CN.json'
 import { registerApplicationUpdateIpc } from './ipc/register-application-update-ipc'
 import { registerExternalControlIpc } from './ipc/register-external-control-ipc'
 import {
@@ -119,6 +127,23 @@ function isPathInside(parent: string, candidate: string) {
 if (testUserDataOverride) {
   mkdirSync(testUserDataOverride, { recursive: true, mode: 0o700 })
   app.setPath('userData', testUserDataOverride)
+}
+// Test userData alone does not isolate services that resolve global Pi files
+// from the OS home directory. Keep those reads/writes inside the same fixture.
+const applicationHomeDirectory = testUserDataOverride
+  ? join(testUserDataOverride, 'home')
+  : app.getPath('home')
+if (testUserDataOverride) mkdirSync(applicationHomeDirectory, { recursive: true, mode: 0o700 })
+const applicationAgentDirectory = resolvePiAgentDirectory({
+  homeDirectory: applicationHomeDirectory,
+  isolatedTest: Boolean(testUserDataOverride),
+})
+const piEnvironment: NodeJS.ProcessEnv = {
+  ...process.env,
+  PI_CODING_AGENT_DIR: applicationAgentDirectory,
+  ...(testUserDataOverride
+    ? { HOME: applicationHomeDirectory, USERPROFILE: applicationHomeDirectory }
+    : {}),
 }
 
 const applicationStorage = createApplicationStoragePaths(app.getPath('userData'))
@@ -241,6 +266,7 @@ let piRuntimeFrontend: PiRuntimeFrontend | null = null
 let localPiIpcController: ReturnType<typeof registerLocalPiIpc> | null = null
 let mcpConfigController: McpConfigController | null = null
 let modelsConfigController: ModelsConfigController | null = null
+let configApplyCoordinator: ConfigApplyCoordinator | null = null
 let piIntegrationsController: ReturnType<typeof registerPiIntegrationsIpc> | null = null
 let piIntegrationService: LocalPiIntegrationService | null = null
 let conversationIpcUnsubscribe: (() => void) | null = null
@@ -300,10 +326,10 @@ async function disposeApplicationResources() {
   localPiIpcController = null
   piIntegrationsController?.dispose()
   piIntegrationsController = null
-  mcpConfigController?.dispose()
   mcpConfigController = null
-  modelsConfigController?.dispose()
   modelsConfigController = null
+  configApplyCoordinator?.dispose()
+  configApplyCoordinator = null
   conversationIpcUnsubscribe?.()
   conversationIpcUnsubscribe = null
 
@@ -447,6 +473,7 @@ if (!hasSingleInstanceLock) {
       conversationNavigationRepository.initialize()
       await observedPiSessionDirectories.initialize()
             piHostPool = new ProjectHostPool({
+              createHost: (scope) => new PiHostController({ cwd: scope.cwd, environment: piEnvironment }),
               onHostDiagnostic: (code) => diagnostics.record('error', code),
             })
           piRuntimeFrontend = new PiRuntimeFrontend(
@@ -454,46 +481,23 @@ if (!hasSingleInstanceLock) {
             conversationScopeResolver,
           )
           const runtimeHost = piRuntimeFrontend
-      const restartAffectedPiHosts = async (
-        scope: { kind: 'global' } | { kind: 'project' },
-        cwd: string,
-      ) => {
-        const active = runtimeHost.getSnapshot()
-        const targets = piHostPool!.listHosts().filter((host) =>
-          host.state !== 'stopped' &&
-          (scope.kind === 'global' || host.cwd === cwd),
-        )
-        for (const host of targets) {
-          if (active.state === 'ready' && active.cwd === host.cwd) {
-            await runtimeHost.restart()
-          } else {
-            await piHostPool!.restart(host.scope)
-          }
-        }
-      }
-      const reloadAffectedPiRuntimes = async (
+      const synchronizeAffectedPiRuntimes = async (
         scope: { kind: 'global' } | { kind: 'project' },
         cwd: string,
       ) => {
         await runtimeHost.reloadRuntimes(scope.kind === 'global' ? undefined : cwd)
       }
+      configApplyCoordinator = new ConfigApplyCoordinator(runtimeHost)
       const mcpConfigService = new McpConfigService({
-        homeDirectory: app.getPath('home'),
+        homeDirectory: applicationHomeDirectory,
+        agentDirectory: applicationAgentDirectory,
         getActiveScope: () => conversationNavigationRepository.get().activeScope,
         scopeResolver: conversationScopeResolver,
       })
       mcpConfigController = new McpConfigController(
         mcpConfigService,
-        runtimeHost,
-        async (target) => {
-          const cwd = target.kind === 'global'
-            ? projectlessCwd
-            : (await conversationScopeResolver.resolve({
-                kind: 'project',
-                workspaceId: target.workspaceId,
-              })).cwd
-          await restartAffectedPiHosts(target, cwd)
-        },
+        configApplyCoordinator,
+        () => runtimeHost.reloadRuntimes(),
       )
       const officialPiSessionActivation = new OfficialPiSessionActivationService(
         conversationScopeResolver,
@@ -512,12 +516,13 @@ if (!hasSingleInstanceLock) {
         activationService: officialPiSessionActivation,
         deletionService: officialPiSessionDeletion,
         navigationRepository: conversationNavigationRepository,
-        runtimeHost,
         scopeResolver: conversationScopeResolver,
         disposeScope: (scope) => terminalService.disposeScope(scope),
+        onScopeDisposalError: () => diagnostics.record('error', 'CONVERSATION_TERMINAL_CLEANUP_FAILED'),
       })
           const piManagementHost = new LocalPiManagementHost({
             helperEntryPath: join(mainOutputDirectory, 'pi-management-helper.js'),
+            environment: piEnvironment,
       })
       piIntegrationService = new LocalPiIntegrationService({
         getActiveScope: () => conversationNavigationRepository.get().activeScope,
@@ -525,8 +530,8 @@ if (!hasSingleInstanceLock) {
         managedPackageStatePath: join(app.getPath('userData'), 'pi-managed-packages.json'),
         restartMarkerPath: join(app.getPath('userData'), 'pi-integrations-state.json'),
         runtimeHost,
-        reloadHosts: reloadAffectedPiRuntimes,
-        restartHosts: restartAffectedPiHosts,
+        reloadHosts: synchronizeAffectedPiRuntimes,
+        restartHosts: synchronizeAffectedPiRuntimes,
         scopeResolver: conversationScopeResolver,
       })
       const externalControlDirectory = join(
@@ -581,14 +586,34 @@ if (!hasSingleInstanceLock) {
       if (testLauncherDirectory) {
         mkdirSync(testLauncherDirectory, { recursive: true, mode: 0o700 })
       }
+      const darwinLauncherDirectory = app.isPackaged &&
+        process.platform === 'darwin' &&
+        !testLauncherDirectory
+        ? join(externalControlDirectory, 'bin')
+        : undefined
+      if (darwinLauncherDirectory) {
+        try {
+          mkdirSync(darwinLauncherDirectory, { recursive: true, mode: 0o700 })
+        } catch {
+          // The optional launcher reports unavailable without blocking PiPilot startup.
+        }
+      }
       const externalControlLauncher = new ExternalControlLauncherService({
         descriptorPath: externalControlDescriptor.path,
         executablePath: externalControlLauncherSource,
-        homeDirectory: app.getPath('home'),
+        homeDirectory: applicationHomeDirectory,
         isPackaged: app.isPackaged,
         receiptPath: join(externalControlDirectory, 'launcher-receipt.json'),
+        ...(darwinLauncherDirectory
+          ? { darwinPrivateTargetDirectory: darwinLauncherDirectory }
+          : {}),
         ...(testLauncherDirectory ? { testTargetDirectory: testLauncherDirectory } : {}),
       })
+      try {
+        externalControlLauncher.initialize()
+      } catch {
+        // Launcher recovery is optional; Settings can retry without blocking startup.
+      }
       externalControlService = new ExternalControlLifecycleService({
         preferenceRepository: externalControlPreference,
         configuration: externalControlConfiguration,
@@ -603,11 +628,35 @@ if (!hasSingleInstanceLock) {
         }),
       })
       await externalControlService.initialize()
+      const shutdownGuard = new ConfigurationShutdownGuard({
+        getMainWindow: () => mainWindow,
+        revealMainWindow,
+        async confirmUnavailable(intent) {
+          const configured = settingsRepository.get().settings.locale
+          const locale = configured === 'system' ? app.getLocale() : configured
+          const messages = locale.toLowerCase().startsWith('zh') ? zhCN : enUS
+          const options = {
+            type: 'warning' as const,
+            title: messages['app.shutdown.unavailableTitle'],
+            message: messages['app.shutdown.unavailableDescription'],
+            buttons: [messages['app.shutdown.cancel'], messages[intent === 'quit' ? 'app.shutdown.discardQuit' : 'app.shutdown.discardUpdate']],
+            defaultId: 0,
+            cancelId: 0,
+            noLink: true,
+          }
+          const result = mainWindow && !mainWindow.isDestroyed()
+            ? await dialog.showMessageBox(mainWindow, options)
+            : await dialog.showMessageBox(options)
+          return result.response === 1
+        },
+      })
       shutdownCoordinator = new ApplicationShutdownCoordinator({
+        confirm: (intent) => shutdownGuard.confirm(intent),
+        cancelConfirmation: () => shutdownGuard.cancel(),
         dispose: disposeApplicationResources,
         quit: () => app.quit(),
       })
-      registerAppIpc({ getMainWindow: () => mainWindow, policy, settingsRepository })
+      registerAppIpc({ getMainWindow: () => mainWindow, policy, settingsRepository, shutdownGuard })
       externalControlIpcController = registerExternalControlIpc({
         getMainWindow: () => mainWindow,
         launcherService: externalControlLauncher,
@@ -615,6 +664,7 @@ if (!hasSingleInstanceLock) {
         service: externalControlService,
       })
       localPiIpcController = registerLocalPiIpc({
+        catalogObserver: new OfficialPiSessionCatalogObserver(runtimeHost, officialPiSessionCatalog, observedPiSessionDirectories),
         activationService: officialPiSessionActivation,
         contextService: conversationContextService,
         getMainWindow: () => mainWindow,
@@ -634,13 +684,13 @@ if (!hasSingleInstanceLock) {
       })
       void piIntegrationService.ensureRecommendedPackages()
       const modelsConfigService = new ModelsConfigService({
-        homeDirectory: app.getPath('home'),
+        homeDirectory: applicationHomeDirectory,
+        agentDirectory: applicationAgentDirectory,
         management: piIntegrationService,
       })
       modelsConfigController = new ModelsConfigController(
         modelsConfigService,
-        runtimeHost,
-        () => restartAffectedPiHosts({ kind: 'global' }, projectlessCwd),
+        configApplyCoordinator,
       )
       registerModelsConfigIpc({
         controller: modelsConfigController,

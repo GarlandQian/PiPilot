@@ -3,9 +3,6 @@ version = 1
 name = "PiPilot"
 
 [setup]
-script = ""
-
-[[actions]]
-name = "dev"
-icon = "run"
-command = "pnpm run dev"
+script = '''
+pnpm run dev
+'''

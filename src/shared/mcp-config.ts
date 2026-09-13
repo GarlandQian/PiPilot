@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { configApplyStatusSchema } from './config-apply'
 
 export const MCP_CONFIG_CONTENT_LIMIT = 1024 * 1024
 export const MCP_CONFIG_SERVER_LIMIT = 500
@@ -49,9 +50,11 @@ export const mcpConfigSnapshotSchema = mcpConfigDocumentSchema
   .extend({
     target: mcpConfigTargetSchema,
     path: z.string().min(1).max(16_384),
+    displayPath: z.string().min(1).max(16_384).optional(),
     exists: z.boolean(),
     content: z.string().max(MCP_CONFIG_CONTENT_LIMIT),
     fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    applyStatus: configApplyStatusSchema.optional(),
   })
   .strict()
 
@@ -60,7 +63,7 @@ export type McpConfigSnapshot = z.infer<typeof mcpConfigSnapshotSchema>
 export const mcpConfigSaveResultSchema = z
   .object({
     snapshot: mcpConfigSnapshotSchema,
-    apply: z.enum(['saved', 'restarted', 'pending', 'unavailable', 'failed']),
+    apply: z.enum(['saved', 'applied', 'restarted', 'pending', 'unavailable', 'failed']),
     applyError: z.string().max(1_000).optional(),
   })
   .strict()
@@ -70,6 +73,7 @@ export type McpConfigSaveResult = z.infer<typeof mcpConfigSaveResultSchema>
 export const mcpConfigRestartResultSchema = z
   .object({
     restarted: z.boolean(),
+    applied: z.boolean().optional(),
     error: z.string().max(1_000).optional(),
   })
   .strict()

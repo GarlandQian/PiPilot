@@ -14,7 +14,12 @@ import {
   settlePiPendingPromptActivities,
   type PiResponseActivityScope,
 } from '../../src/store/pi-rpc'
-import { createLocalPiProjectorState } from '../../src/renderer/pi-rpc/projector'
+import {
+  applyLocalPiProjectorEvent,
+  createLocalPiProjectorState,
+  hydrateLocalPiProjectorEntrySnapshot,
+} from '../../src/renderer/pi-rpc/projector'
+import { projectLocalPiTurns } from '../../src/renderer/pi-rpc/presentation'
 import type {
   LocalPiAgentMessage,
   LocalPiAssistantMessage,
@@ -264,6 +269,78 @@ describe('pending prompt response provenance', () => {
       ...scope,
       generation: 8,
     }, projection)).toBeNull()
+  })
+
+  it('attaches buffered working and notifications after user persistence before any assistant token', () => {
+    let pending = createPiPendingPromptProvenance({ ...scope, operationId: 41, initialMessageCount: 0 })
+    pending = capturePiPendingPromptActivity(pending, scope, {
+      kind: 'working', id: 'working', message: 'Preparing the response.', state: 'active',
+    })!
+    pending = capturePiPendingPromptActivity(pending, scope, {
+      kind: 'notification', id: 'warning', message: 'Review the exact warning.', tone: 'warning', state: 'settled',
+    })!
+    pending = acceptPiPendingPrompt(pending, 41)!
+    const user: LocalPiAgentMessage = { role: 'user', content: 'Inspect it', timestamp: 3 }
+    const initial = createLocalPiProjectorState({
+      ...scope,
+      entrySnapshot: { ...scope, entries: [], leafId: null, cursor: null },
+    })
+    const received = applyLocalPiProjectorEvent(initial, {
+      eventId: 'user-received',
+      generation: scope.generation,
+      event: { type: 'message_end', message: user },
+    })
+    expect(piPendingPromptSnapshotAnchor(pending, scope, received)).toBeNull()
+    const hydrated = hydrateLocalPiProjectorEntrySnapshot(received, {
+      ...scope,
+      entries: [entry('entry-user', null, user)],
+      leafId: 'entry-user',
+      cursor: 'entry-user',
+    }, initial.entrySnapshot)
+    const anchorEntryId = piPendingPromptSnapshotAnchor(pending, scope, hydrated)
+    expect(anchorEntryId).toBe('entry-user')
+    const records = projectPiPendingPromptActivities(pending, { ...scope, anchorEntryId: anchorEntryId! }, 1)!
+    const turns = projectLocalPiTurns(hydrated, { scopeKey: scope.scopeKey, responseActivities: records })
+
+    expect(hydrated.streamingMessage).toBeNull()
+    expect(turns.map((turn) => turn.kind)).toEqual(['user', 'activity', 'activity'])
+    expect(turns.every((turn) => turn.anchorEntryId === 'entry-user')).toBe(true)
+    expect(turns[1]).toMatchObject({ activity: { kind: 'working', message: 'Preparing the response.', state: 'active' } })
+    expect(turns[2]).toMatchObject({ activity: { kind: 'notification', message: 'Review the exact warning.', tone: 'warning' } })
+  })
+
+  it('preserves live assistant and tool evidence that arrives while entry provenance is being fetched', () => {
+    const initial = createLocalPiProjectorState({ ...scope })
+    let live = applyLocalPiProjectorEvent(initial, {
+      eventId: 'assistant-started',
+      generation: scope.generation,
+      event: { type: 'message_start', message: { ...assistant('Partial text.', 4), stopReason: 'pending' } },
+    })
+    live = applyLocalPiProjectorEvent(live, {
+      eventId: 'tool-started',
+      generation: scope.generation,
+      event: { type: 'tool_execution_start', toolCallId: 'tool-live', toolName: 'read', args: { path: 'README.md' } },
+    })
+    const hydrated = hydrateLocalPiProjectorEntrySnapshot(live, {
+      ...scope, entries: [], leafId: null, cursor: null,
+    }, initial.entrySnapshot)
+
+    expect(hydrated.streamingMessage).toBe(live.streamingMessage)
+    expect(hydrated.streamingContent).toBe(live.streamingContent)
+    expect(hydrated.streamingToolCallDeltas).toBe(live.streamingToolCallDeltas)
+    expect(hydrated.messages).toBe(live.messages)
+    expect(hydrated.tools).toBe(live.tools)
+    expect(hydrated.isStreaming).toBe(true)
+    expect(hydrated.revision).toBe(live.revision + 1)
+  })
+
+  it('rejects stale entry pages from another scope or from before a newer snapshot', () => {
+    const current = readyProjection()
+    const snapshot = current.entrySnapshot!
+    expect(hydrateLocalPiProjectorEntrySnapshot(current, { ...snapshot, generation: 8 }, snapshot)).toBe(current)
+    expect(hydrateLocalPiProjectorEntrySnapshot(current, { ...snapshot, sessionId: 'other' }, snapshot)).toBe(current)
+    expect(hydrateLocalPiProjectorEntrySnapshot(current, snapshot, null)).toBe(current)
+    expect(hydrateLocalPiProjectorEntrySnapshot(current, snapshot, { ...snapshot })).toBe(current)
   })
 
   it('prevents an old failure from clearing a newer prompt and clears on scope replacement', () => {

@@ -90,7 +90,7 @@ describe('RuntimeExtensionUiBridge', () => {
     const environment: NodeJS.ProcessEnv = {}
     expect(preparePiHostChildProcessEnvironment(environment, undefined)).toBe(false)
     expect(environment.ELECTRON_RUN_AS_NODE).toBeUndefined()
-    expect(preparePiHostChildProcessEnvironment(environment, '43.4.1')).toBe(true)
+    expect(preparePiHostChildProcessEnvironment(environment, '44.2.0')).toBe(true)
     expect(environment.ELECTRON_RUN_AS_NODE).toBe('1')
   })
 })

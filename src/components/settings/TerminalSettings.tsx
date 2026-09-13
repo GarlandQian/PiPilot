@@ -1,7 +1,8 @@
 import * as React from 'react'
-import { TbRefresh } from 'react-icons/tb'
+import { TbRefresh, TbTerminal2 } from 'react-icons/tb'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import {
   Select,
   SelectContent,
@@ -30,6 +31,7 @@ export function TerminalSettings() {
   const { terminal } = useSettings()
   const { resetTerminal, updateTerminal } = useUpdateSettings()
   const [modeOverride, setModeOverride] = React.useState<typeof CUSTOM_FONT | null>(null)
+  const [confirmReset, setConfirmReset] = React.useState(false)
 
   const knownFont = TERMINAL_FONT_OPTIONS.some((font) => font === terminal.fontFamily)
   const selectedFont = modeOverride ?? (
@@ -47,6 +49,13 @@ export function TerminalSettings() {
         title={t('settings.terminal.title')}
         desc={t('settings.terminal.description')}
       >
+        <figure className="min-w-0 overflow-hidden rounded-md border border-border bg-surface-inset" data-terminal-font-preview data-terminal-font-family={terminal.fontFamily || 'system'} data-terminal-effective-font-family={effectiveStack}>
+          <figcaption className="flex items-center gap-2 border-b border-border/60 px-4 py-2 text-micro text-muted-foreground"><TbTerminal2 className="size-3.5" aria-hidden />{t('settings.terminal.preview')}</figcaption>
+          <div className="px-4 py-5" style={{ fontFamily: effectiveStack, fontSize: terminal.fontSize }}>
+            <p className="break-words leading-relaxed text-foreground">{t('settings.terminal.previewText')}</p>
+            <p className="mt-2 flex items-center gap-2 text-success" aria-hidden><span>$</span><span className="h-4 w-2 bg-foreground/60" /></p>
+          </div>
+        </figure>
         <SettingRow
           label={t('settings.terminal.fontFamily')}
           desc={t('settings.terminal.fontFamilyDesc')}
@@ -121,47 +130,30 @@ export function TerminalSettings() {
           </span>
         </SettingRow>
 
-        <SettingRow label={t('settings.terminal.preview')} className="items-start py-1.5">
-          <div
-            className="w-80 max-w-full overflow-hidden rounded-md border border-border bg-sidebar px-3 py-2"
-            data-terminal-font-preview
-            data-terminal-font-family={terminal.fontFamily || 'system'}
-            data-terminal-effective-font-family={effectiveStack}
-          >
-            <p
-              className="whitespace-nowrap text-foreground"
-              style={{ fontFamily: effectiveStack, fontSize: terminal.fontSize }}
-            >
-              {t('settings.terminal.previewText')}
-            </p>
-            <code
-              className="mt-1 block break-all text-micro leading-4 text-muted-foreground"
-              title={effectiveStack}
-            >
-              {effectiveStack}
-            </code>
-          </div>
-        </SettingRow>
+        <details className="pt-2 text-caption text-muted-foreground"><summary className="w-fit cursor-pointer rounded-sm focus-visible:focus-ring">{t('settings.redesign.effectiveFonts')}</summary><code className="mt-3 block break-words text-micro leading-relaxed">{effectiveStack}</code></details>
       </SettingSection>
 
       <SettingSection
         title={t('settings.terminal.reset')}
         desc={t('settings.terminal.resetDesc')}
       >
-        <div className="px-2 py-1">
+        <div>
           <Button
             variant="outline"
             size="sm"
-            onClick={() => {
-              setModeOverride(null)
-              resetTerminal()
-            }}
+            onClick={() => setConfirmReset(true)}
           >
             <TbRefresh aria-hidden />
             {t('settings.terminal.resetButton')}
           </Button>
         </div>
       </SettingSection>
+      <AlertDialog open={confirmReset} onOpenChange={setConfirmReset}>
+        <AlertDialogContent>
+          <AlertDialogHeader><AlertDialogTitle>{t('settings.terminal.reset')}</AlertDialogTitle><AlertDialogDescription>{t('settings.terminal.resetDesc')}</AlertDialogDescription></AlertDialogHeader>
+          <AlertDialogFooter><AlertDialogCancel>{t('settings.appearance.resetConfirmNo')}</AlertDialogCancel><AlertDialogAction onClick={() => { setModeOverride(null); resetTerminal() }}>{t('settings.appearance.resetConfirmYes')}</AlertDialogAction></AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   )
 }

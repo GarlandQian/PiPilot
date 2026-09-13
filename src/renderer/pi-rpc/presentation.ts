@@ -389,7 +389,9 @@ function appendMessage(
           kind: 'agent',
           id: `${key}:error`,
           markdown: message.errorMessage,
-          state: 'error',
+          // errorMessage can accompany an explicit SDK abort. Keep its exact
+          // diagnostic text without overriding the authoritative stop reason.
+          state,
           ...(anchorEntryId ? { anchorEntryId } : {}),
         })
       } else if (message.stopReason === 'error' || message.stopReason === 'aborted') {

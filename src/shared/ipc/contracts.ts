@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { applicationShutdownDecisionSchema } from '../application-shutdown'
 import {
   appSettingsPatchSchema,
   appSettingsSchema,
@@ -87,6 +88,8 @@ import {
 
 export const ipcChannels = {
   appGetInfo: 'pipilot:app:get-info',
+  appShutdownRequested: 'pipilot:app:shutdown-requested',
+  appShutdownRespond: 'pipilot:app:shutdown-respond',
   applicationUpdateChanged: 'pipilot:application-update:changed',
   applicationUpdateGet: 'pipilot:application-update:get',
   applicationUpdateCheck: 'pipilot:application-update:check',
@@ -255,6 +258,11 @@ export const settingsResetScopeSchema = z.enum(['all', 'appearance', 'terminal']
 export type SettingsResetScope = z.infer<typeof settingsResetScopeSchema>
 
 export const appGetInfoContract = defineIpcContract(ipcChannels.appGetInfo, z.object(requestFields).strict(), appInfoSchema)
+export const appShutdownRespondContract = defineIpcContract(
+  ipcChannels.appShutdownRespond,
+  z.object({ ...requestFields, shutdownId: z.uuid(), decision: applicationShutdownDecisionSchema }).strict(),
+  z.object({ accepted: z.boolean() }).strict(),
+)
 export const applicationUpdateGetContract = defineIpcContract(
   ipcChannels.applicationUpdateGet,
   z.object(requestFields).strict(),

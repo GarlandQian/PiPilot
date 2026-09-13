@@ -804,6 +804,15 @@ export class ConversationMcpControlService {
       return { status: 'failed', error: error.toPublicError() }
     }
     if (error instanceof PiRuntimeFrontendError) {
+      if (error.code === 'PI_RUNTIME_MAINTENANCE_PENDING') {
+        return {
+          status: 'failed',
+          error: {
+            code: 'invalid_state',
+            message: 'Pi configuration is being applied. Retry with a new idempotency key after application finishes.',
+          },
+        }
+      }
       return {
         status: 'failed',
         error: {

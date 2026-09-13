@@ -7,6 +7,8 @@ import {
 import {
   definitionFromFormValue,
   formValueFromServer,
+  getMcpFormErrors,
+  rowsToRecord,
   structuredDocumentSupported,
 } from '../../src/components/settings/mcp-server-form-model'
 import type { McpServerFormValue } from '../../src/components/settings/McpServerFormDialog'
@@ -25,6 +27,33 @@ const STDIO_VALUE: McpServerFormValue = {
 }
 
 describe('MCP form <-> draft sync', () => {
+  it('validates only fields belonging to the active transport', () => {
+    expect(getMcpFormErrors({ ...STDIO_VALUE, headers: [{ key: '', value: '' }] }, [])).toEqual({})
+    expect(getMcpFormErrors({ ...STDIO_VALUE, transport: 'http', command: '', env: [{ key: '', value: '' }], url: 'https://example.test/mcp' }, [])).toEqual({})
+  })
+
+  it('reports empty and duplicate keys without silently overwriting rows', () => {
+    expect(getMcpFormErrors({ ...STDIO_VALUE, env: [{ key: ' TOKEN ', value: 'a' }, { key: 'TOKEN', value: 'b' }] }, [])).toEqual({ env: 'settings.integrations.mcp.form.duplicateKey' })
+    expect(getMcpFormErrors({ ...STDIO_VALUE, transport: 'http', url: 'https://example.test', headers: [{ key: 'Authorization', value: 'a' }, { key: 'authorization', value: 'b' }] }, [])).toEqual({ headers: 'settings.integrations.mcp.form.duplicateKey' })
+    expect(getMcpFormErrors({ ...STDIO_VALUE, env: [{ key: ' ', value: 'a' }] }, [])).toEqual({ env: 'mcp.form.kv.emptyKey' })
+  })
+
+  it('checks the endpoint and excludes only the edited server from duplicate names', () => {
+    expect(getMcpFormErrors({ ...STDIO_VALUE, name: ' DOCS ' }, ['docs'], 'docs')).toEqual({})
+    expect(getMcpFormErrors({ ...STDIO_VALUE, name: ' DOCS ' }, ['docs'])).toEqual({ name: 'mcp.form.name.duplicate' })
+    expect(getMcpFormErrors({ ...STDIO_VALUE, name: '', command: '' }, [])).toEqual({ name: 'mcp.form.name.required', command: 'mcp.form.command.required' })
+    expect(getMcpFormErrors({ ...STDIO_VALUE, transport: 'http', url: 'file:///fixture' }, [])).toEqual({ url: 'mcp.form.url.invalid' })
+  })
+
+  it('preserves literal arguments and safely represents environment keys', () => {
+    const args = ['--message', ' padded text ', '']
+    expect(definitionFromFormValue({ ...STDIO_VALUE, args }).args).toEqual(args)
+    const env = rowsToRecord([{ key: '__proto__', value: 'literal' }])
+    expect(Object.getPrototypeOf(env)).toBe(Object.prototype)
+    expect(Object.prototype.hasOwnProperty.call(env, '__proto__')).toBe(true)
+    expect(JSON.stringify(env)).toBe('{"__proto__":"literal"}')
+  })
+
   it('round-trips a form add through JSONC preserving comments and unknown fields', () => {
     const draft = `{
   // keep this comment

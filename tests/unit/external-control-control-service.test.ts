@@ -19,12 +19,13 @@ import type {
   ConversationMcpResolvedTarget,
 } from '../../src/main/external-control/conversation-inventory'
 import { ConversationMcpOperationRegistry } from '../../src/main/external-control/operation-registry'
-import type {
-  PiRuntimeControlHandle,
-  PiRuntimeControlLease,
-  PiRuntimeControlSummary,
-  PiRuntimeFrontend,
-  PiRuntimeFrontendTarget,
+import {
+  PiRuntimeFrontendError,
+  type PiRuntimeControlHandle,
+  type PiRuntimeControlLease,
+  type PiRuntimeControlSummary,
+  type PiRuntimeFrontend,
+  type PiRuntimeFrontendTarget,
 } from '../../src/main/pi-host/pi-runtime-frontend'
 
 const conversationId = `conv_${'c'.repeat(43)}`
@@ -874,6 +875,45 @@ describe('ConversationMcpControlService', () => {
     expect(JSON.stringify(operations.get(receipt.operationId))).not.toContain(
       'private Pi failure',
     )
+    await service.dispose()
+  })
+
+  it('reports retryable maintenance denial without accepting or replaying the prompt', async () => {
+    const { audit, operations, runtime, service } = createHarness()
+    runtime.acquireControlRuntime.mockRejectedValueOnce(new PiRuntimeFrontendError(
+      'PI_RUNTIME_MAINTENANCE_PENDING',
+      'Private maintenance details: /private/config/models.json',
+    ))
+    const input = {
+      conversationId,
+      prompt: 'Submit only after configuration application finishes.',
+      mode: 'prompt' as const,
+      idempotencyKey: 'maintenance-denied',
+    }
+    const receipt = await service.sendPrompt(input)
+    const failed = await waitForStatus(operations, receipt.operationId, 'failed')
+
+    expect(failed.error).toEqual({
+      code: 'invalid_state',
+      message: 'Pi configuration is being applied. Retry with a new idempotency key after application finishes.',
+    })
+    expect(failed).not.toHaveProperty('acceptedMode')
+    expect(runtime.submitControlPrompt).not.toHaveBeenCalled()
+    expect(runtime.releaseControlRuntime).not.toHaveBeenCalled()
+    expect(JSON.stringify(audit.rows)).not.toContain('/private/config/models.json')
+
+    expect((await service.sendPrompt(input)).operationId).toBe(receipt.operationId)
+    expect(runtime.acquireControlRuntime).toHaveBeenCalledOnce()
+    expect(runtime.submitControlPrompt).not.toHaveBeenCalled()
+
+    const retried = await service.sendPrompt({
+      ...input,
+      idempotencyKey: 'maintenance-finished',
+    })
+    expect(retried.operationId).not.toBe(receipt.operationId)
+    await waitForStatus(operations, retried.operationId, 'accepted')
+    expect(runtime.submitControlPrompt).toHaveBeenCalledOnce()
+    expect(runtime.releaseControlRuntime).toHaveBeenCalledOnce()
     await service.dispose()
   })
 

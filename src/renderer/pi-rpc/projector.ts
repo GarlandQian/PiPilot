@@ -214,6 +214,23 @@ export function replaceLocalPiProjectorSnapshot(
   return next
 }
 
+/**
+ * Resolve entry provenance without replacing live messages or tool evidence.
+ * A concurrent snapshot refresh wins over a page requested from an older base.
+ */
+export function hydrateLocalPiProjectorEntrySnapshot(
+  state: LocalPiProjectorState,
+  snapshot: LocalPiEntrySnapshot,
+  expectedSnapshot: LocalPiEntrySnapshot | null,
+): LocalPiProjectorState {
+  if (
+    snapshot.generation !== state.generation ||
+    snapshot.sessionId !== state.sessionId ||
+    state.entrySnapshot !== expectedSnapshot
+  ) return state
+  return { ...state, entrySnapshot: snapshot, revision: state.revision + 1 }
+}
+
 export function setLocalPiRetryCancelling(
   state: LocalPiProjectorState,
   cancelling: boolean,

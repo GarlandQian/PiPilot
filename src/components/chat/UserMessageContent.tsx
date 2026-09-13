@@ -1,6 +1,7 @@
 import * as React from 'react'
 import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
+import { PromptMarkdown } from './PromptMarkdown'
 import type { UserMessageImage } from '@/types/chat'
 
 const DISPLAYABLE_IMAGE_TYPES = new Set(['image/jpeg', 'image/png'])
@@ -33,9 +34,7 @@ export const UserMessageContent = React.memo(function UserMessageContent({
   return (
     <div className={cn('space-y-2', !text && 'space-y-0')}>
       {text ? (
-        <p className="text-app whitespace-pre-wrap break-words text-foreground">
-          {text}
-        </p>
+        <PromptMarkdown text={text} />
       ) : null}
       {images.length > 0 ? (
         <div

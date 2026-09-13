@@ -10,6 +10,7 @@ export const themeModeSchema = z.enum(['system', 'light', 'dark'])
 export const localeSchema = z.enum(['system', 'zh-CN', 'en-US'])
 export const densitySchema = z.enum(['compact', 'comfortable'])
 export const composerSendShortcutSchema = z.enum(['enter', 'mod-enter'])
+export const runningSubmitPreferenceSchema = z.enum(['queue', 'steer'])
 export const appearanceSettingsSchema = z
   .object({
     theme: themeModeSchema,
@@ -36,6 +37,7 @@ export const terminalSettingsSchema = z
 export const composerSettingsSchema = z
   .object({
     sendShortcut: composerSendShortcutSchema,
+    runningSubmit: runningSubmitPreferenceSchema,
   })
   .strict()
 

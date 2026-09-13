@@ -5,6 +5,7 @@ import {
 } from '../shared/external-control'
 import {
   appGetInfoContract,
+  appShutdownRespondContract,
   applicationUpdateChangedEventSchema,
   applicationUpdateCheckContract,
   applicationUpdateDownloadContract,
@@ -76,6 +77,7 @@ import type { PiPilotApi, PiPilotApiError } from '../shared/pipilot-api'
 import type { ConversationScope, SessionCatalogCursor, SessionCatalogSelectionToken } from '../shared/conversation-scope'
 import type { LocalPiExtensionUiResponse, LocalPiRendererRpcCommand } from '../shared/local-pi'
 import type { ApplicationUpdateSnapshot } from '../shared/application-update'
+import { applicationShutdownEventSchema } from '../shared/application-shutdown'
 
 function createContext(): RequestContext {
   return { requestId: crypto.randomUUID() }
@@ -133,6 +135,13 @@ function createSubscription<T>(
 }
 
 type SettingsListener = (snapshot: SettingsSnapshot) => void
+const shutdownSubscription = createSubscription(
+  ipcChannels.appShutdownRequested,
+  (raw) => {
+    const result = applicationShutdownEventSchema.safeParse(raw)
+    return result.success ? result.data : undefined
+  },
+)
 const settingsSubscription = createSubscription(
   ipcChannels.settingsChanged,
   (raw) => {
@@ -300,7 +309,13 @@ const api: PiPilotApi = {
     resize: (scope, terminalId, cols, rows) => invoke(terminalResizeContract, { context: createContext(), scope, terminalId, cols, rows }),
     subscribe: terminalSubscription.subscribe,
   },
-  app: { getInfo: () => invoke(appGetInfoContract, { context: createContext() }) },
+  app: {
+    getInfo: () => invoke(appGetInfoContract, { context: createContext() }),
+    subscribeShutdown: shutdownSubscription.subscribe,
+    respondToShutdown: (shutdownId, decision) => invoke(appShutdownRespondContract, {
+      context: createContext(), shutdownId, decision,
+    }),
+  },
   shell: { openExternal: async (url) => { await invoke(shellOpenExternalContract, { context: createContext(), url }) } },
   settings: {
     get: () => invoke(settingsGetContract, { context: createContext() }),

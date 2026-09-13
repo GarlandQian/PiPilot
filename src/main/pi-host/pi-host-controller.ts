@@ -25,7 +25,7 @@ import {
   type PiHostUiRequestEventEnvelope,
 } from '../../shared/pi-host-protocol'
 
-export const PI_HOST_EXPECTED_SDK_VERSION = '0.84.2'
+export const PI_HOST_EXPECTED_SDK_VERSION = '0.85.1'
 export const DEFAULT_PI_HOST_HANDSHAKE_TIMEOUT_MS = 15_000
 export const DEFAULT_PI_HOST_REQUEST_TIMEOUT_MS = 30_000
 export const DEFAULT_PI_HOST_SHUTDOWN_TIMEOUT_MS = 2_000

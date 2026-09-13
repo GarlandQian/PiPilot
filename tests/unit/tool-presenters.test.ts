@@ -11,7 +11,7 @@ Task name: structured_activity_impl
 Sender: root
 Payload:
 Implement bounded structured projection and focused tests.
-Trellis task: .trellis/tasks/private
+Internal task: project/tasks/private
 subagent_wait after completing the scheduler workflow.`
 
 const schedulerAcknowledgement = `Run fan-out: 0/64 used, 64 remaining
@@ -49,25 +49,25 @@ describe('tool presenter registry', () => {
         }],
       },
     })
-    expect(call.summary).not.toMatch(/Trellis|scheduler|subagent_wait|workflow/iu)
-    expect(call.subagent?.tasks[0]?.markdown).toContain('Trellis task')
-    expect(toolCallCopyText(call)).toContain('Trellis task')
+    expect(call.summary).not.toMatch(/internal task|scheduler|subagent_wait|workflow/iu)
+    expect(call.subagent?.tasks[0]?.markdown).toContain('Internal task')
+    expect(toolCallCopyText(call)).toContain('Internal task')
     expect(call.body).not.toContain('"agent"')
   })
 
-  it('skips the real Trellis active-task path before choosing a collapsed summary', () => {
+  it('skips internal active-task metadata before choosing a collapsed summary', () => {
     const call = presentToolCall({
       id: 'subagent-active-task',
       name: 'subagent',
       args: {
-        agent: 'trellis-implement',
-        task: 'Active task: .trellis/tasks/08-17-global-ui-redesign\n\nImplement Phase 6A for the Controllers surface.',
+        agent: 'project-worker',
+        task: 'Active task: project/tasks/08-17-renderer-review\n\nImplement Phase 6A for the Controllers surface.',
       },
       phase: 'running',
     })
 
-    expect(call.summary).toBe('trellis-implement · Implement Phase 6A for the Controllers surface.')
-    expect(call.summary).not.toMatch(/\.trellis|Active task/iu)
+    expect(call.summary).toBe('project-worker · Implement Phase 6A for the Controllers surface.')
+    expect(call.summary).not.toMatch(/project\/tasks|Active task/iu)
     expect(call.subagent?.tasks[0]?.markdown).toBe('Implement Phase 6A for the Controllers surface.')
   })
 

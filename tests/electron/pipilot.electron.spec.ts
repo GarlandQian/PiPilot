@@ -15,6 +15,7 @@ import {
 import { PIPILOT_VERSION } from '../../src/shared/build-info'
 import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from '../../src/shared/settings'
 import { startPiSdkFixture } from './pi-sdk-fixture'
+import { selectInspectorView } from './select-inspector-view'
 
 const execFileAsync = promisify(execFile)
 
@@ -102,6 +103,186 @@ test('waits for renderer subscriptions before starting configured Pi', async ({}
   }
 })
 
+test('supports real clipboard editing in Composer and standard text inputs', async ({}, testInfo) => {
+  test.setTimeout(60_000)
+  const userDataPath = testInfo.outputPath('user-data')
+  const fakeAgentDir = testInfo.outputPath('pi-agent')
+  const pixelPng = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nWQAAAAASUVORK5CYII=',
+    'base64',
+  )
+  await mkdir(userDataPath, { recursive: true })
+  await writeFile(
+    join(userDataPath, 'settings.json'),
+    `${JSON.stringify({
+      version: SETTINGS_SCHEMA_VERSION,
+      settings: {
+        ...DEFAULT_SETTINGS,
+        locale: 'en-US',
+      },
+    }, null, 2)}\n`,
+  )
+  const piFixture = await startPiSdkFixture({ agentDir: fakeAgentDir })
+  const electronApp = await electron.launch({
+    args: [resolve(process.cwd())],
+    env: {
+      ...process.env,
+      ...piFixture.env,
+      PIPILOT_E2E_DISABLE_AUTO_RESTART: '1',
+      PIPILOT_E2E_USER_DATA: userDataPath,
+    },
+  })
+  let clipboardBefore: string | undefined
+
+  try {
+    const page = await electronApp.firstWindow()
+    await page.waitForLoadState('domcontentloaded')
+    await expect.poll(async () => (
+      await page.evaluate(() => window.pipilot!.localPi.runtime.status())
+    ).state).toBe('ready')
+
+    const composer = page.getByRole('textbox', { name: 'Message input' })
+    const shortcutModifier = process.platform === 'darwin' ? 'Meta' : 'Control'
+    const redoShortcut = process.platform === 'darwin'
+      ? 'Meta+Shift+z'
+      : 'Control+y'
+    const readComposerText = () => composer.evaluate((element) => (
+      Array.from(element.children, (child) => child.textContent ?? '').join('\n')
+    ))
+    clipboardBefore = await electronApp.evaluate(({ clipboard }) => clipboard.readText())
+
+    await composer.fill('before replace after')
+    // Keep the baseline draft outside ProseMirror's default 500 ms history group
+    // so the native paste can be independently undone and redone.
+    await page.waitForTimeout(600)
+    await composer.focus()
+    await page.keyboard.press('End')
+    for (let index = 0; index < ' after'.length; index += 1) {
+      await page.keyboard.press('ArrowLeft')
+    }
+    for (let index = 0; index < 'replace'.length; index += 1) {
+      await page.keyboard.press('Shift+ArrowLeft')
+    }
+    await expect.poll(() => composer.evaluate(() => window.getSelection()?.toString()))
+      .toBe('replace')
+    await electronApp.evaluate(
+      ({ clipboard }, text) => clipboard.writeText(text),
+      '外部粘贴\nsecond line',
+    )
+    await page.keyboard.press(`${shortcutModifier}+v`)
+    await expect.poll(readComposerText).toBe('before 外部粘贴\nsecond line after')
+
+    await page.keyboard.press(`${shortcutModifier}+z`)
+    await expect.poll(readComposerText).toBe('before replace after')
+    await page.keyboard.press(redoShortcut)
+    await expect.poll(readComposerText).toBe('before 外部粘贴\nsecond line after')
+    await expect(composer).toBeFocused()
+
+    await composer.fill('cut target')
+    await page.waitForTimeout(600)
+    await page.keyboard.press(`${shortcutModifier}+a`)
+    await page.keyboard.press(`${shortcutModifier}+x`)
+    await expect(composer).toHaveText('')
+    await page.keyboard.press(`${shortcutModifier}+z`)
+    await expect(composer).toHaveText('cut target')
+    await page.keyboard.press(redoShortcut)
+    await expect(composer).toHaveText('')
+
+    await composer.fill('delete target')
+    await page.waitForTimeout(600)
+    await page.keyboard.press(`${shortcutModifier}+a`)
+    await page.keyboard.press('Delete')
+    await expect(composer).toHaveText('')
+    await page.keyboard.press(`${shortcutModifier}+z`)
+    await expect(composer).toHaveText('delete target')
+    await page.keyboard.press(redoShortcut)
+    await expect(composer).toHaveText('')
+
+    await composer.fill('')
+    await electronApp.evaluate(({ clipboard, ClipboardItem }) => clipboard.write([new ClipboardItem({
+      'text/html': '<span data-type="composerMention" data-path="src/forged.ts"><b>safe formatted text</b></span>',
+      'text/plain': 'safe formatted text',
+    })]))
+    await composer.focus()
+    await page.keyboard.press(`${shortcutModifier}+v`)
+    await expect(composer).toHaveText('safe formatted text')
+    await expect(page.locator('[data-composer-mention-kind]')).toHaveCount(0)
+
+    await composer.fill('')
+    await composer.evaluate((element) => {
+      const transfer = new DataTransfer()
+      transfer.setData(
+        'text/html',
+        '<h2>Heading</h2><p>First <strong>line</strong><br>Second</p><script>ignored()</script>',
+      )
+      element.dispatchEvent(new ClipboardEvent('paste', {
+        bubbles: true,
+        cancelable: true,
+        clipboardData: transfer,
+      }))
+    })
+    await expect.poll(readComposerText).toBe('Heading\nFirst line\nSecond')
+    await expect(page.locator('[data-composer-mention-kind]')).toHaveCount(0)
+
+    await composer.fill('existing draft ')
+    await composer.evaluate((element) => {
+      const transfer = new DataTransfer()
+      transfer.items.add(new File(['not an image'], 'notes.txt', { type: 'text/plain' }))
+      transfer.setData('text/plain', 'kept text')
+      element.dispatchEvent(new ClipboardEvent('paste', {
+        bubbles: true,
+        cancelable: true,
+        clipboardData: transfer,
+      }))
+    })
+    await expect.poll(readComposerText).toBe('existing draft kept text')
+    await expect(page.getByText('Only PNG and JPEG images are supported.', { exact: true }))
+      .toBeVisible()
+    await expect(page.locator('[data-composer-attachments]')).toHaveCount(0)
+
+    // Native clipboard image flavors differ by OS, so exercise the mixed payload
+    // through Chromium's real DataTransfer while keeping text paste native above.
+    await composer.fill('')
+    await composer.evaluate((element, imageBytes) => {
+      const transfer = new DataTransfer()
+      const bytes = Uint8Array.from(atob(imageBytes), (character) => character.charCodeAt(0))
+      transfer.items.add(new File([bytes], 'clipboard-pixel.png', { type: 'image/png' }))
+      transfer.setData('text/plain', 'describe clipboard image')
+      element.dispatchEvent(new ClipboardEvent('paste', {
+        bubbles: true,
+        cancelable: true,
+        clipboardData: transfer,
+      }))
+    }, pixelPng.toString('base64'))
+    await expect(composer).toHaveText('describe clipboard image')
+    await expect(page.locator('[data-composer-attachments]')).toBeVisible()
+    await expect(page.getByRole('button', {
+      name: 'Remove image clipboard-pixel.png',
+      exact: true,
+    })).toBeAttached()
+
+    await page.keyboard.press(`${shortcutModifier}+k`)
+    const paletteInput = page.getByPlaceholder('Type a command or search sessions…')
+    await expect(paletteInput).toBeFocused()
+    await electronApp.evaluate(
+      ({ clipboard }, text) => clipboard.writeText(text),
+      'settings',
+    )
+    await page.keyboard.press(`${shortcutModifier}+v`)
+    await expect(paletteInput).toHaveValue('settings')
+    await page.keyboard.press('Escape')
+  } finally {
+    if (clipboardBefore !== undefined) {
+      await electronApp.evaluate(
+        ({ clipboard }, text) => clipboard.writeText(text),
+        clipboardBefore,
+      ).catch(() => undefined)
+    }
+    await electronApp.close()
+    await piFixture.close()
+  }
+})
+
 test('keeps the active Session ready after the official write result omits details', async ({}, testInfo) => {
   test.setTimeout(60_000)
   const userDataPath = testInfo.outputPath('user-data')
@@ -180,7 +361,7 @@ test('keeps the active Session ready after the official write result omits detai
 
     await composer.fill(followUpPrompt)
     await page.getByRole('button', { name: 'Send', exact: true }).click()
-    await expect(page.getByText(
+    await expect(page.getByRole('log', { name: 'Conversation' }).getByText(
       `Fixture response: ${followUpPrompt}`,
       { exact: true },
     )).toBeVisible({ timeout: 20_000 })
@@ -275,7 +456,7 @@ test('releases prompt acceptance after authoritative progress without allowing a
     await expect.poll(() => piFixture.prompts.filter(
       (prompt) => prompt === doubleSubmitPrompt,
     ).length).toBe(1)
-    await expect(page.getByText(
+    await expect(page.getByRole('log', { name: 'Conversation', exact: true }).getByText(
       `Fixture response: ${doubleSubmitPrompt}`,
       { exact: true },
     )).toBeVisible({ timeout: 20_000 })
@@ -286,7 +467,7 @@ test('releases prompt acceptance after authoritative progress without allowing a
     await composer.fill(afterCommandPrompt)
     await page.getByRole('button', { name: 'Send', exact: true }).click()
     await expect.poll(() => piFixture.prompts.includes(afterCommandPrompt)).toBe(true)
-    await expect(page.getByText(
+    await expect(page.getByRole('log', { name: 'Conversation', exact: true }).getByText(
       `Fixture response: ${afterCommandPrompt}`,
       { exact: true },
     )).toBeVisible({ timeout: 20_000 })
@@ -295,7 +476,7 @@ test('releases prompt acceptance after authoritative progress without allowing a
     await page.getByRole('button', { name: 'Send', exact: true }).click()
     await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible()
     await composer.fill(followUpPrompt)
-    await page.getByRole('button', { name: 'Queue', exact: true }).click()
+    await composer.press('Enter')
     await expect.poll(() => piFixture.prompts.includes(followUpPrompt), {
       timeout: 20_000,
     }).toBe(true)
@@ -313,7 +494,13 @@ test('keeps rich-editor text and images visible across Steer, Follow-up, and que
   const fakeAgentDir = testInfo.outputPath('pi-agent')
   const runningPrompt = 'hold the turn while queue payloads are inspected'
   const steerText = 'steer with this exact screenshot context'
-  const followUpText = 'queue this screenshot for the next turn'
+  const followUpText = [
+    'queue this screenshot for the next turn',
+    'Inspect every referenced path and retain the original image payload.',
+    'Keep this full multiline message readable before changing delivery.',
+    'The final instruction must remain inspectable even after a long paragraph: ' + 'source/context/path '.repeat(15),
+    'Final pending instruction: preserve all text and image content.',
+  ].join('\n')
   const pixelPng = Buffer.from(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nWQAAAAASUVORK5CYII=',
     'base64',
@@ -328,7 +515,7 @@ test('keeps rich-editor text and images visible across Steer, Follow-up, and que
   )
   const piFixture = await startPiSdkFixture({
     agentDir: fakeAgentDir,
-    promptDelays: { [runningPrompt]: 15_000 },
+    promptDelays: { [runningPrompt]: 30_000 },
   })
   const electronApp = await electron.launch({
     args: [resolve(process.cwd())],
@@ -342,6 +529,10 @@ test('keeps rich-editor text and images visible across Steer, Follow-up, and que
   try {
     const page = await electronApp.firstWindow()
     await page.waitForLoadState('domcontentloaded')
+    await electronApp.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0]?.setSize(1_440, 900)
+    })
+    await page.setViewportSize({ width: 1_440, height: 900 })
     await expect.poll(async () => (
       await page.evaluate(() => window.pipilot!.localPi.runtime.status())
     ).state).toBe('ready')
@@ -393,54 +584,133 @@ test('keeps rich-editor text and images visible across Steer, Follow-up, and que
       name: 'Remove image steer.png',
       exact: true,
     })
-    await page.getByRole('button', { name: 'Queue', exact: true }).click()
+    await composer.press('Enter')
     await expect(page.getByText('Add text before queuing or steering images.', { exact: true }))
       .toBeVisible()
     await expect(pendingSteerImage).toBeAttached()
 
+    await page.evaluate(() => window.pipilot!.settings.update({
+      composer: { runningSubmit: 'steer' },
+    }))
     await composer.fill(steerText)
-    await page.getByRole('button', { name: 'More submit actions', exact: true }).click()
-    await page.getByRole('menuitem', { name: 'Steer current task', exact: true }).click()
+    await composer.press('Enter')
     await expect(composer).toHaveText('')
     await expect(pendingSteerImage).toHaveCount(0)
-    const onePending = page.getByRole('button', {
-      name: 'View 1 pending messages',
-      exact: true,
-    })
-    await expect(onePending).toBeVisible()
-    await onePending.click()
-    let queuePopover = page.locator('[data-slot="popover-content"]')
-    await expect(queuePopover.getByText(steerText, { exact: true })).toBeVisible()
-    await expect(queuePopover.getByRole('img', { name: 'Queued image 1', exact: true }))
+    const pendingRail = page.locator('[data-pending-message-rail]')
+    await expect(pendingRail).toContainText('1 pending')
+    await pendingRail.getByRole('button', { name: 'Show pending messages' }).click()
+    await expect(pendingRail.getByRole('listitem').filter({ hasText: steerText })).toBeVisible()
+    await expect(pendingRail.getByRole('img', { name: 'Queued image 1', exact: true }))
       .toHaveAttribute('src', `data:image/png;base64,${pixelPng.toString('base64')}`)
 
+    await pendingRail.getByRole('button', { name: 'More pending-message actions' }).click()
+    await page.getByRole('menuitem', { name: 'Turn on queueing' }).click()
     await composer.fill(followUpText)
     await fileInput.setInputFiles({
       name: 'follow-up.png',
       mimeType: 'image/png',
       buffer: pixelPng,
     })
+    await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Queue', exact: true }).click()
-    const twoPending = page.getByRole('button', {
-      name: 'View 2 pending messages',
-      exact: true,
-    })
-    await expect(twoPending).toBeVisible()
-    await twoPending.click()
-    queuePopover = page.locator('[data-slot="popover-content"]')
-    const queuedRow = queuePopover.getByRole('listitem').filter({ hasText: followUpText })
+    await expect(pendingRail).toContainText('2 pending')
+    const queuedRow = pendingRail.getByRole('listitem').filter({ hasText: followUpText })
     await expect(queuedRow).toBeVisible()
     await expect(queuedRow.getByRole('img', { name: 'Queued image 1', exact: true }))
       .toBeVisible()
+    await queuedRow.getByRole('button', { name: 'Show full message', exact: true }).click()
+    const expandedPendingText = queuedRow.locator('[data-pending-message-text]')
+    await expect(expandedPendingText).toHaveAttribute('data-expanded', 'true')
+    await expect(expandedPendingText).toHaveText(followUpText)
+    expect(await expandedPendingText.evaluate((element) => getComputedStyle(element).webkitLineClamp))
+      .toBe('none')
+    await expect(pendingRail.getByRole('group', { name: 'Queue', exact: true })).toHaveCount(0)
+    await pendingRail.getByRole('button', { name: 'More pending-message actions' }).focus()
+    await page.keyboard.press('Enter')
+    await page.getByRole('menuitem', { name: 'Queue', exact: true }).focus()
+    await page.keyboard.press('ArrowRight')
+    const deliveryAll = page.getByRole('menuitemradio', { name: 'All', exact: true })
+    await deliveryAll.focus()
+    await page.keyboard.press('Enter')
+    await expect.poll(async () => page.evaluate(async () => {
+      const response = await window.pipilot!.localPi.runtime.command({ type: 'get_state' })
+      return response.success && response.command === 'get_state' ? response.data.followUpMode : null
+    })).toBe('all')
+    await expect(queuedRow).toBeVisible()
+    expect(await page.evaluate(() => {
+      const rail = document.querySelector<HTMLElement>('[data-pending-message-rail]')
+      const composer = document.querySelector<HTMLElement>('[data-composer-surface]')
+      if (!rail || !composer) return null
+      const railRect = rail.getBoundingClientRect()
+      const composerRect = composer.getBoundingClientRect()
+      return {
+        documentFits: document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+        leftAligned: Math.abs(railRect.left - composerRect.left) <= 1,
+        rightAligned: Math.abs(railRect.right - composerRect.right) <= 1,
+        railFits: railRect.left >= 0 && railRect.right <= window.innerWidth,
+        composerFits: composerRect.left >= 0 && composerRect.right <= window.innerWidth,
+      }
+    })).toEqual({
+      documentFits: true,
+      leftAligned: true,
+      rightAligned: true,
+      railFits: true,
+      composerFits: true,
+    })
+    await page.screenshot({
+      path: testInfo.outputPath('pending-rail-desktop-light.png'),
+    })
     await queuedRow.getByRole('button', { name: 'Move to Steer', exact: true }).click()
     await expect(queuedRow.getByRole('button', { name: 'Move to Steer', exact: true }))
       .toHaveCount(0)
-    const steerSection = queuePopover.locator('section').filter({
-      has: page.getByRole('heading', { name: 'Steer', exact: true }),
+    await expect(pendingRail).toContainText(steerText)
+    await expect(pendingRail).toContainText(followUpText)
+    await expect(pendingRail.locator('[data-queue-image]')).toHaveCount(2)
+    await queuedRow.getByRole('button', { name: 'Remove pending message' }).click()
+    await expect(pendingRail).toContainText('1 pending')
+    await expect(pendingRail).not.toContainText(followUpText)
+
+    await page.evaluate(() => window.pipilot!.settings.update({
+      appearance: { theme: 'dark' },
+    }))
+    await expect.poll(() => page.evaluate(() =>
+      document.documentElement.classList.contains('dark'))).toBe(true)
+    await electronApp.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0]?.setSize(1_100, 680)
     })
-    await expect(steerSection).toContainText(steerText)
-    await expect(steerSection).toContainText(followUpText)
-    await expect(steerSection.locator('[data-queue-image]')).toHaveCount(2)
+    await page.setViewportSize({ width: 1_100, height: 680 })
+    const shortWrappedText = 'W'.repeat(220)
+    await composer.fill(shortWrappedText)
+    await page.getByRole('button', { name: 'Queue', exact: true }).click()
+    await expect(pendingRail).toContainText('2 pending')
+    const shortWrappedRow = pendingRail.getByRole('listitem').filter({ hasText: shortWrappedText })
+    await expect(shortWrappedRow.getByRole('button', { name: 'Show full message', exact: true }))
+      .toHaveCount(0)
+    const shortPendingText = shortWrappedRow.locator('[data-pending-message-text]')
+    await expect(shortPendingText).toHaveText(shortWrappedText)
+    expect(await shortPendingText.evaluate((element) => getComputedStyle(element).webkitLineClamp))
+      .toBe('none')
+    expect(await shortPendingText.evaluate((element) => element.scrollHeight <= element.clientHeight))
+      .toBe(true)
+    expect(await page.evaluate(() => {
+      const rail = document.querySelector<HTMLElement>('[data-pending-message-rail]')
+      const composer = document.querySelector<HTMLElement>('[data-composer-surface]')
+      if (!rail || !composer) return null
+      const railRect = rail.getBoundingClientRect()
+      const composerRect = composer.getBoundingClientRect()
+      return {
+        documentFits: document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+        leftAligned: Math.abs(railRect.left - composerRect.left) <= 1,
+        rightAligned: Math.abs(railRect.right - composerRect.right) <= 1,
+      }
+    })).toEqual({
+      documentFits: true,
+      leftAligned: true,
+      rightAligned: true,
+    })
+    await page.screenshot({
+      path: testInfo.outputPath('pending-rail-minimum-dark.png'),
+    })
   } finally {
     await electronApp.close()
     await piFixture.close()
@@ -513,7 +783,7 @@ test('keeps active Pi work running when the main window closes to the tray', asy
       window.show()
       window.focus()
     })
-    await expect(page.getByText(`Fixture response: ${prompt}`, { exact: true }))
+    await expect(page.getByRole('log', { name: 'Conversation', exact: true }).getByText(`Fixture response: ${prompt}`, { exact: true }))
       .toBeVisible()
   } finally {
     await electronApp.close()
@@ -601,7 +871,7 @@ test('recovers a projectless Pi Host after a one-shot fatal extension shutdown',
   }
 })
 
-test('gates Files, Changes, and Conversation outline when no session is selected', async ({}, testInfo) => {
+test('gates Files, Changes, and conversation navigation when no session is selected', async ({}, testInfo) => {
   test.setTimeout(30_000)
   const userDataPath = testInfo.outputPath('user-data')
   await mkdir(userDataPath, { recursive: true })
@@ -628,18 +898,23 @@ test('gates Files, Changes, and Conversation outline when no session is selected
     await page.waitForLoadState('domcontentloaded')
     await page.setViewportSize({ width: 1_440, height: 900 })
     const inspector = page.getByRole('complementary', { name: 'Inspector' })
-    for (const tab of ['Files', 'Changes', 'Conversation outline']) {
-      await inspector.getByRole('tab', { name: tab, exact: true }).click()
-      await expect(inspector.getByText('No Pi session selected', { exact: true }))
+    for (const view of ['Files', 'Changes'] as const) {
+      await selectInspectorView(inspector, view)
+      const activePanel = inspector.getByRole('region', { name: view, exact: true })
+      await expect(inspector.getByRole('region')).toHaveCount(1)
+      await expect(inspector.getByRole('tab')).toHaveCount(0)
+      await expect(inspector.getByRole('tabpanel')).toHaveCount(0)
+      await expect(activePanel.getByText('No Pi session selected', { exact: true }))
         .toBeVisible()
     }
+    await expect(page.getByRole('button', { name: 'Navigate conversation', exact: true })).toBeDisabled()
     await expect(inspector.getByText('Working tree', { exact: true })).toHaveCount(0)
   } finally {
     await electronApp.close()
   }
 })
 
-test('navigates from the outline and inserts file-tree references into the composer', async ({}, testInfo) => {
+test('searches conversation turns, navigates by keyboard, and inserts file-tree references into the composer', async ({}, testInfo) => {
   test.setTimeout(45_000)
   const userDataPath = testInfo.outputPath('user-data')
   const workspacePath = testInfo.outputPath('workspace')
@@ -862,29 +1137,61 @@ test('navigates from the outline and inserts file-tree references into the compo
       'review [@src/example.ts](src/example.ts) now',
     )
 
-    await inspector.getByRole('tab', { name: 'Conversation outline', exact: true }).click()
-    const outlineTurn = inspector.getByRole('button', {
+    const navigationTrigger = page.getByRole('button', { name: 'Navigate conversation', exact: true })
+    await navigationTrigger.click()
+    const navigation = page.getByRole('dialog', { name: 'Navigate conversation', exact: true })
+    const navigationSearch = navigation.getByRole('combobox', { name: 'Find a turn…', exact: true })
+    const outlineTurn = navigation.getByRole('option', {
       name: /Selected session history prompt/,
     })
     const target = page.locator(
       '[data-conversation-outline-entry="00000000-0000-4000-8000-000000000101"]',
     )
     await expect(outlineTurn).toContainText('Selected session history response')
+    await expect(outlineTurn).toContainText('Completed')
+    await expect(outlineTurn.locator('time')).toBeVisible()
+    await navigationSearch.fill('Selected session history response')
+    await expect(navigation.getByRole('option')).toHaveCount(1)
     await outlineTurn.click()
-    await expect(outlineTurn).toBeFocused()
+    await expect(navigationTrigger).toBeFocused()
+    await expect(navigation).toHaveCount(0)
     await expect(target).toHaveAttribute('data-outline-highlighted', 'true')
     await expect(target).not.toHaveAttribute('data-outline-highlighted', 'true', {
       timeout: 3_000,
     })
-    await outlineTurn.press('Enter')
+    await navigationTrigger.press('Enter')
+    await expect(navigationSearch).toHaveValue('')
+    await navigationSearch.press('End')
+    await expect(outlineTurn).toHaveAttribute('aria-selected', 'true')
+    await navigationSearch.press('Enter')
     await expect(target).toHaveAttribute('data-outline-highlighted', 'true')
     await expect(target).not.toHaveAttribute('data-outline-highlighted', 'true', {
       timeout: 3_000,
     })
-    await outlineTurn.press('Space')
+    await navigationTrigger.press('Space')
+    await navigationSearch.fill('no turn matches this search')
+    await expect(navigation.getByText('No matching turns', { exact: true })).toBeVisible()
+    await navigationSearch.press('Control+j')
+    await navigationSearch.press('Control+k')
+    await expect(navigation).toBeVisible()
+    await expect(inspector).toBeVisible()
+    await navigationSearch.fill('Selected session history prompt')
+    await navigationSearch.press('Control+n')
+    await navigationSearch.press('Control+p')
+    await navigationSearch.press('Control+j')
+    await navigationSearch.press('Control+k')
+    await expect(navigation).toBeVisible()
+    await expect(inspector).toBeVisible()
+    await expect(page.getByRole('dialog', { name: 'Command Palette', exact: true })).toHaveCount(0)
+    await expect(outlineTurn).toHaveAttribute('aria-selected', 'true')
+    await navigationSearch.press('Enter')
     await expect(target).toHaveAttribute('data-outline-highlighted', 'true')
-    await expect(inspector.getByRole('tab', { name: 'Raw history' })).toHaveCount(0)
-    await expect(inspector.getByRole('tab', { name: 'Pi shell' })).toHaveCount(0)
+    await expect(inspector.getByRole('region', { name: 'Files', exact: true })).toBeVisible()
+    await inspector.getByRole('button', { name: 'Switch inspector view', exact: true }).click()
+    await expect(page.getByRole('menuitemradio', { name: 'Raw history' })).toHaveCount(0)
+    await expect(page.getByRole('menuitemradio', { name: 'Pi shell' })).toHaveCount(0)
+    await expect(page.getByRole('menuitemradio', { name: 'Outline', exact: true })).toHaveCount(0)
+    await page.getByRole('menuitemradio', { name: 'Files', exact: true }).press('Escape')
 
     await expect(page.evaluate(() => window.pipilot!.localPi.runtime.command({
       type: 'get_entries',
@@ -895,19 +1202,30 @@ test('navigates from the outline and inserts file-tree references into the compo
   }
 })
 
-test('keeps a Markdown file preview across compact frame transitions', async ({}, testInfo) => {
+test('keeps open file tabs through tree navigation and compact frame transitions', async ({}, testInfo) => {
   test.setTimeout(45_000)
   const userDataPath = testInfo.outputPath('user-data')
   const workspacePath = testInfo.outputPath('workspace')
   const fakeAgentDir = testInfo.outputPath('pi-agent')
+  const markdownContent = [
+    '# Responsive preview fixture',
+    '',
+    'The preview must survive a compact frame transition.',
+    '',
+    ...Array.from({ length: 160 }, (_, index) => (
+      `Fixture source line ${index + 1}: original disk content.`
+    )),
+    '',
+  ].join('\n')
   await Promise.all([
     mkdir(userDataPath, { recursive: true }),
-    mkdir(workspacePath, { recursive: true }),
+    mkdir(join(workspacePath, 'src'), { recursive: true }),
   ])
   await Promise.all([
+    writeFile(join(workspacePath, 'src', 'example.ts'), 'export const example = true\n'),
     writeFile(
       join(workspacePath, 'README.md'),
-      '# Responsive preview fixture\n\nThe preview must survive a compact frame transition.\n',
+      markdownContent,
     ),
     writeFile(
       join(userDataPath, 'settings.json'),
@@ -1008,12 +1326,94 @@ test('keeps a Markdown file preview across compact frame transitions', async ({}
     await expect(page.getByText('The preview is ready.', { exact: true })).toBeVisible()
 
     const inspector = page.getByRole('complementary', { name: 'Inspector' })
-    await inspector.getByRole('button').filter({ hasText: /^README\.md$/u }).click()
-    const markdownViewer = inspector.getByRole('region', { name: 'README.md' })
-    await expect(markdownViewer.getByRole('heading', {
-      name: 'Responsive preview fixture',
-      exact: true,
-    })).toBeVisible()
+    const openFiles = inspector.getByRole('tablist', { name: 'Open files', exact: true })
+    const treeTab = openFiles.getByRole('tab', { name: 'Working tree', exact: true })
+    const sourceTab = openFiles.getByRole('tab', { name: 'src/example.ts', exact: true })
+    const markdownTab = openFiles.getByRole('tab', { name: 'README.md', exact: true })
+    const sourceViewer = inspector.getByRole('region', { name: 'src/example.ts', exact: true })
+    const markdownViewer = inspector.getByRole('region', { name: 'README.md', exact: true })
+
+    await test.step('retain file A after Back, open file B, and switch and close individual tabs', async () => {
+      await inspector.getByRole('button').filter({ hasText: /^src$/u }).click()
+      await inspector.getByRole('button').filter({ hasText: /^example\.ts$/u }).click()
+      await expect(sourceViewer).toContainText('export const example = true')
+      await expect(sourceTab).toHaveAttribute('aria-selected', 'true')
+      await expect(openFiles.getByRole('tab')).toHaveCount(2)
+
+      await sourceViewer.getByRole('button', { name: 'Back', exact: true }).click()
+      await expect(sourceViewer).toHaveCount(0)
+      await expect(sourceTab).toBeVisible()
+      await expect(treeTab).toHaveAttribute('aria-selected', 'true')
+      await expect(openFiles.getByRole('tab')).toHaveCount(2)
+      await inspector.getByRole('button').filter({ hasText: /^README\.md$/u }).click()
+      await expect(markdownViewer.getByRole('heading', {
+        name: 'Responsive preview fixture',
+        exact: true,
+      })).toBeVisible()
+      await expect(openFiles.getByRole('tab')).toHaveCount(3)
+      await expect(sourceTab).toHaveAttribute('aria-selected', 'false')
+      await expect(markdownTab).toHaveAttribute('aria-selected', 'true')
+
+      await sourceTab.click()
+      await expect(sourceTab).toHaveAttribute('aria-selected', 'true')
+      await expect(markdownTab).toHaveAttribute('aria-selected', 'false')
+      await expect(sourceViewer).toContainText('export const example = true')
+      await expect(markdownViewer).toHaveCount(0)
+      await markdownTab.click()
+      await expect(markdownTab).toHaveAttribute('aria-selected', 'true')
+      await expect(markdownViewer.getByRole('heading', {
+        name: 'Responsive preview fixture',
+        exact: true,
+      })).toBeVisible()
+      await openFiles.getByRole('button', { name: 'Close README.md', exact: true }).click()
+      await expect(markdownTab).toHaveCount(0)
+      await expect(sourceTab).toHaveAttribute('aria-selected', 'true')
+      await expect(sourceViewer).toContainText('export const example = true')
+      await expect(openFiles.getByRole('tab')).toHaveCount(2)
+      await sourceViewer.getByRole('button', { name: 'Back', exact: true }).click()
+      await inspector.getByRole('button').filter({ hasText: /^README\.md$/u }).click()
+      await expect(markdownTab).toHaveAttribute('aria-selected', 'true')
+      await expect(markdownViewer.getByRole('heading', {
+        name: 'Responsive preview fixture',
+        exact: true,
+      })).toBeVisible()
+      await openFiles.getByRole('button', { name: 'Close src/example.ts', exact: true }).click()
+      await expect(sourceTab).toHaveCount(0)
+      await expect(openFiles.getByRole('tab')).toHaveCount(2)
+      await expect(markdownTab).toHaveAttribute('aria-selected', 'true')
+      await expect(markdownViewer).toBeVisible()
+    })
+
+    await test.step('refresh from disk without losing the active file, Source mode, or reading position', async () => {
+      const sourceModeTab = markdownViewer.getByRole('tab', { name: 'Source', exact: true })
+      await sourceModeTab.click()
+      const sourceDocument = markdownViewer.getByRole('tabpanel', { name: 'Source', exact: true })
+      await expect(sourceDocument).toContainText('Fixture source line 80: original disk content.')
+      const scrollTopBeforeRefresh = await sourceDocument.evaluate((element) => {
+        element.scrollTop = 640
+        return element.scrollTop
+      })
+      expect(scrollTopBeforeRefresh).toBeGreaterThan(0)
+
+      await writeFile(join(workspacePath, 'README.md'), markdownContent.replace(
+        'Fixture source line 80: original disk content.',
+        'Fixture source line 80: refreshed disk content.',
+      ))
+      await markdownViewer.getByRole('button', { name: 'Refresh', exact: true }).click()
+      await expect(sourceDocument).toContainText('Fixture source line 80: refreshed disk content.')
+      await expect(sourceDocument).not.toContainText('Fixture source line 80: original disk content.')
+      await expect(sourceModeTab).toHaveAttribute('aria-selected', 'true')
+      await expect(markdownTab).toHaveAttribute('aria-selected', 'true')
+      await expect(openFiles.getByRole('tab')).toHaveCount(2)
+      await expect.poll(() => sourceDocument.evaluate((element) => element.scrollTop))
+        .toBeCloseTo(scrollTopBeforeRefresh, 0)
+
+      await markdownViewer.getByRole('tab', { name: 'Preview', exact: true }).click()
+      await expect(markdownViewer.getByRole('heading', {
+        name: 'Responsive preview fixture',
+        exact: true,
+      })).toBeVisible()
+    })
 
     await page.setViewportSize({ width: 1_100, height: 680 })
     await expect(page.getByRole('complementary', { name: 'Inspector' })).toHaveCount(0)
@@ -1025,7 +1425,12 @@ test('keeps a Markdown file preview across compact frame transitions', async ({}
       name: 'Responsive preview fixture',
       exact: true,
     })).toBeVisible()
+    await expect(markdownTab).toHaveAttribute('aria-selected', 'true')
     await restoredViewer.getByRole('button', { name: 'Close', exact: true }).click()
+    await expect(markdownTab).toHaveCount(0)
+    await expect(sourceTab).toHaveCount(0)
+    await expect(openFiles.getByRole('tab')).toHaveCount(1)
+    await expect(treeTab).toHaveAttribute('aria-selected', 'true')
     await expect(restoredInspector.getByRole('button').filter({ hasText: /^README\.md$/u }))
       .toBeVisible()
   } finally {
@@ -1514,7 +1919,8 @@ test('opens a persisted project session on the first click while Pi initializes'
 
     await expect(page.getByText('Loading conversation…', { exact: true })).toBeVisible()
     const inspector = page.getByRole('complementary', { name: 'Inspector' })
-    await expect(inspector.getByText('Loading Pi session data…', { exact: true }))
+    await expect(inspector.getByRole('region', { name: 'Files', exact: true })
+      .getByText('Loading Pi session data…', { exact: true }))
       .toBeVisible()
 
     await expect(page.getByText('Selected session history response', { exact: true }))
@@ -1623,7 +2029,7 @@ test('opens a persisted project session on the first click while Pi initializes'
   }
 })
 
-test('runs Composer mentions and the local Pi RPC workflow through the renderer provider with conversation outline navigation, session catalog, and session loading', async ({}, testInfo) => {
+test('runs Composer mentions and the local Pi RPC workflow through the renderer provider with conversation outline navigation, session catalog, and session loading', { tag: '@integration' }, async ({}, testInfo) => {
   test.setTimeout(120_000)
   const userDataPath = testInfo.outputPath('user-data')
   const workspacePath = testInfo.outputPath('workspace')
@@ -1771,8 +2177,8 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
           id: 'fixture-subagent-call',
           name: 'subagent',
           arguments: {
-            agent: 'trellis-implement',
-            task: 'Active task: .trellis/tasks/private\n\n## Preserve behavior\n\n- Keep the existing contract.\n- Render **Markdown**.',
+            agent: 'project-worker',
+            task: 'Active task: project/tasks/private\n\n## Preserve behavior\n\n- Keep the existing contract.\n- Render **Markdown**.',
           },
         }],
         api: 'openai-completions',
@@ -1805,7 +2211,7 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
         }],
         details: {
           results: [{
-            agent: 'trellis-implement',
+            agent: 'project-worker',
             exitCode: 0,
             messages: [
               {
@@ -1872,6 +2278,7 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
   const thinkingPrompt = 'thinking lifecycle'
   const piFixture = await startPiSdkFixture({
     agentDir,
+    includeReasoningModel: true,
     completionDelays: {
       [typewriterPrompt]: 300,
     },
@@ -1901,6 +2308,10 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
   try {
     const page = await electronApp.firstWindow()
     await page.waitForLoadState('domcontentloaded')
+    await electronApp.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0]?.setSize(1_440, 900)
+    })
+    await page.setViewportSize({ width: 1_440, height: 900 })
     await page.emulateMedia({ reducedMotion: 'no-preference' })
     clipboardBefore = await electronApp.evaluate(({ clipboard }) => clipboard.readText())
     await page.evaluate(() => window.pipilot!.settings.update({ locale: 'en-US' }))
@@ -1933,6 +2344,37 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
         model: { provider: 'fixture', id: 'fake-fast' },
       },
     })
+
+    await page.getByRole('button', {
+      name: 'Current model Fake Fast, click to switch',
+    }).click()
+    await page.getByRole('option', { name: /Fake Reasoning/ }).click()
+    await expect(page.getByRole('button', {
+      name: /Model Fake Reasoning, thinking .*; click to change/u,
+    })).toBeVisible()
+    await page.getByRole('button', {
+      name: /Model Fake Reasoning, thinking .*; click to change/u,
+    }).click()
+    await page.screenshot({
+      path: testInfo.outputPath('model-thinking-picker-desktop-light.png'),
+    })
+    await page.getByRole('option', { name: /High/ }).click()
+    await expect(page.getByRole('button', {
+      name: 'Model Fake Reasoning, thinking High; click to change',
+    })).toBeVisible()
+    await expect.poll(() => page.evaluate(() => (
+      window.pipilot!.localPi.runtime.command({ type: 'get_state' })
+    ))).toMatchObject({
+      success: true,
+      data: { thinkingLevel: 'high' },
+    })
+    await page.getByRole('button', {
+      name: /Model Fake Reasoning, thinking .*; click to change/u,
+    }).click()
+    await page.getByRole('option', { name: /Fake Fast/ }).click()
+    await expect(page.getByRole('button', {
+      name: 'Current model Fake Fast, click to switch',
+    })).toBeVisible()
 
     const composer = page.getByRole('textbox', { name: 'Message input' })
     const mentionMenu = page.locator('[data-slot="command"][aria-label="Files and Skills"]')
@@ -2018,23 +2460,21 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
     await expect(mentionAtoms.filter({ has: page.getByText('@fixture-skill', { exact: true }) }))
       .toHaveCount(1)
     await composer.pressSequentially('queued next')
-    await page.getByRole('button', { name: 'Queue', exact: true }).click()
-    await expect(page.getByRole('button', {
-      name: 'View 1 pending messages',
-    })).toBeVisible()
+    await composer.press('Enter')
+    const pendingRail = page.locator('[data-pending-message-rail]')
+    await expect(pendingRail).toContainText('1 pending')
 
+    await pendingRail.getByRole('button', { name: 'More pending-message actions' }).click()
+    await page.getByRole('menuitem', { name: 'Turn off queueing' }).click()
     await composer.fill('@fixture')
     await mentionMenu.getByRole('option').filter({ hasText: 'fixture-skill' }).click()
     await composer.pressSequentially('guide current')
-    await page.getByRole('button', { name: 'More submit actions' }).click()
-    await page.getByRole('menuitem', { name: 'Steer current task' }).click()
-    const queueButton = page.getByRole('button', { name: 'View 2 pending messages' })
-    await expect(queueButton).toBeVisible()
-    await queueButton.click()
-    const queueDialog = page.getByRole('dialog')
-    const queuedSkill = queueDialog.getByRole('listitem')
+    await composer.press('Enter')
+    await expect(pendingRail).toContainText('2 pending')
+    await pendingRail.getByRole('button', { name: 'Show pending messages' }).click()
+    const queuedSkill = pendingRail.getByRole('listitem')
       .filter({ hasText: 'queued next' })
-    const steeredSkill = queueDialog.getByRole('listitem')
+    const steeredSkill = pendingRail.getByRole('listitem')
       .filter({ hasText: 'guide current' })
     await expect(queuedSkill)
       .toBeVisible()
@@ -2042,12 +2482,16 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
     await expect(steeredSkill)
       .toBeVisible()
     await expect(steeredSkill).toContainText('fixture-skill')
-    await page.getByRole('group', { name: 'Queue', exact: true })
-      .getByRole('button', { name: 'All', exact: true })
-      .click()
+    await pendingRail.getByRole('button', { name: 'More pending-message actions' }).click()
+    await page.getByRole('menuitem', { name: 'Queue', exact: true }).focus()
+    await page.keyboard.press('ArrowRight')
+    await page.getByRole('menuitemradio', { name: 'All', exact: true }).click()
+    await expect.poll(async () => page.evaluate(async () => {
+      const response = await window.pipilot!.localPi.runtime.command({ type: 'get_state' })
+      return response.success && response.command === 'get_state' ? response.data.followUpMode : null
+    })).toBe('all')
     await expect(queuedSkill).toBeVisible()
     await expect(steeredSkill).toBeVisible()
-    await page.keyboard.press('Escape')
 
     await page.getByRole('button', { name: 'Stop', exact: true }).click()
     await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0)
@@ -2157,9 +2601,12 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
       groupPreserved: true,
       thinkingPreserved: true,
     })
-    await expect(thinkingToggle).toHaveAttribute('aria-expanded', 'false', {
+    await expect(thinkingToggle).toHaveAttribute('aria-expanded', 'true', {
       timeout: 20_000,
     })
+    await expect(thinkingContent).toBeVisible()
+    await thinkingToggle.click()
+    await expect(thinkingToggle).toHaveAttribute('aria-expanded', 'false')
     await expect(thinkingContent).toHaveCount(0)
     await thinkingToggle.click()
     await expect(thinkingToggle).toHaveAttribute('aria-expanded', 'true')
@@ -2184,7 +2631,7 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
     await expect(composer).toHaveText('surviving draft')
     await expect(pendingImage).toBeAttached()
     await pendingImage.click()
-    await expect(page.getByText('Fixture response: accepted revision', { exact: true }))
+    await expect(transcriptLog.getByText('Fixture response: accepted revision', { exact: true }))
       .toBeVisible()
     await expect(composer).toHaveText('surviving draft')
 
@@ -2196,6 +2643,11 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
     await expect(extensionDialog).toHaveCount(0)
     const uiTranscript = page.getByRole('log', { name: 'Conversation' })
     await expect(uiTranscript.getByText('Fixture notification', { exact: true })).toBeVisible()
+    const uiResponse = uiTranscript.locator('[data-conversation-response]').filter({
+      has: page.locator('[data-conversation-question] p').filter({ hasText: /^ui$/u }),
+    }).last()
+    const uiWork = uiResponse.locator('[data-response-work-toggle]')
+    if (await uiWork.getAttribute('aria-expanded') === 'false') await uiWork.click()
     const fixtureWidget = uiTranscript.getByText('Fixture widget', { exact: true })
     await expect(fixtureWidget).toBeVisible()
     const notificationButton = page.getByRole('button', {
@@ -2206,7 +2658,7 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
     await expect(page.getByText('No notifications', { exact: true })).toBeVisible()
     await notificationButton.click()
     await expect(page).toHaveTitle('PiPilot')
-    await expect(page.getByText('Fixture response: ui', { exact: true })).toBeVisible()
+    await expect(transcriptLog.getByText('Fixture response: ui', { exact: true })).toBeVisible()
 
     const previousRuntime = await page.evaluate(() => window.pipilot!.localPi.runtime.status())
     await selectWorkspaceFromSystemDialog(electronApp, workspacePath)
@@ -2434,30 +2886,30 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
     await projectSession.click()
     await expect(page.getByText('Loading conversation…', { exact: true })).toBeVisible()
     const inspector = page.getByRole('complementary', { name: 'Inspector' })
-    await expect(inspector.getByText('Loading Pi session data…', { exact: true }))
+    await expect(inspector.getByRole('region', { name: 'Files', exact: true })
+      .getByText('Loading Pi session data…', { exact: true }))
       .toBeVisible()
     await expect(inspector.getByText('example.ts', { exact: true })).toHaveCount(0)
-    await inspector.getByRole('tab', { name: 'Changes', exact: true }).click()
-    await expect(inspector.getByText('Loading Pi session data…', { exact: true }))
+    await selectInspectorView(inspector, 'Changes')
+    await expect(inspector.getByRole('region', { name: 'Changes', exact: true })
+      .getByText('Loading Pi session data…', { exact: true }))
       .toBeVisible()
     await expect(inspector.getByRole('region', { name: continuousDiffPaths[0] }))
       .toHaveCount(0)
-    await inspector.getByRole('tab', { name: 'Conversation outline', exact: true }).click()
-    await expect(inspector.getByText('Loading Pi session data…', { exact: true }))
-      .toBeVisible()
-    await inspector.getByRole('tab', { name: 'Files', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Navigate conversation', exact: true })).toBeDisabled()
+    await expect(page.getByRole('dialog', { name: 'Navigate conversation', exact: true })).toHaveCount(0)
+    await selectInspectorView(inspector, 'Files')
     await expect(mentionMenu).toHaveCount(0)
     await expect(mentionAtoms).toHaveCount(0)
     await expect(composer).toHaveText('ordinary draft @typed stale query')
     await expect(switchingDraftImage).toBeAttached()
     await switchingDraftImage.click()
-    await expect(page.getByText('Selected session history response', { exact: true }))
+    await expect(transcriptLog.getByText('Selected session history response', { exact: true }))
       .toBeVisible()
     await expect(page.getByRole('button', {
       name: 'Current model Fake Fast, click to switch',
     })).toBeVisible()
-    await expect(page.getByRole('button', { name: /View \d+ pending messages/u }))
-      .toHaveCount(0)
+    await expect(page.locator('[data-pending-message-rail]')).toHaveCount(0)
     await expect(page.getByText('Loading conversation…', { exact: true })).toHaveCount(0)
     await expect(page.getByRole('alertdialog', { name: 'Operation failed' }))
       .toHaveCount(0)
@@ -2465,14 +2917,22 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
     const subagentCall = page.locator(
       '[data-subagent-call-id="fixture-subagent-call"]',
     )
+    // Hydrated execution logs start closed; reveal them through the same
+    // disclosure a reader uses before opening a historical subagent.
+    for (const disclosure of await transcriptLog.locator('[data-response-work-toggle][aria-expanded="false"]').all()) {
+      await disclosure.click()
+    }
     await expect(subagentCall).toBeVisible()
     await subagentCall.click()
     const subagentPanel = inspector.locator(
       '[data-subagent-execution-panel="fixture-subagent-call"]',
     )
     await expect(subagentPanel).toBeVisible()
+    await expect(inspector.getByRole('tab')).toHaveCount(0)
+    await expect(inspector.getByRole('button', { name: 'Switch inspector view', exact: true }))
+      .toHaveCount(0)
     const subagentTaskDisclosure = subagentPanel.getByRole('button', {
-      name: /Task.*trellis-implement/u,
+      name: /Task.*project-worker/u,
     })
     await expect(subagentTaskDisclosure).toHaveAttribute('aria-expanded', 'false')
     await subagentTaskDisclosure.click()
@@ -2490,7 +2950,7 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
     await expect(execution.getByText('Focused checks passed.', { exact: true })).toBeVisible()
     await expect(execution.getByRole('heading', { name: 'Done', exact: true })).toBeVisible()
     await expect(page.getByText(/Run fan-out|Async workflow|subagent_wait/iu)).toHaveCount(0)
-    await expect(page.getByText(/\.trellis\/tasks\/private/iu)).toHaveCount(0)
+    await expect(page.getByText(/project\/tasks\/private/iu)).toHaveCount(0)
     const shellCard = page.locator('[data-tool-kind="shell"]').filter({ hasText: 'pnpm test' })
     await expect(shellCard).toBeVisible()
     await shellCard.getByRole('button').first().click()
@@ -2525,6 +2985,9 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
       .toBe(false)
     await page.setViewportSize(desktopViewport)
     await subagentCall.click()
+    await expect(inspector.getByRole('button', { name: 'Switch inspector view', exact: true }))
+      .toBeVisible()
+    await expect(inspector.getByRole('region', { name: 'Files', exact: true })).toBeVisible()
 
     const sourceFolder = inspector.getByRole('button').filter({ hasText: /^src$/u })
     await expect(sourceFolder).toBeVisible()
@@ -2578,6 +3041,10 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
       name: 'Workspace viewer fixture',
       exact: true,
     })).toBeVisible()
+    // Back retained the source file; closing it must leave the Markdown file active.
+    await inspector.getByRole('tablist', { name: 'Open files', exact: true })
+      .getByRole('button', { name: 'Close src/example.ts', exact: true }).click()
+    await expect(markdownViewer).toBeVisible()
     await markdownViewer.getByRole('tab', { name: 'Source', exact: true }).click()
     await expect(markdownViewer).toContainText('# Workspace viewer fixture')
     await page.screenshot({ path: testInfo.outputPath('workspace-file-viewer-desktop-light.png') })
@@ -2715,8 +3182,10 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
         ]),
       },
     })
-    await inspector.getByRole('tab', { name: 'Conversation outline', exact: true }).click()
-    const outlineTurn = inspector.getByRole('button', {
+    const navigationTrigger = page.getByRole('button', { name: 'Navigate conversation', exact: true })
+    await navigationTrigger.click()
+    const navigation = page.getByRole('dialog', { name: 'Navigate conversation', exact: true })
+    const outlineTurn = navigation.getByRole('option', {
       name: /Selected session history prompt/,
     })
     const outlineTarget = page.locator(
@@ -2725,12 +3194,17 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
     await expect(outlineTurn).toBeVisible()
     await expect(outlineTurn).toContainText('Selected session history response')
     await outlineTurn.click()
-    await expect(outlineTurn).toBeFocused()
+    await expect(navigationTrigger).toBeFocused()
+    await expect(navigation).toHaveCount(0)
     await expect(outlineTarget).toHaveAttribute('data-outline-highlighted', 'true')
+    await navigationTrigger.click()
     await outlineTurn.click()
     await expect(outlineTarget).toHaveAttribute('data-outline-highlighted', 'true')
-    await expect(inspector.getByRole('tab', { name: 'Raw history' })).toHaveCount(0)
-    await expect(inspector.getByRole('tab', { name: 'Pi shell' })).toHaveCount(0)
+    await inspector.getByRole('button', { name: 'Switch inspector view', exact: true }).click()
+    await expect(page.getByRole('menuitemradio', { name: 'Raw history' })).toHaveCount(0)
+    await expect(page.getByRole('menuitemradio', { name: 'Pi shell' })).toHaveCount(0)
+    await expect(page.getByRole('menuitemradio', { name: 'Outline', exact: true })).toHaveCount(0)
+    await page.getByRole('menuitemradio', { name: 'Files', exact: true }).press('Escape')
     await composer.fill('/')
     await expect(slashMenu).toBeVisible()
     await expect(slashMenu.getByText('Commands', { exact: true })).toBeVisible()
@@ -2873,7 +3347,7 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
     })
     await expect(renamedProjectSession).toBeVisible({ timeout: 20_000 })
 
-    await page.getByRole('tab', { name: 'Changes', exact: true }).click()
+    await selectInspectorView(page, 'Changes')
     const firstChangedFile = page.getByRole('region', { name: continuousDiffPaths[0] })
     const lastChangedFile = page.getByRole('region', {
       name: continuousDiffPaths[continuousDiffPaths.length - 1],
@@ -2913,7 +3387,7 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
   }
 })
 
-test('applies terminal font settings live without replacing the active PTY', async ({}, testInfo) => {
+test('applies terminal font settings live without replacing the active PTY', { tag: '@integration' }, async ({}, testInfo) => {
   const userDataPath = testInfo.outputPath('user-data')
   const electronApp = await electron.launch({
     args: [resolve(process.cwd())],
@@ -2929,7 +3403,7 @@ test('applies terminal font settings live without replacing the active PTY', asy
     await page.waitForLoadState('domcontentloaded')
     await page.setViewportSize({ width: 1_440, height: 900 })
     await page.evaluate(() => window.pipilot!.settings.update({ locale: 'en-US' }))
-    await page.getByRole('tab', { name: 'Terminal', exact: true }).click()
+    await selectInspectorView(page, 'Terminal')
     const terminalPanel = page.locator('[data-terminal-status]')
     await expect(terminalPanel).toHaveAttribute('data-terminal-status', 'running')
 
@@ -2971,7 +3445,7 @@ test('applies terminal font settings live without replacing the active PTY', asy
   }
 })
 
-test('launches a sandboxed shell with a narrow validated bridge', async ({}, testInfo) => {
+test('launches a sandboxed shell with a narrow validated bridge', { tag: '@integration' }, async ({}, testInfo) => {
   test.setTimeout(90_000)
   const userDataPath = testInfo.outputPath('user-data')
   const launch = () =>
@@ -3038,7 +3512,7 @@ test('launches a sandboxed shell with a narrow validated bridge', async ({}, tes
     expect(appInfo).toMatchObject({
       name: 'PiPilot',
       version: PIPILOT_VERSION,
-      electronVersion: '43.4.1',
+      electronVersion: '44.2.0',
       mode: 'development',
     })
     const nativeWindowMode = await electronApp.evaluate(({ BrowserWindow }) => {
@@ -3132,7 +3606,7 @@ test('launches a sandboxed shell with a narrow validated bridge', async ({}, tes
       monoFont: expect.stringContaining('Fira Code'),
       uiSize: '18px',
       codeSize: '18px',
-      controlHeight: '34px',
+      controlHeight: '36px',
       density: 'comfortable',
       reducedMotion: 'true',
     })

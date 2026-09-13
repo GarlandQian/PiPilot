@@ -9,6 +9,7 @@ import {
   ensureRuntimeSessionDirectory,
   getRuntimeCommandArgumentCompletions,
   promoteRuntimeFollowUp,
+  removeRuntimeQueuedMessage,
 } from '../../src/main/pi-host/runtime-command-dispatcher'
 import {
   LOCAL_PI_COMMAND_ARGUMENT_COMPLETION_MAX_ITEMS,
@@ -162,6 +163,165 @@ describe('runtime command dispatcher', () => {
       followUp: [{ message: 'renderer follow-up' }],
     })).rejects.toThrow('queue changed')
     expect(clearQueue).not.toHaveBeenCalled()
+  })
+
+  it('reports when a queue changed during clear and the original cannot be restored', async () => {
+    let steering: string[] = []
+    let followUp = ['first', 'second']
+    const runtime = {
+      session: {
+        isStreaming: true,
+        getSteeringMessages: () => steering,
+        getFollowUpMessages: () => followUp,
+        clearQueue: vi.fn(() => {
+          steering = []
+          followUp = []
+          return { steering: [], followUp: ['first'] }
+        }),
+        steer: vi.fn(async (text: string) => { steering.push(text) }),
+        followUp: vi.fn(async (text: string) => {
+          if (text === 'first') followUp.push(text)
+        }),
+      },
+    } as unknown as AgentSessionRuntime
+
+    await expect(removeRuntimeQueuedMessage(runtime, {
+      type: 'remove_queued_message',
+      kind: 'followUp',
+      itemIndex: 0,
+      steering: [],
+      followUp: [{ message: 'first' }, { message: 'second' }],
+    })).rejects.toThrow('could not restore')
+    expect(followUp).toEqual(['first'])
+  })
+
+  it('removes one exact queue item and preserves all remaining image payloads', async () => {
+    let steering = ['guide first']
+    let followUp = ['remove me', 'keep me']
+    const steer = vi.fn(async (text: string) => { steering.push(text) })
+    const follow = vi.fn(async (text: string) => { followUp.push(text) })
+    const runtime = {
+      session: {
+        isStreaming: true,
+        getSteeringMessages: () => steering,
+        getFollowUpMessages: () => followUp,
+        clearQueue: vi.fn(() => {
+          const current = { steering: [...steering], followUp: [...followUp] }
+          steering = []
+          followUp = []
+          return current
+        }),
+        steer,
+        followUp: follow,
+      },
+    } as unknown as AgentSessionRuntime
+    const image = { type: 'image' as const, data: 'kept', mimeType: 'image/png' }
+
+    await removeRuntimeQueuedMessage(runtime, {
+      type: 'remove_queued_message',
+      kind: 'followUp',
+      itemIndex: 0,
+      steering: [{ message: 'guide first' }],
+      followUp: [
+        { message: 'remove me' },
+        { message: 'keep me', images: [image] },
+      ],
+    })
+
+    expect(steer).toHaveBeenCalledWith('guide first', undefined)
+    expect(follow).toHaveBeenCalledWith('keep me', [image])
+    expect(steering).toEqual(['guide first'])
+    expect(followUp).toEqual(['keep me'])
+  })
+
+  it('restores the original queue when a rewritten queue cannot be verified', async () => {
+    let steering: string[] = []
+    let followUp = ['remove me', 'keep me']
+    let rebuildingTarget = true
+    const runtime = {
+      session: {
+        isStreaming: true,
+        getSteeringMessages: () => steering,
+        getFollowUpMessages: () => followUp,
+        clearQueue: vi.fn(() => {
+          const current = { steering: [...steering], followUp: [...followUp] }
+          steering = []
+          followUp = []
+          return current
+        }),
+        steer: vi.fn(async (text: string) => { steering.push(text) }),
+        followUp: vi.fn(async (text: string) => {
+          if (rebuildingTarget && text === 'keep me') {
+            rebuildingTarget = false
+            return
+          }
+          followUp.push(text)
+        }),
+      },
+    } as unknown as AgentSessionRuntime
+
+    await expect(removeRuntimeQueuedMessage(runtime, {
+      type: 'remove_queued_message',
+      kind: 'followUp',
+      itemIndex: 0,
+      steering: [],
+      followUp: [{ message: 'remove me' }, { message: 'keep me' }],
+    })).rejects.toThrow('did not preserve')
+
+    expect(steering).toEqual([])
+    expect(followUp).toEqual(['remove me', 'keep me'])
+  })
+
+  it('does not replay a queue entry consumed while SDK enqueue promises settle', async () => {
+    let followUp = ['remove', 'first', 'second']
+    const consumed: string[] = []
+    const clearQueue = vi.fn(() => {
+      const result = { steering: [], followUp: [...followUp] }
+      followUp = []
+      return result
+    })
+    const follow = vi.fn(async (text: string) => {
+      followUp.push(text)
+      if (text === 'first') queueMicrotask(() => { consumed.push(followUp.shift()!) })
+    })
+    const runtime = { session: {
+      isStreaming: true, clearQueue, getSteeringMessages: () => [],
+      getFollowUpMessages: () => followUp, steer: vi.fn(), followUp: follow,
+    } } as unknown as AgentSessionRuntime
+    await removeRuntimeQueuedMessage(runtime, {
+      type: 'remove_queued_message', kind: 'followUp', itemIndex: 0,
+      steering: [], followUp: ['remove', 'first', 'second'].map((message) => ({ message })),
+    })
+    expect(consumed).toEqual(['first'])
+    expect(followUp).toEqual(['second'])
+    expect(follow.mock.calls.map(([text]) => text)).toEqual(['first', 'second'])
+    expect(clearQueue).toHaveBeenCalledOnce()
+  })
+
+  it('does not roll back consumed work after a later asynchronous enqueue failure', async () => {
+    let followUp = ['remove', 'keep']
+    const clearQueue = vi.fn(() => {
+      const result = { steering: [], followUp: [...followUp] }
+      followUp = []
+      return result
+    })
+    const follow = vi.fn(async (text: string) => {
+      followUp.push(text)
+      await Promise.resolve()
+      followUp.shift()
+      throw new Error('late failure')
+    })
+    const runtime = { session: {
+      isStreaming: true, clearQueue, getSteeringMessages: () => [],
+      getFollowUpMessages: () => followUp, steer: vi.fn(), followUp: follow,
+    } } as unknown as AgentSessionRuntime
+    await expect(removeRuntimeQueuedMessage(runtime, {
+      type: 'remove_queued_message', kind: 'followUp', itemIndex: 0,
+      steering: [], followUp: ['remove', 'keep'].map((message) => ({ message })),
+    })).rejects.toThrow('late failure')
+    expect(followUp).toEqual([])
+    expect(clearQueue).toHaveBeenCalledOnce()
+    expect(follow).toHaveBeenCalledTimes(1)
   })
 
   it('accepts an idle auto Prompt only at the explicit Pi preflight boundary', async () => {

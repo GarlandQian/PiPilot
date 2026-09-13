@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { configApplyStatusSchema } from './config-apply'
 
 export const MODELS_CONFIG_CONTENT_LIMIT = 1024 * 1024
 export const MODELS_CONFIG_PROVIDER_LIMIT = 500
@@ -105,6 +106,7 @@ export const modelsConfigSnapshotSchema = modelsConfigDocumentSchema
     // Raw JSONC text backing the Form|JSON single draft (same contract as MCP).
     content: z.string().max(MODELS_CONFIG_CONTENT_LIMIT),
     fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    applyStatus: configApplyStatusSchema.optional(),
     defaultProvider: z.string().max(256).optional(),
     defaultModel: z.string().max(256).optional(),
   })
@@ -115,7 +117,7 @@ export type ModelsConfigSnapshot = z.infer<typeof modelsConfigSnapshotSchema>
 export const modelsConfigSaveResultSchema = z
   .object({
     snapshot: modelsConfigSnapshotSchema,
-    apply: z.enum(['saved', 'restarted', 'pending', 'unavailable', 'failed']),
+    apply: z.enum(['saved', 'applied', 'restarted', 'pending', 'unavailable', 'failed']),
     applyError: z.string().max(1_000).optional(),
   })
   .strict()

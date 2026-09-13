@@ -12,6 +12,7 @@ vi.mock('../../src/main/ipc/validated-handler', () => ({
 }))
 
 import { registerLocalPiIpc } from '../../src/main/ipc/register-local-pi-ipc'
+import { OfficialPiSessionCatalogObserver } from '../../src/main/conversations/official-pi-session-catalog-observer'
 
 function deferred() {
   let resolve!: () => void
@@ -36,13 +37,21 @@ describe('Local Pi IPC controller', () => {
     const send = vi.fn()
     const eventUnsubscribe = vi.fn(() => true)
     const settled = deferred()
-    const activationService = {
-      onAgentSettled: vi.fn(() => settled.promise),
-      onSessionCatalogChanged: vi.fn(),
-    }
+    const invalidate = vi.fn()
+    const getControlRuntimeState = vi.fn(async () => {
+      await settled.promise
+      return { sessionFile: '/sessions/a.jsonl' }
+    })
+    let allListener!: Parameters<import('../../src/main/pi-host/pi-runtime-frontend').PiRuntimeFrontend['subscribeAllEvents']>[0]
     const runtimeHost = {
-      getSnapshot: vi.fn(() => ({ state: 'stopped' })),
+      getSnapshot: vi.fn(() => ({ state: 'stopped', generation: 0, cwd: null,
+        sessionFile: null, sessionState: null, commands: [], stderr: '', diagnostics: [] })),
       subscribe: vi.fn(() => vi.fn(() => true)),
+      subscribeAllEvents: vi.fn((listener: typeof allListener) => {
+        allListener = listener
+        return vi.fn(() => true)
+      }),
+      getControlRuntimeState,
       subscribeEvents: vi.fn((listener: typeof eventListener) => {
         eventListener = listener
         return eventUnsubscribe
@@ -53,9 +62,12 @@ describe('Local Pi IPC controller', () => {
       respondToExtensionUi: vi.fn(),
       restart: vi.fn(),
     }
+    const catalogObserver = new OfficialPiSessionCatalogObserver(runtimeHost as never,
+      { invalidate }, { observe: vi.fn() } as never)
 
     const controller = registerLocalPiIpc({
-      activationService: activationService as never,
+      activationService: {} as never,
+      catalogObserver,
       contextService: { start: vi.fn() } as never,
       getMainWindow: () => ({
         isDestroyed: () => false,
@@ -65,20 +77,28 @@ describe('Local Pi IPC controller', () => {
       runtimeHost: runtimeHost as never,
     })
 
-    eventListener!({ type: 'agent_settled' }, 1, 'runtime-a')
+    const scope = { kind: 'projectless' } as const
+    allListener({ type: 'agent_settled' }, {
+      hostEpoch: 1, runtimeId: 'rt_a', generation: 1, scope,
+      sessionId: 'session-a', sessionFile: '/sessions/a.jsonl',
+    })
+    eventListener!({ type: 'agent_settled' }, 1, 'rt_a')
     await flush()
 
-    expect(activationService.onAgentSettled).toHaveBeenCalledWith('runtime-a', 1)
-    expect(send).toHaveBeenCalledTimes(1)
+    expect(invalidate).toHaveBeenCalledWith(scope)
+    expect(getControlRuntimeState).toHaveBeenCalledOnce()
+    expect(send.mock.calls.filter(([, message]) => message.event)).toHaveLength(1)
 
     eventListener!({ type: 'agent_start' }, 1, 'runtime-a')
     await flush()
 
-    expect(send).toHaveBeenCalledTimes(2)
-    expect(send.mock.calls.map(([, message]) => message.event.type)).toEqual([
+    expect(send.mock.calls.filter(([, message]) => message.event).map(([, message]) => message.event.type)).toEqual([
       'agent_settled',
       'agent_start',
     ])
+    expect(send.mock.calls.find(([, message]) => message.catalogInvalidation)?.[1]).toMatchObject({
+      snapshot: runtimeHost.getSnapshot(), catalogInvalidation: { scope, revision: 1 },
+    })
 
     settled.resolve()
     await settled.promise

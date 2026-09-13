@@ -5,6 +5,7 @@ import type {
   McpConfigServer,
 } from '@/shared/mcp-config'
 import type { McpServerFormValue } from './McpServerFormDialog'
+import type { MessageKey } from '@/i18n'
 
 /*
  * Pure form <-> JSONC-definition mapping helpers for the MCP single-draft
@@ -60,9 +61,41 @@ export function structuredDocumentSupported(document: McpConfigDocument) {
 }
 
 export function rowsToRecord(rows: readonly KeyValueRow[]) {
-  const record: Record<string, string> = {}
-  for (const row of rows) record[row.key] = row.value
-  return record
+  return Object.fromEntries(rows.map((row) => [row.key, row.value]))
+}
+
+export type McpFormErrorField = 'name' | 'command' | 'url' | 'env' | 'headers'
+
+export function getMcpFormErrors(
+  value: McpServerFormValue,
+  existingNames: readonly string[],
+  originalName?: string,
+): Partial<Record<McpFormErrorField, MessageKey>> {
+  const errors: Partial<Record<McpFormErrorField, MessageKey>> = {}
+  const name = value.name.trim().toLocaleLowerCase()
+  if (!name) errors.name = 'mcp.form.name.required'
+  else if (existingNames.some((existing) => {
+    const candidate = existing.trim().toLocaleLowerCase()
+    return candidate === name && candidate !== originalName?.trim().toLocaleLowerCase()
+  })) errors.name = 'mcp.form.name.duplicate'
+  if (value.transport === 'stdio') {
+    if (!value.command.trim()) errors.command = 'mcp.form.command.required'
+  } else {
+    const url = value.url.trim()
+    if (!url) errors.url = 'mcp.form.url.required'
+    else {
+      try {
+        if (!['http:', 'https:'].includes(new URL(url).protocol)) errors.url = 'mcp.form.url.invalid'
+      } catch {
+        errors.url = 'mcp.form.url.invalid'
+      }
+    }
+  }
+  const field = value.transport === 'stdio' ? 'env' : 'headers'
+  const keys = value[field].map((row) => field === 'headers' ? row.key.trim().toLocaleLowerCase() : row.key.trim())
+  if (keys.some((key) => !key)) errors[field] = 'mcp.form.kv.emptyKey'
+  else if (new Set(keys).size !== keys.length) errors[field] = 'settings.integrations.mcp.form.duplicateKey'
+  return errors
 }
 
 export function recordToRows(value: unknown): KeyValueRow[] {

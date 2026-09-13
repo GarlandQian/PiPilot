@@ -24,6 +24,7 @@ import {
   type PiHostControllerSnapshot,
   type PiHostRequestOptions,
 } from './pi-host-controller'
+import { RuntimeMaintenanceBusyError, RuntimeMaintenanceGate, type RuntimeMaintenancePermit } from './runtime-maintenance-gate'
 
 export type ProjectHostScopeKind = 'project' | 'projectless'
 
@@ -172,8 +173,9 @@ const runtimeBindResultSchema = z.object({
 }).strict()
 
 const runtimeReloadResultSchema = z.object({
-  reloaded: z.literal(true),
+  reloaded: z.boolean(),
   runtime: runtimeDescriptorSchema,
+  interactionRequired: z.literal(true).optional(),
 }).strict()
 
 const runtimeCommandResultSchema = z.object({
@@ -269,6 +271,7 @@ function errorFromUnknown(error: unknown, fallbackCode: string): PiHostError {
  * owns the session-file lease map across all project Hosts.
  */
 export class ProjectHostPool {
+  private readonly maintenanceGate = new RuntimeMaintenanceGate()
   private readonly createHost: (scope: ProjectHostScope, hostKey: string) => ProjectHostControllerLike
   private readonly canonicalizeCwd: (cwd: string) => string
   private readonly createRuntimeId: () => string
@@ -279,6 +282,12 @@ export class ProjectHostPool {
   private readonly sessionLeases = new Map<string, string>()
   private readonly pendingRuntimeOwners = new Map<string, HostEntry>()
   private readonly pendingSessionLeases = new Map<string, string>()
+  private readonly pendingReloads = new Map<string, {
+    entry: HostEntry
+    runtime: RuntimeEntry
+    generation: number
+    hostEpoch: number
+  }>()
   private readonly listeners = new Set<(snapshot: ProjectHostPoolSnapshot) => void>()
   private readonly uiRequestListeners = new Set<
     (event: PiHostUiRequestEventEnvelope) => void
@@ -370,8 +379,7 @@ export class ProjectHostPool {
     ) {
       return
     }
-    await this.requestHost(
-      entry,
+    await this.maintenanceGate.dialogResponse(entry.cwd, () => entry.controller.request(
       { type: 'runtime.extension_ui_response', response },
       {
         runtimeId,
@@ -379,11 +387,30 @@ export class ProjectHostPool {
           ? { runtimeGeneration: runtime.descriptor.generation }
           : { runtimeGeneration: expectedGeneration }),
       },
-    )
+    ))
   }
 
   listHosts(): ProjectHostSummary[] {
     return this.getSnapshot().hosts
+  }
+
+  assertAdmission(cwd: string): void {
+    this.maintenanceGate.assertAdmission(this.canonicalizeCwd(cwd))
+  }
+
+  subscribeAdmission(listener: () => void) {
+    return this.maintenanceGate.subscribeAdmission(listener)
+  }
+
+  withMaintenance<T>(
+    cwd: string | undefined,
+    operation: (permit: RuntimeMaintenancePermit) => Promise<T>,
+  ) {
+    this.assertActive()
+    return this.maintenanceGate.maintenance(
+      cwd === undefined ? undefined : this.canonicalizeCwd(cwd),
+      operation,
+    )
   }
 
   getHost(scope: ProjectHostScope): ProjectHostSummary | null {
@@ -395,6 +422,11 @@ export class ProjectHostPool {
   async createRuntime(scope: ProjectHostScope, target: ProjectRuntimeTarget): Promise<ProjectRuntimeDescriptor> {
     this.assertActive()
     const normalizedScope = this.normalizeScope(scope)
+    return this.maintenanceGate.operation(normalizedScope.cwd, () =>
+      this.createAdmittedRuntime(normalizedScope, target))
+  }
+
+  private async createAdmittedRuntime(normalizedScope: ProjectHostScope, target: ProjectRuntimeTarget) {
     const entry = await this.acquireHostForSession(normalizedScope)
     const sessionDir = target.sessionDir === undefined
       ? undefined
@@ -519,6 +551,7 @@ export class ProjectHostPool {
     command: LocalPiRpcCommand,
     expectedGeneration?: number,
     timeoutMs?: number,
+    maintenancePermit?: RuntimeMaintenancePermit,
   ): Promise<{ runtime: ProjectRuntimeDescriptor; response: LocalPiRpcResponse }> {
     this.assertActive()
     const entry = this.runtimeOwners.get(runtimeId)
@@ -559,7 +592,7 @@ export class ProjectHostPool {
         runtimeId,
         runtimeGeneration: runtime.descriptor.generation,
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
-      })
+      }, maintenancePermit)
       const parsed = runtimeCommandResultSchema.safeParse(result)
       if (!parsed.success) {
         throw new ProjectHostPoolError(
@@ -657,7 +690,8 @@ export class ProjectHostPool {
     runtimeId: string,
     expectedGeneration?: number,
     timeoutMs?: number,
-  ): Promise<ProjectRuntimeDescriptor> {
+    maintenancePermit?: RuntimeMaintenancePermit,
+  ): Promise<ProjectRuntimeDescriptor & { interactionRequired?: true; reloadFailed?: true }> {
     this.assertActive()
     const entry = this.runtimeOwners.get(runtimeId)
     if (!entry) {
@@ -687,15 +721,28 @@ export class ProjectHostPool {
       )
     }
 
-    const result = await this.requestHost(
-      entry,
-      { type: 'runtime.reload' },
-      {
-        runtimeId,
-        runtimeGeneration: runtime.descriptor.generation,
-        ...(timeoutMs === undefined ? {} : { timeoutMs }),
-      },
-    )
+    this.maintenanceGate.assertAdmission(entry.cwd, maintenancePermit)
+    if (this.pendingReloads.has(runtimeId)) throw new RuntimeMaintenanceBusyError()
+    const reload = {
+      entry, runtime, generation: runtime.descriptor.generation,
+      hostEpoch: entry.controller.getSnapshot().hostEpoch,
+    }
+    this.pendingReloads.set(runtimeId, reload)
+    let result: PiHostDto
+    try {
+      result = await this.requestHost(
+        entry,
+        { type: 'runtime.reload', ...(maintenancePermit ? { configurationApply: true as const } : {}) },
+        {
+          runtimeId,
+          runtimeGeneration: runtime.descriptor.generation,
+          ...(timeoutMs === undefined ? {} : { timeoutMs }),
+        },
+        maintenancePermit,
+      )
+    } finally {
+      if (this.pendingReloads.get(runtimeId) === reload) this.pendingReloads.delete(runtimeId)
+    }
     const parsed = runtimeReloadResultSchema.safeParse(result)
     if (!parsed.success) {
       throw new ProjectHostPoolError(
@@ -706,7 +753,11 @@ export class ProjectHostPool {
     }
     this.updateRuntimeDescriptor(entry, runtimeId, parsed.data.runtime)
     this.publish()
-    return structuredClone(runtime.descriptor)
+    return {
+      ...structuredClone(runtime.descriptor),
+      ...(parsed.data.interactionRequired ? { interactionRequired: true as const } : {}),
+      ...(!parsed.data.reloaded ? { reloadFailed: true as const } : {}),
+    }
   }
 
   async renameSession(
@@ -716,6 +767,15 @@ export class ProjectHostPool {
   ): Promise<{ sessionId: string; name: string }> {
     this.assertActive()
     const normalizedScope = this.normalizeScope(scope)
+    return this.maintenanceGate.operation(normalizedScope.cwd, () =>
+      this.renameAdmittedSession(normalizedScope, sessionFile, name))
+  }
+
+  private async renameAdmittedSession(
+    normalizedScope: ProjectHostScope,
+    sessionFile: string,
+    name: string,
+  ): Promise<{ sessionId: string; name: string }> {
     const normalizedFile = normalizePath(sessionFile, 'sessionFile')
     const lease = canonicalLease(normalizedFile)
     const runtimeId = this.leaseOwner(lease)
@@ -796,6 +856,7 @@ export class ProjectHostPool {
     }
     const runtime = entry.runtimes.get(runtimeId)
     if (!runtime) return null
+    this.maintenanceGate.assertAdmission(entry.cwd)
     if (expectedGeneration !== undefined && runtime.descriptor.generation !== expectedGeneration) {
       throw new ProjectHostPoolError(
         'RUNTIME_STALE_GENERATION',
@@ -848,7 +909,7 @@ export class ProjectHostPool {
     const entry = this.hosts.get(scopeKey(normalizedScope))
     if (!entry) return null
     if (entry.state === 'stopped') return this.hostSummary(entry)
-    await this.stopEntry(entry)
+    await this.maintenanceGate.operation(normalizedScope.cwd, () => this.stopEntry(entry))
     return this.hostSummary(entry)
   }
 
@@ -866,6 +927,11 @@ export class ProjectHostPool {
   async restart(scope: ProjectHostScope): Promise<ProjectHostSummary> {
     this.assertActive()
     const normalizedScope = this.normalizeScope(scope)
+    return this.maintenanceGate.operation(normalizedScope.cwd, () =>
+      this.restartAdmittedHost(normalizedScope))
+  }
+
+  private async restartAdmittedHost(normalizedScope: ProjectHostScope) {
     const key = scopeKey(normalizedScope)
     const current = this.hosts.get(key)
     if (current) await this.stopEntry(current)
@@ -891,6 +957,7 @@ export class ProjectHostPool {
     this.sessionLeases.clear()
     this.pendingRuntimeOwners.clear()
     this.pendingSessionLeases.clear()
+    this.pendingReloads.clear()
     this.listeners.clear()
     this.uiRequestListeners.clear()
     this.eventListeners.clear()
@@ -1061,6 +1128,7 @@ export class ProjectHostPool {
   }
 
   private getOrCreateHost(scope: ProjectHostScope): HostEntry {
+    this.maintenanceGate.assertAdmission(scope.cwd)
     const key = scopeKey(scope)
     const existing = this.hosts.get(key)
     if (existing) {
@@ -1109,11 +1177,19 @@ export class ProjectHostPool {
     }
     entry.detachController = controller.subscribe((snapshot) => this.handleControllerSnapshot(entry, snapshot))
     entry.detachUiRequests = controller.subscribeUiRequests?.((event) => {
+      if (!this.adoptReloadGeneration(entry, event)) {
+        entry.controller.acknowledgeEvent?.(event)
+        return
+      }
       for (const listener of this.uiRequestListeners) {
         try { listener(event) } catch { /* isolate Main consumers */ }
       }
     }) ?? null
     entry.detachEvents = controller.subscribeEvents?.((event) => {
+      if (!this.adoptReloadGeneration(entry, event)) {
+        entry.controller.acknowledgeEvent?.(event)
+        return
+      }
       for (const listener of this.eventListeners) {
         try { listener(event) } catch { /* isolate Main consumers */ }
       }
@@ -1144,6 +1220,23 @@ export class ProjectHostPool {
       if (firstCrash) this.recordHostDiagnostic(entry.error)
       this.publish()
     })
+  }
+
+  private adoptReloadGeneration(entry: HostEntry, event: PiHostEventEnvelope | PiHostUiRequestEventEnvelope): boolean {
+    const reload = this.pendingReloads.get(event.runtimeId)
+    if (!reload) return true
+    if (reload.entry !== entry || this.hosts.get(entry.hostKey) !== entry ||
+        this.runtimeOwners.get(event.runtimeId) !== entry ||
+        entry.runtimes.get(event.runtimeId) !== reload.runtime ||
+        event.hostEpoch !== reload.hostEpoch ||
+        event.hostEpoch !== entry.controller.getSnapshot().hostEpoch ||
+        (event.runtimeGeneration !== reload.generation && event.runtimeGeneration !== reload.generation + 1)) return false
+    if (event.runtimeGeneration === reload.generation || reload.runtime.descriptor.generation !== reload.generation) return true
+    // The SDK emits new-generation startup UI before its reload response settles.
+    // Admit exactly that next generation only for this in-flight reload owner.
+    reload.runtime.descriptor = { ...reload.runtime.descriptor, generation: event.runtimeGeneration }
+    this.publish()
+    return true
   }
 
   private handleControllerSnapshot(entry: HostEntry, snapshot: PiHostControllerSnapshot): void {
@@ -1258,9 +1351,14 @@ export class ProjectHostPool {
     entry: HostEntry,
     command: PiHostCommand,
     options?: PiHostRequestOptions,
+    maintenancePermit?: RuntimeMaintenancePermit,
   ): Promise<PiHostDto> {
     try {
-      return await entry.controller.request(command, options)
+      return await this.maintenanceGate.operation(
+        entry.cwd,
+        () => entry.controller.request(command, options),
+        maintenancePermit,
+      )
     } catch (error) {
       if (
         this.hosts.get(entry.hostKey) !== entry ||

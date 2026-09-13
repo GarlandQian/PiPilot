@@ -13,7 +13,7 @@ describe('embedded Pi host packaging', () => {
       devDependencies?: Record<string, string>
     }
 
-    expect(manifest.dependencies?.['@earendil-works/pi-coding-agent']).toBe('0.84.2')
+    expect(manifest.dependencies?.['@earendil-works/pi-coding-agent']).toBe('0.85.1')
     expect(manifest.devDependencies?.['@earendil-works/pi-coding-agent']).toBeUndefined()
   })
 

@@ -9,10 +9,11 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { FormDialog, FormRow } from '@/components/ui/form'
+import { FormDialog } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { useT } from '@/i18n'
+import { ModelsAdvancedFields, ModelsFormField as FormRow, ModelsFormGroup } from './ModelsFormFields'
 import {
   costFieldValid,
   costGroupComplete,
@@ -69,6 +70,7 @@ export function ModelsModelFormDialog({
   const [touched, setTouched] = React.useState<Partial<Record<ErrorField, boolean>>>({})
   const [submitAttempted, setSubmitAttempted] = React.useState(false)
   const [confirmDiscard, setConfirmDiscard] = React.useState(false)
+  const [pricingOpen, setPricingOpen] = React.useState(false)
 
   const idId = React.useId()
   const nameId = React.useId()
@@ -81,6 +83,7 @@ export function ModelsModelFormDialog({
   const costOutputId = React.useId()
   const costCacheReadId = React.useId()
   const costCacheWriteId = React.useId()
+  const costFeedbackId = React.useId()
 
   // Re-initialize once per opening; `initial` is the snapshot for that session.
   React.useEffect(() => {
@@ -91,6 +94,7 @@ export function ModelsModelFormDialog({
       setTouched({})
       setSubmitAttempted(false)
       setConfirmDiscard(false)
+      setPricingOpen([value.costInput, value.costOutput, value.costCacheRead, value.costCacheWrite].some((cost) => cost.trim() !== ''))
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
@@ -147,6 +151,7 @@ export function ModelsModelFormDialog({
 
   const handleSubmit = () => {
     if (Object.keys(errors).length > 0) {
+      if (errors.cost) setPricingOpen(true)
       setSubmitAttempted(true)
       setTouched({ id: true, contextWindow: true, maxTokens: true, cost: true })
       return
@@ -173,6 +178,7 @@ export function ModelsModelFormDialog({
         value={value}
         inputMode="decimal"
         aria-invalid={(showError('cost') && errors.cost !== undefined) || undefined}
+        aria-describedby={showError('cost') && errors.cost ? costFeedbackId : undefined}
         className="font-mono"
         onChange={(event) => patch(event.target.value)}
         onBlur={() => touch('cost')}
@@ -188,13 +194,18 @@ export function ModelsModelFormDialog({
         title={t(mode === 'add'
           ? 'settings.models.form.titleAddModel'
           : 'settings.models.form.titleEditModel')}
+        description={t('settings.models.form.modelIntro')}
+        className="sm:max-w-[680px]"
+        bodyClassName="py-6"
         cancelLabel={t('common.cancel')}
         submitLabel={t(mode === 'add'
           ? 'settings.models.form.submitAdd'
           : 'settings.models.form.submitEdit')}
         onSubmit={handleSubmit}
       >
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-6">
+          <ModelsFormGroup title={t('settings.models.form.identitySection')}>
+          <div className="grid gap-4 sm:grid-cols-2">
           <FormRow
             label={<span>{t('settings.models.form.id')}{requiredMark}</span>}
             htmlFor={idId}
@@ -203,6 +214,7 @@ export function ModelsModelFormDialog({
           >
             <Input
               id={idId}
+              aria-describedby={mode === 'add' || (showError('id') && errors.id) ? `${idId}-feedback` : undefined}
               value={draft.id}
               aria-invalid={(showError('id') && errors.id !== undefined) || undefined}
               className="font-mono"
@@ -219,7 +231,10 @@ export function ModelsModelFormDialog({
               onChange={(event) => update({ name: event.target.value })}
             />
           </FormRow>
+          </div>
+          </ModelsFormGroup>
 
+          <ModelsFormGroup title={t('settings.models.form.capabilitiesSection')}>
           <FormRow label={t('settings.models.form.reasoning')} htmlFor={reasoningId}>
             <div className="flex min-h-[var(--control-h)] items-center">
               <Switch
@@ -253,7 +268,10 @@ export function ModelsModelFormDialog({
               </div>
             </div>
           </FormRow>
+          </ModelsFormGroup>
 
+          <ModelsFormGroup title={t('settings.models.form.limitsSection')}>
+          <div className="grid gap-4 sm:grid-cols-2">
           <FormRow
             label={t('settings.models.form.contextWindow')}
             htmlFor={contextWindowId}
@@ -261,6 +279,7 @@ export function ModelsModelFormDialog({
           >
             <Input
               id={contextWindowId}
+              aria-describedby={showError('contextWindow') && errors.contextWindow ? `${contextWindowId}-feedback` : undefined}
               value={draft.contextWindow}
               inputMode="numeric"
               placeholder="200000"
@@ -280,6 +299,7 @@ export function ModelsModelFormDialog({
           >
             <Input
               id={maxTokensId}
+              aria-describedby={showError('maxTokens') && errors.maxTokens ? `${maxTokensId}-feedback` : undefined}
               value={draft.maxTokens}
               inputMode="numeric"
               placeholder="8192"
@@ -290,11 +310,17 @@ export function ModelsModelFormDialog({
             />
           </FormRow>
 
+          </div>
+          </ModelsFormGroup>
+
+          <ModelsAdvancedFields open={pricingOpen} onOpenChange={setPricingOpen}
+            title={t('settings.models.form.pricingSection')} description={t('settings.models.form.pricingDescription')}>
           <FormRow
             label={t('settings.models.form.cost')}
             error={showError('cost') ? errors.cost : undefined}
+            feedbackId={costFeedbackId}
           >
-            <div className="flex flex-wrap gap-2">
+            <div className="grid grid-cols-2 gap-3">
               {costField(
                 costInputId,
                 t('settings.models.form.costInput'),
@@ -321,6 +347,8 @@ export function ModelsModelFormDialog({
               )}
             </div>
           </FormRow>
+          </ModelsAdvancedFields>
+          <p className="text-micro leading-relaxed text-muted-foreground">{t('settings.models.form.draftNote')}</p>
         </div>
       </FormDialog>
 

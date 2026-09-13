@@ -6,13 +6,22 @@ import { join } from 'node:path'
 interface PiSdkFixtureOptions {
   agentDir: string
   globalPackages?: readonly string[]
+  includeReasoningModel?: boolean
   completionDelays?: Readonly<Record<string, number>>
   promptDelays?: Readonly<Record<string, number>>
+  /** Hold the provider response until a test has completed a real UI action. */
+  promptGates?: Readonly<Record<string, Promise<void>>>
   reasoningDelays?: Readonly<Record<string, number>>
+  reasoningGates?: Readonly<Record<string, Promise<void>>>
   retryEnabled?: boolean
   writeToolPrompts?: Readonly<Record<string, {
     path: string
     content: string
+  }>>
+  /** Emit observable assistant commentary before the real SDK write call. */
+  writeToolCommentary?: Readonly<Record<string, {
+    text: string
+    delayMs: number
   }>>
 }
 
@@ -100,6 +109,7 @@ export async function startPiSdkFixture(
         const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown
         const prompt = latestUserPrompt(body)
         prompts.push(prompt)
+        await options.promptGates?.[prompt]
         const promptDelay = options.promptDelays?.[prompt] ?? 0
         if (promptDelay > 0) await delay(promptDelay)
         const model = typeof body === 'object' && body !== null &&
@@ -116,6 +126,21 @@ export async function startPiSdkFixture(
         const writeTool = options.writeToolPrompts?.[prompt]
         const writeToolCallId = 'call_pipilot_fixture_write'
         if (writeTool && !hasToolResult(body, writeToolCallId)) {
+          const commentary = options.writeToolCommentary?.[prompt]
+          if (commentary) {
+            response.write(`data: ${JSON.stringify({
+              id: 'chatcmpl-pipilot-fixture-write',
+              object: 'chat.completion.chunk',
+              created,
+              model,
+              choices: [{
+                index: 0,
+                delta: { role: 'assistant', content: commentary.text },
+                finish_reason: null,
+              }],
+            })}\n\n`)
+            if (commentary.delayMs > 0) await delay(commentary.delayMs)
+          }
           response.write(`data: ${JSON.stringify({
             id: 'chatcmpl-pipilot-fixture-write',
             object: 'chat.completion.chunk',
@@ -170,6 +195,7 @@ export async function startPiSdkFixture(
             }],
           })}\n\n`)
           if (reasoningDelay > 0) await delay(reasoningDelay)
+          await options.reasoningGates?.[prompt]
         }
         response.write(`data: ${JSON.stringify({
           id: 'chatcmpl-pipilot-fixture',
@@ -244,6 +270,15 @@ export async function startPiSdkFixture(
               maxTokens: 64_000,
               cost: { input: 0.5, output: 1, cacheRead: 0, cacheWrite: 0 },
             },
+            ...(options.includeReasoningModel ? [{
+              id: 'fake-reasoning',
+              name: 'Fake Reasoning',
+              reasoning: true,
+              input: ['text', 'image'],
+              contextWindow: 500_000,
+              maxTokens: 64_000,
+              cost: { input: 0.5, output: 1, cacheRead: 0, cacheWrite: 0 },
+            }] : []),
           ],
         },
       },
@@ -345,6 +380,7 @@ export default function pipilotE2eExtension(pi) {
   return {
     env: {
       PI_CODING_AGENT_DIR: options.agentDir,
+      PIPILOT_E2E_AGENT_DIR: options.agentDir,
       PI_OFFLINE: '1',
       PI_SKIP_VERSION_CHECK: '1',
       PI_TELEMETRY: '0',

@@ -27,6 +27,7 @@ import {
 } from '../../src/shared/ipc/contracts'
 import {
   localPiRendererRpcResponseSchema,
+  localPiRuntimeChangedEventSchema,
   localPiRpcResponseSchema,
   type LocalPiRpcResponse,
   type LocalPiSessionTreeNode,
@@ -46,7 +47,7 @@ const validResponse = {
   version: '0.0.1',
   platform: 'darwin',
   arch: 'arm64',
-  electronVersion: '43.4.1',
+  electronVersion: '44.2.0',
   mode: 'development' as const,
 }
 const emptyEvent = {} as IpcMainInvokeEvent
@@ -184,7 +185,7 @@ describe('settings IPC schemas', () => {
         context: { requestId },
         patch: {
           appearance: { uiFontSize: 18, theme: 'dark' },
-          composer: { sendShortcut: 'mod-enter' },
+          composer: { sendShortcut: 'mod-enter', runningSubmit: 'steer' },
           terminal: { fontFamily: 'Maple Mono', fontSize: 16 },
         },
       }).success,
@@ -205,6 +206,12 @@ describe('settings IPC schemas', () => {
       settingsUpdateContract.requestSchema.safeParse({
         context: { requestId },
         patch: { composer: { sendShortcut: 'space' } },
+      }).success,
+    ).toBe(false)
+    expect(
+      settingsUpdateContract.requestSchema.safeParse({
+        context: { requestId },
+        patch: { composer: { runningSubmit: 'immediate' } },
       }).success,
     ).toBe(false)
     expect(
@@ -232,6 +239,24 @@ describe('settings IPC schemas', () => {
 })
 
 describe('local Pi IPC schemas', () => {
+  it('validates bounded path-free scoped catalog hints without changing ordinary snapshots', () => {
+    const event = { eventId: requestId, snapshot: { state: 'stopped', generation: 0,
+      cwd: null, sessionFile: null, sessionState: null, commands: [], stderr: '', diagnostics: [] } }
+    expect(localPiRuntimeChangedEventSchema.safeParse(event).success).toBe(true)
+    const hint = { scope: { kind: 'projectless' }, revision: 1 }
+    expect(localPiRuntimeChangedEventSchema.safeParse({ ...event, catalogInvalidation: hint }).success).toBe(true)
+    for (const revision of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(localPiRuntimeChangedEventSchema.safeParse({ ...event,
+        catalogInvalidation: { ...hint, revision } }).success).toBe(false)
+    }
+    expect(localPiRuntimeChangedEventSchema.safeParse({ ...event, catalogInvalidation: {
+      ...hint, scope: { kind: 'projectless', cwd: '/private/project' },
+    } }).success).toBe(false)
+    expect(localPiRuntimeChangedEventSchema.safeParse({ ...event, catalogInvalidation: {
+      ...hint, sessionFile: '/private/session.jsonl',
+    } }).success).toBe(false)
+  })
+
   it('keeps the renderer-ready handshake strict and acknowledgement-only', () => {
     expect(localPiRendererReadyContract.requestSchema.safeParse({
       context: { requestId },
@@ -258,6 +283,26 @@ describe('local Pi IPC schemas', () => {
       context: { requestId },
       command: { type: 'set_thinking_level', level: 'max' },
     }).success).toBe(true)
+    expect(localPiCommandContract.requestSchema.safeParse({
+      context: { requestId },
+      command: {
+        type: 'remove_queued_message',
+        kind: 'followUp',
+        itemIndex: 0,
+        steering: [],
+        followUp: [{ message: 'Remove this exact item.' }],
+      },
+    }).success).toBe(true)
+    expect(localPiCommandContract.requestSchema.safeParse({
+      context: { requestId },
+      command: {
+        type: 'remove_queued_message',
+        kind: 'followUp',
+        itemIndex: -1,
+        steering: [],
+        followUp: [],
+      },
+    }).success).toBe(false)
     expect(localPiCommandContract.requestSchema.safeParse({
       context: { requestId },
       command: { type: 'steer', message: 'Adjust', id: 'renderer-id' },
@@ -769,6 +814,7 @@ function darkSettingsForEvent() {
     },
     composer: {
       sendShortcut: 'enter',
+      runningSubmit: 'queue',
     },
     terminal: {
       fontFamily: '',

@@ -13,6 +13,7 @@ export const INSPECTOR_MIN_WIDTH = 280
 export const INSPECTOR_DEFAULT_WIDTH = 360
 export const INSPECTOR_MAX_WIDTH = 480
 export const COMPACT_FRAME_MAX_WIDTH = 1_279
+export const COMPACT_SETTINGS_MAX_WIDTH = 959
 
 export const SETTINGS_ROUTE_IDS = [
   'general',
@@ -141,11 +142,12 @@ export function deriveFrameLayoutMode(
   route: AppRoute,
   frameWidth: number,
 ): FrameLayoutMode {
-  const compact = !Number.isFinite(frameWidth) || frameWidth <= COMPACT_FRAME_MAX_WIDTH
   if (route.workspace === 'settings') {
-    return compact ? 'settings-compact' : 'settings-wide'
+    return !Number.isFinite(frameWidth) || frameWidth <= COMPACT_SETTINGS_MAX_WIDTH
+      ? 'settings-compact' : 'settings-wide'
   }
-  return compact ? 'conversation-compact' : 'conversation-wide'
+  return !Number.isFinite(frameWidth) || frameWidth <= COMPACT_FRAME_MAX_WIDTH
+    ? 'conversation-compact' : 'conversation-wide'
 }
 
 export function normalizePanelLayout(

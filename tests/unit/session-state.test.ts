@@ -6,9 +6,11 @@ import type {
 import {
   deriveSessionActivityState,
   deriveOfficialSessionState,
+  isOfficialSessionActiveRow,
   isOfficialSessionOpeningRow,
   paginateSessions,
   runtimeStatusForOfficialSession,
+  runtimeStateForOfficialSession,
   sameConversationScope,
   sessionPageForId,
 } from '../../src/store/workspace-state'
@@ -149,6 +151,42 @@ describe('workspace session state', () => {
       selectionToken: duplicateA.selectionToken,
       sessionId: 'single-id',
     })).toBe(true)
+  })
+
+  it('selects only the exact runtime-owned row when official session ids collide', () => {
+    const duplicateA = session('same-id', 'a'.repeat(32), '2026-08-08T01:00:00.000Z')
+    const duplicateB = session('same-id', 'b'.repeat(32), '2026-08-08T02:00:00.000Z')
+    const siblings = [duplicateA, duplicateB]
+
+    expect(isOfficialSessionActiveRow(
+      duplicateA,
+      siblings,
+      projectScope,
+      'same-id',
+    )).toBe(false)
+    expect(isOfficialSessionActiveRow(
+      duplicateB,
+      siblings,
+      projectScope,
+      'same-id',
+      true,
+    )).toBe(true)
+  })
+
+  it('keeps a background Session queued count on its exact opaque row', () => {
+    const background = session('queued-id', 'q'.repeat(32), '2026-08-08T02:00:00.000Z')
+    const runtimeState = runtimeStateForOfficialSession(background, [{
+      scope: projectScope,
+      sessionId: background.sessionId,
+      selectionToken: background.selectionToken,
+      status: 'running',
+      pendingMessageCount: 2,
+    }], [background])
+
+    expect(deriveSessionActivityState({
+      status: runtimeState?.status,
+      pendingMessageCount: runtimeState?.pendingMessageCount,
+    })).toBe('waiting')
   })
 
   it('projects authoritative activity states without deleting released sessions', () => {

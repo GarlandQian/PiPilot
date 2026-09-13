@@ -4,8 +4,12 @@ import {
   TbGitBranch,
   TbLayoutSidebarRightCollapse,
   TbLayoutSidebarRightExpand,
-  TbMessageCircle,
+  TbMessagePlus,
+  TbFileDiff,
+  TbLoader2,
 } from 'react-icons/tb'
+import { ConversationNavigation } from './ConversationNavigation'
+import type { AgentStatus, ConversationOutlineItem } from '@/types/chat'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -24,6 +28,7 @@ import {
 import type { PiSessionStats } from '@/store/pi-rpc'
 
 export interface ChatHeaderProps {
+  ownerKey?: string | null
   title: string
   sessionVisible: boolean
   inspectorOpen: boolean
@@ -31,9 +36,17 @@ export interface ChatHeaderProps {
   stats: PiSessionStats | null
   onToggleInspector: () => void
   onCompact: () => void
+  compacting?: boolean
+  projectName?: string
+  status?: AgentStatus
+  outline?: readonly ConversationOutlineItem[]
+  onNavigate?: (entryId: string) => void
+  onNewConversation?: () => void
+  onShowChanges?: () => void
 }
 
 export function ChatHeader({
+  ownerKey,
   title,
   sessionVisible,
   inspectorOpen,
@@ -41,6 +54,13 @@ export function ChatHeader({
   stats,
   onToggleInspector,
   onCompact,
+  compacting = false,
+  projectName,
+  status,
+  outline = [],
+  onNavigate,
+  onNewConversation,
+  onShowChanges,
 }: ChatHeaderProps) {
   const t = useT()
   const locale = useLocale()
@@ -55,24 +75,34 @@ export function ChatHeader({
   const hasDetails = Boolean(branch || contextLabel || costLabel)
 
   return (
-    <header className="flex h-8 shrink-0 items-center gap-2 border-b border-border/60 bg-background px-3">
-      <TbMessageCircle className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-      <h1 className="min-w-0 flex-1 truncate text-caption font-medium text-foreground">
-        {title}
-      </h1>
+    <header className="flex min-h-18 min-w-0 shrink-0 items-center gap-3 border-b border-border/45 bg-background px-6 py-3">
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-center gap-2 text-micro text-muted-foreground">
+          <span className="truncate">{projectName || t('conversation.projectless')}</span>
+          {branch ? <span className="flex min-w-0 items-center gap-1 truncate"><TbGitBranch className="size-3 shrink-0" aria-hidden />{branch}</span> : null}
+        </div>
+        <h1 className="mt-1 truncate text-title font-medium text-foreground">{title}</h1>
+      </div>
+      {sessionVisible && status && status !== 'idle' ? <span className="flex shrink-0 items-center gap-1.5 text-caption text-muted-foreground" role="status" data-conversation-status={status}>
+        {(status === 'running' || status === 'planning') ? <TbLoader2 className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden /> : null}
+        {t(`agent.status.${status}`)}
+      </span> : null}
 
       <div className="flex shrink-0 items-center gap-0.5">
+        {onNavigate ? <ConversationNavigation ownerKey={ownerKey} items={outline} onNavigate={onNavigate} /> : null}
+        {onShowChanges ? <Button variant="ghost" size="icon-sm" onClick={onShowChanges} aria-label={t('header.showChanges')} title={t('header.showChanges')}><TbFileDiff aria-hidden /></Button> : null}
         {sessionVisible && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon-xs" aria-label={t('header.agentActions')}>
+              <Button variant="ghost" size="icon-sm" aria-label={t('header.agentActions')}>
                 <TbDots aria-hidden />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-64">
+              {onNewConversation ? <DropdownMenuItem onSelect={onNewConversation}><TbMessagePlus aria-hidden />{t('header.newConversation')}</DropdownMenuItem> : null}
               {hasDetails ? (
                 <>
-                  <DropdownMenuLabel className="px-2 py-1 text-micro font-medium uppercase text-muted-foreground">
+                  <DropdownMenuLabel className="px-2 py-1.5 text-caption font-medium text-muted-foreground">
                     {t('header.sessionDetails')}
                   </DropdownMenuLabel>
                   <div className="space-y-1 px-2 pb-1.5 text-caption">
@@ -98,7 +128,7 @@ export function ChatHeader({
                   <DropdownMenuSeparator />
                 </>
               ) : null}
-              <DropdownMenuItem onSelect={onCompact}>
+              <DropdownMenuItem onSelect={onCompact} disabled={compacting}>
                 <TbArrowsMinimize aria-hidden />
                 {t('header.compact')}
               </DropdownMenuItem>
@@ -109,7 +139,7 @@ export function ChatHeader({
           <TooltipTrigger asChild>
             <Button
               variant="ghost"
-              size="icon-xs"
+              size="icon-sm"
               aria-label={inspectorOpen ? t('header.collapsePanel') : t('header.expandPanel')}
               onClick={onToggleInspector}
             >

@@ -1,114 +1,76 @@
-import { TbRefresh } from 'react-icons/tb'
-import { Badge } from '@/components/ui/badge'
+import * as React from 'react'
+import { TbCpu, TbRefresh } from 'react-icons/tb'
 import { Button } from '@/components/ui/button'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { SettingRow, SettingSection } from './common'
 import { useT } from '@/i18n'
-import { SUPPORTED_PI_VERSION } from '@/shared/local-pi'
+import { cn } from '@/lib/utils'
+import { SUPPORTED_PI_VERSION, type LocalPiRuntimeSnapshot } from '@/shared/local-pi'
 import { useSettings, useUpdateSettings } from '@/store/settings'
-import type { ComposerSendShortcut } from '@/shared/settings'
 
 interface GeneralSettingsProps {
   restartBusy: boolean
   restartMessage: string | null
   restartAvailable: boolean
+  runtimeState: LocalPiRuntimeSnapshot['state']
   onRestart(): void
 }
 
-export function GeneralSettings({
-  restartBusy,
-  restartMessage,
-  restartAvailable,
-  onRestart,
-}: GeneralSettingsProps) {
+export function GeneralSettings({ restartBusy, restartMessage, restartAvailable, runtimeState, onRestart }: GeneralSettingsProps) {
   const t = useT()
   const { composer } = useSettings()
   const { update } = useUpdateSettings()
-
-  return (
-    <>
-      <SettingSection
-        title={t('settings.general.localPi')}
-        desc={t('settings.general.localPiDesc')}
-      >
-        <div className="flex items-center justify-between gap-3 px-2 py-1">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <Badge variant="secondary">{t('settings.about.piRuntime')}</Badge>
-              <span className="font-mono text-caption text-foreground">
-                v{SUPPORTED_PI_VERSION}
-              </span>
-            </div>
-            <p className="mt-2 break-all font-mono text-caption text-muted-foreground">
-              {t('settings.about.piConfig')}
-            </p>
-            <p className="mt-1 text-micro text-muted-foreground">
-              {t('settings.about.piHint')}
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center justify-between gap-3 px-2">
-          <p className="text-micro text-muted-foreground">
-            {t('settings.general.piRestartDesc')}
-          </p>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={restartBusy || !restartAvailable}
-            onClick={onRestart}
-          >
-            <TbRefresh className={restartBusy ? 'animate-spin' : ''} aria-hidden />
-            {restartBusy
-              ? t('settings.general.piRestarting')
-              : t('settings.general.piRestart')}
-          </Button>
-        </div>
-        {restartMessage && (
-          <p className="px-2 text-caption text-muted-foreground" role="status">
-            {restartMessage}
-          </p>
-        )}
-      </SettingSection>
-      <SettingSection
-        title={t('settings.general.composer')}
-        desc={t('settings.general.composerDesc')}
-      >
-        <SettingRow
-          label={t('settings.general.sendShortcut')}
-          desc={t('settings.general.sendShortcutDesc')}
-        >
-          <RadioGroup
-            value={composer.sendShortcut}
-            onValueChange={(value) => update({
-              composer: { sendShortcut: value as ComposerSendShortcut },
-            })}
-            className="flex flex-wrap justify-end gap-3"
-          >
-            <label className="flex cursor-pointer items-center gap-1.5 text-app">
-              <RadioGroupItem
-                value="enter"
-                aria-label={t('settings.general.sendShortcut.enter')}
-              />
-              {t('settings.general.sendShortcut.enter')}
-            </label>
-            <label className="flex cursor-pointer items-center gap-1.5 text-app">
-              <RadioGroupItem
-                value="mod-enter"
-                aria-label={t('settings.general.sendShortcut.modEnter')}
-              />
-              {t('settings.general.sendShortcut.modEnter')}
-            </label>
-          </RadioGroup>
-        </SettingRow>
-      </SettingSection>
-      <SettingSection
-        title={t('settings.general.storage')}
-        desc={t('settings.general.storageDesc')}
-      >
-        <p className="text-caption text-muted-foreground">
-          {t('settings.general.localStorageNote')}
-        </p>
-      </SettingSection>
-    </>
-  )
+  const [confirmRestart, setConfirmRestart] = React.useState(false)
+  const runtimeFailed = runtimeState === 'crashed' || runtimeState === 'error'
+  const runtimePending = runtimeState === 'starting' || runtimeState === 'replacing'
+  const choiceClass = 'flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-2 text-caption has-[[data-state=checked]]:border-ring/60 has-[[data-state=checked]]:bg-accent/50'
+  return <>
+    <SettingSection title={t('settings.general.composer')} desc={t('settings.general.composerDesc')}>
+      <SettingRow label={t('settings.general.sendShortcut')} desc={t('settings.general.sendShortcutDesc')}>
+        <RadioGroup value={composer.sendShortcut} aria-label={t('settings.general.sendShortcut')} onValueChange={(value) => {
+          if (value === 'enter' || value === 'mod-enter') update({ composer: { sendShortcut: value } })
+        }} className="flex flex-wrap gap-2">
+          {(['enter', 'mod-enter'] as const).map((value) => {
+            const label = t(value === 'enter' ? 'settings.general.sendShortcut.enter' : 'settings.general.sendShortcut.modEnter')
+            return <label key={value} className={choiceClass}><RadioGroupItem value={value} aria-label={label} /><span>{label}</span></label>
+          })}
+        </RadioGroup>
+      </SettingRow>
+      <SettingRow label={t('settings.general.runningSubmit')} desc={t('settings.general.runningSubmitDesc')}>
+        <RadioGroup value={composer.runningSubmit} aria-label={t('settings.general.runningSubmit')} onValueChange={(value) => {
+          if (value === 'queue' || value === 'steer') update({ composer: { runningSubmit: value } })
+        }} className="flex flex-wrap gap-2">
+          {(['queue', 'steer'] as const).map((value) => <label key={value} className={choiceClass}><RadioGroupItem value={value} aria-label={t(`settings.general.runningSubmit.${value}`)} /><span>{t(`settings.general.runningSubmit.${value}`)}</span></label>)}
+        </RadioGroup>
+      </SettingRow>
+    </SettingSection>
+    <SettingSection title={t('settings.general.localPi')} desc={t('settings.general.localPiDesc')}>
+      <div className="flex flex-wrap items-center gap-3 py-3">
+        <TbCpu className="size-5 text-muted-foreground" aria-hidden />
+        <span className="text-app font-medium">{t('settings.about.piRuntime')}</span>
+        <span className="font-mono text-caption text-muted-foreground">v{SUPPORTED_PI_VERSION}</span>
+        <span className="ml-auto flex items-center gap-2 text-caption text-muted-foreground">
+          <span className={cn('size-1.5 rounded-full', runtimeState === 'ready' ? 'bg-success' : runtimeFailed ? 'bg-destructive' : 'bg-muted-foreground')} aria-hidden />
+          {t(runtimeFailed ? 'settings.redesign.runtimeError' : runtimePending ? 'settings.general.piRestarting' : runtimeState === 'ready' ? 'settings.redesign.runtimeActive' : 'settings.redesign.runtimeInactive')}
+        </span>
+      </div>
+      <p className="font-mono text-caption text-muted-foreground">{t('settings.about.piConfig')}</p>
+      <SettingRow label={t('settings.general.piRestart')} desc={t('settings.general.piRestartDesc')}>
+        <Button variant="outline" size="sm" disabled={restartBusy || !restartAvailable} onClick={() => setConfirmRestart(true)}>
+          <TbRefresh className={restartBusy ? 'animate-spin' : ''} aria-hidden />{t(restartBusy ? 'settings.general.piRestarting' : 'settings.general.piRestart')}
+        </Button>
+      </SettingRow>
+      {restartMessage ? <p className="text-caption text-muted-foreground" role="status">{restartMessage}</p> : null}
+    </SettingSection>
+    <SettingSection title={t('settings.general.storage')} desc={t('settings.general.storageDesc')}>
+      <p className="text-caption text-muted-foreground">{t('settings.general.localStorageNote')}</p>
+    </SettingSection>
+    <AlertDialog open={confirmRestart} onOpenChange={setConfirmRestart}>
+      <AlertDialogContent>
+        <AlertDialogHeader><AlertDialogTitle>{t('settings.general.piRestart')}</AlertDialogTitle><AlertDialogDescription>{t('settings.redesign.restartConfirm')}</AlertDialogDescription></AlertDialogHeader>
+        <AlertDialogFooter><AlertDialogCancel>{t('settings.appearance.resetConfirmNo')}</AlertDialogCancel><AlertDialogAction onClick={onRestart}>{t('settings.general.piRestart')}</AlertDialogAction></AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  </>
 }

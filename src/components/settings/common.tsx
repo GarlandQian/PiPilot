@@ -12,10 +12,12 @@ export function SettingSection({
   children: React.ReactNode
 }) {
   return (
-    <section className="border-b border-border/70 px-5 py-5 last:border-b-0">
-      <h3 className="text-title text-foreground">{title}</h3>
-      {desc && <p className="mt-0.5 text-caption text-muted-foreground">{desc}</p>}
-      <div className="mt-3 flex flex-col gap-1.5">{children}</div>
+    <section className="min-w-0 border-b border-border/70 py-6 first:pt-0 last:border-b-0" aria-label={title}>
+      <header className="mb-4 min-w-0">
+        <h2 className="text-app font-semibold text-foreground">{title}</h2>
+        {desc && <p className="mt-1 max-w-[72ch] text-caption leading-relaxed text-muted-foreground">{desc}</p>}
+      </header>
+      <div className="flex min-w-0 flex-col gap-2">{children}</div>
     </section>
   )
 }
@@ -34,15 +36,15 @@ export function SettingRow({
   return (
     <div
       className={cn(
-        '@container/setting-row density-row -mx-2 flex flex-col items-stretch gap-2 rounded-md px-2 py-1 transition-colors duration-(--duration-fast) hover:bg-accent/30 @min-[520px]/setting-row:flex-row @min-[520px]/setting-row:items-center @min-[520px]/setting-row:gap-4 @min-[520px]/setting-row:py-0',
+        '@container/setting-row flex min-w-0 flex-col items-stretch gap-3 rounded-md py-3 @min-[580px]/settings-workspace:flex-row @min-[580px]/settings-workspace:items-center @min-[580px]/settings-workspace:gap-8',
         className,
       )}
     >
       <div className="min-w-0 flex-1">
         <p className="text-app text-foreground">{label}</p>
-        {desc && <p className="mt-0.5 text-caption text-muted-foreground">{desc}</p>}
+        {desc && <p className="mt-1 max-w-[64ch] text-caption text-muted-foreground">{desc}</p>}
       </div>
-      <div className="flex min-w-0 items-center gap-2 @min-[520px]/setting-row:shrink-0">{children}</div>
+      <div className="flex min-w-0 flex-wrap items-center gap-2 @min-[580px]/settings-workspace:max-w-[52%] @min-[580px]/settings-workspace:shrink-0">{children}</div>
     </div>
   )
 }

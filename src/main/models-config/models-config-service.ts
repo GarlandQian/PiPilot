@@ -19,7 +19,7 @@ import {
 } from '../../shared/models-config'
 import { parseModelsConfigDocument } from '../../shared/models-config-schema'
 import type { LocalPiIntegrationService } from '../local-pi-management/local-pi-integration-service'
-import type { PiRuntimeFrontend } from '../pi-host/pi-runtime-frontend'
+import { configApplySaveFields, type ConfigApplyCoordinator } from '../config-apply/config-apply-coordinator'
 
 const DEFAULT_DOCUMENT = '{\n  "providers": {}\n}\n'
 const MISSING_FINGERPRINT = createHash('sha256')
@@ -47,6 +47,7 @@ export class ModelsConfigError extends Error {
 
 interface ModelsConfigServiceOptions {
   homeDirectory: string
+  agentDirectory?: string
   management?: Pick<
     LocalPiIntegrationService,
     'modelsDefaults' | 'setDefaultModel' | 'testModel'
@@ -62,14 +63,18 @@ function isMissing(error: unknown) {
 }
 
 export class ModelsConfigService {
-  private readonly homeDirectory: string
+  private readonly agentDirectory: string
   private readonly management?: ModelsConfigServiceOptions['management']
 
   constructor(options: ModelsConfigServiceOptions) {
     if (!isAbsolute(options.homeDirectory)) {
       throw new Error('The models configuration home must be absolute.')
     }
-    this.homeDirectory = resolve(options.homeDirectory)
+    const agentDirectory = options.agentDirectory ?? join(options.homeDirectory, '.pi', 'agent')
+    if (!isAbsolute(agentDirectory)) {
+      throw new Error('The models configuration Agent directory must be absolute.')
+    }
+    this.agentDirectory = resolve(agentDirectory)
     this.management = options.management
   }
 
@@ -247,7 +252,7 @@ export class ModelsConfigService {
   }
 
   private async readDefaultsFromFile(): Promise<ModelsConfigDefaults> {
-    const settingsPath = join(this.homeDirectory, '.pi', 'agent', 'settings.json')
+    const settingsPath = join(this.agentDirectory, 'settings.json')
     let content: string
     try {
       content = await readFile(settingsPath, 'utf8')
@@ -295,7 +300,7 @@ export class ModelsConfigService {
 
   private resolveTargetPath(_target: ModelsConfigTarget) {
     // Pi supports exactly one models.json — the global Pi Agent file.
-    return join(this.homeDirectory, '.pi', 'agent', 'models.json')
+    return join(this.agentDirectory, 'models.json')
   }
 
   private async writeAtomically(path: string, content: string, existed: boolean) {
@@ -330,44 +335,15 @@ export class ModelsConfigService {
 }
 
 export class ModelsConfigController {
-  private pendingRestartGeneration: number | null = null
-  private readonly unsubscribes: readonly (() => void)[]
-
   constructor(
     private readonly service: ModelsConfigService,
-    private readonly runtimeHost: Pick<
-      PiRuntimeFrontend,
-      'getSnapshot' | 'restart' | 'subscribe' | 'subscribeEvents'
-    >,
-    private readonly restartGlobalHosts: () => Promise<unknown> = () =>
-      runtimeHost.restart(),
-  ) {
-    const unsubscribeEvents = runtimeHost.subscribeEvents((event, generation) => {
-      if (
-        event.type !== 'agent_settled' ||
-        this.pendingRestartGeneration !== generation ||
-        generation !== runtimeHost.getSnapshot().generation
-      ) return
-      this.pendingRestartGeneration = null
-      void this.restartGlobalHosts().catch(() => {
-        if (runtimeHost.getSnapshot().generation === generation) {
-          this.pendingRestartGeneration = generation
-        }
-      })
-    })
-    const unsubscribeRuntime = runtimeHost.subscribe((snapshot) => {
-      if (
-        this.pendingRestartGeneration !== null &&
-        this.pendingRestartGeneration !== snapshot.generation
-      ) {
-        this.pendingRestartGeneration = null
-      }
-    })
-    this.unsubscribes = [unsubscribeEvents, unsubscribeRuntime]
-  }
+    private readonly applyCoordinator: ConfigApplyCoordinator,
+  ) {}
 
-  load(target: ModelsConfigTarget) {
-    return this.service.load(target)
+  async load(target: ModelsConfigTarget) {
+    const snapshot = await this.service.load(target)
+    const applyStatus = this.applyCoordinator.getStatus(snapshot.path, snapshot.fingerprint)
+    return { ...snapshot, ...(applyStatus ? { applyStatus } : {}) }
   }
 
   defaults() {
@@ -392,29 +368,14 @@ export class ModelsConfigController {
     if (!restart) {
       return modelsConfigSaveResultSchema.parse({ snapshot, apply: 'saved' })
     }
-    // models.json is global-only, so the global runtime is always the target.
-    const runtime = this.runtimeHost.getSnapshot()
-    if (runtime.state !== 'ready') {
-      return modelsConfigSaveResultSchema.parse({ snapshot, apply: 'unavailable' })
-    }
-    if (runtime.sessionState?.isStreaming || runtime.sessionState?.isCompacting) {
-      this.pendingRestartGeneration = runtime.generation
-      return modelsConfigSaveResultSchema.parse({ snapshot, apply: 'pending' })
-    }
-    this.pendingRestartGeneration = null
-    try {
-      await this.restartGlobalHosts()
-      return modelsConfigSaveResultSchema.parse({ snapshot, apply: 'restarted' })
-    } catch (error) {
-      return modelsConfigSaveResultSchema.parse({
-        snapshot,
-        apply: 'failed',
-        applyError: error instanceof Error ? error.message : 'Pi could not restart.',
-      })
-    }
+    const applyStatus = await this.applyCoordinator.apply({
+      path: snapshot.path,
+      fingerprint: snapshot.fingerprint,
+    })
+    return modelsConfigSaveResultSchema.parse({
+      snapshot: { ...snapshot, applyStatus },
+      ...configApplySaveFields(applyStatus),
+    })
   }
 
-  dispose() {
-    for (const unsubscribe of this.unsubscribes) unsubscribe()
-  }
 }

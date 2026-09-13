@@ -15,11 +15,17 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  type DarwinUserPathAdapter,
   ExternalControlLauncherService,
+  isSafePosixResolutionDirectoryOwner,
+  mergeDarwinUserPath,
   mergeWindowsUserPath,
   parseWindowsUserPathRegistryExport,
+  persistDarwinLauncherDirectory,
+  persistDarwinLauncherDirectoryRemoval,
   persistWindowsLauncherDirectory,
   persistWindowsLauncherDirectoryRemoval,
+  removeDarwinLauncherDirectory,
   removeWindowsLauncherDirectory,
   renderWindowsUserPathRegistryImport,
   renderExternalControlLauncherWrapper,
@@ -53,6 +59,45 @@ function harness() {
     testTargetDirectory: bin,
   })
   return { bin, create, descriptor, executable, receipt, root }
+}
+
+function statefulDarwinPath(initial: string | null) {
+  let value = initial
+  const adapter: DarwinUserPathAdapter = {
+    read: vi.fn(() => value),
+    write: vi.fn((next) => { value = next }),
+    remove: vi.fn(() => { value = null }),
+  }
+  return { adapter, get value() { return value }, set value(next) { value = next } }
+}
+
+function darwinHarness(initialPath: string | null = null) {
+  const root = mkdtempSync(join(realpathSync(tmpdir()), 'pipilot-darwin-launcher-'))
+  roots.push(root)
+  chmodSync(root, 0o700)
+  const state = join(root, 'external-control')
+  const bin = join(state, 'bin')
+  mkdirSync(bin, { recursive: true, mode: 0o700 })
+  const executable = join(root, 'PiPilot')
+  const descriptor = join(state, 'descriptor.json')
+  const receipt = join(state, 'launcher-receipt.json')
+  writeFileSync(executable, '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+  const userPath = statefulDarwinPath(initialPath)
+  const create = (
+    targetDirectory = bin,
+    fallbackPath = '/usr/bin:/bin:/usr/sbin:/sbin',
+  ) => new ExternalControlLauncherService({
+    darwinPrivateTargetDirectory: targetDirectory,
+    darwinUserPath: userPath.adapter,
+    descriptorPath: descriptor,
+    environment: { PATH: fallbackPath },
+    executablePath: executable,
+    homeDirectory: root,
+    isPackaged: true,
+    platform: 'darwin',
+    receiptPath: receipt,
+  })
+  return { bin, create, descriptor, executable, receipt, root, userPath }
 }
 
 describe('ExternalControlLauncherService', () => {
@@ -265,6 +310,147 @@ describe('ExternalControlLauncherService', () => {
       platform: 'win32',
       receiptPath: 'C:\\Users\\test\\AppData\\Roaming\\PiPilot\\launcher.json',
     })).not.toThrow()
+  })
+})
+
+describe('macOS launchd user PATH', () => {
+  it('installs from Finder PATH when launchd PATH is unset and restores the default on uninstall', () => {
+    const fixture = darwinHarness()
+    const service = fixture.create()
+
+    expect(service.inspect()).toEqual({
+      state: 'missing', managed: false, requiresClientRestart: false,
+    })
+    expect(service.install()).toEqual({
+      state: 'installed', managed: true, requiresClientRestart: true,
+    })
+    expect(fixture.userPath.value).toBe(
+      `${fixture.bin}:/usr/bin:/bin:/usr/sbin:/sbin`,
+    )
+    expect(JSON.parse(readFileSync(fixture.receipt, 'utf8'))).toMatchObject({
+      darwin: {
+        insertedSeparator: true,
+        pathEntryAdded: true,
+        pathValueCreated: true,
+      },
+    })
+
+    expect(service.uninstall()).toEqual({
+      state: 'missing', managed: false, requiresClientRestart: true,
+    })
+    expect(fixture.userPath.value).toBeNull()
+    expect(existsSync(join(fixture.bin, 'pipilot-mcp'))).toBe(false)
+    expect(existsSync(fixture.receipt)).toBe(false)
+  })
+
+  it('prepends and removes exactly its entry while preserving unrelated PATH bytes', () => {
+    const fixture = darwinHarness()
+    const original = `/opt/homebrew/bin::relative:${fixture.bin}:/usr/bin:`
+    fixture.userPath.value = original
+    const service = fixture.create()
+
+    expect(service.install().requiresClientRestart).toBe(true)
+    expect(fixture.userPath.value).toBe(`${fixture.bin}:${original}`)
+    expect(service.uninstall().requiresClientRestart).toBe(true)
+    expect(fixture.userPath.value).toBe(original)
+  })
+
+  it('does not remove a private-directory PATH entry that PiPilot did not add', () => {
+    const fixture = darwinHarness()
+    fixture.userPath.value = `${fixture.bin}:/usr/bin:/bin`
+    const service = fixture.create()
+
+    expect(service.install()).toEqual({
+      state: 'installed', managed: true, requiresClientRestart: false,
+    })
+    expect(service.uninstall()).toEqual({
+      state: 'missing', managed: false, requiresClientRestart: false,
+    })
+    expect(fixture.userPath.value).toBe(`${fixture.bin}:/usr/bin:/bin`)
+  })
+
+  it('recovers a valid managed launcher after launchd PATH is reset', () => {
+    const fixture = darwinHarness()
+    fixture.create().install()
+    fixture.userPath.value = null
+
+    const restored = fixture.create()
+    expect(restored.initialize()).toEqual({
+      state: 'installed', managed: true, requiresClientRestart: true,
+    })
+    expect(fixture.userPath.value).toBe(
+      `${fixture.bin}:/usr/bin:/bin:/usr/sbin:/sbin`,
+    )
+  })
+
+  it('restores launchd PATH even when the inherited fallback already starts with the launcher', () => {
+    const fixture = darwinHarness()
+    fixture.create().install()
+    fixture.userPath.value = null
+
+    const restored = fixture.create(
+      fixture.bin,
+      `${fixture.bin}:/usr/bin:/bin`,
+    )
+    expect(restored.initialize()).toEqual({
+      state: 'installed', managed: true, requiresClientRestart: true,
+    })
+    expect(fixture.userPath.value).toBe(`${fixture.bin}:/usr/bin:/bin`)
+  })
+
+  it('rejects unsafe and symlinked private target directories', () => {
+    const unsafe = darwinHarness()
+    chmodSync(unsafe.bin, 0o770)
+    expect(unsafe.create().inspect()).toMatchObject({
+      state: 'unsupported',
+      error: { code: 'launcher_unsafe_target' },
+    })
+
+    const linked = darwinHarness()
+    const linkedBin = join(linked.root, 'linked-bin')
+    symlinkSync(linked.bin, linkedBin)
+    expect(linked.create(linkedBin).inspect()).toMatchObject({
+      state: 'unsupported',
+      error: { code: 'launcher_unsafe_target' },
+    })
+  })
+
+  it('rolls PATH back exactly when install or uninstall completion fails', () => {
+    const original = '/usr/bin:/bin'
+    const installPath = statefulDarwinPath(original)
+    expect(() => persistDarwinLauncherDirectory(
+      installPath.adapter,
+      undefined,
+      '/private/pipilot/bin',
+      () => { throw new Error('receipt failed') },
+    )).toThrow('receipt failed')
+    expect(installPath.value).toBe(original)
+
+    const merged = mergeDarwinUserPath(original, undefined, '/private/pipilot/bin')
+    const uninstallPath = statefulDarwinPath(merged.value)
+    expect(() => persistDarwinLauncherDirectoryRemoval(
+      uninstallPath.adapter,
+      '/private/pipilot/bin',
+      merged.metadata,
+      () => { throw new Error('file removal failed') },
+    )).toThrow('file removal failed')
+    expect(uninstallPath.value).toBe(merged.value)
+  })
+
+  it('preserves later PATH changes and validates resolution directory ownership', () => {
+    const directory = '/private/pipilot/bin'
+    const merged = mergeDarwinUserPath(null, '/usr/bin:/bin', directory)
+    expect(removeDarwinLauncherDirectory(
+      `${merged.value}:/later/tooling`,
+      directory,
+      merged.metadata,
+    )).toEqual({
+      changed: true,
+      value: '/usr/bin:/bin:/later/tooling',
+    })
+    expect(isSafePosixResolutionDirectoryOwner(0, 501)).toBe(true)
+    expect(isSafePosixResolutionDirectoryOwner(501, 501)).toBe(true)
+    expect(isSafePosixResolutionDirectoryOwner(502, 501)).toBe(false)
   })
 })
 

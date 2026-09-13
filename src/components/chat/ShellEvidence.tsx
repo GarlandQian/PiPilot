@@ -11,6 +11,31 @@ interface ShellEvidenceProps {
   source: string
   sourceTruncated?: boolean
   tone?: 'default' | 'error'
+  format?: 'auto' | 'markdown' | 'verbatim'
+}
+
+/** Preserve terminal records while allowing ordinary prose through the Markdown renderer. */
+export function isVerbatimToolEvidence(source: string): boolean {
+  if (/\u001b\[[0-?]*[ -/]*[@-~]/u.test(source) || /\r(?!\n)/u.test(source)) return true
+  const trimmed = source.trim()
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try {
+      JSON.parse(trimmed)
+      return true
+    } catch {
+      // A link, task list, or prose beginning with a bracket is still Markdown.
+    }
+  }
+  // Tabs inside Markdown lists and fenced code must not turn the whole report
+  // into a literal terminal block. The Markdown renderer owns these structures.
+  if (/^ {0,3}(?:#{1,6}\s|[-*+]\s|\d+[.)]\s|>\s|`{3,}|~{3,})/mu.test(source)) return false
+  if (/^\s*\|?.+\|.+\r?\n\s*\|?\s*:?-{3,}:?\s*\|/mu.test(source)) return false
+  if (source.includes('\t')) return true
+  const lines = source.split(/\r?\n/u).filter(Boolean)
+  const logLines = lines.filter((line) =>
+    /^\s*(?:\d{4}-\d{2}-\d{2}[T\s]|\[?(?:trace|debug|info|warn|error|fatal)\]?\b)/iu.test(line),
+  )
+  return logLines.length >= 2 && logLines.length >= Math.ceil(lines.length / 2)
 }
 
 export function ShellEvidence({
@@ -18,10 +43,17 @@ export function ShellEvidence({
   source,
   sourceTruncated = false,
   tone = 'default',
+  format = 'auto',
 }: ShellEvidenceProps) {
   const t = useT()
   const evidence = React.useMemo(() => projectShellEvidence(source), [source])
-  const [view, setView] = React.useState<'formatted' | 'raw'>(evidence.defaultView)
+  const formattedMarkdown = format === 'markdown' ||
+    (format === 'auto' && !isVerbatimToolEvidence(evidence.source))
+    ? evidence.source : undefined
+  const defaultView = formattedMarkdown ? 'formatted' : 'raw'
+  const [view, setView] = React.useState<'formatted' | 'raw'>(
+    defaultView,
+  )
   const explicitlySelectedRef = React.useRef(false)
   const [copied, setCopied] = React.useState(false)
   const copyFeedbackTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -31,12 +63,12 @@ export function ShellEvidence({
   }, [])
 
   React.useEffect(() => {
-    if (!evidence.formattedMarkdown) {
+    if (!formattedMarkdown) {
       setView('raw')
       return
     }
-    if (!explicitlySelectedRef.current) setView(evidence.defaultView)
-  }, [evidence.defaultView, evidence.formattedMarkdown])
+    if (!explicitlySelectedRef.current) setView(defaultView)
+  }, [defaultView, formattedMarkdown])
 
   const copy = React.useCallback(async () => {
     if (copyFeedbackTimer.current) clearTimeout(copyFeedbackTimer.current)
@@ -54,7 +86,7 @@ export function ShellEvidence({
 
   if (!evidence.source.trim()) return null
   return (
-    <section className="min-w-0 space-y-1.5">
+    <section className="min-w-0 space-y-1" data-tool-evidence={format}>
       <header className="flex min-h-6 min-w-0 items-center gap-1.5">
         <h4 className={cn(
           'min-w-0 flex-1 truncate text-micro font-medium text-muted-foreground',
@@ -62,9 +94,9 @@ export function ShellEvidence({
         )}>
           {label}
         </h4>
-        {evidence.formattedMarkdown ? (
+        {formattedMarkdown ? (
           <div
-            className="flex shrink-0 items-center rounded-md bg-muted p-0.5"
+            className="flex shrink-0 items-center gap-0.5"
             aria-label={t('tool.outputView')}
           >
             {(['formatted', 'raw'] as const).map((candidate) => (
@@ -78,7 +110,7 @@ export function ShellEvidence({
                 }}
                 className={cn(
                   'h-5 rounded-sm px-1.5 text-micro text-muted-foreground outline-none hover:text-foreground focus-visible:focus-ring',
-                  view === candidate && 'bg-background text-foreground shadow-xs',
+                  view === candidate && 'bg-accent/45 text-foreground',
                 )}
               >
                 {t(candidate === 'formatted' ? 'tool.outputFormatted' : 'tool.outputRaw')}
@@ -95,12 +127,15 @@ export function ShellEvidence({
           {copied ? <TbCheck className="text-sage" aria-hidden /> : <TbCopy aria-hidden />}
         </Button>
       </header>
-      {view === 'formatted' && evidence.formattedMarkdown ? (
-        <div className="min-w-0 rounded-md bg-muted/35 px-2.5 py-2">
-          <MarkdownContent markdown={evidence.formattedMarkdown} />
+      {view === 'formatted' && formattedMarkdown ? (
+        <div className="scroll-slim max-h-[min(28rem,55vh)] min-w-0 overflow-auto pr-1">
+          <MarkdownContent markdown={formattedMarkdown} />
         </div>
       ) : (
-        <pre className="scroll-slim max-h-64 max-w-full overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/50 p-2.5 font-mono text-micro text-foreground/90">
+        <pre className={cn(
+          'scroll-slim max-h-[min(28rem,55vh)] max-w-full overflow-auto whitespace-pre-wrap break-words font-mono text-caption leading-relaxed text-foreground/85',
+          tone === 'error' && 'text-destructive',
+        )}>
           <code>{evidence.source}</code>
         </pre>
       )}

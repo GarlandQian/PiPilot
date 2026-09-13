@@ -43,8 +43,8 @@ import type {
   PlanActionId,
   PlanModeProjection,
 } from '@/renderer/pi-rpc/adapters/plan-mode'
-import type { ResponseActivity } from '@/types/chat'
-import type { StructuredValueProjection } from '@/types/chat'
+import type { ResponseActivity, StructuredValueProjection } from '@/types/chat'
+import { MarkdownContent } from './markdown/MarkdownContent'
 import { StructuredValueView } from './StructuredValueView'
 
 const planActionIcons = {
@@ -99,6 +99,11 @@ const PLAN_LIFECYCLE_KEYS = {
   implementing: 'plan.lifecycle.implementing',
 } as const
 
+function isStructuredActivityValue(projection: StructuredValueProjection) {
+  return projection.kind === 'json' &&
+    (projection.valueKind === 'object' || projection.valueKind === 'array')
+}
+
 export function ResponseActivityRow({ activity }: { activity: ResponseActivity }) {
   const t = useT()
   const retry = activity.kind === 'retry' ? activity : null
@@ -109,17 +114,11 @@ export function ResponseActivityRow({ activity }: { activity: ResponseActivity }
   const active = activity.state === 'active'
   const [open, setOpen] = React.useState(error)
   const previousErrorRef = React.useRef(error)
-  const previousActiveRef = React.useRef(active)
 
   React.useEffect(() => {
     if (!previousErrorRef.current && error) setOpen(true)
     previousErrorRef.current = error
   }, [error])
-
-  React.useEffect(() => {
-    if (previousActiveRef.current && !active && !error) setOpen(false)
-    previousActiveRef.current = active
-  }, [active, error])
 
   let label = t('extension.activity.title')
   let summary = ''
@@ -176,24 +175,11 @@ export function ResponseActivityRow({ activity }: { activity: ResponseActivity }
   }
 
   const summaryProjection = projectStructuredValue(summary)
-  const structuredSummary = summaryProjection.kind === 'json' ||
-    summaryProjection.kind === 'malformed' ||
-    summaryProjection.kind === 'truncated' ||
-    summaryProjection.kind === 'unsupported'
-  const detailProjection: StructuredValueProjection | null = details.length > 0
-    ? projectStructuredValue(details.length === 1 ? details[0] : details)
-    : structuredSummary
-      ? summaryProjection
-      : null
-  if (structuredSummary) {
-    summary = summaryProjection.kind === 'malformed'
-      ? t('tool.valueMalformed')
-      : summaryProjection.kind === 'unsupported'
-        ? t('tool.valueUnsupported')
-        : summaryProjection.kind === 'truncated'
-          ? t('tool.valueTruncated')
-          : summaryProjection.summary
-  }
+  // Human Markdown can begin with a link or a quote. Only a successfully
+  // parsed JSON container belongs in the structured viewer. Quoted text,
+  // booleans, and numbers remain ordinary reading content.
+  const structuredSummary = isStructuredActivityValue(summaryProjection)
+  const hasDetails = structuredSummary || details.length > 0
 
   const spinning = active && (
     activity.kind === 'working' ||
@@ -216,13 +202,10 @@ export function ResponseActivityRow({ activity }: { activity: ResponseActivity }
       <span className="shrink-0 font-mono text-micro font-medium text-foreground">
         {label}
       </span>
-      <span className={cn(
-        'min-w-0 flex-1 truncate text-caption',
-        error ? 'text-destructive' : 'text-muted-foreground',
-      )} title={summary}>
-        {summary}
-      </span>
-      {detailProjection ? (
+      {structuredSummary ? <span className="min-w-0 flex-1 truncate text-caption text-muted-foreground">
+        {summaryProjection.summary}
+      </span> : <span className="flex-1" />}
+      {hasDetails ? (
         <TbChevronRight
           className={cn(
             'size-3.5 shrink-0 text-muted-foreground transition-transform duration-(--duration-fast) motion-reduce:transition-none',
@@ -241,7 +224,7 @@ export function ResponseActivityRow({ activity }: { activity: ResponseActivity }
       role={error ? 'alert' : 'status'}
       aria-label={`${label}: ${summary}`}
     >
-      {detailProjection ? (
+      {hasDetails ? (
         <CollapsibleTrigger asChild>
           <button
             type="button"
@@ -257,14 +240,32 @@ export function ResponseActivityRow({ activity }: { activity: ResponseActivity }
           {content}
         </div>
       )}
-      {detailProjection ? (
+      {!structuredSummary && summary ? (
+        <div className={cn('min-w-0 py-1 pl-6 text-caption', error ? 'text-destructive' : 'text-muted-foreground')}>
+          <MarkdownContent markdown={summary} streaming={active} />
+        </div>
+      ) : null}
+      {hasDetails ? (
         <CollapsibleContent>
-          <div className="ml-3.5 min-w-0 border-l border-border/70 py-1 pl-3" role={error ? 'alert' : undefined}>
-            <StructuredValueView
+          <div className="ml-3.5 min-w-0 space-y-2 border-l border-border/70 py-1 pl-3">
+            {structuredSummary ? <StructuredValueView
               label={t('extension.activity.details')}
-              projection={detailProjection}
+              projection={summaryProjection}
               tone={error ? 'error' : 'default'}
-            />
+            /> : null}
+            {details.map((detail, index) => {
+              const projection = projectStructuredValue(detail)
+              return isStructuredActivityValue(projection)
+                ? <StructuredValueView
+                    key={index}
+                    label={t('extension.activity.details')}
+                    projection={projection}
+                    tone={error ? 'error' : 'default'}
+                  />
+                : <div key={index} className={cn('min-w-0 text-caption', error && 'text-destructive')}>
+                    <MarkdownContent markdown={detail} streaming={active} />
+                  </div>
+            })}
           </div>
         </CollapsibleContent>
       ) : null}
@@ -419,11 +420,11 @@ export function ActiveControlBar({
 
   return (
     <section
-      className="shrink-0 bg-surface px-3"
+      className="shrink-0 bg-background px-3 pt-2"
       aria-label={title}
       role={actionError ? 'alert' : 'status'}
     >
-      <div className="mx-auto flex min-h-8 w-full max-w-[920px] items-center gap-2 border-t border-border/60 px-1.5 py-1">
+      <div className="mx-auto flex min-h-10 w-full max-w-[920px] items-center gap-2 rounded-lg border border-border bg-card px-2 py-1">
         <CurrentIcon
           className={cn(
             'size-3.5 shrink-0 text-muted-foreground',
@@ -435,15 +436,14 @@ export function ActiveControlBar({
           aria-hidden
         />
         <span className="shrink-0 text-caption font-medium text-foreground">{title}</span>
-        <span
+        <div
           className={cn(
-            'min-w-0 flex-1 truncate text-caption text-muted-foreground',
+            'scroll-slim max-h-28 min-w-0 flex-1 overflow-y-auto text-caption text-muted-foreground',
             actionError && 'text-destructive',
           )}
-          title={actionError ?? summary}
         >
-          {actionError ?? summary}
-        </span>
+          <MarkdownContent markdown={actionError ?? summary} />
+        </div>
         {invokeAction && actionLabel && CurrentActionIcon ? (
           <Button
             variant="ghost"

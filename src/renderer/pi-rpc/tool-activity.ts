@@ -58,16 +58,6 @@ function activityCategory(call: ToolCall): ToolActivityCategory {
   return 'other'
 }
 
-function aggregateStatus(items: readonly ToolActivityItem[]): ToolCall['status'] {
-  let status: ToolCall['status'] = 'success'
-  for (const item of items) {
-    if (STATUS_PRIORITY[item.call.status] > STATUS_PRIORITY[status]) {
-      status = item.call.status
-    }
-  }
-  return status
-}
-
 function projectActivityRun(toolTurns: readonly Extract<Turn, { kind: 'tool' }>[]): ToolActivityRun {
   const items = toolTurns.map<ToolActivityItem>((turn, order) => ({
     id: turn.call.id,
@@ -96,7 +86,9 @@ function projectActivityRun(toolTurns: readonly Extract<Turn, { kind: 'tool' }>[
       continue
     }
     previous.items.push(item)
-    previous.status = aggregateStatus(previous.items)
+    if (STATUS_PRIORITY[item.call.status] > STATUS_PRIORITY[previous.status]) {
+      previous.status = item.call.status
+    }
     if (item.call.status === 'failed') previous.failedCount += 1
   }
 

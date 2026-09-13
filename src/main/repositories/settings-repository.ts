@@ -37,6 +37,13 @@ interface SettingsRepositoryOptions {
 }
 
 type Listener = (snapshot: SettingsRepositorySnapshot) => void
+interface PersistenceWaiter {
+  revision: number
+  resolve(snapshot: SettingsRepositorySnapshot): void
+  reject(error: Error): void
+}
+
+const persistenceError = () => new Error('Settings could not be saved to disk.')
 
 function isMissingFile(error: unknown) {
   return (error as NodeJS.ErrnoException).code === 'ENOENT'
@@ -49,9 +56,13 @@ export class SettingsRepository {
   private readonly onDiagnostic: (code: SettingsDiagnosticCode) => void
   private readonly listeners = new Set<Listener>()
   private initialized = false
+  private disposed = false
   private dirty = false
   private revision = 0
   private settings = cloneSettings()
+  private durable: SettingsRepositorySnapshot | null = null
+  private readonly waiters = new Set<PersistenceWaiter>()
+  private readonly failedBatches: Array<{ first: number; last: number }> = []
   private timer: NodeJS.Timeout | undefined
 
   constructor(
@@ -66,6 +77,7 @@ export class SettingsRepository {
 
   initialize(): SettingsRepositorySnapshot {
     if (this.initialized) return this.snapshot()
+    this.assertOpen()
 
     let rawText: string
     try {
@@ -73,13 +85,7 @@ export class SettingsRepository {
     } catch (error) {
       if (!isMissingFile(error)) throw error
 
-      this.settings = cloneSettings(DEFAULT_SETTINGS)
-      this.initialized = true
-      this.revision = 1
-      this.dirty = true
-      this.persistNow()
-      this.onDiagnostic('created')
-      return this.snapshot()
+      return this.initializeDefaults('created')
     }
 
     let document: ReturnType<typeof parseSettingsDocument>
@@ -88,18 +94,13 @@ export class SettingsRepository {
       document = parseSettingsDocument(raw)
     } catch {
       this.backUpCorruptFile()
-      this.settings = cloneSettings(DEFAULT_SETTINGS)
-      this.initialized = true
-      this.revision = 1
-      this.dirty = true
-      this.persistNow()
-      this.onDiagnostic('recovered-corrupt')
-      return this.snapshot()
+      return this.initializeDefaults('recovered-corrupt')
     }
 
     this.settings = cloneSettings(document.settings)
     this.initialized = true
     this.revision = 1
+    this.durable = this.snapshot()
 
     return this.snapshot()
   }
@@ -110,17 +111,19 @@ export class SettingsRepository {
   }
 
   update(patch: AppSettingsPatch): SettingsRepositorySnapshot {
+    this.assertOpen()
     if (!this.initialized) this.initialize()
     this.settings = mergeSettings(this.settings, patch)
     this.revision += 1
     this.dirty = true
     const snapshot = this.snapshot()
-    this.schedulePersist()
     this.emit(snapshot)
+    this.schedulePersist()
     return snapshot
   }
 
   reset(scope: SettingsResetScope): SettingsRepositorySnapshot {
+    this.assertOpen()
     if (!this.initialized) this.initialize()
     if (scope === 'appearance') {
       this.settings = {
@@ -138,9 +141,27 @@ export class SettingsRepository {
     this.revision += 1
     this.dirty = true
     const snapshot = this.snapshot()
-    this.schedulePersist()
     this.emit(snapshot)
+    this.schedulePersist()
     return snapshot
+  }
+
+  /** A superseding write acknowledges the whole batch, never a rolled-back revision. */
+  async whenPersisted(revision: number): Promise<SettingsRepositorySnapshot> {
+    if (!this.initialized) this.initialize()
+    if (!Number.isSafeInteger(revision) || revision < 1 || revision > this.revision) {
+      throw new Error('The settings revision is unavailable.')
+    }
+    if (this.failedBatches.some((batch) => revision >= batch.first && revision <= batch.last)) {
+      throw persistenceError()
+    }
+    if (this.durable && revision <= this.durable.revision) {
+      return { revision: this.durable.revision, settings: cloneSettings(this.durable.settings) }
+    }
+    this.assertOpen()
+    return new Promise((resolve, reject) => {
+      this.waiters.add({ revision, resolve, reject })
+    })
   }
 
   subscribe(listener: Listener) {
@@ -155,8 +176,29 @@ export class SettingsRepository {
   }
 
   dispose() {
-    this.flush()
-    this.listeners.clear()
+    if (this.disposed) return
+    this.disposed = true
+    try {
+      this.flush()
+    } finally {
+      for (const waiter of this.waiters) waiter.reject(new Error('The settings repository is closed.'))
+      this.waiters.clear()
+      this.listeners.clear()
+    }
+  }
+
+  private assertOpen() {
+    if (this.disposed) throw new Error('The settings repository is closed.')
+  }
+
+  private initializeDefaults(diagnostic: 'created' | 'recovered-corrupt') {
+    this.settings = cloneSettings(DEFAULT_SETTINGS)
+    this.revision = 1
+    this.dirty = true
+    this.persistNow()
+    this.initialized = true
+    this.onDiagnostic(diagnostic)
+    return this.snapshot()
   }
 
   private snapshot(): SettingsRepositorySnapshot {
@@ -185,32 +227,50 @@ export class SettingsRepository {
     try {
       this.persistNow()
     } catch {
-      this.onDiagnostic('write-failed')
+      // persistNow rolls back and rejects the durable acknowledgements.
     }
   }
 
   private persistNow() {
-    const document = persistedSettingsDocumentSchema.parse({
-      version: SETTINGS_SCHEMA_VERSION,
-      settings: this.settings,
-    })
-    const temporaryPath = `${this.filePath}.${this.createId()}.tmp`
-
-    mkdirSync(dirname(this.filePath), { recursive: true })
+    const candidate = this.snapshot()
+    let temporaryPath: string | undefined
     try {
+      const document = persistedSettingsDocumentSchema.parse({
+        version: SETTINGS_SCHEMA_VERSION,
+        settings: candidate.settings,
+      })
+      temporaryPath = `${this.filePath}.${this.createId()}.tmp`
+      mkdirSync(dirname(this.filePath), { recursive: true })
       writeFileSync(temporaryPath, `${JSON.stringify(document, null, 2)}\n`, {
         encoding: 'utf8',
         mode: 0o600,
       })
       renameSync(temporaryPath, this.filePath)
       this.dirty = false
-    } catch (error) {
+      this.durable = candidate
+      for (const waiter of this.waiters) {
+        if (waiter.revision > candidate.revision) continue
+        this.waiters.delete(waiter)
+        waiter.resolve({ revision: candidate.revision, settings: cloneSettings(candidate.settings) })
+      }
+    } catch {
       try {
-        unlinkSync(temporaryPath)
+        if (temporaryPath) unlinkSync(temporaryPath)
       } catch {
         // The temporary file may not have been created.
       }
-      throw error
+      this.dirty = false
+      if (this.durable) {
+        this.failedBatches.push({ first: this.durable.revision + 1, last: candidate.revision })
+        this.settings = cloneSettings(this.durable.settings)
+        this.revision = candidate.revision + 1
+        this.durable = this.snapshot()
+      }
+      for (const waiter of this.waiters) waiter.reject(persistenceError())
+      this.waiters.clear()
+      this.onDiagnostic('write-failed')
+      if (this.durable) this.emit(this.snapshot())
+      throw persistenceError()
     }
   }
 

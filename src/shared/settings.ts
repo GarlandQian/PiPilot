@@ -4,6 +4,7 @@ export type ThemeMode = 'system' | 'light' | 'dark'
 export type Locale = 'system' | 'zh-CN' | 'en-US'
 export type Density = 'compact' | 'comfortable'
 export type ComposerSendShortcut = 'enter' | 'mod-enter'
+export type RunningSubmitPreference = 'queue' | 'steer'
 
 export const TERMINAL_FONT_FAMILY_LIMIT = 120
 export const TERMINAL_FONT_SIZE_MIN = 11
@@ -30,6 +31,7 @@ export interface TerminalSettings {
 
 export interface ComposerSettings {
   sendShortcut: ComposerSendShortcut
+  runningSubmit: RunningSubmitPreference
 }
 
 export interface AppSettings {
@@ -68,6 +70,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   composer: {
     sendShortcut: 'enter',
+    runningSubmit: 'queue',
   },
   terminal: {
     fontFamily: '',
@@ -79,6 +82,7 @@ const LOCALES: readonly Locale[] = ['system', 'zh-CN', 'en-US']
 const THEMES: readonly ThemeMode[] = ['system', 'light', 'dark']
 const DENSITIES: readonly Density[] = ['compact', 'comfortable']
 const COMPOSER_SEND_SHORTCUTS: readonly ComposerSendShortcut[] = ['enter', 'mod-enter']
+const RUNNING_SUBMIT_PREFERENCES: readonly RunningSubmitPreference[] = ['queue', 'steer']
 const APP_KEYS = ['locale', 'appearance', 'composer', 'terminal'] as const
 const APPEARANCE_KEYS = [
   'theme',
@@ -94,7 +98,8 @@ const APPEARANCE_KEYS = [
   'compactToolCards',
 ] as const
 const TERMINAL_KEYS = ['fontFamily', 'fontSize'] as const
-const COMPOSER_KEYS = ['sendShortcut'] as const
+const COMPOSER_KEYS = ['sendShortcut', 'runningSubmit'] as const
+const LEGACY_COMPOSER_KEYS = ['sendShortcut'] as const
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -178,7 +183,25 @@ function isExactTerminal(value: unknown): value is TerminalSettings {
 function isExactComposer(value: unknown): value is ComposerSettings {
   return isRecord(value) &&
     hasExactKeys(value, COMPOSER_KEYS) &&
+    COMPOSER_SEND_SHORTCUTS.includes(value.sendShortcut as ComposerSendShortcut) &&
+    RUNNING_SUBMIT_PREFERENCES.includes(
+      value.runningSubmit as RunningSubmitPreference,
+    )
+}
+
+function isLegacyComposer(value: unknown) {
+  return isRecord(value) &&
+    hasExactKeys(value, LEGACY_COMPOSER_KEYS) &&
     COMPOSER_SEND_SHORTCUTS.includes(value.sendShortcut as ComposerSendShortcut)
+}
+
+function isMigratableSettings(value: unknown) {
+  return isRecord(value) &&
+    hasExactKeys(value, APP_KEYS) &&
+    LOCALES.includes(value.locale as Locale) &&
+    isExactAppearance(value.appearance) &&
+    isLegacyComposer(value.composer) &&
+    isExactTerminal(value.terminal)
 }
 
 function isExactSettings(value: unknown): value is AppSettings {
@@ -249,6 +272,11 @@ export function sanitizeSettings(
         COMPOSER_SEND_SHORTCUTS,
         fallback.composer.sendShortcut,
       ),
+      runningSubmit: oneOf(
+        composer.runningSubmit,
+        RUNNING_SUBMIT_PREFERENCES,
+        fallback.composer.runningSubmit,
+      ),
     },
     terminal: {
       fontFamily: terminalFontNameOr(
@@ -297,6 +325,12 @@ export function parseSettingsDocument(raw: unknown): PersistedSettingsDocument {
     return {
       version: SETTINGS_SCHEMA_VERSION,
       settings: cloneSettings(raw.settings),
+    }
+  }
+  if (raw.version === SETTINGS_SCHEMA_VERSION && isMigratableSettings(raw.settings)) {
+    return {
+      version: SETTINGS_SCHEMA_VERSION,
+      settings: sanitizeSettings(raw.settings),
     }
   }
   throw new InvalidSettingsDocumentError()

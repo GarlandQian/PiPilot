@@ -11,11 +11,11 @@ import {
   TbFolderOpen,
   TbFolderPlus,
   TbLoader2,
-  TbMessage,
   TbMessagePlus,
   TbPencil,
   TbPin,
   TbPinnedOff,
+  TbPlus,
   TbTrash,
 } from 'react-icons/tb'
 import { Button } from '@/components/ui/button'
@@ -35,10 +35,12 @@ import type {
 import type { WorkspaceSummary } from '@/shared/schemas/workspace'
 import type { AgentStatus } from '@/types/chat'
 import type { SessionActivityState } from '@/store/workspace-state'
+import { sidebarConversationTitle } from './session-navigation'
 
 export interface SidebarConversationItem {
   summary: OfficialPiSessionSummary
   loading?: boolean
+  disabled?: boolean
   status?: AgentStatus
   activityState?: SessionActivityState
   selected?: boolean
@@ -51,6 +53,7 @@ export type SidebarProjectCatalog =
       status: 'ready'
       items: readonly SidebarConversationItem[]
       hasMore: boolean
+      loadedCount?: number
     }
 
 export interface SidebarProjectNavigation {
@@ -84,6 +87,33 @@ const statusLabelKey = {
   cancelled: 'agent.status.cancelled',
 } as const
 
+export type SidebarSessionIndicatorState =
+  | 'loading'
+  | 'waiting'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'released'
+
+export function resolveSidebarSessionIndicatorState({
+  loading = false,
+  status,
+  activityState,
+}: {
+  loading?: boolean
+  status?: AgentStatus
+  activityState?: SessionActivityState
+}): SidebarSessionIndicatorState {
+  if (loading || activityState === 'opening') return 'loading'
+  if (activityState) return activityState
+  if (status === 'planning' || status === 'running') return 'running'
+  if (status === 'failed') return 'failed'
+  if (status === 'idle' || status === 'completed' || status === 'cancelled') {
+    return 'completed'
+  }
+  return 'released'
+}
+
 function StatusIndicator({
   loading = false,
   status,
@@ -94,74 +124,54 @@ function StatusIndicator({
   activityState?: SessionActivityState
 }) {
   const t = useT()
-  if (loading) {
-    return (
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span
-            className="flex size-4 shrink-0 items-center justify-center"
-            role="status"
-            aria-label={t('sidebar.session.loading')}
-          >
-            <TbLoader2 className="size-3.5 animate-spin text-sage motion-reduce:animate-none" aria-hidden />
-          </span>
-        </TooltipTrigger>
-        <TooltipContent side="right">{t('sidebar.session.loading')}</TooltipContent>
-      </Tooltip>
-    )
+  const indicatorState = resolveSidebarSessionIndicatorState({
+    loading,
+    status,
+    activityState,
+  })
+  if (indicatorState === 'released') {
+    return <span className="block size-5 shrink-0" aria-hidden />
   }
-  if (activityState === 'waiting') {
-    return (
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span
-            className="flex size-4 shrink-0 items-center justify-center"
-            role="status"
-            aria-label={t('sidebar.session.waiting')}
-          >
-            <TbClock className="size-3.5 text-sage" aria-hidden />
-          </span>
-        </TooltipTrigger>
-        <TooltipContent side="right">{t('sidebar.session.waiting')}</TooltipContent>
-      </Tooltip>
-    )
-  }
-  if (!status || status === 'idle') return <span className="block size-4" aria-hidden />
 
-  const icon = status === 'running' || status === 'planning'
+  const label = indicatorState === 'loading'
+    ? t('sidebar.session.loading')
+    : indicatorState === 'waiting'
+      ? t('sidebar.session.waiting')
+      : indicatorState === 'running'
+        ? t(status === 'planning' ? statusLabelKey.planning : statusLabelKey.running)
+        : indicatorState === 'completed'
+          ? t(status === 'cancelled' ? statusLabelKey.cancelled : statusLabelKey.completed)
+          : t(statusLabelKey.failed)
+
+  const icon = indicatorState === 'loading' || indicatorState === 'running'
     ? <TbLoader2 className="size-3.5 animate-spin text-sage motion-reduce:animate-none" aria-hidden />
-    : status === 'completed'
-      ? <TbCheck className="size-3.5 text-sage" aria-hidden />
-      : <TbAlertCircle className={cn(
-          'size-3.5',
-          status === 'failed' ? 'text-destructive' : 'text-muted-foreground',
-        )} aria-hidden />
+    : indicatorState === 'waiting'
+      ? <TbClock className="size-3.5 text-warning" aria-hidden />
+      : indicatorState === 'completed'
+        ? <TbCheck className="size-3.5 text-success" aria-hidden />
+        : <TbAlertCircle className="size-3.5 text-destructive" aria-hidden />
 
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <span
-          className="flex size-4 shrink-0 items-center justify-center"
+          className="relative z-10 flex size-5 shrink-0 items-center justify-center"
           role="status"
-          aria-label={t(statusLabelKey[status])}
+          aria-label={label}
+          data-session-indicator={indicatorState}
         >
           {icon}
         </span>
       </TooltipTrigger>
-      <TooltipContent side="right">{t(statusLabelKey[status])}</TooltipContent>
+      <TooltipContent side="right">{label}</TooltipContent>
     </Tooltip>
   )
-}
-
-function conversationTitle(item: SidebarConversationItem, untitled: string) {
-  return item.summary.name?.trim() || item.summary.preview.trim() || untitled
 }
 
 function ConversationRow({
   item,
   active,
   renaming,
-  variant,
   onSelect,
   onRenameStart,
   onRenameCommit,
@@ -171,10 +181,9 @@ function ConversationRow({
   item: SidebarConversationItem
   active: boolean
   renaming: boolean
-  variant: ConversationListProps['variant']
 } & Omit<ConversationListActions, 'renamingSelectionToken'>) {
   const t = useT()
-  const title = conversationTitle(item, t('sidebar.session.untitled'))
+  const title = sidebarConversationTitle(item.summary, t('sidebar.session.untitled'))
   const [renameText, setRenameText] = React.useState(title)
   const inputRef = React.useRef<HTMLInputElement>(null)
   const skipBlurCommit = React.useRef(false)
@@ -192,18 +201,13 @@ function ConversationRow({
   }
 
   return (
-    <li className="group/conversation relative">
+    <li className="group/conversation relative" data-session-activity={item.activityState}>
       <div className={cn(
-        'density-row relative grid grid-cols-[16px_minmax(0,1fr)_16px_32px] items-center gap-1 rounded-md px-2 transition-colors duration-(--duration-fast)',
+        'relative grid min-h-8 grid-cols-[minmax(0,1fr)_20px_28px] items-center gap-1 rounded-lg pl-2.5 pr-1 transition-colors duration-(--duration-fast)',
         active
-          ? 'bg-accent text-accent-foreground'
-          : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
+          ? 'bg-selected text-foreground'
+          : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
       )}>
-        <TbMessage
-          className={cn('size-3.5', variant === 'project' && 'opacity-55')}
-          aria-hidden
-        />
-
         {renaming ? (
           <input
             ref={inputRef}
@@ -231,16 +235,19 @@ function ConversationRow({
             aria-current={active ? 'page' : undefined}
             aria-label={title}
             title={title}
-            disabled={item.loading}
+            disabled={item.loading || item.disabled}
             onClick={() => onSelect(item)}
-            className="absolute inset-0 cursor-pointer rounded-md outline-none focus-visible:focus-ring disabled:cursor-wait"
+            className="absolute inset-0 cursor-pointer rounded-lg outline-none focus-visible:focus-ring disabled:cursor-wait"
           >
             <span className="sr-only">{title}</span>
           </button>
         )}
 
         {!renaming && (
-          <span className="pointer-events-none relative z-10 truncate text-caption">
+          <span className={cn(
+            'pointer-events-none relative z-10 truncate text-app',
+            active && 'font-medium',
+          )}>
             {title}
           </span>
         )}
@@ -256,13 +263,10 @@ function ConversationRow({
             <DropdownMenuTrigger asChild>
               <Button
                 variant="ghost"
-                size="icon-sm"
+                size="icon-xs"
                 aria-label={t('sidebar.session.actions')}
-                disabled={item.loading}
-                className={cn(
-                  'relative z-10 opacity-0 group-hover/conversation:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100',
-                  active && 'opacity-100',
-                )}
+                disabled={item.loading || item.disabled}
+                className={cn('relative z-10 size-7 opacity-0 group-hover/conversation:opacity-100 group-focus-within/conversation:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100', active && 'opacity-100')}
                 onClick={(event) => event.stopPropagation()}
               >
                 <TbDots aria-hidden />
@@ -287,7 +291,7 @@ function ConversationRow({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-        ) : <span className="block size-8" aria-hidden />}
+        ) : <span className="block size-6" aria-hidden />}
       </div>
     </li>
   )
@@ -312,14 +316,13 @@ export function ConversationList({
   }
 
   return (
-    <ul className="flex flex-col gap-0.5">
+    <ul className="flex flex-col gap-px" data-session-list={variant}>
       {items.map((item) => (
         <ConversationRow
           key={item.summary.selectionToken}
           item={item}
           active={item.selected ?? item.summary.sessionId === activeSessionId}
           renaming={item.summary.selectionToken === renamingSelectionToken}
-          variant={variant}
           onSelect={onSelect}
           onRenameStart={onRenameStart}
           onRenameCommit={onRenameCommit}
@@ -352,6 +355,7 @@ function ProjectChildren({
   onStartProjectTask,
   onLoadMore,
   onAddProject,
+  onRetryProject,
 }: {
   navigation: SidebarProjectNavigation
   activeSessionId: string
@@ -360,6 +364,7 @@ function ProjectChildren({
   onStartProjectTask(projectId: string): void
   onLoadMore(projectId: string): void
   onAddProject(): void
+  onRetryProject(projectId: string): void
 }) {
   const t = useT()
   const { project, catalog } = navigation
@@ -381,7 +386,7 @@ function ProjectChildren({
   if (catalog.status === 'loading') {
     return (
       <p className="flex items-center gap-1.5 px-2 py-1 text-caption text-muted-foreground" role="status">
-        <TbLoader2 className="size-3.5 animate-spin" aria-hidden />
+        <TbLoader2 className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden />
         {t('sidebar.project.loading')}
       </p>
     )
@@ -409,9 +414,20 @@ function ProjectChildren({
 
   if (catalog.status === 'error') {
     return (
-      <p className="px-2 py-1 text-caption text-destructive" role="alert" title={catalog.message}>
-        {t('sidebar.project.error')}
-      </p>
+      <div className="density-row flex items-center gap-1.5 px-2 text-caption" role="alert" title={catalog.message}>
+        <TbAlertCircle className="size-3.5 shrink-0 text-destructive" aria-hidden />
+        <span className="min-w-0 flex-1 truncate text-destructive">
+          {t('sidebar.project.error')}
+        </span>
+        <Button
+          variant="ghost"
+          size="xs"
+          className="h-6 px-1.5"
+          onClick={() => onRetryProject(project.id)}
+        >
+          {t('common.retry')}
+        </Button>
+      </div>
     )
   }
 
@@ -433,16 +449,17 @@ function ProjectChildren({
       ) : (
         <button
           type="button"
-          className="w-full rounded-sm px-2 py-1 text-left text-caption font-medium text-foreground outline-none transition-colors duration-(--duration-fast) hover:bg-accent/60 focus-visible:focus-ring"
+          className="density-row flex w-full items-center gap-1.5 rounded-sm px-2 text-left text-caption font-medium text-foreground outline-none transition-colors duration-(--duration-fast) hover:bg-accent/50 focus-visible:focus-ring"
           onClick={() => onStartProjectTask(project.id)}
         >
+          <TbMessagePlus className="size-3.5" aria-hidden />
           {t('sidebar.project.startTask')}
         </button>
       )}
       {catalog.hasMore && (
         <button
           type="button"
-          className="w-full rounded-sm px-2 py-1 text-left text-micro text-muted-foreground outline-none transition-colors duration-(--duration-fast) hover:bg-accent/60 hover:text-foreground focus-visible:focus-ring"
+          className="density-row w-full rounded-sm px-2 text-left text-micro text-muted-foreground outline-none transition-colors duration-(--duration-fast) hover:bg-accent/50 hover:text-foreground focus-visible:focus-ring"
           onClick={() => onLoadMore(project.id)}
         >
           {t('sidebar.project.showMore')}
@@ -482,8 +499,8 @@ export function ProjectNavigationGroup({
 
   return (
     <section aria-labelledby="sidebar-projects-heading">
-      <div className="density-row flex items-center justify-between px-2">
-        <h2 id="sidebar-projects-heading" className="text-caption font-medium uppercase tracking-wide text-muted-foreground/75">
+      <div className="mb-1 flex min-h-8 items-center justify-between px-2">
+        <h2 id="sidebar-projects-heading" className="text-micro font-medium tracking-wide text-muted-foreground">
           {t('sidebar.projects')}
         </h2>
         <Tooltip>
@@ -491,6 +508,7 @@ export function ProjectNavigationGroup({
             <Button
               variant="ghost"
               size="icon-xs"
+              className="size-7 text-muted-foreground"
               aria-label={t('sidebar.addProject')}
               onClick={onAddProject}
             >
@@ -510,13 +528,13 @@ export function ProjectNavigationGroup({
           {t('sidebar.projects.empty')}
         </button>
       ) : (
-        <ul className="flex flex-col gap-0.5">
+        <ul className="flex flex-col gap-1.5">
           {projects.map((navigation) => {
             const { project } = navigation
             const active = project.id === activeProjectId
             return (
               <li key={project.id}>
-                <div className="group/project density-row grid grid-cols-[16px_minmax(0,1fr)_32px] items-center gap-1 rounded-md px-2 transition-colors duration-(--duration-fast) hover:bg-accent/60">
+                <div className="group/project grid min-h-8 grid-cols-[22px_minmax(0,1fr)_28px_28px] items-center gap-0.5 rounded-lg px-1 transition-colors duration-(--duration-fast) hover:bg-accent/45 focus-within:bg-accent/45">
                   <button
                     type="button"
                     aria-expanded={navigation.expanded}
@@ -525,30 +543,68 @@ export function ProjectNavigationGroup({
                       { name: project.name },
                     )}
                     onClick={() => onToggleProject(project.id, !navigation.expanded)}
-                    className="col-span-2 flex min-w-0 items-center gap-1.5 rounded-sm outline-none focus-visible:focus-ring"
+                    className="flex min-h-8 items-center justify-center rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:focus-ring"
                   >
                     {navigation.expanded
-                      ? <TbChevronDown className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-                      : <TbChevronRight className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />}
+                      ? <TbChevronDown className="size-3 shrink-0 text-muted-foreground" aria-hidden />
+                      : <TbChevronRight className="size-3 shrink-0 text-muted-foreground" aria-hidden />}
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`${t('sidebar.project.open')}: ${project.name}`}
+                    aria-current={active ? 'true' : undefined}
+                    disabled={!project.available}
+                    onClick={() => {
+                      if (!navigation.expanded) onToggleProject(project.id, true)
+                      onActivateProject(project.id)
+                    }}
+                    className="flex min-h-8 min-w-0 items-center gap-1.5 rounded-sm text-left outline-none focus-visible:focus-ring disabled:cursor-default"
+                  >
                     {navigation.expanded
                       ? <TbFolderOpen className="size-3.5 shrink-0" aria-hidden />
                       : <TbFolder className="size-3.5 shrink-0" aria-hidden />}
                     <span className={cn(
-                      'truncate text-caption',
-                      active ? 'font-medium text-foreground' : 'text-muted-foreground',
+                      'min-w-0 truncate text-caption font-medium',
+                      active ? 'text-foreground' : 'text-muted-foreground',
                       !project.available && 'opacity-55',
                     )} title={project.name}>
                       {project.name}
                     </span>
+                    {project.pinned ? <TbPin className="size-3 shrink-0 text-muted-foreground" aria-hidden /> : null}
+                    {navigation.catalog.status === 'ready' && navigation.catalog.loadedCount !== undefined && (
+                      <span
+                        className="ml-auto shrink-0 pl-1 text-micro font-normal tabular-nums text-muted-foreground/70"
+                        title={t('sidebar.sessions.loadedCount', { count: navigation.catalog.loadedCount })}
+                        aria-label={t('sidebar.sessions.loadedCount', { count: navigation.catalog.loadedCount })}
+                      >
+                        {navigation.catalog.loadedCount}
+                      </span>
+                    )}
                   </button>
+
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        className="size-7 text-muted-foreground/75 hover:text-foreground"
+                        aria-label={t('sidebar.project.newSessionIn', { name: project.name })}
+                        disabled={!project.available}
+                        onClick={() => onStartProjectTask(project.id)}
+                      >
+                        <TbPlus className="size-3.5" aria-hidden />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="right">{t('sidebar.project.newSession')}</TooltipContent>
+                  </Tooltip>
 
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button
                         variant="ghost"
-                        size="icon-sm"
+                        size="icon-xs"
                         aria-label={t('sidebar.project.actions', { name: project.name })}
-                        className="opacity-0 group-hover/project:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
+                        className="size-7 text-muted-foreground/75 hover:text-foreground data-[state=open]:text-foreground"
                       >
                         <TbDots aria-hidden />
                       </Button>
@@ -588,7 +644,7 @@ export function ProjectNavigationGroup({
                 </div>
 
                 {navigation.expanded && (
-                  <div className="ml-5 border-l border-border/70 pl-1">
+                  <div className="mb-1 ml-5 mt-0.5">
                     <ProjectChildren
                       navigation={navigation}
                       activeSessionId={active ? activeSessionId : ''}
@@ -597,6 +653,7 @@ export function ProjectNavigationGroup({
                       onStartProjectTask={onStartProjectTask}
                       onLoadMore={onLoadMore}
                       onAddProject={onAddProject}
+                      onRetryProject={(projectId) => onToggleProject(projectId, true)}
                     />
                   </div>
                 )}
@@ -623,9 +680,9 @@ export function RecentChatGroup({
   const projectless = items.filter((item) => item.summary.scope.kind === 'projectless')
 
   return (
-    <section className="mt-3" aria-labelledby="sidebar-recent-heading">
-      <h2 id="sidebar-recent-heading" className="density-row flex items-center px-2 text-caption font-medium uppercase tracking-wide text-muted-foreground/75">
-        {t('sidebar.recent')}
+    <section className="mt-4" aria-labelledby="sidebar-recent-heading">
+      <h2 id="sidebar-recent-heading" className="mb-1 flex min-h-8 items-center px-2 text-micro font-medium tracking-wide text-muted-foreground">
+        {t('sidebar.generalChats')}
       </h2>
       <ConversationList
         {...actions}

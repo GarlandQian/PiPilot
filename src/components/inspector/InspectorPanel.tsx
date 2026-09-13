@@ -1,6 +1,5 @@
 import * as React from 'react'
 import { TbLoader2 } from 'react-icons/tb'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useT, type MessageKey } from '@/i18n'
 import {
   createDefaultWorkspaceAdapter,
@@ -9,40 +8,20 @@ import {
 import { useWorkspaceStore } from '@/store/workspace'
 import type { PiConversationPresentation } from '@/store/pi-rpc'
 import type { PiPilotApiError } from '@/shared/pipilot-api'
-import type {
-  WorkspaceFilePreview,
-  WorkspacePathSearchEntry,
-} from '@/shared/workspace-content'
-import type { ConversationOutlineItem, FileNode, ToolCall } from '@/types/chat'
+import type { WorkspacePathSearchEntry } from '@/shared/workspace-content'
+import type { FileNode, ToolCall } from '@/types/chat'
 import { FileTree } from './FileTree'
 import { DiffViewer } from './DiffViewer'
-import { ConversationOutlinePanel } from './ConversationOutlinePanel'
 import { ContinuousDiffController } from './continuous-diff-controller'
 import { TerminalLoadingFallback } from './TerminalPanel'
-import { WorkspaceFileViewer } from './WorkspaceFileViewer'
 import { SubagentExecutionPanel } from './SubagentExecutionPanel'
+import { InspectorToolbar, InspectorView, type InspectorTab } from './InspectorView'
+import { InspectorFileTabs } from './InspectorFileTabs'
+import { InspectorResourcesController, type InspectorPreviewState } from './inspector-resources'
+import { replaceFileTreeChildren } from './file-tree-state'
 
-export const INSPECTOR_TABS = ['files', 'diff', 'outline', 'terminal'] as const
-export type InspectorTab = (typeof INSPECTOR_TABS)[number]
-
-/**
- * The file viewer can move between the wide Inspector and the compact detail
- * layer when the window is resized. Keep the loaded preview at the stable App
- * boundary so that responsive re-parenting never flashes the tree or loses the
- * document that the user was reading.
- */
-export interface InspectorPreviewState {
-  sessionKey: string
-  workspaceId: string
-  path: string
-  preview?: WorkspaceFilePreview
-  phase: 'loading' | 'ready' | 'error'
-  errorCode?: string
-}
-
-export function isInspectorTab(value: string): value is InspectorTab {
-  return (INSPECTOR_TABS as readonly string[]).includes(value)
-}
+export { INSPECTOR_TABS, isInspectorTab, type InspectorTab } from './InspectorView'
+export type { InspectorPreviewState } from './inspector-resources'
 
 const RealTerminalPanel = React.lazy(() =>
   import('./RealTerminalPanel').then((module) => ({
@@ -52,47 +31,21 @@ const RealTerminalPanel = React.lazy(() =>
 
 interface InspectorPanelProps {
   width: number
+  visible?: boolean
+  onClose?: () => void
   activeTab?: InspectorTab
   onActiveTabChange?: (tab: InspectorTab) => void
   previewState?: InspectorPreviewState | null
   onPreviewStateChange?: (state: InspectorPreviewState | null) => void
   conversation: PiConversationPresentation
-  outline: readonly ConversationOutlineItem[]
-  outlineSessionKey: string | null
-  onNavigateOutline: (entryId: string) => void
+  sessionKey: string | null
   onAddWorkspaceReference?: (entry: WorkspacePathSearchEntry) => void
   subagentCall?: ToolCall | null
   onCloseSubagent?: () => void
 }
 
-function InspectorTabList() {
-  const t = useT()
-  return (
-    <div className="flex h-9 shrink-0 items-center border-b border-border/60 px-2">
-      <TabsList
-        variant="line"
-        aria-label={t('inspector.title')}
-        className="grid h-8 w-full grid-cols-4 gap-0 p-0"
-      >
-        <TabsTrigger value="files" className="min-w-0 px-1 text-micro">
-          <span className="truncate">{t('inspector.tab.files')}</span>
-        </TabsTrigger>
-        <TabsTrigger value="diff" className="min-w-0 px-1 text-micro">
-          <span className="truncate">{t('inspector.tab.diff')}</span>
-        </TabsTrigger>
-        <TabsTrigger value="outline" className="min-w-0 px-1 text-micro">
-          <span className="truncate">{t('inspector.tab.outline')}</span>
-        </TabsTrigger>
-        <TabsTrigger value="terminal" className="min-w-0 px-1 text-micro">
-          <span className="truncate">{t('inspector.tab.terminal')}</span>
-        </TabsTrigger>
-      </TabsList>
-    </div>
-  )
-}
-
 function errorCode(error: unknown) {
-  const code = (error as Partial<PiPilotApiError>).code
+  const code = (error as Partial<PiPilotApiError> | null)?.code
   return typeof code === 'string' ? code : 'UNKNOWN_ERROR'
 }
 
@@ -102,24 +55,6 @@ function errorMessageKey(code: string): MessageKey {
   if (code === 'WORKSPACE_CONTENT_STALE_WORKSPACE') return 'inspector.error.staleWorkspace'
   if (code.startsWith('WORKSPACE_PATH_')) return 'inspector.error.invalidPath'
   return 'inspector.error.generic'
-}
-
-function replaceChildren(
-  root: FileNode,
-  path: string,
-  children: FileNode[],
-  truncated: boolean,
-): FileNode {
-  if (path === '.') return { ...root, children, loaded: true, truncated }
-  return {
-    ...root,
-    children: root.children?.map((child) =>
-      child.path === path
-        ? { ...child, children, loaded: true, truncated }
-        : child.type === 'dir'
-          ? replaceChildren(child, path, children, truncated)
-          : child),
-  }
 }
 
 function SessionOwnedInspectorState({
@@ -146,40 +81,37 @@ function SessionOwnedInspectorState({
   )
 }
 
-function ReadySessionOwnedTabs({
+function WorkspaceInspectorTabs({
   adapter,
-  outline,
-  outlineSessionKey,
-  onNavigateOutline,
   onAddWorkspaceReference,
   onPreviewStateChange,
   previewState,
   sessionKey,
   tab,
+  visible,
+  conversation,
   workspaceId,
   workspaceName,
 }: {
   adapter: WorkspaceAdapter
-  outline: readonly ConversationOutlineItem[]
-  outlineSessionKey: string | null
-  onNavigateOutline: (entryId: string) => void
   onAddWorkspaceReference?: (entry: WorkspacePathSearchEntry) => void
   onPreviewStateChange?: (state: InspectorPreviewState | null) => void
   previewState?: InspectorPreviewState | null
   sessionKey: string
-  tab: string
+  tab: InspectorTab
+  visible: boolean
+  conversation: PiConversationPresentation
   workspaceId: string
   workspaceName: string
 }) {
   const t = useT()
   const workspaceStore = useWorkspaceStore()
-  const restoredPreview = previewState &&
-    previewState.sessionKey === sessionKey &&
-    previewState.workspaceId === workspaceId
-    ? previewState
-    : null
-  const restorePreviewOnMount = restoredPreview?.phase === 'loading' &&
-    !restoredPreview.preview
+  const [resources] = React.useState(() => new InspectorResourcesController(
+    workspaceId,
+    (path) => adapter.files.preview(workspaceId, path),
+    previewState,
+  ))
+  const resourceSnapshot = React.useSyncExternalStore(resources.subscribe, resources.getSnapshot, resources.getSnapshot)
   const [root, setRoot] = React.useState<FileNode>({
     name: workspaceName,
     path: '.',
@@ -195,18 +127,6 @@ function ReadySessionOwnedTabs({
   const [modifiedCount, setModifiedCount] = React.useState(0)
   const [currentPath, setCurrentPath] = React.useState<string>()
   const [fileSearchQuery, setFileSearchQuery] = React.useState('')
-  const [previewPath, setPreviewPath] = React.useState<string | undefined>(
-    restoredPreview?.path,
-  )
-  const [preview, setPreview] = React.useState<WorkspaceFilePreview | undefined>(
-    restoredPreview?.preview,
-  )
-  const [previewLoading, setPreviewLoading] = React.useState(
-    restoredPreview?.phase === 'loading',
-  )
-  const [previewErrorCode, setPreviewErrorCode] = React.useState<string | undefined>(
-    restoredPreview?.errorCode,
-  )
   const [diffController] = React.useState(() => new ContinuousDiffController((path) => {
     return adapter.changes.read(workspaceId, path)
   }))
@@ -217,8 +137,7 @@ function ReadySessionOwnedTabs({
   )
   const directoryEpoch = React.useRef(0)
   const lifecycleEpoch = React.useRef(0)
-  const previewEpoch = React.useRef(0)
-  const restoredPreviewHydrationStarted = React.useRef(false)
+  const [diffActivated, setDiffActivated] = React.useState(false)
 
   const loadDirectory = React.useCallback(async (path: string) => {
     const rootRequest = path === '.'
@@ -229,19 +148,19 @@ function ReadySessionOwnedTabs({
       const snapshot = await adapter.files.list(workspaceId, path)
       if (
         lifecycle !== lifecycleEpoch.current ||
-        (path === '.' && epoch !== directoryEpoch.current)
+        epoch !== directoryEpoch.current
       ) return
       const children: FileNode[] = snapshot.entries.map((entry) => ({
         ...entry,
         ...(entry.type === 'dir' ? { loaded: false } : {}),
       }))
-      setRoot((previous) => replaceChildren(previous, path, children, snapshot.truncated))
+      setRoot((previous) => replaceFileTreeChildren(previous, path, children, snapshot.truncated))
       setModifiedCount(snapshot.modifiedCount)
       if (rootRequest) setFileListState({ status: 'ready' })
     } catch (error) {
       if (
         lifecycle !== lifecycleEpoch.current ||
-        (path === '.' && epoch !== directoryEpoch.current)
+        epoch !== directoryEpoch.current
       ) return
       if (rootRequest) {
         setFileListState({ status: 'error', code: errorCode(error) })
@@ -278,81 +197,27 @@ function ReadySessionOwnedTabs({
   }, [refreshFiles])
 
   React.useEffect(() => {
-    if (tab === 'diff') void loadChanges()
-  }, [loadChanges, tab])
+    if (visible && tab === 'diff' && !diffActivated) {
+      setDiffActivated(true)
+      void loadChanges()
+    }
+  }, [diffActivated, loadChanges, tab, visible])
 
   React.useEffect(() => () => {
     lifecycleEpoch.current += 1
     directoryEpoch.current += 1
-    previewEpoch.current += 1
+    resources.dispose()
     diffController.dispose()
-  }, [diffController])
+  }, [diffController, resources])
 
-  const openPreview = React.useCallback(async (path: string) => {
-    const lifecycle = lifecycleEpoch.current
-    const epoch = ++previewEpoch.current
-    setCurrentPath(path)
-    setPreviewPath(path)
-    setPreview(undefined)
-    setPreviewErrorCode(undefined)
-    setPreviewLoading(true)
-    onPreviewStateChange?.({
-      sessionKey,
-      workspaceId,
-      path,
-      phase: 'loading',
-    })
-    try {
-      const nextPreview = await adapter.files.preview(workspaceId, path)
-      if (
-        lifecycle !== lifecycleEpoch.current ||
-        epoch !== previewEpoch.current
-      ) return
-      setPreview(nextPreview)
-      onPreviewStateChange?.({
-        sessionKey,
-        workspaceId,
-        path,
-        preview: nextPreview,
-        phase: 'ready',
-      })
-    } catch (error) {
-      if (
-        lifecycle !== lifecycleEpoch.current ||
-        epoch !== previewEpoch.current
-      ) return
-      setPreview(undefined)
-      const code = errorCode(error)
-      setPreviewErrorCode(code)
-      onPreviewStateChange?.({
-        sessionKey,
-        workspaceId,
-        path,
-        phase: 'error',
-        errorCode: code,
-      })
-    } finally {
-      if (
-        lifecycle === lifecycleEpoch.current &&
-        epoch === previewEpoch.current
-      ) setPreviewLoading(false)
-    }
-  }, [adapter, onPreviewStateChange, sessionKey, workspaceId])
-
-  const closePreview = React.useCallback(() => {
-    previewEpoch.current += 1
-    setPreviewPath(undefined)
-    setPreview(undefined)
-    setPreviewLoading(false)
-    setPreviewErrorCode(undefined)
-    onPreviewStateChange?.(null)
-  }, [onPreviewStateChange])
-
+  React.useLayoutEffect(() => {
+    resources.setSession(conversation.status === 'ready' ? sessionKey : null)
+    return () => resources.setSession(null)
+  }, [conversation.status, resources, sessionKey])
   React.useEffect(() => {
-    if (!restorePreviewOnMount || !previewPath || restoredPreviewHydrationStarted.current) return
-    restoredPreviewHydrationStarted.current = true
-    void openPreview(previewPath)
-  }, [openPreview, previewPath, restorePreviewOnMount])
+    if (conversation.status !== 'ready') return
+    onPreviewStateChange?.(resourceSnapshot.files.find((file) => file.path === resourceSnapshot.activePath) ?? null)
+  }, [conversation.status, onPreviewStateChange, resourceSnapshot])
 
   const refreshContent = React.useCallback(async () => {
     await Promise.all([
@@ -369,79 +234,68 @@ function ReadySessionOwnedTabs({
       : diffSnapshot.gitAvailable
         ? t('inspector.diff.clean')
         : t('inspector.diff.gitUnavailable')
+  const blocked = conversation.status === 'ready' ? null : conversation
 
   return (
     <>
-      <TabsContent value="files" className="min-h-0 flex-1 data-[state=inactive]:hidden">
-        {previewPath ? (
-          <WorkspaceFileViewer
-            key={previewPath}
-            path={previewPath}
-            preview={preview}
-            loading={previewLoading}
-            errorMessage={previewErrorCode
-              ? t(errorMessageKey(previewErrorCode))
-              : undefined}
-            onBack={closePreview}
-            onClose={closePreview}
-            onRetry={() => void openPreview(previewPath)}
-          />
-        ) : (
-          <FileTree
-            root={root}
-            workspaceName={workspaceName}
-            workingTreeLabel={t('inspector.files.workspaceTree')}
-            currentPath={currentPath}
-            modifiedCount={modifiedCount}
-            onExpand={loadDirectory}
-            onRefresh={() => {
-              void refreshContent().catch(() => undefined)
-            }}
-            onSelect={(path) => void openPreview(path)}
-            onAddToComposer={onAddWorkspaceReference}
-            loading={fileListState.status === 'loading'}
-            errorMessage={fileListState.status === 'error'
-              ? t(errorMessageKey(fileListState.code))
-              : undefined}
-            onRetry={() => void refreshFiles()}
-            onSearch={searchFiles}
-            searchWorkspaceId={workspaceId}
-            searchQuery={fileSearchQuery}
-            onSearchQueryChange={setFileSearchQuery}
-          />
-        )}
-      </TabsContent>
-      <TabsContent value="diff" className="min-h-0 flex-1 data-[state=inactive]:hidden">
-        <DiffViewer
-          files={diffSnapshot.files}
-          listLoading={diffSnapshot.listLoading}
-          listTruncated={diffSnapshot.listTruncated}
-          emptyMessage={emptyDiffMessage}
-          onRefresh={() => void refreshContent().catch(() => undefined)}
-          onRequestFile={diffController.request}
-          onRetryFile={diffController.request}
-        />
-      </TabsContent>
-      <TabsContent value="outline" className="min-h-0 flex-1 data-[state=inactive]:hidden">
-        <ConversationOutlinePanel
-          key={outlineSessionKey ?? 'no-session'}
-          items={outline}
-          onNavigate={onNavigateOutline}
-        />
-      </TabsContent>
-
+      <InspectorView view="files" activeView={tab}>
+        <div hidden={Boolean(blocked)} className="h-full min-h-0">
+          <InspectorFileTabs controller={resources} snapshot={resourceSnapshot} errorMessageKey={errorMessageKey} onAddToComposer={onAddWorkspaceReference}>
+            <FileTree
+              root={root}
+              workspaceName={workspaceName}
+              workingTreeLabel={t('inspector.files.workspaceTree')}
+              currentPath={currentPath}
+              modifiedCount={modifiedCount}
+              onExpand={loadDirectory}
+              onRefresh={() => {
+                void refreshContent().catch(() => undefined)
+              }}
+              onSelect={(path) => { if (resources.open(path)) setCurrentPath(path) }}
+              onAddToComposer={onAddWorkspaceReference}
+              loading={fileListState.status === 'loading'}
+              errorMessage={fileListState.status === 'error'
+                ? t(errorMessageKey(fileListState.code))
+                : undefined}
+              onRetry={() => void refreshFiles()}
+              onSearch={searchFiles}
+              searchWorkspaceId={workspaceId}
+              searchQuery={fileSearchQuery}
+              onSearchQueryChange={setFileSearchQuery}
+            />
+          </InspectorFileTabs>
+        </div>
+        {blocked ? <SessionOwnedInspectorState conversation={blocked} /> : null}
+      </InspectorView>
+      <InspectorView view="diff" activeView={tab}>
+        <div hidden={Boolean(blocked)} className="h-full min-h-0">
+          {diffActivated ? (
+            <DiffViewer
+              files={diffSnapshot.files}
+              listLoading={diffSnapshot.listLoading}
+              listTruncated={diffSnapshot.listTruncated}
+              listErrorMessage={diffSnapshot.listErrorCode ? t(errorMessageKey(diffSnapshot.listErrorCode)) : undefined}
+              emptyMessage={emptyDiffMessage}
+              onRefresh={() => void refreshContent().catch(() => undefined)}
+              onRequestFile={diffController.request}
+              onRetryFile={diffController.request}
+            />
+          ) : null}
+        </div>
+        {blocked ? <SessionOwnedInspectorState conversation={blocked} /> : null}
+      </InspectorView>
     </>
   )
 }
 
 function ElectronInspector({
   width,
+  visible = true,
+  onClose,
   activeTab,
   onActiveTabChange,
   conversation,
-  outline,
-  outlineSessionKey,
-  onNavigateOutline,
+  sessionKey,
   onAddWorkspaceReference,
   onPreviewStateChange,
   previewState,
@@ -458,8 +312,14 @@ function ElectronInspector({
   const t = useT()
   const [adapter] = React.useState(createDefaultWorkspaceAdapter)
   const [terminalActivated, setTerminalActivated] = React.useState(
-    activeTab === 'terminal',
+    visible && activeTab === 'terminal',
   )
+  const [workspaceActivated, setWorkspaceActivated] = React.useState(false)
+  const renderWorkspace = workspaceActivated || (visible && conversation.status === 'ready')
+  React.useEffect(() => {
+    if (visible && activeTab === 'terminal') setTerminalActivated(true)
+    if (visible && conversation.status === 'ready') setWorkspaceActivated(true)
+  }, [activeTab, conversation.status, visible])
   const blockedConversation: Exclude<PiConversationPresentation, { status: 'ready' }> =
     conversation.status === 'ready'
       ? { status: 'error', error: t('inspector.error.generic') }
@@ -471,61 +331,51 @@ function ElectronInspector({
       style={{ width, maxWidth: '100%' }}
       className="relative flex h-full shrink-0 flex-col border-l border-border bg-sidebar"
     >
-      <Tabs
-        value={activeTab}
-        onValueChange={(value) => {
-          if (!isInspectorTab(value)) return
-          onActiveTabChange(value)
-          if (value === 'terminal') setTerminalActivated(true)
-        }}
-        className="flex min-h-0 flex-1 flex-col"
+      <div
+        data-inspector-views
+        inert={Boolean(subagentCall && onCloseSubagent)}
+        aria-hidden={subagentCall && onCloseSubagent ? true : undefined}
+        className="flex min-h-0 flex-1 flex-col gap-0"
       >
-        <InspectorTabList />
+        <InspectorToolbar activeView={activeTab} onViewChange={onActiveTabChange} onClose={onClose} visible={visible && !subagentCall} />
 
-        {conversation.status === 'ready' && adapter ? (
-          <ReadySessionOwnedTabs
-            key={`${workspaceId}:${outlineSessionKey ?? conversation.sessionId}`}
+        {renderWorkspace && adapter ? (
+          <WorkspaceInspectorTabs
+            key={workspaceId}
             adapter={adapter}
-            outline={outline}
-            outlineSessionKey={outlineSessionKey}
-            onNavigateOutline={onNavigateOutline}
             onAddWorkspaceReference={onAddWorkspaceReference}
             onPreviewStateChange={onPreviewStateChange}
             previewState={previewState}
-            sessionKey={outlineSessionKey ?? conversation.sessionId}
+            sessionKey={sessionKey ?? 'unavailable'}
             tab={activeTab}
+            visible={visible && conversation.status === 'ready'}
+            conversation={conversation}
             workspaceId={workspaceId}
             workspaceName={workspaceName}
           />
         ) : (
           <>
-            <TabsContent value="files" className="min-h-0 flex-1 data-[state=inactive]:hidden">
+            <InspectorView view="files" activeView={activeTab}>
               <SessionOwnedInspectorState conversation={blockedConversation} />
-            </TabsContent>
-            <TabsContent value="diff" className="min-h-0 flex-1 data-[state=inactive]:hidden">
+            </InspectorView>
+            <InspectorView view="diff" activeView={activeTab}>
               <SessionOwnedInspectorState conversation={blockedConversation} />
-            </TabsContent>
-            <TabsContent value="outline" className="min-h-0 flex-1 data-[state=inactive]:hidden">
-              <SessionOwnedInspectorState conversation={blockedConversation} />
-            </TabsContent>
+            </InspectorView>
           </>
         )}
 
-        <TabsContent
-          value="terminal"
-          forceMount
-          className="min-h-0 flex-1 data-[state=inactive]:hidden"
-        >
+        <InspectorView view="terminal" activeView={activeTab}>
           {terminalActivated && adapter ? (
             <React.Suspense fallback={<TerminalLoadingFallback />}>
               <RealTerminalPanel
                 terminalApi={adapter.terminal}
                 scope={{ kind: 'project', workspaceId }}
+                visible={visible && activeTab === 'terminal' && !subagentCall}
               />
             </React.Suspense>
           ) : null}
-        </TabsContent>
-      </Tabs>
+        </InspectorView>
+      </div>
       {subagentCall && onCloseSubagent ? (
         <SubagentExecutionPanel call={subagentCall} onClose={onCloseSubagent} />
       ) : null}
@@ -535,12 +385,11 @@ function ElectronInspector({
 
 function EmptyElectronInspector({
   width,
+  visible = true,
+  onClose,
   activeTab,
   onActiveTabChange,
   conversation,
-  outline,
-  outlineSessionKey,
-  onNavigateOutline,
   subagentCall,
   onCloseSubagent,
 }: InspectorPanelProps & {
@@ -551,8 +400,11 @@ function EmptyElectronInspector({
   const workspaceStore = useWorkspaceStore()
   const [adapter] = React.useState(createDefaultWorkspaceAdapter)
   const [terminalActivated, setTerminalActivated] = React.useState(
-    activeTab === 'terminal',
+    visible && activeTab === 'terminal',
   )
+  React.useEffect(() => {
+    if (visible && activeTab === 'terminal') setTerminalActivated(true)
+  }, [activeTab, visible])
   const root: FileNode = {
     name: workspaceStore.activeScope.kind === 'projectless'
       ? t('conversation.projectless')
@@ -568,17 +420,14 @@ function EmptyElectronInspector({
       style={{ width, maxWidth: '100%' }}
       className="relative flex h-full shrink-0 flex-col border-l border-border bg-sidebar"
     >
-      <Tabs
-        value={activeTab}
-        className="flex min-h-0 flex-1 flex-col"
-        onValueChange={(value) => {
-          if (!isInspectorTab(value)) return
-          onActiveTabChange(value)
-          if (value === 'terminal') setTerminalActivated(true)
-        }}
+      <div
+        data-inspector-views
+        inert={Boolean(subagentCall && onCloseSubagent)}
+        aria-hidden={subagentCall && onCloseSubagent ? true : undefined}
+        className="flex min-h-0 flex-1 flex-col gap-0"
       >
-        <InspectorTabList />
-        <TabsContent value="files" className="min-h-0 flex-1 data-[state=inactive]:hidden">
+        <InspectorToolbar activeView={activeTab} onViewChange={onActiveTabChange} onClose={onClose} visible={visible && !subagentCall} />
+        <InspectorView view="files" activeView={activeTab}>
           {conversation.status === 'ready' ? (
             <FileTree
               root={root}
@@ -589,8 +438,8 @@ function EmptyElectronInspector({
           ) : (
             <SessionOwnedInspectorState conversation={conversation} />
           )}
-        </TabsContent>
-        <TabsContent value="diff" className="min-h-0 flex-1 data-[state=inactive]:hidden">
+        </InspectorView>
+        <InspectorView view="diff" activeView={activeTab}>
           {conversation.status === 'ready' ? (
             <DiffViewer
               files={[]}
@@ -599,33 +448,19 @@ function EmptyElectronInspector({
           ) : (
             <SessionOwnedInspectorState conversation={conversation} />
           )}
-        </TabsContent>
-        <TabsContent value="outline" className="min-h-0 flex-1 data-[state=inactive]:hidden">
-          {conversation.status === 'ready' ? (
-            <ConversationOutlinePanel
-              key={outlineSessionKey ?? 'no-session'}
-              items={outline}
-              onNavigate={onNavigateOutline}
-            />
-          ) : (
-            <SessionOwnedInspectorState conversation={conversation} />
-          )}
-        </TabsContent>
-        <TabsContent
-          value="terminal"
-          forceMount
-          className="min-h-0 flex-1 data-[state=inactive]:hidden"
-        >
+        </InspectorView>
+        <InspectorView view="terminal" activeView={activeTab}>
           {terminalActivated && adapter ? (
             <React.Suspense fallback={<TerminalLoadingFallback />}>
               <RealTerminalPanel
                 terminalApi={adapter.terminal}
                 scope={workspaceStore.activeScope}
+                visible={visible && activeTab === 'terminal' && !subagentCall}
               />
             </React.Suspense>
           ) : null}
-        </TabsContent>
-      </Tabs>
+        </InspectorView>
+      </div>
       {subagentCall && onCloseSubagent ? (
         <SubagentExecutionPanel call={subagentCall} onClose={onCloseSubagent} />
       ) : null}
@@ -644,6 +479,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
   if (workspaceStore.mode === 'electron' && workspaceStore.workspace?.available) {
     return (
       <ElectronInspector
+        key={workspaceStore.workspace.id}
         {...props}
         activeTab={activeTab}
         onActiveTabChange={onActiveTabChange}

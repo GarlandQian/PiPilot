@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { app, shell, type BrowserWindow } from 'electron'
 import {
   appGetInfoContract,
+  appShutdownRespondContract,
   ipcChannels,
   settingsChangedEventSchema,
   settingsGetContract,
@@ -13,6 +14,7 @@ import {
 } from '../../shared/ipc/contracts'
 import type { SettingsRepository } from '../repositories/settings-repository'
 import type { ApplicationUrlPolicy } from '../security/url-policy'
+import type { ConfigurationShutdownGuard } from '../application-update/configuration-shutdown-guard'
 import {
   createTrustedSenderValidator,
   MainProcessError,
@@ -23,14 +25,20 @@ interface RegisterAppIpcOptions {
   getMainWindow(): BrowserWindow | null
   policy: ApplicationUrlPolicy
   settingsRepository: SettingsRepository
+  shutdownGuard: ConfigurationShutdownGuard
 }
 
 export function registerAppIpc({
   getMainWindow,
   policy,
   settingsRepository,
+  shutdownGuard,
 }: RegisterAppIpcOptions) {
   const isTrustedSender = createTrustedSenderValidator(policy, getMainWindow)
+
+  registerValidatedHandler(appShutdownRespondContract, isTrustedSender, ({ shutdownId, decision }, event) => ({
+    accepted: shutdownGuard.respond(event.sender, shutdownId, decision),
+  }))
 
   registerValidatedHandler(appGetInfoContract, isTrustedSender, () => {
     const info: AppInfo = {
@@ -63,12 +71,22 @@ export function registerAppIpc({
     () => settingsRepository.initialize(),
   )
 
-  registerValidatedHandler(settingsUpdateContract, isTrustedSender, ({ patch }) => {
-    return settingsRepository.update(patch)
+  registerValidatedHandler(settingsUpdateContract, isTrustedSender, async ({ patch }) => {
+    const snapshot = settingsRepository.update(patch)
+    try {
+      return await settingsRepository.whenPersisted(snapshot.revision)
+    } catch {
+      throw new MainProcessError('SETTINGS_WRITE_FAILED', 'Settings could not be saved. The previous saved settings were restored.')
+    }
   })
 
-  registerValidatedHandler(settingsResetContract, isTrustedSender, ({ scope }) => {
-    return settingsRepository.reset(scope)
+  registerValidatedHandler(settingsResetContract, isTrustedSender, async ({ scope }) => {
+    const snapshot = settingsRepository.reset(scope)
+    try {
+      return await settingsRepository.whenPersisted(snapshot.revision)
+    } catch {
+      throw new MainProcessError('SETTINGS_WRITE_FAILED', 'Settings could not be saved. The previous saved settings were restored.')
+    }
   })
 
   settingsRepository.subscribe((snapshot) => {

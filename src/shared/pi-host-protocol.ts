@@ -573,7 +573,7 @@ export const piHostCommandSchema = z.discriminatedUnion('type', [
       }
     }),
   z.object({ type: z.literal('runtime.bind') }).strict(),
-  z.object({ type: z.literal('runtime.reload') }).strict(),
+  z.object({ type: z.literal('runtime.reload'), configurationApply: z.literal(true).optional() }).strict(),
   z
     .object({
       type: z.literal('runtime.command'),

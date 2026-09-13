@@ -3,7 +3,12 @@ import {
   applyLocalPiProjectorEvent,
   createLocalPiProjectorState,
 } from '../../src/renderer/pi-rpc/projector'
-import { projectLocalPiTurns } from '../../src/renderer/pi-rpc/presentation'
+import {
+  groupConversationTurns,
+  projectConversationOutline,
+  projectLocalPiTurns,
+} from '../../src/renderer/pi-rpc/presentation'
+import { projectResponsePresentation } from '../../src/renderer/pi-rpc/response-presentation'
 import type {
   LocalPiAssistantMessage,
   LocalPiRpcEvent,
@@ -468,4 +473,48 @@ describe('official Pi transcript presentation', () => {
       }),
     ]))
   })
+
+  it.each([
+    ['aborted', 'Request was aborted', true, 'cancelled', 'aborted'],
+    ['aborted', 'Provider diagnostic details.', false, 'cancelled', 'aborted'],
+    ['error', 'Request was aborted', true, 'failed', 'error'],
+    ['error', 'The provider rejected this request.', false, 'failed', 'error'],
+  ] as const)(
+    'preserves authoritative %s state for diagnostic text %s with thinking=%s',
+    (stopReason, diagnostic, withThinking, responseStatus, turnState) => {
+      const user = { role: 'user' as const, content: 'Inspect the result.', timestamp: 1 }
+      const stopped = {
+        ...assistant(withThinking ? [{ type: 'thinking', thinking: 'Observed reasoning before termination.' }] : [], stopReason),
+        errorMessage: diagnostic,
+      }
+      const state = createLocalPiProjectorState({
+        generation: 4,
+        sessionId: 'session-a',
+        messages: [user, stopped],
+        entrySnapshot: {
+          generation: 4,
+          sessionId: 'session-a',
+          entries: [
+            { type: 'message', id: 'entry-user', parentId: null, timestamp: '2026-09-08T09:14:14.925Z', message: user },
+            { type: 'message', id: 'entry-stopped', parentId: 'entry-user', timestamp: '2026-09-08T09:14:15.061Z', message: stopped },
+          ],
+          leafId: 'entry-stopped',
+          cursor: 'entry-stopped',
+        },
+      })
+      const turns = projectLocalPiTurns(state)
+      const diagnosticTurn = turns.find((turn) => turn.kind === 'agent')
+      const thinkingTurn = turns.find((turn) => turn.kind === 'thinking')
+      const response = projectResponsePresentation(groupConversationTurns(turns)[0]!, { active: false, status: 'idle' })
+
+      expect(diagnosticTurn).toMatchObject({ kind: 'agent', markdown: diagnostic, state: turnState })
+      if (withThinking) expect(thinkingTurn).toMatchObject({ kind: 'thinking', state: turnState })
+      else expect(thinkingTurn).toBeUndefined()
+      expect(response.status).toBe(responseStatus)
+      expect(projectConversationOutline(turns)[0]?.status).toBe(turnState)
+      expect(turns.some((turn) => turn.kind === 'response-actions')).toBe(false)
+      expect(stopped.stopReason).toBe(stopReason)
+      expect(stopped.errorMessage).toBe(diagnostic)
+    },
+  )
 })

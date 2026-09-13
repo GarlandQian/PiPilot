@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
-  conversationOutlineFocusIndex,
-  orderConversationOutlineItemsForDisplay,
-} from '../../src/components/inspector/ConversationOutlinePanel'
+  conversationNavigationFocusIndex,
+  filterConversationNavigationItems,
+} from '../../src/components/chat/conversation-navigation'
 import { projectConversationOutline } from '../../src/renderer/pi-rpc/presentation'
 import type { ConversationOutlineItem, Turn } from '../../src/types/chat'
 
@@ -163,7 +163,7 @@ describe('conversation outline projection', () => {
   })
 })
 
-describe('conversation outline panel ordering', () => {
+describe('conversation navigation ordering and search', () => {
   const chronologicalItems: readonly ConversationOutlineItem[] = [
     {
       entryId: 'entry-user-a',
@@ -174,6 +174,7 @@ describe('conversation outline panel ordering', () => {
     {
       entryId: 'entry-user-b',
       title: 'Middle prompt',
+      summary: 'Investigated the selected session',
       status: 'complete',
       time: '',
     },
@@ -186,19 +187,29 @@ describe('conversation outline panel ordering', () => {
   ]
 
   it('shows the latest projected turn first without mutating source order', () => {
-    expect(orderConversationOutlineItemsForDisplay(chronologicalItems).map((item) => item.entryId))
+    expect(filterConversationNavigationItems(chronologicalItems).map((item) => item.entryId))
       .toEqual(['entry-user-c', 'entry-user-b', 'entry-user-a'])
     expect(chronologicalItems.map((item) => item.entryId))
       .toEqual(['entry-user-a', 'entry-user-b', 'entry-user-c'])
   })
 
   it('moves focus by the latest-first visual DOM order', () => {
-    expect(conversationOutlineFocusIndex('ArrowDown', 0, 3)).toBe(1)
-    expect(conversationOutlineFocusIndex('ArrowUp', 2, 3)).toBe(1)
-    expect(conversationOutlineFocusIndex('Home', 2, 3)).toBe(0)
-    expect(conversationOutlineFocusIndex('End', 0, 3)).toBe(2)
-    expect(conversationOutlineFocusIndex('ArrowUp', 0, 3)).toBe(0)
-    expect(conversationOutlineFocusIndex('ArrowDown', 2, 3)).toBe(2)
-    expect(conversationOutlineFocusIndex('Enter', 1, 3)).toBeNull()
+    expect(conversationNavigationFocusIndex('ArrowDown', 0, 3)).toBe(1)
+    expect(conversationNavigationFocusIndex('ArrowUp', 2, 3)).toBe(1)
+    expect(conversationNavigationFocusIndex('Home', 2, 3)).toBe(0)
+    expect(conversationNavigationFocusIndex('End', 0, 3)).toBe(2)
+    expect(conversationNavigationFocusIndex('ArrowUp', 0, 3)).toBe(0)
+    expect(conversationNavigationFocusIndex('ArrowDown', 2, 3)).toBe(2)
+    expect(conversationNavigationFocusIndex('Enter', 1, 3)).toBeNull()
+    expect(conversationNavigationFocusIndex('Home', -1, 0)).toBeNull()
+  })
+
+  it('matches prompt and answer terms while preserving chronology for search results', () => {
+    expect(filterConversationNavigationItems(chronologicalItems, ' PROMPT ').map((item) => item.entryId))
+      .toEqual(['entry-user-c', 'entry-user-b', 'entry-user-a'])
+    expect(filterConversationNavigationItems(chronologicalItems, 'SELECTED middle').map((item) => item.entryId))
+      .toEqual(['entry-user-b'])
+    expect(filterConversationNavigationItems(chronologicalItems, 'unmatched')).toEqual([])
+    expect(filterConversationNavigationItems(chronologicalItems, '   ')).toHaveLength(3)
   })
 })

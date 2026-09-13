@@ -5,10 +5,8 @@ function commonPrefixLength(left: string, right: string) {
   return index
 }
 
-function stepSize(backlog: number, settling: boolean) {
-  const fraction = settling ? 0.08 : 0.05
-  const minimum = settling ? 5 : 3
-  return Math.min(backlog, Math.max(Math.ceil(backlog * fraction), minimum))
+function stepSize(backlog: number) {
+  return Math.min(backlog, Math.max(Math.ceil(backlog * 0.05), 3))
 }
 
 export function nextTypewriterText(
@@ -16,12 +14,13 @@ export function nextTypewriterText(
   target: string,
   settling = false,
 ) {
+  if (settling) return target
   const prefixLength = target.startsWith(displayed)
     ? displayed.length
     : commonPrefixLength(displayed, target)
   const backlog = target.length - prefixLength
   if (backlog <= 0) return target
-  return target.slice(0, prefixLength + stepSize(backlog, settling))
+  return target.slice(0, prefixLength + stepSize(backlog))
 }
 
 export function shouldStartTypewriterFromEmpty(
@@ -33,8 +32,8 @@ export function shouldStartTypewriterFromEmpty(
 }
 
 /**
- * Keeps active reasoning visible, then collapses it at settlement unless the
- * user explicitly chose a disclosure state during that live phase.
+ * Settlement changes the status, not the reader's disclosure or viewport.
+ * Hydrated history still starts closed in the presentation component.
  */
 export function thinkingDisclosureAfterPhaseChange(
   wasStreaming: boolean,
@@ -43,5 +42,5 @@ export function thinkingDisclosureAfterPhaseChange(
 ): boolean | null {
   if (wasStreaming === streaming) return null
   if (streaming) return true
-  return manualOpen ?? false
+  return manualOpen ?? true
 }

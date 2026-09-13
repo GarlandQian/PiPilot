@@ -1,5 +1,14 @@
+import { realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from 'node:path'
 
 const PACKAGED_SMOKE_DIRECTORY_PREFIX = 'pipilot-packaged-smoke-'
 
@@ -27,6 +36,23 @@ function isPathInside(parent: string, candidate: string) {
   )
 }
 
+function canonicalizePath(value: string) {
+  let current = resolve(value)
+  const suffix: string[] = []
+  while (true) {
+    try {
+      let canonical = realpathSync.native(current)
+      for (const segment of suffix.reverse()) canonical = join(canonical, segment)
+      return canonical
+    } catch {
+      const parent = dirname(current)
+      if (parent === current) return resolve(value)
+      suffix.push(basename(current))
+      current = parent
+    }
+  }
+}
+
 export function resolveTestUserDataOverride({
   candidate,
   isPackaged,
@@ -40,17 +66,19 @@ export function resolveTestUserDataOverride({
   if (packagedSmoke !== '1') return undefined
 
   const resolvedTemporaryDirectory = resolve(temporaryDirectory)
-  if (!isPathInside(resolvedTemporaryDirectory, resolvedCandidate)) return undefined
+  const canonicalTemporaryDirectory = canonicalizePath(resolvedTemporaryDirectory)
+  const canonicalCandidate = canonicalizePath(resolvedCandidate)
+  if (!isPathInside(canonicalTemporaryDirectory, canonicalCandidate)) return undefined
 
   const topLevelDirectory = relative(
-    resolvedTemporaryDirectory,
-    resolvedCandidate,
+    canonicalTemporaryDirectory,
+    canonicalCandidate,
   ).split(sep)[0]
   if (!topLevelDirectory.startsWith(PACKAGED_SMOKE_DIRECTORY_PREFIX)) {
     return undefined
   }
 
-  return resolvedCandidate
+  return canonicalCandidate
 }
 
 export function createApplicationStoragePaths(

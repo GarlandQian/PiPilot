@@ -2,6 +2,7 @@ import { realpathSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
 import type { ExternalControlRequestedMode } from '../../shared/external-control-mode'
 import {
+  LOCAL_PI_RUNTIME_SESSION_PENDING_MAX,
   LOCAL_PI_RUNTIME_SESSION_STATUS_MAX_ITEMS,
   localPiRuntimeSnapshotSchema,
   localPiSessionStateSchema,
@@ -31,6 +32,12 @@ import {
   type ProjectHostScope,
   type ProjectRuntimeDescriptor,
 } from './project-host-pool'
+import { RuntimeMaintenanceBusyError, type RuntimeMaintenancePermit } from './runtime-maintenance-gate'
+import type {
+  RuntimeConfigurationAttempt,
+  RuntimeConfigurationIdentity,
+  RuntimeConfigurationResult,
+} from './runtime-configuration'
 
 export const PI_RUNTIME_ABORT_GRACE_TIMEOUT_MS = 5_000
 
@@ -42,6 +49,8 @@ export type PiRuntimeFrontendErrorCode =
   | 'PI_RUNTIME_CONFIRMATION_FAILED'
   | 'PI_RUNTIME_HOST_RECOVERY_FAILED'
   | 'PI_RUNTIME_OPERATION_FAILED'
+  | 'PI_RUNTIME_MAINTENANCE_PENDING'
+  | 'PI_RUNTIME_CONFIGURATION_INTERACTION_REQUIRED'
 
 export class PiRuntimeFrontendError extends Error {
   constructor(
@@ -125,6 +134,13 @@ export function projectRuntimeSessionStatuses(
       sessionId: summary.sessionId,
       ...(summary.selectionToken ? { selectionToken: summary.selectionToken } : {}),
       status,
+      ...(summary.queueCount > 0
+        ? { pendingMessageCount: Math.min(
+            summary.queueCount,
+            LOCAL_PI_RUNTIME_SESSION_PENDING_MAX,
+          ) }
+        : {}),
+      ...(summary.selected ? { selected: true as const } : {}),
     })
   }
   for (const key of statuses.keys()) {
@@ -348,6 +364,7 @@ export class PiRuntimeFrontend {
   private readonly detachEvents: () => boolean
   private readonly detachUiRequests: () => boolean
   private readonly detachHostSnapshots: () => boolean
+  private readonly detachAdmission: () => boolean
 
   constructor(
     private readonly pool: ProjectHostPool,
@@ -367,6 +384,7 @@ export class PiRuntimeFrontend {
     this.detachUiRequests = pool.subscribeUiRequests((envelope) => {
       void this.forwardUiRequest(envelope).catch(() => undefined)
     })
+    this.detachAdmission = pool.subscribeAdmission(() => this.publishControlRuntimes())
     this.detachHostSnapshots = pool.subscribe((snapshot) => {
       this.reconcileInactiveRuntimes(snapshot)
       const active = this.active
@@ -605,6 +623,7 @@ export class PiRuntimeFrontend {
       runtime.activity.controlPins - 1,
     )
     this.touchActivity(runtime)
+    this.publishControlRuntimes()
     if (runtime.runtimeId !== this.active?.runtimeId && isRuntimeIdle(runtime.activity)) {
       this.scheduleIdleReclaim(runtime.hostScope)
     }
@@ -619,6 +638,7 @@ export class PiRuntimeFrontend {
   ) {
     this.assertNotDisposed()
     const runtime = this.requireControlRuntime(handle)
+    this.assertAdmission(runtime.hostScope.cwd)
     const token = this.markCommandStart(runtime, handle.generation)
     try {
       const result = await this.pool.externalSubmit(
@@ -796,6 +816,7 @@ export class PiRuntimeFrontend {
           'No Pi runtime is active.',
         )
       }
+      this.assertAdmission(active.hostScope.cwd)
       return this.activate(
         {
           scope: active.scope,
@@ -808,57 +829,184 @@ export class PiRuntimeFrontend {
     })
   }
 
-  /** Reload package/resources in every retained Runtime for an affected Host set. */
-  reloadRuntimes(cwd?: string): Promise<void> {
-    return this.enqueue(async () => {
-      this.assertNotDisposed()
-      const readyRuntimeIds = new Set(this.pool.getSnapshot().hosts
-        .filter((host) => host.state === 'ready' && (cwd === undefined || host.cwd === cwd))
-        .flatMap((host) => host.runtimes)
-        .filter((runtime) => runtime.state === 'ready')
-        .map((runtime) => runtime.runtimeId))
-      const targets = [...this.runtimes.values()].filter((runtime) =>
-        readyRuntimeIds.has(runtime.runtimeId))
-
-      for (const runtime of targets) {
-        const baseGeneration = runtime.descriptor.generation
-        const commandToken = this.markCommandStart(runtime, baseGeneration)
-        let descriptor: ProjectRuntimeDescriptor
-        try {
-          descriptor = await this.pool.reloadRuntime(
-            runtime.runtimeId,
-            baseGeneration,
-          )
-        } catch (error) {
-          throw this.toFrontendError(error)
-        } finally {
-          this.markCommandEnd(runtime, commandToken)
-        }
-
-        this.setRuntimeDescriptor(runtime, descriptor)
-        runtime.lastCredibleSessionFile = descriptor.sessionFile ??
-          runtime.lastCredibleSessionFile
-        if (runtime.runtimeId !== this.active?.runtimeId) continue
-
-        runtime.snapshot = {
-          ...runtime.snapshot,
-          state: 'replacing',
-          generation: descriptor.generation,
-          cwd: descriptor.cwd,
-          sessionFile: descriptor.sessionFile,
-        }
-        this.publish(runtime.snapshot)
-        const hydrated = await this.hydrate(descriptor, {
-          scope: runtime.hostScope,
-          ...(descriptor.sessionFile === null
-            ? {}
-            : { sessionFile: descriptor.sessionFile }),
-        })
-        runtime.snapshot = hydrated
-        runtime.lastCredibleSessionFile = hydrated.sessionFile
-        this.publish(hydrated)
-      }
+  /** Package synchronization has the same no-interruption policy as config save. */
+  async reloadRuntimes(cwd?: string): Promise<void> {
+    const result = await this.applyConfiguration({
+      ...(cwd === undefined ? {} : { cwd }),
+      isCurrent: async () => true,
+      isApplied: () => false,
+      didApply: () => undefined,
     })
+    if (result.state === 'pending') throw new RuntimeMaintenanceBusyError()
+    if (result.state === 'failed') {
+      throw new PiRuntimeFrontendError(
+        'PI_RUNTIME_OPERATION_FAILED',
+        'Pi configuration could not be applied to every affected runtime.',
+      )
+    }
+  }
+
+  async applyConfiguration(attempt: RuntimeConfigurationAttempt): Promise<RuntimeConfigurationResult> {
+    this.assertNotDisposed()
+    const counts = { total: 0, applied: 0, failed: 0 }
+    let reason: RuntimeConfigurationResult['reason']
+    const outcome = (state: RuntimeConfigurationResult['state']): RuntimeConfigurationResult =>
+      ({ state, ...counts, ...(reason ? { reason } : {}) })
+    const admission = await this.pool.withMaintenance(attempt.cwd, async (permit) => {
+      if (!await attempt.isCurrent()) return outcome('superseded')
+      const hosts = this.pool.getSnapshot().hosts.filter((host) =>
+        host.state !== 'stopped' && (attempt.cwd === undefined || host.cwd === attempt.cwd))
+      counts.total = hosts.reduce((total, host) => total + host.runtimes.length, 0)
+      if (hosts.some((host) => host.state === 'crashed')) {
+        counts.failed = Math.max(1, counts.total)
+        return outcome('failed')
+      }
+      if (hosts.some((host) => host.state !== 'ready')) return outcome('pending')
+      if (counts.total === 0) return outcome('unavailable')
+
+      const targets: Array<{
+        runtime: ActiveRuntime
+        identity: RuntimeConfigurationIdentity
+        revision: number
+      }> = []
+      for (const host of hosts) {
+        for (const summary of host.runtimes) {
+          const runtime = this.runtimes.get(summary.runtimeId)
+          if (!runtime || summary.state !== 'ready' ||
+              runtime.descriptor.generation !== summary.generation ||
+              !isRuntimeIdle(runtime.activity)) return outcome('pending')
+          const identity = {
+            hostKey: host.hostKey,
+            hostEpoch: host.controller.hostEpoch,
+            runtimeId: runtime.runtimeId,
+            generation: summary.generation,
+          }
+          if (attempt.isApplied(identity)) counts.applied += 1
+          targets.push({ runtime, identity, revision: runtime.activity.revision })
+        }
+      }
+
+      const stillIdle = () => targets.every(({ runtime, identity, revision }) => {
+        if (this.runtimes.get(runtime.runtimeId) !== runtime ||
+            runtime.descriptor.generation !== identity.generation ||
+            runtime.activity.revision !== revision || !isRuntimeIdle(runtime.activity)) return false
+        try {
+          return this.controlHandleFor(runtime).hostEpoch === identity.hostEpoch
+        } catch {
+          return false
+        }
+      })
+      // Every affected Runtime is checked before the first extension shutdown.
+      for (const { runtime, identity } of targets) {
+        try {
+          const result = await this.pool.command(
+            runtime.runtimeId, { type: 'get_state' }, identity.generation, undefined, permit,
+          )
+          const state = this.parseStateResponse(result.response)
+          if (!stillIdle() || result.runtime.generation !== identity.generation ||
+              state.isStreaming || state.isCompacting || state.pendingMessageCount > 0) {
+            return outcome('pending')
+          }
+        } catch {
+          counts.failed += 1
+          return outcome('failed')
+        }
+      }
+
+      for (const target of targets) {
+        if (attempt.isApplied(target.identity)) {
+          if (target.runtime.snapshot.state !== 'ready') {
+            try {
+              await this.hydrateConfigurationRuntime(target.runtime, permit)
+              target.revision = target.runtime.activity.revision
+            } catch {
+              return outcome('failed')
+            }
+          }
+          continue
+        }
+        if (!await attempt.isCurrent()) return outcome('superseded')
+        if (!stillIdle()) return outcome('pending')
+        try {
+          const confirmed = await this.reloadConfigurationRuntime(target.runtime, permit, async () => {
+            target.identity.generation = target.runtime.descriptor.generation
+            if (!await attempt.isCurrent()) return false
+            attempt.didApply(target.identity)
+            counts.applied += 1
+            return true
+          })
+          target.revision = target.runtime.activity.revision
+          if (!confirmed) return outcome('superseded')
+        } catch (error) {
+          if (error instanceof PiHostControllerError &&
+              error.diagnostic?.code === 'RUNTIME_CONFIGURATION_BUSY') return outcome('pending')
+          if (error instanceof PiRuntimeFrontendError && error.code === 'PI_RUNTIME_CONFIGURATION_INTERACTION_REQUIRED') {
+            reason = 'interaction-required'
+          }
+          if (!attempt.isApplied(target.identity)) counts.failed += 1
+          // Do not restart a Host after an uncertain/partial extension reload.
+          return outcome('failed')
+        }
+      }
+      return outcome('applied')
+    })
+    return admission.admitted ? admission.value : {
+      ...outcome('pending'),
+      ...(admission.retryAfter ? { retryAfter: admission.retryAfter } : {}),
+    }
+  }
+
+  private async reloadConfigurationRuntime(
+    runtime: ActiveRuntime,
+    permit: RuntimeMaintenancePermit,
+    didReload: () => Promise<boolean>,
+  ) {
+    const baseGeneration = runtime.descriptor.generation
+    const token = this.markCommandStart(runtime, baseGeneration)
+    try {
+      const { interactionRequired, reloadFailed, ...descriptor } = await this.pool.reloadRuntime(runtime.runtimeId, baseGeneration, undefined, permit)
+      this.setRuntimeDescriptor(runtime, descriptor)
+      runtime.lastCredibleSessionFile = descriptor.sessionFile ?? runtime.lastCredibleSessionFile
+      runtime.snapshot = { ...runtime.snapshot, state: 'replacing', generation: descriptor.generation }
+      if (runtime.runtimeId === this.active?.runtimeId) this.publish(runtime.snapshot)
+      const confirmed = interactionRequired || reloadFailed ? false : await didReload()
+      await this.hydrateConfigurationRuntime(runtime, permit)
+      if (reloadFailed) {
+        throw new PiRuntimeFrontendError('PI_RUNTIME_OPERATION_FAILED', 'Pi configuration reload failed. The current runtime state was refreshed; retry application.')
+      }
+      if (interactionRequired) {
+        throw new PiRuntimeFrontendError(
+          'PI_RUNTIME_CONFIGURATION_INTERACTION_REQUIRED',
+          'Configuration reload required interactive setup. Its new dialogs were cancelled without interrupting existing work.',
+        )
+      }
+      return confirmed
+    } finally {
+      this.markCommandEnd(runtime, token)
+    }
+  }
+
+  private async hydrateConfigurationRuntime(runtime: ActiveRuntime, permit: RuntimeMaintenancePermit) {
+    try {
+      runtime.snapshot = await this.hydrate(runtime.descriptor, { scope: runtime.hostScope }, permit)
+      runtime.lastCredibleSessionFile = runtime.snapshot.sessionFile
+      this.mergeSnapshotActivity(runtime, runtime.snapshot)
+      if (runtime.runtimeId === this.active?.runtimeId) this.publish(runtime.snapshot)
+    } catch (error) {
+      runtime.snapshot = {
+        ...runtime.snapshot,
+        state: 'error',
+        sessionState: null,
+        commands: [],
+        diagnostics: [{
+          code: 'PI_RUNTIME_CONFIRMATION_FAILED',
+          message: 'Configuration was reloaded, but Pi runtime state could not be refreshed. Retry application.',
+          timestamp: this.now(),
+        }],
+      }
+      if (runtime.runtimeId === this.active?.runtimeId) this.publish(runtime.snapshot)
+      throw error
+    }
   }
 
   stop() {
@@ -868,6 +1016,7 @@ export class PiRuntimeFrontend {
         this.publish(snapshot)
         return snapshot
       }
+      this.assertAdmission(this.active.hostScope.cwd)
       const generation = this.active.snapshot.generation
       await this.disposeActive().catch(() => undefined)
       const snapshot = stoppedSnapshot(generation)
@@ -931,7 +1080,11 @@ export class PiRuntimeFrontend {
     const runtime = command.type === 'abort'
       ? this.requireAbortTarget()
       : this.requireActive()
+    this.assertAdmission(runtime.hostScope.cwd)
     const expectedGeneration = runtime.descriptor.generation
+    const recoveryHostEpoch = command.type === 'abort'
+      ? this.pool.getSnapshot().hosts.find((host) => sameHostScope(host.scope, runtime.hostScope))?.controller.hostEpoch
+      : undefined
     const commandToken = this.markCommandStart(runtime, expectedGeneration)
     const recoverySessionFile = runtime.descriptor.sessionFile ??
       runtime.lastCredibleSessionFile
@@ -966,7 +1119,7 @@ export class PiRuntimeFrontend {
           )
         }
         try {
-          await this.enqueue(() => this.activate(recoveryTarget, { restartHost: true }))
+          await this.recoverAbortedRuntime(runtime, expectedGeneration, recoveryHostEpoch, recoveryTarget)
         } catch (recoveryError) {
           throw this.toFrontendError(recoveryError)
         }
@@ -1041,6 +1194,7 @@ export class PiRuntimeFrontend {
 
   async getState(): Promise<LocalPiSessionState> {
     const active = this.requireActive()
+    this.assertAdmission(active.hostScope.cwd)
     const result = await this.pool.command(
       active.runtimeId,
       { type: 'get_state' },
@@ -1084,6 +1238,7 @@ export class PiRuntimeFrontend {
     this.detachEvents()
     this.detachUiRequests()
     this.detachHostSnapshots()
+    this.detachAdmission()
     this.snapshotListeners.clear()
     this.eventListeners.clear()
     this.uiListeners.clear()
@@ -1101,6 +1256,55 @@ export class PiRuntimeFrontend {
       'set_session_name',
       'import_session',
     ].includes(command)
+  }
+
+  private async recoverAbortedRuntime(
+    runtime: ActiveRuntime,
+    generation: number,
+    hostEpoch: number | undefined,
+    target: PiRuntimeFrontendTarget,
+  ) {
+    const selectedRecovery = await this.enqueue(async () => {
+      this.assertNotDisposed()
+      const host = this.pool.getSnapshot().hosts.find((entry) => sameHostScope(entry.scope, runtime.hostScope))
+      const current = host?.runtimes.find((entry) => entry.runtimeId === runtime.runtimeId)
+      if (!host || !current || host.controller.hostEpoch !== hostEpoch ||
+          current.generation !== generation || !['ready', 'crashed'].includes(host.state)) {
+        throw new PiRuntimeFrontendError(
+          'PI_RUNTIME_STALE_GENERATION',
+          'The aborted Pi runtime was already replaced before recovery.',
+        )
+      }
+      if (this.active?.runtimeId === runtime.runtimeId) {
+        await this.activate(target, { restartHost: true })
+        return true
+      }
+      const selected = this.active
+      if (selected && sameHostScope(selected.hostScope, runtime.hostScope)) {
+        const sessionFile = selected.descriptor.sessionFile ?? selected.lastCredibleSessionFile
+        if (!sessionFile) {
+          throw new PiRuntimeFrontendError(
+            'PI_RUNTIME_HOST_RECOVERY_FAILED',
+            'The selected Pi runtime has no persisted Session to restore after Host recovery.',
+            false,
+          )
+        }
+        // A hard abort replaces the whole Host; rebind its selected sibling too.
+        await this.activate({
+          scope: structuredClone(selected.scope),
+          sessionFile,
+          ...(selected.selectionToken ? { selectionToken: selected.selectionToken } : {}),
+        }, { restartHost: true })
+        return false
+      }
+      this.dropCachedHost(runtime.hostScope)
+      await this.pool.restart(runtime.hostScope)
+      return false
+    })
+    if (!selectedRecovery) {
+      const lease = await this.acquireControlRuntime(target)
+      this.releaseControlRuntime(lease)
+    }
   }
 
   private async activate(
@@ -1140,12 +1344,10 @@ export class PiRuntimeFrontend {
     let selected: ActiveRuntime | null = null
     let createdRuntime = false
     try {
-      if (previousActive) {
-        if (options.restartHost) {
-          this.active = null
-          this.dropCachedHost(previousActive.hostScope)
-          await this.pool.restart(previousActive.hostScope)
-        }
+      if (options.restartHost) {
+        if (previousActive && sameHostScope(previousActive.hostScope, prepared.scope)) this.active = null
+        this.dropCachedHost(prepared.scope)
+        await this.pool.restart(prepared.scope)
       }
       const cached = options.restartHost
         ? null
@@ -1454,6 +1656,7 @@ export class PiRuntimeFrontend {
   }
 
   private pinControlRuntime(runtime: ActiveRuntime): PiRuntimeControlLease {
+    this.assertAdmission(runtime.hostScope.cwd)
     const handle = this.controlHandleFor(runtime)
     const leaseId = Symbol(runtime.runtimeId)
     this.controlLeases.set(leaseId, {
@@ -1773,10 +1976,11 @@ export class PiRuntimeFrontend {
   private async hydrate(
     descriptor: ProjectRuntimeDescriptor,
     _prepared: { scope: ProjectHostScope; sessionFile?: string; forkSessionFile?: string },
+    maintenancePermit?: RuntimeMaintenancePermit,
   ): Promise<LocalPiRuntimeSnapshot> {
     const [stateResult, commandsResult] = await Promise.all([
-      this.pool.command(descriptor.runtimeId, { type: 'get_state' }, descriptor.generation),
-      this.pool.command(descriptor.runtimeId, { type: 'get_commands' }, descriptor.generation),
+      this.pool.command(descriptor.runtimeId, { type: 'get_state' }, descriptor.generation, undefined, maintenancePermit),
+      this.pool.command(descriptor.runtimeId, { type: 'get_commands' }, descriptor.generation, undefined, maintenancePermit),
     ])
     const state = this.parseStateResponse(stateResult.response)
     if (!commandsResult.response.success) {
@@ -1848,6 +2052,7 @@ export class PiRuntimeFrontend {
       )
     }
     const resolved = await this.scopeResolver.prepare(target.scope)
+    this.assertAdmission(resolved.cwd)
     return {
       scope: {
         kind: scopeKindFor(target.scope),
@@ -2060,6 +2265,9 @@ export class PiRuntimeFrontend {
 
   private toFrontendError(error: unknown): PiRuntimeFrontendError {
     if (error instanceof PiRuntimeFrontendError) return error
+    if (error instanceof RuntimeMaintenanceBusyError) {
+      return new PiRuntimeFrontendError('PI_RUNTIME_MAINTENANCE_PENDING', error.message)
+    }
     if (error instanceof ProjectHostPoolError) {
       if (
         error.code === 'HOST_CRASHED' ||
@@ -2204,5 +2412,13 @@ export class PiRuntimeFrontend {
     const result = this.lifecycle.then(operation, operation)
     this.lifecycle = result.then(() => undefined, () => undefined)
     return result
+  }
+
+  private assertAdmission(cwd: string): void {
+    try {
+      this.pool.assertAdmission(cwd)
+    } catch (error) {
+      throw this.toFrontendError(error)
+    }
   }
 }

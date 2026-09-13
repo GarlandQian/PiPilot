@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import type {
   PiHostCommand,
   PiHostDto,
+  PiHostUiRequestEventEnvelope,
 } from '../../src/shared/pi-host-protocol'
+import { PI_HOST_PROTOCOL_VERSION } from '../../src/shared/pi-host-protocol'
 import type {
   PiHostControllerSnapshot,
   PiHostRequestOptions,
@@ -28,6 +30,9 @@ class FakeProjectHostController implements ProjectHostControllerLike {
   private readonly runtimes = new Map<string, ProjectRuntimeDescriptor>()
   readonly requests: Array<{ command: PiHostCommand; options?: PiHostRequestOptions }> = []
   createDelay: Promise<void> | null = null
+  reloadObservation: ((runtime: ProjectRuntimeDescriptor) => Promise<void>) | null = null
+  private readonly uiListeners = new Set<(event: PiHostUiRequestEventEnvelope) => void>()
+  readonly acknowledgements: PiHostUiRequestEventEnvelope[] = []
   startError: Error | null = null
   disposeCount = 0
   private snapshot: PiHostControllerSnapshot
@@ -54,9 +59,9 @@ class FakeProjectHostController implements ProjectHostControllerLike {
       state: 'ready',
       hostEpoch: this.snapshot.hostEpoch + 1,
       pid: 1_001,
-      sdkVersion: '0.84.2',
+      sdkVersion: '0.85.1',
       nodeVersion: '24.18.1',
-      electronVersion: '43.4.1',
+      electronVersion: '44.2.0',
       capabilities: ['runtime.create', 'runtime.bind', 'runtime.reload', 'runtime.command', 'runtime.dispose'],
     })
     return this.getSnapshot()
@@ -95,6 +100,7 @@ class FakeProjectHostController implements ProjectHostControllerLike {
         if (!current) throw new Error('Runtime not found.')
         const runtime = { ...current, generation: current.generation + 1 }
         this.runtimes.set(runtimeId, runtime)
+        await this.reloadObservation?.(runtime)
         return projectPiHostDto({ reloaded: true, runtime })
       }
       case 'runtime.command': {
@@ -190,6 +196,19 @@ class FakeProjectHostController implements ProjectHostControllerLike {
     return () => this.listeners.delete(listener)
   }
 
+  subscribeUiRequests(listener: (event: PiHostUiRequestEventEnvelope) => void) {
+    this.uiListeners.add(listener)
+    return () => this.uiListeners.delete(listener)
+  }
+
+  acknowledgeEvent(event: PiHostUiRequestEventEnvelope) {
+    this.acknowledgements.push(event)
+  }
+
+  emitUi(event: PiHostUiRequestEventEnvelope) {
+    for (const listener of this.uiListeners) listener(event)
+  }
+
   crash(code = 'HOST_EXITED'): void {
     this.publish({
       ...this.snapshot,
@@ -240,6 +259,83 @@ const projectA: ProjectHostScope = { kind: 'project', cwd: '/projects/a' }
 const projectB: ProjectHostScope = { kind: 'project', cwd: '/projects/b' }
 
 describe('ProjectHostPool', () => {
+  it('adopts only the exact in-flight reload generation before forwarding new startup observations', async () => {
+    const { pool, controllers } = createHarness()
+    const created = await pool.createRuntime(projectA, {})
+    await pool.bindRuntime(created.runtimeId, created.generation)
+    const controller = controllers[0]!
+    const observation = deferred()
+    const complete = deferred()
+    const forwarded: number[] = []
+    pool.subscribeUiRequests((event) => { forwarded.push(event.runtimeGeneration) })
+    controller.reloadObservation = async (runtime) => {
+      const envelope: PiHostUiRequestEventEnvelope = {
+        kind: 'ui_request', protocolVersion: PI_HOST_PROTOCOL_VERSION,
+        hostEpoch: controller.getSnapshot().hostEpoch,
+        runtimeId: runtime.runtimeId, runtimeGeneration: runtime.generation, sequence: 1,
+        request: { type: 'extension_ui_request', id: 'reload-notice', method: 'notify', message: 'Reload started', notifyType: 'info' },
+      }
+      controller.emitUi({ ...envelope, hostEpoch: envelope.hostEpoch - 1 })
+      controller.emitUi({ ...envelope, runtimeGeneration: runtime.generation + 1 })
+      expect(pool.getHost(projectA)?.runtimes[0]?.generation).toBe(created.generation)
+      controller.emitUi(envelope)
+      observation.resolve()
+      await complete.promise
+    }
+    const applying = pool.withMaintenance(projectA.cwd, (permit) =>
+      pool.reloadRuntime(created.runtimeId, created.generation, undefined, permit))
+    await observation.promise
+    expect(pool.getHost(projectA)?.runtimes[0]?.generation).toBe(created.generation + 1)
+    expect(forwarded).toEqual([created.generation + 1])
+    expect(controller.acknowledgements).toHaveLength(2)
+    complete.resolve()
+    await expect(applying).resolves.toMatchObject({ admitted: true, value: { generation: created.generation + 1 } })
+    await pool.dispose()
+  })
+  it('gates desktop/external commands, cold acquisition and restart while allowing the exact maintenance owner', async () => {
+    const { pool, controllers } = createHarness()
+    const created = await pool.createRuntime(projectA, { sessionFile: '/sessions/owned.jsonl' })
+    await pool.bindRuntime(created.runtimeId, created.generation)
+    const gate = deferred()
+    const entered = deferred()
+    const applying = pool.withMaintenance(projectA.cwd, async (permit) => {
+      entered.resolve()
+      await gate.promise
+      return pool.reloadRuntime(created.runtimeId, created.generation, undefined, permit)
+    })
+    await entered.promise
+    const requestCount = controllers[0]!.requests.length
+    await expect(pool.command(created.runtimeId, { type: 'prompt', message: 'blocked' }, created.generation))
+      .rejects.toMatchObject({ code: 'PI_RUNTIME_MAINTENANCE_PENDING' })
+    await expect(pool.externalSubmit(created.runtimeId, 'blocked', 'auto', created.generation))
+      .rejects.toMatchObject({ code: 'PI_RUNTIME_MAINTENANCE_PENDING' })
+    await expect(pool.createRuntime(projectA, {})).rejects.toMatchObject({ code: 'PI_RUNTIME_MAINTENANCE_PENDING' })
+    await expect(pool.restart(projectA)).rejects.toMatchObject({ code: 'PI_RUNTIME_MAINTENANCE_PENDING' })
+    expect(controllers[0]!.requests).toHaveLength(requestCount)
+    await expect(pool.createRuntime(projectB, {})).resolves.toMatchObject({ cwd: projectB.cwd })
+    await expect(pool.respondToExtensionUi(created.runtimeId, {
+      type: 'extension_ui_response', id: 'reload-dialog', confirmed: true,
+    }, created.generation)).resolves.toBeUndefined()
+    gate.resolve()
+    await expect(applying).resolves.toMatchObject({ admitted: true, value: { generation: 2 } })
+    expect(pool.getHost(projectA)?.runtimes[0]?.leaseKey).toBe('/sessions/owned.jsonl')
+    await pool.dispose()
+  })
+
+  it('protects in-flight cold acquisition and future Host admission during global maintenance', async () => {
+    const creationGate = deferred()
+    const { pool, controllers } = createHarness({ createDelay: creationGate.promise })
+    const acquisition = pool.createRuntime(projectA, {})
+    await expect(pool.withMaintenance(undefined, async () => undefined)).resolves.toEqual({ admitted: false })
+    creationGate.resolve()
+    await acquisition
+    await expect(pool.withMaintenance(undefined, async () => {
+      await expect(pool.createRuntime(projectB, {})).rejects.toMatchObject({ code: 'PI_RUNTIME_MAINTENANCE_PENDING' })
+      expect(controllers).toHaveLength(1)
+    })).resolves.toMatchObject({ admitted: true })
+    await pool.dispose()
+  })
+
   it('omits an absent custom session directory from the strict Host DTO', async () => {
     const { pool, controllers } = createHarness()
 

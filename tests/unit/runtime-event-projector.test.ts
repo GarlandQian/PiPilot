@@ -1,13 +1,111 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 import { projectRuntimeEvent } from '../../src/main/pi-host/runtime-event-projector'
+import { localPiSessionEntrySchema } from '../../src/shared/local-pi'
 import {
   applyLocalPiProjectorEvent,
   createLocalPiProjectorState,
 } from '../../src/renderer/pi-rpc/projector'
 import { projectLocalPiTurns } from '../../src/renderer/pi-rpc/presentation'
 
+function assistantMessage(content: unknown[]) {
+  return {
+    role: 'assistant',
+    content,
+    api: 'openai-completions',
+    provider: 'fixture',
+    model: 'fixture-model',
+    usage: {
+      input: 2, output: 3, cacheRead: 0, cacheWrite: 0, totalTokens: 5,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: 'toolUse',
+    timestamp: 1,
+  }
+}
+
+const publicToolCall = {
+  type: 'toolCall',
+  id: 'call-bash',
+  name: 'bash',
+  arguments: {
+    command: 'pnpm test',
+    partialArgs: 'a real argument',
+    customInput: { mode: 'public argument' },
+    streamIndex: 7,
+  },
+  thoughtSignature: 'tool-signature',
+}
+
 describe('embedded Pi event projection', () => {
+  it.each([
+    ['JSON arguments', { partialArgs: '{"command":"pnpm test"', customInput: undefined, streamIndex: 0 }],
+    ['grammar input', {
+      partialArgs: undefined,
+      customInput: { property: 'input', jsonBuffer: { input: 'pnpm test', started: true, closed: false } },
+      streamIndex: 1,
+    }],
+  ])('removes SDK %s scratch fields only from starting tool blocks', (_label, scratch) => {
+    const text = Object.freeze({ type: 'text', text: 'Running tests', textSignature: 'text-signature' })
+    const thinking = Object.freeze({ type: 'thinking', thinking: 'Checking the implementation', thinkingSignature: 'thinking-signature' })
+    const toolCall = Object.freeze({ ...publicToolCall, ...scratch })
+    const message = Object.freeze({
+      ...assistantMessage([]),
+      content: Object.freeze([text, thinking, toolCall]),
+    })
+    const event = Object.freeze({ type: 'message_start', message })
+    const before = structuredClone(event)
+
+    expect(projectRuntimeEvent(event as unknown as AgentSessionEvent)).toEqual({
+      type: 'message_start',
+      message: assistantMessage([text, thinking, publicToolCall]),
+    })
+    expect(event).toEqual(before)
+    expect(event.message.content[2]).toBe(toolCall)
+  })
+
+  it('keeps final assistant content when the SDK emits it as message_start', () => {
+    const event = {
+      type: 'message_start',
+      message: assistantMessage([
+        { type: 'text', text: 'Completed the check' },
+        { type: 'thinking', thinking: 'Checked the result' },
+        publicToolCall,
+      ]),
+    }
+    expect(projectRuntimeEvent(event as unknown as AgentSessionEvent)).toEqual(event)
+  })
+
+  it.each(['partialArgs', 'customInput', 'streamIndex', 'unknownProviderField'])(
+    'rejects %s in final messages, completed tool calls and persisted entries',
+    (field) => {
+      const toolCall = { ...publicToolCall, [field]: 'not a public tool field' }
+      const message = assistantMessage([toolCall])
+      expect(() => projectRuntimeEvent({ type: 'message_end', message } as unknown as AgentSessionEvent)).toThrow()
+      expect(() => projectRuntimeEvent({
+        type: 'message_update',
+        message,
+        assistantMessageEvent: { type: 'toolcall_end', contentIndex: 0, toolCall, partial: message },
+      } as unknown as AgentSessionEvent)).toThrow()
+      expect(localPiSessionEntrySchema.safeParse({
+        type: 'message', id: 'entry-assistant', parentId: null,
+        timestamp: '2026-09-08T00:00:00.000Z', message,
+      }).success).toBe(false)
+    },
+  )
+
+  it('does not strip unknown tool fields or scratch-named fields from other start content', () => {
+    for (const block of [
+      { ...publicToolCall, partialArgs: '{}', unknownProviderField: true },
+      { type: 'text', text: 'Hello', partialArgs: '{}' },
+      { type: 'thinking', thinking: 'Checking', streamIndex: 0 },
+    ]) {
+      expect(() => projectRuntimeEvent({
+        type: 'message_start', message: assistantMessage([block]),
+      } as unknown as AgentSessionEvent)).toThrow()
+    }
+  })
+
   it('keeps cumulative usage while removing assistant partial snapshots', () => {
     const event = {
       type: 'message_update',

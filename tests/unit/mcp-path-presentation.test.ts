@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
   displayMcpConfigPath,
-  GLOBAL_MCP_CONFIG_DISPLAY_PATH,
 } from '../../src/renderer/mcp/mcp-path-presentation'
 
 describe('MCP config path presentation', () => {
@@ -9,7 +8,14 @@ describe('MCP config path presentation', () => {
     expect(displayMcpConfigPath(
       { kind: 'global' },
       '/Users/example/.pi/agent/mcp.json',
-    )).toBe(GLOBAL_MCP_CONFIG_DISPLAY_PATH)
+      '~/.pi/agent/mcp.json',
+    )).toBe('~/.pi/agent/mcp.json')
+  })
+
+  it('never invents a default location for an overridden Agent directory', () => {
+    const path = '/custom/pi-agent/mcp.json'
+    expect(displayMcpConfigPath({ kind: 'global' }, path)).toBe(path)
+    expect(displayMcpConfigPath({ kind: 'global' }, path, path)).toBe(path)
   })
 
   it('keeps the resolved absolute path for a project config', () => {
