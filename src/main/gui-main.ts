@@ -609,11 +609,9 @@ if (!hasSingleInstanceLock) {
           : {}),
         ...(testLauncherDirectory ? { testTargetDirectory: testLauncherDirectory } : {}),
       })
-      try {
-        externalControlLauncher.initialize()
-      } catch {
+      void externalControlLauncher.initialize().catch(() => {
         // Launcher recovery is optional; Settings can retry without blocking startup.
-      }
+      })
       externalControlService = new ExternalControlLifecycleService({
         preferenceRepository: externalControlPreference,
         configuration: externalControlConfiguration,

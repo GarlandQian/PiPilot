@@ -238,11 +238,13 @@ function McpDocumentSettings({ scope, active = true, onDirtyChange, document }: 
       } else {
         next = upsertMcpServer(next, value.name, definitionFromFormValue(value))
       }
-      updateDraft(next)
+      if (!updateDraft(next)) return false
       setError(null)
       setFormOpen(false)
+      return true
     } catch {
       setError(t('settings.mcp.editFailed'))
+      return false
     }
   }
 

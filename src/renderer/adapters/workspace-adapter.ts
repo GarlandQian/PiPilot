@@ -1,15 +1,9 @@
 import {
-  SESSION_CATALOG_MAX_CANDIDATES,
-  SESSION_CATALOG_MAX_PAGE_ROWS,
   type ConversationScope,
   type OfficialPiSessionSummary,
   type SessionCatalogListResult,
 } from '@/shared/conversation-scope'
 import type { PiPilotApi } from '@/shared/pipilot-api'
-
-const SESSION_CATALOG_MAX_PAGES = Math.ceil(
-  SESSION_CATALOG_MAX_CANDIDATES / SESSION_CATALOG_MAX_PAGE_ROWS,
-)
 
 type SessionCatalogApi = Pick<PiPilotApi['sessionCatalog'], 'list' | 'refresh'>
 
@@ -52,12 +46,10 @@ export async function loadOfficialSessionCatalog(
 
   const rows = [...page.rows]
   const seenCursors = new Set<string>()
-  let pageCount = 1
-  while (
-    page.nextCursor &&
-    pageCount < SESSION_CATALOG_MAX_PAGES &&
-    !seenCursors.has(page.nextCursor)
-  ) {
+  while (page.nextCursor) {
+    if (seenCursors.has(page.nextCursor)) {
+      throw new Error('The session catalog returned a repeated continuation cursor.')
+    }
     seenCursors.add(page.nextCursor)
     page = await catalog.list(scope, page.nextCursor)
     if (!sameScope(page.scope, scope)) {
@@ -65,7 +57,6 @@ export async function loadOfficialSessionCatalog(
     }
     if (page.status !== 'ready') return { status: page.status, rows: [] }
     rows.push(...page.rows)
-    pageCount += 1
   }
 
   return { status: 'ready', rows }

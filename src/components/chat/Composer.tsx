@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { SessionComposerDrafts } from '@/renderer/composer/session-drafts'
 import {
   TbArrowUp,
   TbLoader2,
@@ -109,6 +110,8 @@ export interface ComposerMentionInsertionRequest {
 
 export interface ComposerProps {
   connected: boolean
+  /** False while navigation has not yet bound input to a definite conversation. */
+  draftEditable?: boolean
   loadingModels: boolean
   modelError?: string | null
   availabilityError?: string | null
@@ -123,6 +126,8 @@ export interface ComposerProps {
   draftReplacement?: { revision: number; text: string } | null
   mentionInsertionRequest?: ComposerMentionInsertionRequest | null
   scopeKey: string
+  /** Stable conversation identity, independent of a restarted Runtime. */
+  draftKey?: string
   operationOwnerKey?: string
   sendShortcut: ComposerSendShortcut
   runningSubmitPreference: RunningSubmitPreference
@@ -457,8 +462,18 @@ function initialEditorChange(): ComposerEditorChange {
   }
 }
 
-export function Composer({
+export function Composer(props: ComposerProps) {
+  const [drafts] = React.useState(() => new SessionComposerDrafts())
+  const consumedMentionInsertionSequence = React.useRef(0)
+  React.useEffect(() => () => drafts.dispose(), [drafts])
+  const draftKey = props.draftKey ?? props.scopeKey
+  return <SessionComposer key={draftKey} {...props} drafts={drafts} draftKey={draftKey}
+    consumedMentionInsertionSequence={consumedMentionInsertionSequence} />
+}
+
+function SessionComposer({
   connected,
+  draftEditable = true,
   loadingModels,
   modelError,
   availabilityError,
@@ -473,6 +488,9 @@ export function Composer({
   draftReplacement,
   mentionInsertionRequest,
   scopeKey,
+  draftKey,
+  drafts,
+  consumedMentionInsertionSequence,
   operationOwnerKey = scopeKey,
   sendShortcut,
   runningSubmitPreference,
@@ -487,11 +505,17 @@ export function Composer({
   onRemoveQueuedMessage,
   onCompleteCommandArguments,
   onSearchContext,
-}: ComposerProps) {
+}: ComposerProps & {
+  drafts: SessionComposerDrafts
+  draftKey: string
+  consumedMentionInsertionSequence: React.RefObject<number>
+}) {
   const t = useT()
   const hasContextSource = onSearchContext !== undefined
   const [editorChange, setEditorChange] = React.useState(initialEditorChange)
-  const [attachments, setAttachments] = React.useState<ComposerImageAttachment[]>([])
+  const [initialDraft] = React.useState(() => drafts.get(draftKey))
+  const [editorOwner] = React.useState(() => ({}))
+  const [attachments, setAttachments] = React.useState<readonly ComposerImageAttachment[]>(initialDraft.attachments)
   const [dragging, setDragging] = React.useState(false)
   const [submitError, setSubmitError] = React.useState<string | null>(null)
   const submitFeedback = useConversationOperationFeedback(operationOwnerKey)
@@ -510,9 +534,8 @@ export function Composer({
   const fileInput = React.useRef<HTMLInputElement>(null)
   const editorRef = React.useRef<ComposerEditorHandle>(null)
   const dismissedSlashText = React.useRef<string | null>(null)
-  const attachmentSnapshot = React.useRef<ComposerImageAttachment[]>([])
+  const attachmentSnapshot = React.useRef<readonly ComposerImageAttachment[]>(initialDraft.attachments)
   const mentionRequestSequence = React.useRef(0)
-  const consumedMentionInsertionSequence = React.useRef(0)
   const commandArgumentRequestSequence = React.useRef(0)
   const mentionSelectionTouched = React.useRef(false)
   const mentionSuggestionRef = React.useRef<ComposerEditorSuggestion | null>(null)
@@ -524,11 +547,19 @@ export function Composer({
     attachmentSnapshot.current = attachments
   }, [attachments])
 
+  React.useEffect(() => drafts.subscribe(draftKey, (clearedRevision) => {
+    const current = drafts.get(draftKey)
+    attachmentSnapshot.current = current.attachments
+    setAttachments(current.attachments)
+    if (clearedRevision !== undefined && current.documentRevision === clearedRevision) {
+      const editor = editorRef.current
+      if (editor) editor.clearIfRevision(editor.capture().revision)
+    }
+  }), [draftKey, drafts])
+
   React.useEffect(() => {
-    // Attachments are user-owned draft content and remain available when the
-    // selected Session or Settings surface changes. Scope-bound trusted
-    // mentions and async candidate results are reset below.
-    editorRef.current?.removeMentions()
+    // Runtime visits invalidate pending lookups, not this conversation's draft.
+    editorRef.current?.dismissSuggestion()
     setSubmitError(null)
     setCommandPickerOpen(false)
     setSlashActiveId(null)
@@ -550,12 +581,6 @@ export function Composer({
     commandArgumentRequestSequence.current += 1
     dismissedSlashText.current = null
   }, [commandCatalogState.state])
-
-  React.useEffect(() => () => {
-    for (const attachment of attachmentSnapshot.current) {
-      URL.revokeObjectURL(attachment.previewUrl)
-    }
-  }, [])
 
   React.useEffect(() => {
     if (!draftReplacement || draftReplacement.revision <= appliedDraftRevision.current) return
@@ -878,7 +903,7 @@ export function Composer({
     setMentionActiveId(null)
     mentionSelectionTouched.current = false
     focusEditor('current')
-  }, [focusEditor, mentionInsertionRequest, scopeKey])
+  }, [consumedMentionInsertionSequence, focusEditor, mentionInsertionRequest, scopeKey])
 
   const closeCommandPicker = React.useCallback((dismiss: boolean) => {
     if (dismiss) dismissedSlashText.current = editorChange.plainText
@@ -923,6 +948,7 @@ export function Composer({
   }, [editorChange.plainText, focusEditor])
 
   const updateEditor = React.useCallback((next: ComposerEditorChange) => {
+    drafts.updateDocument(draftKey, editorOwner, next)
     setEditorChange(next)
     setSubmitError((previous) => previous === t('composer.mentions.skillConflict')
       ? null
@@ -947,7 +973,7 @@ export function Composer({
     if (dismissedSlashText.current === next.plainText) return
     dismissedSlashText.current = null
     setCommandPickerOpen(true)
-  }, [commandProjection.topLevel, onCompleteCommandArguments, t])
+  }, [commandProjection.topLevel, draftKey, drafts, editorOwner, onCompleteCommandArguments, t])
 
   const extensionCommand = React.useMemo(() => {
     const serialized = serializeComposerDocument(editorChange)
@@ -1075,18 +1101,16 @@ export function Composer({
     setSubmitError(null)
     const updated = [...currentAttachments, ...next]
     attachmentSnapshot.current = updated
+    drafts.updateAttachments(draftKey, updated)
     setAttachments(updated)
-  }, [supportsImages, t])
+  }, [draftKey, drafts, supportsImages, t])
 
   const removeAttachment = React.useCallback((id: string) => {
-    const updated = attachmentSnapshot.current.filter((attachment) => {
-      if (attachment.id !== id) return true
-      URL.revokeObjectURL(attachment.previewUrl)
-      return false
-    })
+    const updated = attachmentSnapshot.current.filter((attachment) => attachment.id !== id)
     attachmentSnapshot.current = updated
+    drafts.updateAttachments(draftKey, updated)
     setAttachments(updated)
-  }, [])
+  }, [draftKey, drafts])
 
   const dispatch = React.useCallback(async (action: SubmitAction) => {
     if (!connected || submitting) return
@@ -1114,6 +1138,7 @@ export function Composer({
       return
     }
     const capturedScopeKey = scopeKeyRef.current
+    const capturedDraft = drafts.get(draftKey)
     setSubmitError(null)
     await submitFeedback.run(action, async (isCurrent) => {
       const images = await attachmentsToPiImagesIfCurrent(
@@ -1122,6 +1147,7 @@ export function Composer({
       )
       if (!images || !isCurrent()) return
       await onSubmit(message, action, images)
+      const remainingDraft = drafts.acknowledge(draftKey, capturedDraft)
       if (!isCurrent() || scopeKeyRef.current !== capturedScopeKey) return
       const currentDocument = editorRef.current?.capture()
       if (currentDocument && shouldClearCapturedComposer(
@@ -1132,18 +1158,15 @@ export function Composer({
       )) {
         editorRef.current?.clearIfRevision(capturedDocument.revision)
       }
-      const attachmentIds = new Set(capturedAttachments.map((attachment) => attachment.id))
-      const remainingAttachments = attachmentSnapshot.current.filter((attachment) => {
-        if (!attachmentIds.has(attachment.id)) return true
-        URL.revokeObjectURL(attachment.previewUrl)
-        return false
-      })
+      const remainingAttachments = remainingDraft.attachments
       attachmentSnapshot.current = remainingAttachments
       setAttachments(remainingAttachments)
     }, t('composer.sendFailed'))
   }, [
     connected,
     editorChange,
+    draftKey,
+    drafts,
     officialExecutableNames,
     onSubmit,
     submitting,
@@ -1378,6 +1401,7 @@ export function Composer({
               <div className="rounded-t-lg">
                 <ComposerEditor
                   ref={editorRef}
+                  initialDocument={initialDraft.document}
                   activeDescendantId={mentionSuggestion && activeMentionId
                     ? composerPickerOptionId(COMPOSER_MENTION_LISTBOX_ID, activeMentionId)
                     : commandPickerOpen && activeSlashId
@@ -1392,7 +1416,7 @@ export function Composer({
                   ariaLabel={t('composer.inputLabel')}
                   ariaDescribedBy={visibleError ? 'composer-input-error' : undefined}
                   ariaInvalid={Boolean(visibleError)}
-                  disabled={false}
+                  disabled={!draftEditable}
                   placeholder={t('composer.inputPlaceholder')}
                   onChange={updateEditor}
                   onKeyDown={handleEditorKeyDown}

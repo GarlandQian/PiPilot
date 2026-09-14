@@ -27,11 +27,10 @@ import { useSessionOpening } from '@/components/frame/useSessionOpening'
 import { CommandPalette } from '@/components/frame/CommandPalette'
 import { SessionsPanel } from '@/components/frame/SessionsPanel'
 import type { SidebarConversationItem } from '@/components/layout/SessionList'
-import { ChatHeader } from '@/components/chat/ChatHeader'
+import { ConversationHeader, ConversationTranscript } from '@/components/chat/ConversationTranscript'
 import { ConversationWelcome } from '@/components/chat/ConversationWelcome'
 import { MarkdownContent } from '@/components/chat/markdown/MarkdownContent'
 import {
-  MessageList,
   type ConversationJumpRequest,
 } from '@/components/chat/MessageList'
 import {
@@ -65,7 +64,8 @@ import {
   usePiExtensionUi,
   usePiRpcActions,
   usePiRuntime,
-  usePiTranscript,
+  usePiTranscriptLoading,
+  usePiTranscriptToolCall,
 } from '@/store/pi-rpc'
 import {
   conversationScopeKey,
@@ -123,7 +123,7 @@ export default function App() {
   const t = useT()
   const workspace = useWorkspaceStore()
   const pi = usePiRuntime()
-  const transcript = usePiTranscript()
+  const transcriptLoading = usePiTranscriptLoading()
   const actions = usePiRpcActions()
   const extension = usePiExtensionUi()
 
@@ -137,9 +137,9 @@ export default function App() {
   const [integrationsTab, setIntegrationsTab] = React.useState<IntegrationsTabId>('overview')
   const [renamingToken, setRenamingToken] = React.useState<string | null>(null)
   const {
-    openingSession, selectionRevision, abandonSessionOpening,
+    openingSession, switching, selectionRevision, abandonSessionOpening,
     requestSwitch, requestSessionOpening,
-  } = useSessionOpening({ workspace, pi, transcriptLoading: transcript.loading })
+  } = useSessionOpening({ workspace, pi, transcriptLoading })
   const [inspectorTab, setInspectorTab] = React.useState<InspectorTab>('files')
   const [inspectorContainer] = React.useState(() => {
     const container = document.createElement('div')
@@ -193,12 +193,12 @@ export default function App() {
       ? openingSession.error
         ? { status: 'error', error: openingSession.error }
         : { status: 'loading' }
-      : null,
+      : switching ? { status: 'loading' } : null,
     runtime: pi.runtime,
     session: pi.session,
     hydration: pi.hydration,
     runtimeLoading: pi.loading,
-    transcriptLoading: transcript.loading,
+    transcriptLoading,
   })
   const conversationReady = conversation.status === 'ready'
   const composerScopeKey = workspace.activeScope.kind === 'project'
@@ -234,21 +234,9 @@ export default function App() {
       sequence: ++composerMentionInsertionSequence.current,
     })
   }, [composerScopeKey, conversationReady, setRail, workspace.activeScope.kind])
-  const selectedSubagentCall = React.useMemo(() => {
-    if (
-      !subagentSelection ||
-      !conversationSessionKey ||
-      subagentSelection.sessionKey !== conversationSessionKey
-    ) return null
-    for (const turn of transcript.turns) {
-      if (
-        turn.kind === 'tool' &&
-        turn.call.id === subagentSelection.toolCallId &&
-        turn.call.subagent
-      ) return turn.call
-    }
-    return null
-  }, [conversationSessionKey, subagentSelection, transcript.turns])
+  const selectedTool = usePiTranscriptToolCall(subagentSelection?.sessionKey === conversationSessionKey
+    ? subagentSelection?.toolCallId ?? null : null)
+  const selectedSubagentCall = selectedTool?.subagent ? selectedTool : null
   const compactInspectorVisible = compactInspectorOpen || Boolean(selectedSubagentCall)
 
   React.useEffect(() => {
@@ -591,12 +579,11 @@ export default function App() {
             hidden={!conversationWorkspace}
             className="relative flex min-w-0 flex-1 flex-col overflow-x-hidden bg-surface"
           >
-            <ChatHeader
+            <ConversationHeader
               title={title}
               ownerKey={conversationSessionKey}
               projectName={workspace.activeScope.kind === 'project' ? workspace.workspace?.name : undefined}
               status={conversationReady ? pi.status : undefined}
-              outline={conversationReady ? transcript.outline : []}
               onNavigate={navigateConversationOutline}
               onNewConversation={newPrimarySession}
               onShowChanges={() => {
@@ -632,14 +619,12 @@ export default function App() {
                 <MarkdownContent markdown={paletteStopFeedback.error} />
               </div>
             ) : null}
-            <MessageList
+            <ConversationTranscript
               emptyState={<ConversationWelcome
                 selected={conversationReady}
                 projectName={workspace.activeScope.kind === 'project' ? workspace.workspace?.name : undefined}
                 onOpenProject={() => { requestSwitch(async () => { await workspace.chooseWorkspace() }); setRail('sessions') }}
               />}
-              turns={transcript.turns}
-              revision={transcript.revision}
               presentation={conversation}
               sessionKey={conversationSessionKey}
               jumpRequest={conversationJump}
@@ -663,6 +648,7 @@ export default function App() {
             ) : null}
             <Composer
               connected={conversationReady}
+              draftEditable={!switching && Boolean(workspace.activeSessionId)}
               loadingModels={conversation.status === 'loading'}
               availabilityError={conversationReady || conversation.status === 'error'
                 ? pi.error
@@ -680,6 +666,7 @@ export default function App() {
               draftReplacement={conversationReady ? extension.draftReplacement : null}
               mentionInsertionRequest={composerMentionInsertionRequest}
               scopeKey={composerScopeKey}
+              draftKey={`${conversationScopeKey(workspace.activeScope)}:${workspace.activeSessionId ?? 'unselected'}`}
               operationOwnerKey={operationOwnerKey}
               sendShortcut={settings.composer.sendShortcut}
               runningSubmitPreference={settings.composer.runningSubmit}

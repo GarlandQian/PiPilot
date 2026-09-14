@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { spawnSync } from 'node:child_process'
 import {
   accessSync,
   closeSync,
@@ -12,7 +11,6 @@ import {
   openSync,
   readSync,
   renameSync,
-  rmdirSync,
   unlinkSync,
   writeSync,
 } from 'node:fs'
@@ -22,36 +20,35 @@ import {
   type ExternalControlLauncherError,
   type ExternalControlLauncherSnapshot,
 } from '../../shared/external-control'
+import { ExternalControlLauncherServiceError } from './launcher-error'
+import {
+  assertValidDarwinPathValue,
+  createDarwinUserPathAdapter,
+  createWindowsUserPathAdapter,
+  MAX_DARWIN_ENVIRONMENT_BYTES,
+  type DarwinUserPathAdapter,
+  type WindowsUserPathAdapter,
+  type WindowsUserPathValue,
+} from './launcher-platform-adapters'
+
+export { ExternalControlLauncherServiceError } from './launcher-error'
+export {
+  createDarwinUserPathAdapter,
+  createWindowsUserPathAdapter,
+  parseWindowsUserPathRegistryExport,
+  renderWindowsUserPathRegistryImport,
+  type DarwinUserPathAdapter,
+  type WindowsUserPathAdapter,
+  type WindowsUserPathValue,
+} from './launcher-platform-adapters'
 
 const LAUNCHER_NAME = 'pipilot-mcp'
 const WINDOWS_LAUNCHER_NAME = 'pipilot-mcp.exe'
 const WRAPPER_HEADER = '#!/bin/sh\n# PiPilot MCP launcher v1\n'
 const MAX_WRAPPER_BYTES = 64 * 1024
 const MAX_RECEIPT_BYTES = 16 * 1024
-const MAX_REGISTRY_OUTPUT_BYTES = 64 * 1024
-const MAX_REGISTRY_FILE_BYTES = 4 * 1024 * 1024
 const MAX_WINDOWS_ENVIRONMENT_CHARS = 32_767
-const LAUNCHCTL_EXECUTABLE = '/bin/launchctl'
-const MAX_DARWIN_ENVIRONMENT_BYTES = 64 * 1024
-const LAUNCHCTL_TIMEOUT_MS = 5_000
 const POSIX_PATH_DELIMITER = ':'
-
-export interface DarwinUserPathAdapter {
-  read(): string | null
-  write(value: string): void
-  remove(): void
-}
-
-export interface WindowsUserPathValue {
-  type: 'REG_SZ' | 'REG_EXPAND_SZ'
-  value: string
-}
-
-export interface WindowsUserPathAdapter {
-  read(): WindowsUserPathValue | null
-  write(value: WindowsUserPathValue): void
-  remove(): void
-}
 
 export interface ExternalControlLauncherServiceOptions {
   descriptorPath: string
@@ -104,16 +101,6 @@ interface Inspection {
   darwinPath?: string | null
   darwinPathNeedsRegistration?: boolean
   darwinReceiptNeedsMetadata?: boolean
-}
-
-export class ExternalControlLauncherServiceError extends Error {
-  constructor(
-    readonly code: ExternalControlLauncherError['code'],
-    message: string,
-  ) {
-    super(message.slice(0, 512))
-    this.name = 'ExternalControlLauncherServiceError'
-  }
 }
 
 function unsupported(
@@ -355,15 +342,15 @@ export function removeWindowsLauncherDirectory(
   }
 }
 
-export function persistWindowsLauncherDirectory(
+export async function persistWindowsLauncherDirectory(
   adapter: WindowsUserPathAdapter,
   directory: string,
   afterPersist: (
     value: WindowsUserPathValue,
     metadata: WindowsLauncherReceiptMetadata,
-  ) => void = () => undefined,
+  ) => void | Promise<void> = () => undefined,
 ) {
-  const original = adapter.read()
+  const original = await adapter.read()
   const merged = mergeWindowsUserPath(original?.value ?? '', directory)
   if (!merged.changed) return false
   const updated = {
@@ -371,35 +358,35 @@ export function persistWindowsLauncherDirectory(
     value: merged.value,
   } satisfies WindowsUserPathValue
   try {
-    adapter.write(updated)
-    const readBack = adapter.read()
+    await adapter.write(updated)
+    const readBack = await adapter.read()
     if (readBack?.type !== updated.type || readBack.value !== updated.value) {
       throw new Error('The current-user PATH update did not persist exactly.')
     }
-    afterPersist(updated, {
+    await afterPersist(updated, {
       insertedSeparator: Boolean(original?.value) && !original!.value.endsWith(';'),
       pathValueCreated: original === null,
     })
   } catch (error) {
     try {
-      if (original) adapter.write(original)
-      else adapter.remove()
+      if (original) await adapter.write(original)
+      else await adapter.remove()
     } catch { /* rollback best effort */ }
     throw error
   }
   return true
 }
 
-export function persistWindowsLauncherDirectoryRemoval(
+export async function persistWindowsLauncherDirectoryRemoval(
   adapter: WindowsUserPathAdapter,
   directory: string,
   metadata: WindowsLauncherReceiptMetadata,
-  afterPersist: () => void = () => undefined,
+  afterPersist: () => void | Promise<void> = () => undefined,
 ) {
-  const original = adapter.read()
+  const original = await adapter.read()
   const removed = removeWindowsLauncherDirectory(original?.value ?? '', directory, metadata)
   if (!removed.changed) {
-    afterPersist()
+    await afterPersist()
     return false
   }
   const shouldRemoveValue = metadata.pathValueCreated && removed.value === ''
@@ -407,10 +394,10 @@ export function persistWindowsLauncherDirectoryRemoval(
     ? { type: original.type, value: removed.value } satisfies WindowsUserPathValue
     : null
   try {
-    if (shouldRemoveValue) adapter.remove()
-    else if (updated) adapter.write(updated)
+    if (shouldRemoveValue) await adapter.remove()
+    else if (updated) await adapter.write(updated)
     else throw new Error('The current-user PATH value disappeared before removal.')
-    const readBack = adapter.read()
+    const readBack = await adapter.read()
     if (shouldRemoveValue) {
       if (readBack !== null) {
         throw new Error('The current-user PATH removal did not persist exactly.')
@@ -423,12 +410,12 @@ export function persistWindowsLauncherDirectoryRemoval(
     ) {
       throw new Error('The current-user PATH update did not persist exactly.')
     }
-    afterPersist()
+    await afterPersist()
   } catch (error) {
     try {
-      if (original) adapter.write(original)
-      else adapter.remove()
-      const restored = adapter.read()
+      if (original) await adapter.write(original)
+      else await adapter.remove()
+      const restored = await adapter.read()
       if (original) {
         if (
           !restored ||
@@ -457,19 +444,6 @@ export interface DarwinLauncherReceiptMetadata {
 
 function normalizePosixPathEntry(value: string) {
   return resolve(value)
-}
-
-function assertValidDarwinPathValue(value: string) {
-  if (
-    !value ||
-    /[\0\r\n]/u.test(value) ||
-    Buffer.byteLength(value, 'utf8') > MAX_DARWIN_ENVIRONMENT_BYTES
-  ) {
-    throw new ExternalControlLauncherServiceError(
-      'launcher_unsafe_target',
-      'The current-user PATH is invalid.',
-    )
-  }
 }
 
 function matchingDarwinPathEntries(currentValue: string, directory: string) {
@@ -587,34 +561,34 @@ export function removeDarwinLauncherDirectory(
   }
 }
 
-function restoreDarwinUserPath(adapter: DarwinUserPathAdapter, original: string | null) {
-  if (original === null) adapter.remove()
-  else adapter.write(original)
-  if (adapter.read() !== original) {
+async function restoreDarwinUserPath(adapter: DarwinUserPathAdapter, original: string | null) {
+  if (original === null) await adapter.remove()
+  else await adapter.write(original)
+  if (await adapter.read() !== original) {
     throw new Error('The current-user PATH rollback did not persist exactly.')
   }
 }
 
-export function persistDarwinLauncherDirectory(
+export async function persistDarwinLauncherDirectory(
   adapter: DarwinUserPathAdapter,
   fallbackValue: string | undefined,
   directory: string,
-  afterPersist: (metadata: DarwinLauncherReceiptMetadata) => void = () => undefined,
+  afterPersist: (metadata: DarwinLauncherReceiptMetadata) => void | Promise<void> = () => undefined,
 ) {
-  const original = adapter.read()
+  const original = await adapter.read()
   const merged = mergeDarwinUserPath(original, fallbackValue, directory)
   try {
     if (merged.changed) {
-      adapter.write(merged.value)
-      if (adapter.read() !== merged.value) {
+      await adapter.write(merged.value)
+      if (await adapter.read() !== merged.value) {
         throw new Error('The current-user PATH update did not persist exactly.')
       }
     }
-    afterPersist(merged.metadata)
+    await afterPersist(merged.metadata)
   } catch (error) {
     if (merged.changed) {
       try {
-        restoreDarwinUserPath(adapter, original)
+        await restoreDarwinUserPath(adapter, original)
       } catch {
         throw new Error('The current-user PATH rollback did not persist exactly.')
       }
@@ -624,27 +598,27 @@ export function persistDarwinLauncherDirectory(
   return merged.changed
 }
 
-export function persistDarwinLauncherDirectoryRemoval(
+export async function persistDarwinLauncherDirectoryRemoval(
   adapter: DarwinUserPathAdapter,
   directory: string,
   metadata: DarwinLauncherReceiptMetadata,
-  afterPersist: () => void = () => undefined,
+  afterPersist: () => void | Promise<void> = () => undefined,
 ) {
-  const original = adapter.read()
+  const original = await adapter.read()
   const removed = removeDarwinLauncherDirectory(original, directory, metadata)
   try {
     if (removed.changed) {
-      if (removed.value === null) adapter.remove()
-      else adapter.write(removed.value)
-      if (adapter.read() !== removed.value) {
+      if (removed.value === null) await adapter.remove()
+      else await adapter.write(removed.value)
+      if (await adapter.read() !== removed.value) {
         throw new Error('The current-user PATH removal did not persist exactly.')
       }
     }
-    afterPersist()
+    await afterPersist()
   } catch (error) {
     if (removed.changed) {
       try {
-        restoreDarwinUserPath(adapter, original)
+        await restoreDarwinUserPath(adapter, original)
       } catch {
         throw new Error('The current-user PATH rollback did not persist exactly.')
       }
@@ -654,343 +628,11 @@ export function persistDarwinLauncherDirectoryRemoval(
   return removed.changed
 }
 
-function runLaunchctl(args: readonly string[]) {
-  return spawnSync(LAUNCHCTL_EXECUTABLE, [...args], {
-    encoding: 'buffer',
-    maxBuffer: MAX_DARWIN_ENVIRONMENT_BYTES,
-    shell: false,
-    timeout: LAUNCHCTL_TIMEOUT_MS,
-    windowsHide: true,
-  })
-}
-
-export function createDarwinUserPathAdapter(): DarwinUserPathAdapter {
-  try {
-    const details = lstatSync(LAUNCHCTL_EXECUTABLE)
-    if (
-      details.isSymbolicLink() ||
-      !details.isFile() ||
-      details.uid !== 0 ||
-      (details.mode & 0o022) !== 0
-    ) throw new Error('Invalid launchctl executable.')
-  } catch {
-    throw new ExternalControlLauncherServiceError(
-      'launcher_unavailable',
-      'The trusted macOS launchctl executable is unavailable.',
-    )
-  }
-  const run = (args: readonly string[]) => {
-    const result = runLaunchctl(args)
-    if (result.error) throw result.error
-    if (result.status !== 0) throw new Error('The current-user PATH could not be updated.')
-    return result.stdout
-  }
-  return {
-    read() {
-      const stdout = run(['getenv', 'PATH'])
-      if (stdout.length === 0) return null
-      let value = stdout.toString('utf8')
-      if (value.endsWith('\n')) value = value.slice(0, -1)
-      if (value.endsWith('\r')) value = value.slice(0, -1)
-      assertValidDarwinPathValue(value)
-      return value
-    },
-    write(value) {
-      assertValidDarwinPathValue(value)
-      run(['setenv', 'PATH', value])
-    },
-    remove() {
-      run(['unsetenv', 'PATH'])
-    },
-  }
-}
-
 export function isSafePosixResolutionDirectoryOwner(
   directoryUid: number,
   currentUid: number,
 ) {
   return directoryUid === 0 || directoryUid === currentUid
-}
-
-function runRegistry(executable: string, args: string[]) {
-  return spawnSync(executable, args, {
-    maxBuffer: MAX_REGISTRY_OUTPUT_BYTES,
-    shell: false,
-    windowsHide: true,
-  })
-}
-
-function readRegistryBytes(path: string) {
-  const descriptor = openSync(path, constants.O_RDONLY | noFollowFlag())
-  try {
-    const details = fstatSync(descriptor)
-    if (!details.isFile() || details.size > MAX_REGISTRY_FILE_BYTES) {
-      throw new Error('The exported registry file is invalid.')
-    }
-    const bytes = Buffer.alloc(details.size)
-    let offset = 0
-    while (offset < bytes.length) {
-      const count = readSync(descriptor, bytes, offset, bytes.length - offset, offset)
-      if (count === 0) break
-      offset += count
-    }
-    if (offset !== bytes.length) {
-      throw new Error('The exported registry file changed while being read.')
-    }
-    return bytes
-  } finally {
-    closeSync(descriptor)
-  }
-}
-
-function decodeRegistryString(value: string) {
-  if (value.length < 2 || value[0] !== '"' || value[value.length - 1] !== '"') {
-    throw new Error('The exported registry string is invalid.')
-  }
-  let decoded = ''
-  for (let index = 1; index < value.length - 1; index += 1) {
-    const character = value[index]!
-    if (character === '"') {
-      throw new Error('The exported registry string contains an unescaped quote.')
-    }
-    if (character !== '\\') {
-      decoded += character
-      continue
-    }
-    const escaped = value[index + 1]
-    if (escaped !== '\\' && escaped !== '"') {
-      throw new Error('The exported registry string contains an invalid escape.')
-    }
-    decoded += escaped
-    index += 1
-  }
-  if (decoded.includes('\0')) {
-    throw new Error('The exported registry string contains a NUL byte.')
-  }
-  return decoded
-}
-
-function decodeRegistryHex(value: string, expectedType: '1' | '2') {
-  const match = value.match(new RegExp(`^hex\\(${expectedType}\\):(.*)$`, 'iu'))
-  if (!match) return null
-  const tokens = match[1]!.split(',').map((token) => token.trim())
-  if (
-    tokens.length < 2 ||
-    tokens.some((token) => !/^[a-f0-9]{2}$/iu.test(token))
-  ) {
-    throw new Error('The exported registry hex value is invalid.')
-  }
-  const bytes = Buffer.from(tokens.map((token) => Number.parseInt(token, 16)))
-  if (
-    bytes.length % 2 !== 0 ||
-    bytes[bytes.length - 2] !== 0 ||
-    bytes[bytes.length - 1] !== 0
-  ) {
-    throw new Error('The exported registry string is not NUL terminated.')
-  }
-  const decoded = bytes.subarray(0, -2).toString('utf16le')
-  if (decoded.includes('\0')) {
-    throw new Error('The exported registry string contains an embedded NUL byte.')
-  }
-  return decoded
-}
-
-export function parseWindowsUserPathRegistryExport(bytes: Buffer) {
-  if (
-    bytes.length < 2 ||
-    bytes[0] !== 0xff ||
-    bytes[1] !== 0xfe ||
-    (bytes.length - 2) % 2 !== 0
-  ) {
-    throw new Error('The exported registry file is not UTF-16LE.')
-  }
-  const contents = bytes.subarray(2).toString('utf16le')
-  const lines = contents.replace(/\r\n?/gu, '\n').split('\n')
-  if (lines[0] !== 'Windows Registry Editor Version 5.00') {
-    throw new Error('The exported registry file header is invalid.')
-  }
-  const sectionIndex = lines.findIndex((line) =>
-    line.toLocaleLowerCase('en-US') === '[hkey_current_user\\environment]')
-  if (sectionIndex < 0) {
-    throw new Error('The current-user environment registry key is missing.')
-  }
-
-  let parsed: WindowsUserPathValue | null | undefined
-  for (let index = sectionIndex + 1; index < lines.length; index += 1) {
-    const line = lines[index]!
-    if (line.startsWith('[')) break
-    const match = line.match(/^"Path"=(.*)$/iu)
-    if (!match) continue
-    if (parsed !== undefined) {
-      throw new Error('The exported registry file contains duplicate PATH values.')
-    }
-    let encoded = match[1]!
-    if (/^hex\([12]\):/iu.test(encoded)) {
-      while (/\\\s*$/u.test(encoded)) {
-        encoded = encoded.replace(/\\\s*$/u, '')
-        index += 1
-        if (index >= lines.length) {
-          throw new Error('The exported registry hex value is incomplete.')
-        }
-        encoded += lines[index]!.trimStart()
-      }
-    }
-    if (encoded.startsWith('"') && encoded.endsWith('"')) {
-      parsed = { type: 'REG_SZ', value: decodeRegistryString(encoded) }
-      continue
-    }
-    const regular = decodeRegistryHex(encoded, '1')
-    if (regular !== null) {
-      parsed = { type: 'REG_SZ', value: regular }
-      continue
-    }
-    const expanded = decodeRegistryHex(encoded, '2')
-    if (expanded !== null) {
-      parsed = { type: 'REG_EXPAND_SZ', value: expanded }
-      continue
-    }
-    throw new Error('The exported PATH registry type is unsupported.')
-  }
-  return parsed ?? null
-}
-
-export function renderWindowsUserPathRegistryImport(value: WindowsUserPathValue) {
-  if (value.value.includes('\0')) {
-    throw new Error('The current-user PATH contains a NUL byte.')
-  }
-  const bytes = Buffer.concat([
-    Buffer.from(value.value, 'utf16le'),
-    Buffer.from([0, 0]),
-  ])
-  const tokens = [...bytes].map((byte) => byte.toString(16).padStart(2, '0'))
-  const chunks: string[] = []
-  for (let index = 0; index < tokens.length; index += 24) {
-    chunks.push(tokens.slice(index, index + 24).join(','))
-  }
-  const hex = chunks.map((chunk, index) =>
-    `${index === 0 ? '' : '  '}${chunk}${index < chunks.length - 1 ? ',\\' : ''}`,
-  ).join('\r\n')
-  const registryText = [
-    'Windows Registry Editor Version 5.00',
-    '',
-    '[HKEY_CURRENT_USER\\Environment]',
-    `"Path"=hex(${value.type === 'REG_SZ' ? '1' : '2'}):${hex}`,
-    '',
-  ].join('\r\n')
-  return Buffer.concat([
-    Buffer.from([0xff, 0xfe]),
-    Buffer.from(registryText, 'utf16le'),
-  ])
-}
-
-function withRegistryOperationDirectory<T>(
-  parentDirectory: string,
-  operation: (directory: string) => T,
-) {
-  mkdirSync(parentDirectory, { recursive: true, mode: 0o700 })
-  const parent = lstatSync(parentDirectory)
-  if (parent.isSymbolicLink() || !parent.isDirectory()) {
-    throw new Error('The private registry operation directory is invalid.')
-  }
-  const directory = win32.join(parentDirectory, `registry-${randomUUID()}`)
-  mkdirSync(directory, { mode: 0o700 })
-  try {
-    return operation(directory)
-  } finally {
-    try { rmdirSync(directory) } catch { /* operation retains its original error */ }
-  }
-}
-
-function writeRegistryImportFile(path: string, contents: Buffer) {
-  const descriptor = openSync(
-    path,
-    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | noFollowFlag(),
-    0o600,
-  )
-  try {
-    let offset = 0
-    while (offset < contents.length) {
-      offset += writeSync(descriptor, contents, offset, contents.length - offset, offset)
-    }
-    fsyncSync(descriptor)
-  } finally {
-    closeSync(descriptor)
-  }
-}
-
-export function createWindowsUserPathAdapter(
-  environment: NodeJS.ProcessEnv = process.env,
-  operationDirectory = '',
-): WindowsUserPathAdapter {
-  const systemRoot = environment.SystemRoot ?? environment.SYSTEMROOT
-  if (!systemRoot || !win32.isAbsolute(systemRoot) || systemRoot.includes('\0')) {
-    throw new ExternalControlLauncherServiceError(
-      'launcher_unavailable',
-      'The trusted Windows registry tool is unavailable.',
-    )
-  }
-  const registryExecutable = win32.join(systemRoot, 'System32', 'reg.exe')
-  try {
-    const registryDetails = lstatSync(registryExecutable)
-    if (registryDetails.isSymbolicLink() || !registryDetails.isFile()) {
-      throw new Error('Invalid registry executable.')
-    }
-  } catch {
-    throw new ExternalControlLauncherServiceError(
-      'launcher_unavailable',
-      'The trusted Windows registry tool is unavailable.',
-    )
-  }
-  const registryKey = 'HKCU\\Environment'
-  if (!operationDirectory || !win32.isAbsolute(operationDirectory)) {
-    throw new ExternalControlLauncherServiceError(
-      'launcher_unavailable',
-      'The private Windows registry operation directory is unavailable.',
-    )
-  }
-  const read = (): WindowsUserPathValue | null => {
-    return withRegistryOperationDirectory(operationDirectory, (directory) => {
-      const path = win32.join(directory, 'environment.reg')
-      const result = runRegistry(registryExecutable, [
-        'export', registryKey, path, '/y',
-      ])
-      if (result.error) throw result.error
-      if (result.status !== 0) {
-        throw new Error('The current-user environment is unavailable.')
-      }
-      try {
-        return parseWindowsUserPathRegistryExport(readRegistryBytes(path))
-      } finally {
-        try { unlinkSync(path) } catch { /* best-effort private cleanup */ }
-      }
-    })
-  }
-  return {
-    read,
-    write(value) {
-      withRegistryOperationDirectory(operationDirectory, (directory) => {
-        const path = win32.join(directory, 'environment.reg')
-        writeRegistryImportFile(path, renderWindowsUserPathRegistryImport(value))
-        try {
-          const result = runRegistry(registryExecutable, ['import', path])
-          if (result.error) throw result.error
-          if (result.status !== 0) {
-            throw new Error('The current-user PATH could not be updated.')
-          }
-        } finally {
-          try { unlinkSync(path) } catch { /* best-effort private cleanup */ }
-        }
-      })
-    },
-    remove() {
-      const result = runRegistry(
-        registryExecutable,
-        ['delete', registryKey, '/v', 'Path', '/f'],
-      )
-      if (result.error) throw result.error
-      if (result.status !== 0) throw new Error('The current-user PATH could not be restored.')
-    },
-  }
 }
 
 export class ExternalControlLauncherService {
@@ -1000,6 +642,8 @@ export class ExternalControlLauncherService {
   private readonly darwinUserPath: DarwinUserPathAdapter | null
   private readonly windowsUserPath: WindowsUserPathAdapter | null
   private requiresClientRestart = false
+  private pendingOperation: Promise<void> = Promise.resolve()
+  private pendingInspection: Promise<ExternalControlLauncherSnapshot> | null = null
 
   constructor(private readonly options: ExternalControlLauncherServiceOptions) {
     this.platform = options.platform ?? process.platform
@@ -1037,17 +681,50 @@ export class ExternalControlLauncherService {
   }
 
   inspect() {
-    const snapshot = this.inspectInternal().snapshot
-    return structuredClone(this.withRestartState(snapshot))
+    if (this.pendingInspection) return this.pendingInspection
+    const inspection = this.enqueue(() => this.inspectSnapshot())
+    this.pendingInspection = inspection
+    const clear = () => {
+      if (this.pendingInspection === inspection) this.pendingInspection = null
+    }
+    void inspection.then(clear, clear)
+    return inspection
   }
 
   initialize() {
+    this.pendingInspection = null
+    return this.enqueue(() => this.initializeInternal())
+  }
+
+  install() {
+    this.pendingInspection = null
+    return this.enqueue(() => this.installInternal())
+  }
+
+  uninstall() {
+    this.pendingInspection = null
+    return this.enqueue(() => this.uninstallInternal())
+  }
+
+  /** Reads and mutations share a lane so inspection never observes a half-written receipt/PATH. */
+  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.pendingOperation.then(operation)
+    this.pendingOperation = result.then(() => undefined, () => undefined)
+    return result
+  }
+
+  private async inspectSnapshot() {
+    const snapshot = (await this.inspectInternal()).snapshot
+    return structuredClone(this.withRestartState(snapshot))
+  }
+
+  private async initializeInternal() {
     if (
       this.platform !== 'darwin' ||
       !this.options.darwinPrivateTargetDirectory ||
       this.options.testTargetDirectory
-    ) return this.inspect()
-    const inspection = this.inspectInternal()
+    ) return this.inspectSnapshot()
+    const inspection = await this.inspectInternal()
     if (
       inspection.snapshot.state !== 'repair' ||
       !inspection.targetPath ||
@@ -1059,18 +736,18 @@ export class ExternalControlLauncherService {
       (!inspection.darwinPathNeedsRegistration && !inspection.darwinReceiptNeedsMetadata)
     ) return structuredClone(this.withRestartState(inspection.snapshot))
     try {
-      const changed = persistDarwinLauncherDirectory(
+      const changed = await persistDarwinLauncherDirectory(
         this.darwinUserPath!,
         this.environment.PATH,
         dirname(inspection.targetPath),
-        (metadata) => {
+        async (metadata) => {
           this.writeReceipt(
             inspection.targetPath!,
             inspection.wrapper!,
             undefined,
             metadata,
           )
-          if (this.inspectDarwin().snapshot.state !== 'installed') {
+          if ((await this.inspectDarwin()).snapshot.state !== 'installed') {
             throw new Error('The recovered PiPilot MCP launcher could not be verified.')
           }
         },
@@ -1079,11 +756,11 @@ export class ExternalControlLauncherService {
     } catch {
       // Recovery is best effort; Settings exposes the remaining repair state.
     }
-    return this.inspect()
+    return this.inspectSnapshot()
   }
 
-  install() {
-    const inspection = this.inspectInternal()
+  private async installInternal() {
+    const inspection = await this.inspectInternal()
     if (inspection.snapshot.state === 'installed') return inspection.snapshot
     if (inspection.snapshot.state === 'unsupported' || !inspection.targetPath) {
       const error = inspection.snapshot.error
@@ -1093,11 +770,11 @@ export class ExternalControlLauncherService {
       )
     }
     try {
-      if (this.platform === 'win32') return this.installWindows(inspection)
+      if (this.platform === 'win32') return await this.installWindows(inspection)
       if (this.platform === 'darwin' && this.options.darwinPrivateTargetDirectory) {
-        return this.installDarwin(inspection)
+        return await this.installDarwin(inspection)
       }
-      return this.installPosix(inspection)
+      return await this.installPosix(inspection)
     } catch (error) {
       if (error instanceof ExternalControlLauncherServiceError) throw error
       throw new ExternalControlLauncherServiceError(
@@ -1107,7 +784,7 @@ export class ExternalControlLauncherService {
     }
   }
 
-  uninstall() {
+  private async uninstallInternal() {
     const receipt = this.readReceipt()
     if (receipt.state === 'invalid') {
       throw new ExternalControlLauncherServiceError(
@@ -1116,7 +793,7 @@ export class ExternalControlLauncherService {
       )
     }
     if (receipt.state === 'missing') {
-      const inspection = this.inspectInternal()
+      const inspection = await this.inspectInternal()
       if (inspection.snapshot.state === 'missing') return inspection.snapshot
       throw new ExternalControlLauncherServiceError(
         'launcher_conflict',
@@ -1124,12 +801,12 @@ export class ExternalControlLauncherService {
       )
     }
     try {
-      if (this.platform === 'win32') return this.uninstallWindows(receipt)
+      if (this.platform === 'win32') return await this.uninstallWindows(receipt)
       if (
         this.platform === 'darwin' &&
         this.options.darwinPrivateTargetDirectory &&
         receipt.receipt.darwin
-      ) return this.uninstallDarwin(receipt)
+      ) return await this.uninstallDarwin(receipt)
       return this.uninstallPosix(receipt)
     } catch (error) {
       if (error instanceof ExternalControlLauncherServiceError) throw error
@@ -1140,7 +817,7 @@ export class ExternalControlLauncherService {
     }
   }
 
-  private inspectInternal(): Inspection {
+  private async inspectInternal(): Promise<Inspection> {
     if (!this.options.isPackaged && !this.options.testTargetDirectory) {
       return { snapshot: unsupported(
         'launcher_unavailable',
@@ -1192,7 +869,7 @@ export class ExternalControlLauncherService {
     })
   }
 
-  private inspectWindows(): Inspection {
+  private async inspectWindows(): Promise<Inspection> {
     const targetPath = this.options.executablePath!
     if (
       !this.windowsUserPath ||
@@ -1222,7 +899,7 @@ export class ExternalControlLauncherService {
           'The existing PiPilot MCP launcher receipt belongs to another installation.',
         ) }
       }
-      const windowsPath = this.windowsUserPath.read()
+      const windowsPath = await this.windowsUserPath.read()
       const merged = mergeWindowsUserPath(
         windowsPath?.value ?? '',
         directory,
@@ -1249,7 +926,7 @@ export class ExternalControlLauncherService {
     }
   }
 
-  private inspectDarwin(): Inspection {
+  private async inspectDarwin(): Promise<Inspection> {
     const targetDirectory = this.options.darwinPrivateTargetDirectory
     if (
       this.uid === undefined ||
@@ -1299,7 +976,7 @@ export class ExternalControlLauncherService {
     let darwinPath: string | null
     let pathValue: string
     try {
-      darwinPath = this.darwinUserPath.read()
+      darwinPath = await this.darwinUserPath.read()
       pathValue = darwinPath ?? this.environment.PATH ?? ''
       assertValidDarwinPathValue(pathValue)
     } catch {
@@ -1540,12 +1217,12 @@ export class ExternalControlLauncherService {
     }
   }
 
-  private installPosix(
+  private async installPosix(
     inspection: Inspection,
     darwin?: DarwinLauncherReceiptMetadata,
-    inspect: () => Inspection = () => this.inspectPosix(),
+    inspect: () => Inspection | Promise<Inspection> = () => this.inspectPosix(),
   ) {
-    const fresh = inspect()
+    const fresh = await inspect()
     if (
       fresh.snapshot.state !== inspection.snapshot.state ||
       fresh.targetPath !== inspection.targetPath ||
@@ -1581,9 +1258,51 @@ export class ExternalControlLauncherService {
       fresh.receipt?.state === 'missing'
     const previous = fresh.targetIdentity
     if (!receiptOnlyRecovery) writeAtomic(fresh.targetPath, fresh.wrapper, 0o755, false)
+    const installedTarget = readNoFollow(fresh.targetPath, MAX_WRAPPER_BYTES, {
+      uid: this.uid,
+      writableByOwnerOnly: true,
+    })
+    let installedReceipt: Extract<ReceiptRead, { state: 'valid' }> | null = null
     try {
       this.writeReceipt(fresh.targetPath, fresh.wrapper, undefined, darwin)
+      const receipt = this.readReceipt()
+      if (receipt.state !== 'valid') throw new Error('The launcher receipt could not be verified.')
+      installedReceipt = receipt
+      const verified = (await inspect()).snapshot
+      if (verified.state !== 'installed') {
+        throw new ExternalControlLauncherServiceError(
+          'launcher_install_failed',
+          'The installed PiPilot MCP launcher could not be verified.',
+        )
+      }
+      return verified
     } catch (error) {
+      // Verification now awaits a platform command. Never replace files changed while it ran.
+      const currentTarget = readNoFollow(fresh.targetPath, MAX_WRAPPER_BYTES, {
+        uid: this.uid,
+        writableByOwnerOnly: true,
+      })
+      if (!sameIdentity(currentTarget, installedTarget)) {
+        throw new ExternalControlLauncherServiceError(
+          'launcher_conflict',
+          'The installed PiPilot MCP launcher changed during verification.',
+        )
+      }
+      if (installedReceipt) {
+        const currentReceipt = this.readReceipt()
+        if (currentReceipt.state !== 'valid' ||
+          !sameIdentity(currentReceipt.identity, installedReceipt.identity)) {
+          throw new ExternalControlLauncherServiceError(
+            'launcher_conflict',
+            'The PiPilot MCP launcher receipt changed during verification.',
+          )
+        }
+        if (fresh.receipt?.state === 'valid') {
+          writeAtomic(this.options.receiptPath, fresh.receipt.identity.contents, 0o600, false)
+        } else {
+          this.removeReceipt(installedReceipt.identity)
+        }
+      }
       if (!receiptOnlyRecovery) {
         if (previous) {
           writeAtomic(
@@ -1599,17 +1318,9 @@ export class ExternalControlLauncherService {
       }
       throw error
     }
-    const verified = inspect().snapshot
-    if (verified.state !== 'installed') {
-      throw new ExternalControlLauncherServiceError(
-        'launcher_install_failed',
-        'The installed PiPilot MCP launcher could not be verified.',
-      )
-    }
-    return verified
   }
 
-  private installDarwin(inspection: Inspection) {
+  private async installDarwin(inspection: Inspection) {
     if (!this.darwinUserPath || !inspection.targetPath) {
       throw new ExternalControlLauncherServiceError(
         'launcher_unavailable',
@@ -1617,15 +1328,20 @@ export class ExternalControlLauncherService {
       )
     }
     let installed: ExternalControlLauncherSnapshot | null = null
-    const changed = persistDarwinLauncherDirectory(
+    const changed = await persistDarwinLauncherDirectory(
       this.darwinUserPath,
       this.environment.PATH,
       dirname(inspection.targetPath),
-      (metadata) => {
-        const fresh = this.inspectDarwin()
-        installed = this.installPosix(
+      async (metadata) => {
+        const fresh = await this.inspectDarwin()
+        // Repairing only the wrapper must retain ownership of the PATH registration.
+        const receiptMetadata = !metadata.pathEntryAdded && !metadata.pathValueCreated &&
+          fresh.receipt?.state === 'valid' && fresh.receipt.receipt.darwin
+          ? fresh.receipt.receipt.darwin
+          : metadata
+        installed = await this.installPosix(
           fresh,
-          metadata,
+          receiptMetadata,
           () => this.inspectDarwin(),
         )
       },
@@ -1637,9 +1353,9 @@ export class ExternalControlLauncherService {
     })
   }
 
-  private installWindows(inspection: Inspection) {
+  private async installWindows(inspection: Inspection) {
     const adapter = this.windowsUserPath!
-    const changed = persistWindowsLauncherDirectory(
+    const changed = await persistWindowsLauncherDirectory(
       adapter,
       win32.dirname(inspection.targetPath!),
       (_updated, metadata) => this.writeReceipt(
@@ -1656,7 +1372,7 @@ export class ExternalControlLauncherService {
     })
   }
 
-  private uninstallWindows(receipt: Extract<ReceiptRead, { state: 'valid' }>) {
+  private async uninstallWindows(receipt: Extract<ReceiptRead, { state: 'valid' }>) {
     const targetPath = this.options.executablePath
     if (
       !targetPath ||
@@ -1669,7 +1385,7 @@ export class ExternalControlLauncherService {
         'The PiPilot MCP launcher receipt does not match this installation.',
       )
     }
-    const changed = persistWindowsLauncherDirectoryRemoval(
+    const changed = await persistWindowsLauncherDirectoryRemoval(
       this.windowsUserPath,
       win32.dirname(targetPath),
       receipt.receipt.windows,
@@ -1682,7 +1398,7 @@ export class ExternalControlLauncherService {
     })
   }
 
-  private uninstallDarwin(receipt: Extract<ReceiptRead, { state: 'valid' }>) {
+  private async uninstallDarwin(receipt: Extract<ReceiptRead, { state: 'valid' }>) {
     const targetPath = resolve(receipt.receipt.launcherPath)
     const targetDirectory = this.options.darwinPrivateTargetDirectory
     if (
@@ -1696,7 +1412,7 @@ export class ExternalControlLauncherService {
         'The PiPilot MCP launcher receipt does not match this installation.',
       )
     }
-    const changed = persistDarwinLauncherDirectoryRemoval(
+    const changed = await persistDarwinLauncherDirectoryRemoval(
       this.darwinUserPath,
       targetDirectory,
       receipt.receipt.darwin,

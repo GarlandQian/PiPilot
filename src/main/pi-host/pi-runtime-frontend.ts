@@ -38,6 +38,17 @@ import type {
   RuntimeConfigurationIdentity,
   RuntimeConfigurationResult,
 } from './runtime-configuration'
+import {
+  BLOCKING_EXTENSION_UI_METHODS,
+  createRuntimeActivity,
+  isRuntimeIdle,
+  isSessionStateBusy,
+  reduceRuntimeActivity,
+  summarizeRuntimeActivity,
+  type RuntimeActivity,
+  type RuntimeActivityAction,
+  type RuntimeActivitySummary,
+} from './runtime-activity'
 
 export const PI_RUNTIME_ABORT_GRACE_TIMEOUT_MS = 5_000
 
@@ -92,12 +103,8 @@ export interface PiRuntimeControlLease extends PiRuntimeControlHandle {
   readonly leaseId: symbol
 }
 
-export interface PiRuntimeControlSummary extends PiRuntimeControlHandle {
+export interface PiRuntimeControlSummary extends PiRuntimeControlHandle, RuntimeActivitySummary {
   selected: boolean
-  lifecycle: 'idle' | 'accepting' | 'running' | 'queued'
-  queueCount: number
-  outcome?: 'completed' | 'failed'
-  activity?: 'prompt' | 'tool' | 'retry' | 'compaction' | 'summarization' | 'interaction'
 }
 
 /**
@@ -186,20 +193,6 @@ interface ActiveRuntime {
   activity: RuntimeActivity
 }
 
-interface RuntimeActivity {
-  revision: number
-  controlPins: number
-  pendingCommands: number
-  agentRunning: boolean
-  compactionRunning: boolean
-  retryRunning: boolean
-  summarizationRunning: boolean
-  queuedMessages: number
-  activeToolCalls: Set<string>
-  pendingUiRequests: Set<string>
-  outcome?: 'completed' | 'failed'
-}
-
 export interface PiRuntimeFrontendOptions {
   /**
    * Idle cache size only. Running Runtimes never count toward this value and
@@ -211,7 +204,6 @@ export interface PiRuntimeFrontendOptions {
 }
 
 const DEFAULT_MAX_RETAINED_IDLE_RUNTIMES_PER_HOST = 4
-const BLOCKING_EXTENSION_UI_METHODS = new Set(['select', 'confirm', 'input', 'editor'])
 
 function requireIdleCacheSize(value: number): number {
   if (!Number.isInteger(value) || value < 0) {
@@ -226,36 +218,6 @@ function defaultIsPersistedSessionFile(sessionFile: string): boolean {
   } catch {
     return false
   }
-}
-
-function emptyRuntimeActivity(snapshot?: LocalPiRuntimeSnapshot): RuntimeActivity {
-  return {
-    revision: 0,
-    controlPins: 0,
-    pendingCommands: 0,
-    agentRunning: snapshot?.sessionState?.isStreaming ?? false,
-    compactionRunning: snapshot?.sessionState?.isCompacting ?? false,
-    retryRunning: false,
-    summarizationRunning: false,
-    queuedMessages: snapshot?.sessionState?.pendingMessageCount ?? 0,
-    activeToolCalls: new Set(),
-    pendingUiRequests: new Set(),
-    ...(snapshot?.sessionState?.isStreaming === false
-      ? { outcome: 'completed' as const }
-      : {}),
-  }
-}
-
-function isRuntimeIdle(activity: RuntimeActivity): boolean {
-  return activity.controlPins === 0 &&
-    activity.pendingCommands === 0 &&
-    !activity.agentRunning &&
-    !activity.compactionRunning &&
-    !activity.retryRunning &&
-    !activity.summarizationRunning &&
-    activity.queuedMessages === 0 &&
-    activity.activeToolCalls.size === 0 &&
-    activity.pendingUiRequests.size === 0
 }
 
 const stoppedSnapshot = (generation = 0): LocalPiRuntimeSnapshot => ({
@@ -514,10 +476,7 @@ export class PiRuntimeFrontend {
         summaries.push({
           ...this.controlHandleFor(runtime),
           selected: runtime.runtimeId === this.active?.runtimeId,
-          lifecycle: this.controlLifecycle(runtime),
-          queueCount: runtime.activity.queuedMessages,
-          ...(runtime.activity.outcome ? { outcome: runtime.activity.outcome } : {}),
-          ...this.controlActivity(runtime),
+          ...summarizeRuntimeActivity(runtime.activity),
         })
       } catch {
         // A Host snapshot can replace a Runtime between observation and this
@@ -574,7 +533,7 @@ export class PiRuntimeFrontend {
           lastCredibleSessionFile: descriptor.sessionFile,
           ...(target.selectionToken ? { selectionToken: target.selectionToken } : {}),
           lastUsedAt: this.now(),
-          activity: emptyRuntimeActivity(startingSnapshot),
+          activity: createRuntimeActivity(startingSnapshot.sessionState),
         }
         this.runtimes.set(runtime.runtimeId, runtime)
         const token = this.markCommandStart(runtime, descriptor.generation)
@@ -586,7 +545,6 @@ export class PiRuntimeFrontend {
           this.setRuntimeDescriptor(runtime, descriptor)
           runtime.snapshot = await this.hydrate(descriptor, prepared)
           runtime.lastCredibleSessionFile = runtime.snapshot.sessionFile
-          this.mergeSnapshotActivity(runtime, runtime.snapshot)
           return this.pinControlRuntime(runtime)
         } finally {
           this.markCommandEnd(runtime, token)
@@ -618,11 +576,7 @@ export class PiRuntimeFrontend {
       return false
     }
 
-    runtime.activity.controlPins = Math.max(
-      0,
-      runtime.activity.controlPins - 1,
-    )
-    this.touchActivity(runtime)
+    this.updateActivity(runtime, { type: 'control_pin', delta: -1 })
     this.publishControlRuntimes()
     if (runtime.runtimeId !== this.active?.runtimeId && isRuntimeIdle(runtime.activity)) {
       this.scheduleIdleReclaim(runtime.hostScope)
@@ -640,6 +594,7 @@ export class PiRuntimeFrontend {
     const runtime = this.requireControlRuntime(handle)
     this.assertAdmission(runtime.hostScope.cwd)
     const token = this.markCommandStart(runtime, handle.generation)
+    const expectedEventRevision = runtime.activity.eventRevision
     try {
       const result = await this.pool.externalSubmit(
         handle.runtimeId,
@@ -655,12 +610,11 @@ export class PiRuntimeFrontend {
         )
       }
       this.setRuntimeDescriptor(runtime, result.runtime)
-      if (result.acceptedMode === 'prompt') {
-        runtime.activity.agentRunning = true
-      } else {
-        runtime.activity.queuedMessages = Math.max(1, runtime.activity.queuedMessages)
-      }
-      this.touchActivity(runtime)
+      this.updateActivity(runtime, {
+        type: 'prompt_accepted',
+        mode: result.acceptedMode === 'prompt' ? 'prompt' : 'queued',
+        expectedEventRevision,
+      })
       return {
         handle: this.controlHandleFor(runtime),
         acceptedMode: result.acceptedMode,
@@ -678,13 +632,16 @@ export class PiRuntimeFrontend {
     this.assertNotDisposed()
     const runtime = this.requireControlRuntime(handle)
     const token = this.markCommandStart(runtime, handle.generation)
+    const expectedStateRevision = runtime.activity.stateRevision
     try {
       const result = await this.pool.command(
         handle.runtimeId,
         { type: 'get_state' },
         handle.generation,
       )
-      if (this.runtimes.get(runtime.runtimeId) !== runtime) {
+      if (this.runtimes.get(runtime.runtimeId) !== runtime ||
+        runtime.descriptor.generation !== handle.generation ||
+        result.runtime.generation !== handle.generation) {
         throw new PiRuntimeFrontendError(
           'PI_RUNTIME_STALE_GENERATION',
           'The controlled Pi runtime was replaced while reading state.',
@@ -693,10 +650,7 @@ export class PiRuntimeFrontend {
       this.setRuntimeDescriptor(runtime, result.runtime)
       this.requireControlRuntime(handle)
       const state = this.parseStateResponse(result.response)
-      runtime.activity.agentRunning = state.isStreaming
-      runtime.activity.compactionRunning = state.isCompacting
-      runtime.activity.queuedMessages = state.pendingMessageCount
-      this.touchActivity(runtime)
+      this.updateActivity(runtime, { type: 'session_state', state, expectedStateRevision })
       return structuredClone(state)
     } catch (error) {
       throw this.toFrontendError(error)
@@ -745,8 +699,7 @@ export class PiRuntimeFrontend {
       response,
       runtime.descriptor.generation,
     )
-    if (!runtime.activity.pendingUiRequests.delete(response.id)) return
-    this.touchActivity(runtime)
+    if (!this.updateActivity(runtime, { type: 'ui_responded', id: response.id })) return
     this.publishControlRuntimes()
     if (runtime.runtimeId !== this.active?.runtimeId && isRuntimeIdle(runtime.activity)) {
       this.scheduleIdleReclaim(runtime.hostScope)
@@ -904,7 +857,7 @@ export class PiRuntimeFrontend {
           )
           const state = this.parseStateResponse(result.response)
           if (!stillIdle() || result.runtime.generation !== identity.generation ||
-              state.isStreaming || state.isCompacting || state.pendingMessageCount > 0) {
+              isSessionStateBusy(state)) {
             return outcome('pending')
           }
         } catch {
@@ -990,7 +943,6 @@ export class PiRuntimeFrontend {
     try {
       runtime.snapshot = await this.hydrate(runtime.descriptor, { scope: runtime.hostScope }, permit)
       runtime.lastCredibleSessionFile = runtime.snapshot.sessionFile
-      this.mergeSnapshotActivity(runtime, runtime.snapshot)
       if (runtime.runtimeId === this.active?.runtimeId) this.publish(runtime.snapshot)
     } catch (error) {
       runtime.snapshot = {
@@ -1184,8 +1136,7 @@ export class PiRuntimeFrontend {
     try {
       await this.pool.respondToExtensionUi(active.runtimeId, response, generation)
       if (active.descriptor.generation === generation) {
-        active.activity.pendingUiRequests.delete(response.id)
-        this.touchActivity(active)
+        this.updateActivity(active, { type: 'ui_responded', id: response.id })
       }
     } finally {
       this.markCommandEnd(active, commandToken)
@@ -1195,22 +1146,23 @@ export class PiRuntimeFrontend {
   async getState(): Promise<LocalPiSessionState> {
     const active = this.requireActive()
     this.assertAdmission(active.hostScope.cwd)
+    const expectedGeneration = active.descriptor.generation
+    const expectedStateRevision = active.activity.stateRevision
     const result = await this.pool.command(
       active.runtimeId,
       { type: 'get_state' },
-      active.descriptor.generation,
+      expectedGeneration,
     )
     const parsed = this.parseStateResponse(result.response)
     const current = this.active
-    if (current?.runtimeId === active.runtimeId) {
+    if (current === active && current.descriptor.generation === expectedGeneration &&
+      result.runtime.generation === expectedGeneration) {
       this.setRuntimeDescriptor(current, result.runtime)
-    }
-    if (current?.runtimeId === active.runtimeId) {
-      current.snapshot = {
+      current.snapshot = this.mergeSnapshotActivity(current, {
         ...current.snapshot,
         sessionState: { ...parsed, sessionFile: parsed.sessionFile ?? current.snapshot.sessionFile ?? undefined },
         sessionFile: parsed.sessionFile ?? current.snapshot.sessionFile ?? null,
-      }
+      }, expectedStateRevision)
       current.lastCredibleSessionFile = current.snapshot.sessionFile
       this.publish(current.snapshot)
     }
@@ -1378,7 +1330,7 @@ export class PiRuntimeFrontend {
           lastCredibleSessionFile: descriptor.sessionFile,
           ...(target.selectionToken ? { selectionToken: target.selectionToken } : {}),
           lastUsedAt: this.now(),
-          activity: emptyRuntimeActivity(startingSnapshot),
+          activity: createRuntimeActivity(startingSnapshot.sessionState),
         }
         this.active = selected
         this.runtimes.set(descriptor.runtimeId, selected)
@@ -1397,7 +1349,6 @@ export class PiRuntimeFrontend {
       this.active.snapshot = snapshot
       this.active.lastCredibleSessionFile = snapshot.sessionFile
       this.active.lastUsedAt = this.now()
-      this.mergeSnapshotActivity(this.active, snapshot)
       this.runtimes.set(descriptor.runtimeId, this.active)
       const activatedSessionId = snapshot.sessionState?.sessionId || descriptor.sessionId
       if (activatedSessionId) {
@@ -1651,8 +1602,15 @@ export class PiRuntimeFrontend {
   }
 
   private touchActivity(runtime: ActiveRuntime): void {
-    runtime.activity.revision += 1
+    this.updateActivity(runtime, { type: 'touch' })
+  }
+
+  private updateActivity(runtime: ActiveRuntime, action: RuntimeActivityAction): boolean {
+    const activity = reduceRuntimeActivity(runtime.activity, action)
+    if (activity === runtime.activity) return false
+    runtime.activity = activity
     runtime.lastUsedAt = this.now()
+    return true
   }
 
   private pinControlRuntime(runtime: ActiveRuntime): PiRuntimeControlLease {
@@ -1663,8 +1621,7 @@ export class PiRuntimeFrontend {
       runtime,
       generation: runtime.descriptor.generation,
     })
-    runtime.activity.controlPins += 1
-    this.touchActivity(runtime)
+    this.updateActivity(runtime, { type: 'control_pin', delta: 1 })
     return { ...handle, leaseId }
   }
 
@@ -1694,7 +1651,7 @@ export class PiRuntimeFrontend {
         this.controlLeases.delete(leaseId)
       }
     }
-    runtime.activity.controlPins = 0
+    this.updateActivity(runtime, { type: 'control_pins_cleared' })
   }
 
   private markCommandStart(
@@ -1706,8 +1663,7 @@ export class PiRuntimeFrontend {
       new Map<symbol, number>()
     commands.set(token, baseGeneration)
     this.inFlightRuntimeCommands.set(runtime.runtimeId, commands)
-    runtime.activity.pendingCommands += 1
-    this.touchActivity(runtime)
+    this.updateActivity(runtime, { type: 'command_started' })
     this.publishControlRuntimes()
     return token
   }
@@ -1720,11 +1676,7 @@ export class PiRuntimeFrontend {
         this.inFlightRuntimeCommands.delete(runtime.runtimeId)
       }
     }
-    runtime.activity.pendingCommands = Math.max(
-      0,
-      runtime.activity.pendingCommands - 1,
-    )
-    this.touchActivity(runtime)
+    this.updateActivity(runtime, { type: 'command_finished' })
     this.publishControlRuntimes()
     if (runtime.runtimeId !== this.active?.runtimeId && isRuntimeIdle(runtime.activity)) {
       this.scheduleIdleReclaim(runtime.hostScope)
@@ -1734,102 +1686,32 @@ export class PiRuntimeFrontend {
   private mergeSnapshotActivity(
     runtime: ActiveRuntime,
     snapshot: LocalPiRuntimeSnapshot,
-  ): void {
-    const state = snapshot.sessionState
-    if (state) {
-      runtime.activity.agentRunning = state.isStreaming
-      runtime.activity.compactionRunning = state.isCompacting
-      runtime.activity.queuedMessages = state.pendingMessageCount
-      if (state.isStreaming) runtime.activity.outcome = undefined
+    expectedStateRevision: number,
+  ): LocalPiRuntimeSnapshot {
+    if (expectedStateRevision !== runtime.activity.stateRevision) {
+      // Commands and get_state travel independently from events. Preserve newer live
+      // execution fields while retaining the rest of the authoritative read result.
+      return snapshot.sessionState ? {
+        ...snapshot,
+        sessionState: {
+          ...snapshot.sessionState,
+          isStreaming: runtime.activity.agentRunning,
+          isCompacting: runtime.activity.compactionRunning,
+          pendingMessageCount: runtime.activity.queuedMessages,
+        },
+      } : snapshot
     }
-    this.touchActivity(runtime)
+    this.updateActivity(runtime, {
+      type: 'session_state', state: snapshot.sessionState, expectedStateRevision,
+    })
+    return snapshot
   }
 
   private applyRuntimeActivityEvent(
     runtime: ActiveRuntime,
     event: LocalPiRpcEvent,
   ): boolean {
-    let changed = false
-    switch (event.type) {
-      case 'agent_start':
-      case 'turn_start':
-        changed = !runtime.activity.agentRunning || runtime.activity.outcome !== undefined
-        runtime.activity.agentRunning = true
-        runtime.activity.outcome = undefined
-        break
-      case 'agent_end': {
-        if (event.willRetry) {
-          changed = !runtime.activity.retryRunning
-          runtime.activity.retryRunning = true
-          break
-        }
-        let outcome: 'completed' | 'failed' = 'completed'
-        for (let index = event.messages.length - 1; index >= 0; index -= 1) {
-          const message = event.messages[index]
-          if (message?.role !== 'assistant') continue
-          outcome = message.stopReason === 'error' ? 'failed' : 'completed'
-          break
-        }
-        changed = runtime.activity.outcome !== outcome
-        runtime.activity.outcome = outcome
-        break
-      }
-      case 'agent_settled':
-        changed = runtime.activity.agentRunning ||
-          runtime.activity.activeToolCalls.size > 0 ||
-          runtime.activity.outcome === undefined
-        runtime.activity.agentRunning = false
-        runtime.activity.activeToolCalls.clear()
-        runtime.activity.outcome ??= 'completed'
-        break
-      case 'tool_execution_start':
-      case 'tool_execution_update': {
-        const size = runtime.activity.activeToolCalls.size
-        runtime.activity.activeToolCalls.add(event.toolCallId)
-        changed = runtime.activity.activeToolCalls.size !== size
-        break
-      }
-      case 'tool_execution_end':
-        changed = runtime.activity.activeToolCalls.delete(event.toolCallId)
-        break
-      case 'queue_update': {
-        const queuedMessages = event.steering.length + event.followUp.length
-        changed = runtime.activity.queuedMessages !== queuedMessages
-        runtime.activity.queuedMessages = queuedMessages
-        break
-      }
-      case 'compaction_start':
-        changed = !runtime.activity.compactionRunning
-        runtime.activity.compactionRunning = true
-        break
-      case 'compaction_end':
-        changed = runtime.activity.compactionRunning ||
-          (event.willRetry && !runtime.activity.retryRunning)
-        runtime.activity.compactionRunning = false
-        if (event.willRetry) runtime.activity.retryRunning = true
-        break
-      case 'auto_retry_start':
-        changed = !runtime.activity.retryRunning
-        runtime.activity.retryRunning = true
-        break
-      case 'auto_retry_end':
-        changed = runtime.activity.retryRunning
-        runtime.activity.retryRunning = false
-        break
-      case 'summarization_retry_scheduled':
-      case 'summarization_retry_attempt_start':
-        changed = !runtime.activity.summarizationRunning
-        runtime.activity.summarizationRunning = true
-        break
-      case 'summarization_retry_finished':
-        changed = runtime.activity.summarizationRunning
-        runtime.activity.summarizationRunning = false
-        break
-      default:
-        return false
-    }
-    if (!changed) return false
-    this.touchActivity(runtime)
+    if (!this.updateActivity(runtime, { type: 'event', event })) return false
     if (runtime.runtimeId !== this.active?.runtimeId && isRuntimeIdle(runtime.activity)) {
       this.scheduleIdleReclaim(runtime.hostScope)
     }
@@ -1840,15 +1722,7 @@ export class PiRuntimeFrontend {
     runtime: ActiveRuntime,
     envelope: PiHostUiRequestEventEnvelope,
   ): boolean {
-    const request = envelope.request
-    const size = runtime.activity.pendingUiRequests.size
-    if (request.method === 'dismiss') {
-      runtime.activity.pendingUiRequests.delete(request.id)
-    } else if (BLOCKING_EXTENSION_UI_METHODS.has(request.method)) {
-      runtime.activity.pendingUiRequests.add(request.id)
-    }
-    if (runtime.activity.pendingUiRequests.size === size) return false
-    this.touchActivity(runtime)
+    if (!this.updateActivity(runtime, { type: 'ui_request', request: envelope.request })) return false
     if (runtime.runtimeId !== this.active?.runtimeId && isRuntimeIdle(runtime.activity)) {
       this.scheduleIdleReclaim(runtime.hostScope)
     }
@@ -1934,9 +1808,7 @@ export class PiRuntimeFrontend {
         result.runtime.generation !== generation ||
         current.activity.revision !== activityRevision ||
         !isRuntimeIdle(current.activity) ||
-        parsed.data.isStreaming ||
-        parsed.data.isCompacting ||
-        parsed.data.pendingMessageCount > 0
+        isSessionStateBusy(parsed.data)
       ) {
         return false
       }
@@ -1978,6 +1850,8 @@ export class PiRuntimeFrontend {
     _prepared: { scope: ProjectHostScope; sessionFile?: string; forkSessionFile?: string },
     maintenancePermit?: RuntimeMaintenancePermit,
   ): Promise<LocalPiRuntimeSnapshot> {
+    const runtime = this.runtimes.get(descriptor.runtimeId)
+    const expectedStateRevision = runtime?.activity.stateRevision
     const [stateResult, commandsResult] = await Promise.all([
       this.pool.command(descriptor.runtimeId, { type: 'get_state' }, descriptor.generation, undefined, maintenancePermit),
       this.pool.command(descriptor.runtimeId, { type: 'get_commands' }, descriptor.generation, undefined, maintenancePermit),
@@ -2011,10 +1885,14 @@ export class PiRuntimeFrontend {
         'Pi returned an invalid runtime snapshot.',
       )
     }
-    return snapshot.data
+    return runtime && this.runtimes.get(descriptor.runtimeId) === runtime &&
+      runtime.descriptor.generation === descriptor.generation && expectedStateRevision !== undefined
+      ? this.mergeSnapshotActivity(runtime, snapshot.data, expectedStateRevision)
+      : snapshot.data
   }
 
   private async refreshSession(active: ActiveRuntime) {
+    const expectedStateRevision = active.activity.stateRevision
     const result = await this.pool.command(
       active.runtimeId,
       { type: 'get_state' },
@@ -2040,7 +1918,7 @@ export class PiRuntimeFrontend {
         'Pi changed the session but did not confirm its new state.',
       )
     }
-    return { descriptor, snapshot: parsed.data }
+    return { descriptor, snapshot: this.mergeSnapshotActivity(active, parsed.data, expectedStateRevision) }
   }
 
   private async prepareTarget(target: PiRuntimeFrontendTarget) {
@@ -2125,32 +2003,6 @@ export class PiRuntimeFrontend {
       )
     }
     return runtime
-  }
-
-  private controlLifecycle(runtime: ActiveRuntime): PiRuntimeControlSummary['lifecycle'] {
-    if (runtime.activity.pendingCommands > 0) return 'accepting'
-    if (runtime.activity.queuedMessages > 0) return 'queued'
-    if (
-      runtime.activity.agentRunning ||
-      runtime.activity.compactionRunning ||
-      runtime.activity.retryRunning ||
-      runtime.activity.summarizationRunning ||
-      runtime.activity.activeToolCalls.size > 0 ||
-      runtime.activity.pendingUiRequests.size > 0
-    ) return 'running'
-    return 'idle'
-  }
-
-  private controlActivity(
-    runtime: ActiveRuntime,
-  ): Pick<PiRuntimeControlSummary, 'activity'> {
-    if (runtime.activity.pendingUiRequests.size > 0) return { activity: 'interaction' }
-    if (runtime.activity.summarizationRunning) return { activity: 'summarization' }
-    if (runtime.activity.compactionRunning) return { activity: 'compaction' }
-    if (runtime.activity.retryRunning) return { activity: 'retry' }
-    if (runtime.activity.activeToolCalls.size > 0) return { activity: 'tool' }
-    if (runtime.activity.agentRunning) return { activity: 'prompt' }
-    return {}
   }
 
   private requireActive(): ActiveRuntime {

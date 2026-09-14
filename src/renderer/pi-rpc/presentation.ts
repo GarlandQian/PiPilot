@@ -157,12 +157,18 @@ function toolResultText(
     : boundedToolText(text)
 }
 
+const projectedTools = new WeakMap<LocalPiProjectedTool, ToolCall>()
+
 function projectedToolCall(
   tool: LocalPiProjectedTool,
   fallback?: Partial<ToolCall>,
 ): ToolCall {
+  if (!fallback) {
+    const cached = projectedTools.get(tool)
+    if (cached) return cached
+  }
   const result = toolResultText(tool.result, tool.toolName)
-  return presentToolCall({
+  const call = presentToolCall({
     id: tool.toolCallId,
     name: tool.toolName,
     args: tool.args,
@@ -175,6 +181,8 @@ function projectedToolCall(
     isError: tool.isError,
     fallback,
   })
+  if (!fallback) projectedTools.set(tool, call)
+  return call
 }
 
 function assistantState(
@@ -255,6 +263,8 @@ function captureAssistantResponse(
   group.streaming ||= streaming || message.stopReason === 'pending'
 }
 
+const mergedToolTurns = new WeakMap<Turn, WeakMap<ToolCall, Turn>>()
+
 function appendTool(
   projection: TurnProjection,
   call: ToolCall,
@@ -265,6 +275,11 @@ function appendTool(
   if (existingIndex !== undefined) {
     const existing = projection.turns[existingIndex]
     if (existing?.kind === 'tool') {
+      const cached = mergedToolTurns.get(existing)?.get(call)
+      if (cached) {
+        projection.turns[existingIndex] = cached
+        return
+      }
       const subagent = mergeSubagentPresentation(existing.call.subagent, call.subagent)
       projection.turns[existingIndex] = {
         ...existing,
@@ -281,6 +296,9 @@ function appendTool(
           ...(subagent ? { subagent } : {}),
         },
       }
+      const cache = mergedToolTurns.get(existing) ?? new WeakMap<ToolCall, Turn>()
+      cache.set(call, projection.turns[existingIndex]!)
+      mergedToolTurns.set(existing, cache)
     }
     return
   }
@@ -582,10 +600,10 @@ function attachResponseActivities(
   return projected
 }
 
-export function projectLocalPiTurns(
+function projectHistoryTurns(
   state: LocalPiProjectorState,
   adapters: LocalPiTurnProjectionOptions = {},
-): Turn[] {
+) {
   const projection: TurnProjection = {
     turns: [],
     toolIndexes: new Map(),
@@ -626,6 +644,26 @@ export function projectLocalPiTurns(
       activeAnchorEntryId,
       index,
     )
+  }
+
+  return { projection, prefix, provenanceReady, responseGroup, activeAnchorEntryId }
+}
+
+function projectLiveTurns(
+  state: LocalPiProjectorState,
+  adapters: LocalPiTurnProjectionOptions,
+  history: ReturnType<typeof projectHistoryTurns>,
+): Turn[] {
+  const { prefix, provenanceReady, activeAnchorEntryId } = history
+  // The cache is immutable. Live tool results may replace an existing history
+  // slot, and response actions may extend the current user-led group.
+  const projection: TurnProjection = {
+    turns: [...history.projection.turns],
+    toolIndexes: new Map(history.projection.toolIndexes),
+  }
+  const responseGroup = history.responseGroup && {
+    ...history.responseGroup,
+    markdown: [...history.responseGroup.markdown],
   }
 
   if (state.streamingMessage) {
@@ -698,6 +736,61 @@ export function projectLocalPiTurns(
   const deduplicated = projection.turns.filter((turn, index) =>
     turn.kind !== 'plan' || latestPlanIndexes.get(turn.markdown) === index)
   return attachResponseActivities(deduplicated, state, adapters)
+}
+
+export function projectLocalPiTurns(
+  state: LocalPiProjectorState,
+  adapters: LocalPiTurnProjectionOptions = {},
+): Turn[] {
+  return projectLiveTurns(state, adapters, projectHistoryTurns(state, adapters))
+}
+
+/** One cache per mounted transcript: a token delta never rereads its history. */
+export function createLocalPiTurnsProjector() {
+  let previous: LocalPiProjectorState | undefined
+  let previousPlan: LocalPiTurnProjectionOptions['planMode']
+  let history: ReturnType<typeof projectHistoryTurns> | undefined
+  let historyBuilds = 0
+  let retained = new Map<string, Turn>()
+  return {
+    get historyBuilds() { return historyBuilds },
+    project(state: LocalPiProjectorState, adapters: LocalPiTurnProjectionOptions = {}) {
+      if (!history || !previous || previous.generation !== state.generation ||
+          previous.sessionId !== state.sessionId || previous.messages !== state.messages ||
+          previous.entrySnapshot !== state.entrySnapshot || previous.tools !== state.tools ||
+          previousPlan !== adapters.planMode) {
+        history = projectHistoryTurns(state, adapters)
+        historyBuilds += 1
+      }
+      previous = state
+      previousPlan = adapters.planMode
+      const turns = projectLiveTurns(state, adapters, history)
+      const next = new Map<string, Turn>()
+      const shared = turns.map((turn) => {
+        const old = retained.get(turn.id)
+        const value = old && samePresentationValue(old, turn) ? old : turn
+        next.set(turn.id, value)
+        return value
+      })
+      retained = next
+      return shared
+    },
+  }
+}
+
+// Projection values are plain bounded DTOs. Avoid serializing large Markdown
+// strings just to keep an unchanged response mounted after a history refresh.
+function samePresentationValue(left: unknown, right: unknown, depth = 0): boolean {
+  if (Object.is(left, right)) return true
+  if (depth > 32 || !left || !right || typeof left !== 'object' || typeof right !== 'object') return false
+  if (Array.isArray(left) !== Array.isArray(right)) return false
+  if (!Array.isArray(left) && (Object.getPrototypeOf(left) !== Object.prototype || Object.getPrototypeOf(right) !== Object.prototype)) return false
+  const keys = Object.keys(left)
+  const other = Object.keys(right)
+  return keys.length === other.length && keys.every((key) =>
+    Object.prototype.hasOwnProperty.call(right, key) && samePresentationValue(
+      (left as Record<string, unknown>)[key], (right as Record<string, unknown>)[key], depth + 1,
+    ))
 }
 
 export function groupConversationTurns(
@@ -853,4 +946,31 @@ export function projectConversationOutline(
   }
 
   return items
+}
+
+export function createConversationOutlineProjector() {
+  let cached = new Map<string, { turns: readonly Turn[]; item: ConversationOutlineItem | undefined }>()
+  return (turns: readonly Turn[]): ConversationOutlineItem[] => {
+    const groups = new Map<string, Turn[]>()
+    const order = new Set<string>()
+    for (const turn of turns) {
+      if (!turn.anchorEntryId) continue
+      const group = groups.get(turn.anchorEntryId) ?? []
+      group.push(turn)
+      groups.set(turn.anchorEntryId, group)
+      if (turn.kind === 'user') order.add(turn.anchorEntryId)
+    }
+    const next = new Map<string, { turns: readonly Turn[]; item: ConversationOutlineItem | undefined }>()
+    const items: ConversationOutlineItem[] = []
+    for (const entryId of order) {
+      const group = groups.get(entryId)!
+      const old = cached.get(entryId)
+      const entry = old && old.turns.length === group.length && old.turns.every((turn, index) => turn === group[index])
+        ? old : { turns: group, item: projectConversationOutline(group)[0] }
+      next.set(entryId, entry)
+      if (entry.item) items.push(entry.item)
+    }
+    cached = next
+    return items
+  }
 }

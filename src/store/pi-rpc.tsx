@@ -26,8 +26,8 @@ import {
 } from '@/renderer/pi-rpc/projector'
 import {
   latestLocalPiResponseAnchor,
-  projectConversationOutline,
-  projectLocalPiTurns,
+  createConversationOutlineProjector,
+  createLocalPiTurnsProjector,
   settleLocalPiResponseActivities,
   upsertLocalPiResponseActivity,
   type LocalPiResponseActivityRecord,
@@ -35,6 +35,9 @@ import {
 import {
   dedupeRuntimeAdapterPackages,
   detectRichAdapterCapabilities,
+  PLAN_STATUS_KEY,
+  PLAN_WIDGET_KEY,
+  GOAL_STATUS_KEY,
   projectGoalMode,
   projectPlanMode,
   projectRetryActivity,
@@ -47,6 +50,9 @@ import {
   type LocalPiEntrySnapshot,
 } from '@/renderer/pi-rpc/response-provenance'
 import { createProvenanceRefreshQueue } from '@/renderer/pi-rpc/provenance-refresh-queue'
+import { PiConversationLifecycle, type PiHydrationSnapshot } from '@/renderer/pi-rpc/conversation-lifecycle'
+import { createTranscriptStore, type PiTranscriptSnapshot } from '@/renderer/pi-rpc/transcript-store'
+export type { PiHydrationSnapshot } from '@/renderer/pi-rpc/conversation-lifecycle'
 import {
   advancePiSnapshotWatermark,
   createPiSnapshotWatermark,
@@ -69,9 +75,7 @@ import {
 } from '@/renderer/pi-rpc/queue-payloads'
 import type {
   AgentStatus,
-  ConversationOutlineItem,
   ResponseActivity,
-  Turn,
 } from '@/types/chat'
 import {
   piIntegrationScopeKey,
@@ -101,21 +105,6 @@ interface PiQueueConversion {
   followUp: readonly PiQueuedMessage[]
   latestOfficial: PiQueueTextSnapshot | null
   settleTimer: number | null
-}
-
-interface PiTranscriptSnapshot {
-  turns: readonly Turn[]
-  outline: readonly ConversationOutlineItem[]
-  revision: number
-  loading: boolean
-}
-
-export interface PiHydrationSnapshot {
-  scopeKey: string
-  generation: number
-  sessionId: string | null
-  status: 'loading' | 'ready' | 'error'
-  error: string | null
 }
 
 export type PiConversationPresentation =
@@ -351,7 +340,8 @@ function reconcileQueueFromSession(
   }
 }
 
-const TranscriptContext = React.createContext<PiTranscriptSnapshot | null>(null)
+const TranscriptContext = React.createContext<ReturnType<typeof createTranscriptStore> | null>(null)
+const NO_ADAPTER_PACKAGES: readonly PiPackageSummary[] = []
 const RuntimeContext = React.createContext<PiRuntimeView | null>(null)
 const ExtensionContext = React.createContext<PiExtensionView | null>(null)
 const ActionsContext = React.createContext<PiRpcActions | null>(null)
@@ -726,10 +716,8 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
   const [pendingForkDraft, setPendingForkDraft] = React.useState<PiForkDraftTarget | null>(null)
   const runtimeRef = React.useRef<LocalPiRuntimeSnapshot | null>(null)
   const sessionRef = React.useRef<LocalPiSessionState | null>(null)
-  const hydrationRef = React.useRef(initialHydration)
-  const refreshNonce = React.useRef(0)
-  const conversationRefreshNonce = React.useRef(0)
-  const commandOwnerRevision = React.useRef(0)
+  const [visitLifecycle] = React.useState(() => new PiConversationLifecycle(initialHydration))
+  const commandOwnerRevision = visitLifecycle.ownerRevision
   const snapshotWatermark = React.useRef(createPiSnapshotWatermark())
   const protocolRecoveryPending = React.useRef(false)
   const hydrationKey = React.useRef('')
@@ -820,30 +808,33 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
   const adapterPackages = adapterRuntimePackages?.generation === runtimeGenerationForAdapters &&
     adapterRuntimePackages.scopeKey === expectedIntegrationScopeKey
     ? adapterRuntimePackages.packages
-    : []
+    : NO_ADAPTER_PACKAGES
   const adapterCapabilities = React.useMemo(() => detectRichAdapterCapabilities({
     packages: adapterPackages,
     commands,
   }), [adapterPackages, commands])
+  const planStatus = statuses[PLAN_STATUS_KEY]
+  const planWidget = widgets.find((widget) => widget.key === PLAN_WIDGET_KEY)
+  const goalStatus = statuses[GOAL_STATUS_KEY]
   const planMode = React.useMemo(() => projectPlanMode(
     projection,
     projectionScopeKey.current === activeScopeKey
       ? adapterCapabilities.planMode
       : null,
-    { scopeKey: activeScopeKey, statuses, widgets },
-  ), [activeScopeKey, adapterCapabilities.planMode, projection, statuses, widgets])
+    { scopeKey: activeScopeKey, statuses: planStatus === undefined ? {} : { [PLAN_STATUS_KEY]: planStatus }, widgets: planWidget ? [planWidget] : [] },
+  ), [activeScopeKey, adapterCapabilities.planMode, projection.generation, projection.sessionId, projection.messages, projection.tools, planStatus, planWidget])
   const goalMode = React.useMemo(() => projectGoalMode(
     projection,
     projectionScopeKey.current === activeScopeKey
       ? adapterCapabilities.goal
       : null,
-    { scopeKey: activeScopeKey, statuses },
-  ), [activeScopeKey, adapterCapabilities.goal, projection, statuses])
+    { scopeKey: activeScopeKey, statuses: goalStatus === undefined ? {} : { [GOAL_STATUS_KEY]: goalStatus } },
+  ), [activeScopeKey, adapterCapabilities.goal, projection.generation, projection.sessionId, projection.entrySnapshot, goalStatus])
   const retryActivity = React.useMemo<RetryActivityProjection>(() =>
     projectionScopeKey.current === activeScopeKey
       ? projectRetryActivity(projection)
       : { kind: 'idle' },
-  [activeScopeKey, projection])
+  [activeScopeKey, projection.retry, projection.retryTiming])
 
   React.useEffect(() => {
     if (!pendingForkDraft) return
@@ -1099,19 +1090,23 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
   }, [commitQueue])
 
   const commitHydration = React.useCallback((next: PiHydrationSnapshot) => {
-    hydrationRef.current = next
+    visitLifecycle.commit(next)
     setHydration(next)
-  }, [])
+  }, [visitLifecycle])
 
   const resetGeneration = React.useCallback((snapshot: LocalPiRuntimeSnapshot) => {
-    commandOwnerRevision.current += 1
     snapshotWatermark.current = createPiSnapshotWatermark()
     const activeSession = snapshot.state === 'ready' ? snapshot.sessionState : null
     const canHydrate = snapshot.state === 'ready' ||
       snapshot.state === 'starting' ||
       snapshot.state === 'replacing'
-    refreshNonce.current += 1
-    conversationRefreshNonce.current += 1
+    visitLifecycle.reset({
+      scopeKey: activeScopeKey,
+      generation: snapshot.generation,
+      sessionId: activeSession?.sessionId ?? null,
+      status: canHydrate ? 'loading' : 'error',
+      error: canHydrate ? null : runtimeFailureMessage(snapshot),
+    })
     hydrationKey.current = ''
     projectionScopeKey.current = activeScopeKey
     setLoading(
@@ -1196,6 +1191,12 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
         if (command.type !== 'fork') setPendingForkDraft(null)
       }
       const response = await api.localPi.runtime.command(command)
+      // Sending is acknowledged by the Runtime that received the command.
+      // Navigating away cannot turn that successful acceptance into a failure.
+      // The send caller separately gates all projection effects by visit.
+      if (command.type === 'prompt' || command.type === 'steer' || command.type === 'follow_up') {
+        return responseData<TCommand['type']>(response, command.type)
+      }
       if (projectionScopeKey.current !== expectedScopeKey) {
         throw new Error('The Pi conversation scope changed before the operation completed.')
       }
@@ -1324,18 +1325,18 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
     const expectedScopeKey = activeScopeKey
     const expectedGeneration = expected.generation
     const expectedSessionId = expected.sessionState?.sessionId
-    const expectedOwnerRevision = commandOwnerRevision.current
-    const hydrationRequired = hydrationRef.current.scopeKey !== expectedScopeKey ||
-      hydrationRef.current.generation !== expectedGeneration ||
-      hydrationRef.current.sessionId !== expectedSessionId ||
-      hydrationRef.current.status !== 'ready'
-    const nonce = ++refreshNonce.current
-    const isCurrent = () => nonce === refreshNonce.current &&
-      commandOwnerRevision.current === expectedOwnerRevision &&
-      projectionScopeKey.current === expectedScopeKey &&
-      runtimeRef.current?.state === 'ready' &&
-      runtimeRef.current.generation === expectedGeneration &&
-      (!expectedSessionId || sessionRef.current?.sessionId === expectedSessionId)
+    const hydrated = visitLifecycle.hydration
+    const hydrationRequired = hydrated.scopeKey !== expectedScopeKey ||
+      hydrated.generation !== expectedGeneration ||
+      hydrated.sessionId !== expectedSessionId || hydrated.status !== 'ready'
+    const ticket = visitLifecycle.begin('full', {
+      scopeKey: expectedScopeKey, generation: expectedGeneration, sessionId: expectedSessionId ?? null,
+    })
+    const isCurrent = () => visitLifecycle.isCurrent(ticket, runtimeRef.current?.state === 'ready' ? {
+      scopeKey: projectionScopeKey.current,
+      generation: runtimeRef.current.generation,
+      sessionId: sessionRef.current?.sessionId ?? null,
+    } : null)
     setLoading(true)
     setTranscriptLoading(true)
 
@@ -1406,13 +1407,12 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
           commitProjection(nextProjection)
           setCompacting(nextSession.isCompacting)
           setError(null)
-          commitHydration({
+          const readyHydration = visitLifecycle.finish(ticket, {
             scopeKey: expectedScopeKey,
             generation: expectedGeneration,
             sessionId: nextSession.sessionId,
-            status: 'ready',
-            error: null,
           })
+          if (readyHydration) commitHydration(readyHydration)
         },
       })
     } catch (caught) {
@@ -1421,13 +1421,12 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
         setError(message)
         setTranscriptLoading(false)
         if (hydrationRequired) {
-          commitHydration({
+          const failedHydration = visitLifecycle.finish(ticket, {
             scopeKey: expectedScopeKey,
             generation: expectedGeneration,
             sessionId: expectedSessionId ?? sessionRef.current?.sessionId ?? null,
-            status: 'error',
-            error: message,
-          })
+          }, message)
+          if (failedHydration) commitHydration(failedHydration)
         }
       }
       throw caught
@@ -1442,14 +1441,14 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
     const expectedScopeKey = activeScopeKey
     const expectedGeneration = expected.generation
     const expectedSessionId = expected.sessionState?.sessionId ?? sessionRef.current?.sessionId
-    const expectedOwnerRevision = commandOwnerRevision.current
-    const nonce = ++conversationRefreshNonce.current
-    const isCurrent = () => nonce === conversationRefreshNonce.current &&
-      commandOwnerRevision.current === expectedOwnerRevision &&
-      projectionScopeKey.current === expectedScopeKey &&
-      runtimeRef.current?.state === 'ready' &&
-      runtimeRef.current.generation === expectedGeneration &&
-      (!expectedSessionId || sessionRef.current?.sessionId === expectedSessionId)
+    const ticket = visitLifecycle.begin('conversation', {
+      scopeKey: expectedScopeKey, generation: expectedGeneration, sessionId: expectedSessionId ?? null,
+    })
+    const isCurrent = () => visitLifecycle.isCurrent(ticket, runtimeRef.current?.state === 'ready' ? {
+      scopeKey: projectionScopeKey.current,
+      generation: runtimeRef.current.generation,
+      sessionId: sessionRef.current?.sessionId ?? null,
+    } : null)
     try {
       await refreshPiSnapshot({
         isCurrent,
@@ -1621,13 +1620,13 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
       activeResponseRef.current = null
       pendingPromptRef.current = null
       promptAcceptanceRef.current = null
-      commitHydration({
+      commitHydration(visitLifecycle.reset({
         scopeKey: activeScopeKey,
         generation: 0,
         sessionId: null,
         status: api ? 'loading' : 'error',
         error: api ? null : 'The PiPilot desktop bridge is unavailable.',
-      })
+      }))
       return
     }
 
@@ -2139,7 +2138,7 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
       })
     return () => {
       disposed = true
-      refreshNonce.current += 1
+      visitLifecycle.invalidate()
       clearQueueConversion()
       detachRuntime()
       detachEvents()
@@ -2344,6 +2343,7 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
       await refreshModelCapabilities(ownerRevision)
     },
     async send(text, action, images = []) {
+      const ownerRevision = commandOwnerRevision.current
       if (
         action !== 'prompt' &&
         runtimeRef.current?.state === 'ready' &&
@@ -2428,6 +2428,7 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
       }
       try {
         await runCommand(command)
+        if (commandOwnerRevision.current !== ownerRevision) return
         if (pendingOperationId !== null) {
           pendingPromptRef.current = acceptPiPendingPrompt(
             pendingPromptRef.current,
@@ -2617,19 +2618,23 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
     runCommand,
   ])
 
+  const turnProjector = React.useMemo(() => createLocalPiTurnsProjector(), [activeScopeKey])
+  const outlineProjector = React.useMemo(() => createConversationOutlineProjector(), [activeScopeKey])
   const transcriptSnapshot = React.useMemo<PiTranscriptSnapshot>(() => {
-    const turns = projectLocalPiTurns(projection, {
+    const turns = turnProjector.project(projection, {
       planMode,
       scopeKey: activeScopeKey,
       responseActivities,
     })
     return {
       turns,
-      outline: projectConversationOutline(turns),
+      outline: outlineProjector(turns),
       revision: projection.revision + responseActivityRevision,
       loading: transcriptLoading,
     }
-  }, [activeScopeKey, planMode, projection, responseActivities, responseActivityRevision, transcriptLoading])
+  }, [activeScopeKey, planMode, projection, responseActivities, responseActivityRevision, transcriptLoading, turnProjector, outlineProjector])
+  const [transcriptStore] = React.useState(() => createTranscriptStore(transcriptSnapshot))
+  React.useLayoutEffect(() => transcriptStore.publish(transcriptSnapshot), [transcriptStore, transcriptSnapshot])
 
   const runtimeView = React.useMemo<PiRuntimeView>(() => ({
     runtime,
@@ -2671,7 +2676,7 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
   return (
     <ActionsContext.Provider value={actions}>
       <RuntimeContext.Provider value={runtimeView}>
-        <TranscriptContext.Provider value={transcriptSnapshot}>
+        <TranscriptContext.Provider value={transcriptStore}>
           <ExtensionContext.Provider value={extensionView}>
             {children}
           </ExtensionContext.Provider>
@@ -2688,7 +2693,19 @@ function requiredContext<T>(context: React.Context<T | null>, name: string) {
 }
 
 export function usePiTranscript() {
-  return requiredContext(TranscriptContext, 'usePiTranscript')
+  const store = requiredContext(TranscriptContext, 'usePiTranscript')
+  return React.useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)
+}
+
+export function usePiTranscriptLoading() {
+  const store = requiredContext(TranscriptContext, 'usePiTranscriptLoading')
+  return React.useSyncExternalStore(store.subscribe, store.getLoading, store.getLoading)
+}
+
+export function usePiTranscriptToolCall(toolCallId: string | null) {
+  const store = requiredContext(TranscriptContext, 'usePiTranscriptToolCall')
+  const read = React.useCallback(() => store.getToolCall(toolCallId), [store, toolCallId])
+  return React.useSyncExternalStore(store.subscribe, read, read)
 }
 
 export function usePiRuntime() {

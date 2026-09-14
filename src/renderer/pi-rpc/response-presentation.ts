@@ -7,6 +7,7 @@ import {
   projectToolActivitySequence,
   type ToolActivitySequenceItem,
 } from './tool-activity'
+import { groupConversationTurns } from './presentation'
 
 export type ResponsePresentationRegion = 'work' | 'answer' | 'persistent'
 
@@ -202,5 +203,40 @@ export function projectResponsePresentation(
     isActive,
     status: responseStatus(turns, options),
     work,
+  }
+}
+
+/** A delta in one response must not rebuild every completed response's tools. */
+export function createConversationResponseProjector() {
+  let cached = new Map<string, {
+    group: ConversationResponseGroup
+    active: boolean
+    status: AgentStatus
+    response: ResponsePresentation
+  }>()
+  let builds = 0
+  return {
+    get builds() { return builds },
+    project(turns: readonly Turn[], status: AgentStatus): readonly ResponsePresentation[] {
+      const groups = groupConversationTurns(turns)
+      const next = new Map<string, (typeof cached extends Map<string, infer T> ? T : never)>()
+      const responses = groups.map((group, index) => {
+        const active = index === groups.length - 1
+        const effectiveStatus = active ? status : 'idle'
+        const old = cached.get(group.id)
+        if (old && old.active === active && old.status === effectiveStatus &&
+            old.group.anchorEntryId === group.anchorEntryId && old.group.turns.length === group.turns.length &&
+            old.group.turns.every((turn, turnIndex) => turn === group.turns[turnIndex])) {
+          next.set(group.id, old)
+          return old.response
+        }
+        const response = projectResponsePresentation(group, { active, status: effectiveStatus })
+        builds += 1
+        next.set(group.id, { group, active, status: effectiveStatus, response })
+        return response
+      })
+      cached = next
+      return responses
+    },
   }
 }

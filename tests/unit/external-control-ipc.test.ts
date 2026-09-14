@@ -3,9 +3,12 @@ import type { ExternalControlSettingsSnapshot } from '../../src/shared/external-
 
 const mocks = vi.hoisted(() => {
   const disposers: Array<ReturnType<typeof vi.fn>> = []
+  const handlers = new Map<string, () => unknown>()
   return {
     disposers,
-    registerValidatedHandler: vi.fn(() => {
+    handlers,
+    registerValidatedHandler: vi.fn((contract: { channel: string }, _validator: unknown, handler: () => unknown) => {
+    handlers.set(contract.channel, handler)
     const dispose = vi.fn(() => true)
     disposers.push(dispose)
     return dispose
@@ -15,11 +18,15 @@ const mocks = vi.hoisted(() => {
 
 vi.mock('../../src/main/ipc/validated-handler', () => ({
   createTrustedSenderValidator: vi.fn(() => () => true),
-  MainProcessError: class MainProcessError extends Error {},
+  MainProcessError: class MainProcessError extends Error {
+    constructor(readonly code: string, message: string) { super(message) }
+  },
   registerValidatedHandler: mocks.registerValidatedHandler,
 }))
 
 import { registerExternalControlIpc } from '../../src/main/ipc/register-external-control-ipc'
+import { ExternalControlLauncherServiceError } from '../../src/main/external-control/launcher-service'
+import { externalControlLauncherInstallContract, externalControlLauncherUninstallContract } from '../../src/shared/ipc/contracts'
 
 const snapshot: ExternalControlSettingsSnapshot = {
   revision: 1,
@@ -30,6 +37,25 @@ const snapshot: ExternalControlSettingsSnapshot = {
 }
 
 describe('External Control IPC controller', () => {
+  it('maps asynchronous launcher failures to the same typed IPC error as synchronous failures', async () => {
+    const failure = new ExternalControlLauncherServiceError('launcher_install_failed', 'Platform probe timed out.')
+    const controller = registerExternalControlIpc({
+      getMainWindow: () => null,
+      launcherService: {
+        install: async () => { throw failure },
+        uninstall: async () => { throw failure },
+      } as never,
+      policy: {} as never,
+      service: { subscribe: () => () => undefined } as never,
+    })
+    for (const channel of [externalControlLauncherInstallContract.channel, externalControlLauncherUninstallContract.channel]) {
+      await expect(mocks.handlers.get(channel)!()).rejects.toMatchObject({
+        code: 'launcher_install_failed', message: 'Platform probe timed out.',
+      })
+    }
+    controller.dispose()
+  })
+
   it('unsubscribes events and removes all invoke handlers exactly once', () => {
     mocks.disposers.length = 0
     mocks.registerValidatedHandler.mockClear()

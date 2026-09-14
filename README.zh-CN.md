@@ -9,7 +9,7 @@ Runtime，也不把 Pi 的数据迁移成 PiPilot 私有格式。
 
 Pi 继续拥有 Session、配置和资源，PiPilot 负责桌面使用体验。
 
-> **项目状态：**`v0.0.3` 是当前稳定版，`v0.0.2` 是上一稳定版。源码仓库和
+> **项目状态：**`v0.0.4` 是当前稳定版，`v0.0.3` 是上一稳定版。源码仓库和
 > GitHub Release 均公开；未签名安装包只有在原生构建和 packaged smoke 验证通过后
 > 才用于手动下载。
 
@@ -27,9 +27,11 @@ Pi 继续拥有 Session、配置和资源，PiPilot 负责桌面使用体验。
 - **真实 Pi Session**：按项目浏览 Session，并使用已经接入的创建、打开、命名、复制、
   Fork 和删除等 Pi 能力。
   点击项目名直接进入工作区，旁边的操作创建项目会话；支持搜索、全部/运行中筛选和最近/名称排序。
+  目录以有界批次继续扫描超过 200 个会话，刷新时复用未变文件的元数据；打开和删除仍重新验证实际会话文件。
 - **完整对话体验**：提问居右、回复居左，每轮独立执行记录；消息、思考、提醒、排队内容和工具/子代理说明统一渲染 Markdown，代码与配置保留原文。
   支持代码块、工具调用、Queue、Follow-up、Steer、模型与
   Thinking 控制。运行中发送默认排队，发送与停止操作分开；排队图片和长消息可展开查看。
+  未发送的文字、图片与上下文引用按会话分别保留，切换后可以恢复；草稿只保存在内存中，退出应用后不保留。
   历史执行记录默认收起，当前展开的记录不会在完成后自动收回；思考保留独立可见入口，不随工具记录隐藏。
   重载历史时保留新到的流式输出；工具完成事件缺失时，以已保存的最终结果恢复状态。
   新错误会展开提示，通知和操作卡始终可见。
@@ -50,7 +52,7 @@ Pi 继续拥有 Session、配置和资源，PiPilot 负责桌面使用体验。
   Transcript、Token 或 Session 文件路径。
 - **模型管理**：管理 Pi `models.json`、自定义 Provider/Model、默认模型和高级 JSON
   字段。可搜索的供应商列表与详情共用同一份表单/JSON 草稿，配置修改后旧测试结果失效。
-- **偏好设置**：可搜索的分类导航、即时外观预览与自定义字体。普通设置合并写入磁盘后才报告保存成功，失败时恢复已保存值；退出时等待进行中的配置保存。
+- **偏好设置**：可搜索的分类导航、即时外观预览与自定义字体。普通设置合并写入磁盘后才报告保存成功，失败时恢复已保存值；退出时等待进行中的配置保存，并将尚未提交的供应商、模型和 MCP 表单纳入保存/放弃/取消确认。
 - **桌面体验**：浅色/深色主题、中英文界面、可配置终端字体、键盘操作，以及
   `1100×680` 最小窗口布局。
 
@@ -96,6 +98,12 @@ pnpm build
 pnpm test:electron
 ```
 
+CI 与发布复用 `.github/workflows/verify.yml`：单测在 macOS、Windows、Linux
+三端运行，完整 Electron 回归在 macOS 运行，integration 是该 Electron 套件的子集。
+模型协议契约使用真实已安装的 Pi SDK，连接隔离的本机 HTTP/SSE fixture，覆盖 OpenAI
+Chat Completions、OpenAI Responses、Anthropic Messages 和 Google Generative AI。
+验证流式输出、真实文件写入工具、工具结果回传与下一次发送，不使用真实模型账户或开发者的 Pi 数据。
+
 应用由 Electron Main、sandbox preload 和 React renderer 组成。Renderer 不直接访问
 Node.js、文件系统或 Pi，跨进程数据通过共享 Zod 契约和白名单 IPC 传递。
 
@@ -111,6 +119,17 @@ pnpm package:mac
 pnpm package:win
 pnpm package:linux
 ```
+
+打包冒烟默认选择当前 Node 架构。构建 macOS 两种架构后，可分别明确验证：
+
+```bash
+PIPILOT_PACKAGED_ARCH=arm64 pnpm test:packaged
+PIPILOT_PACKAGED_ARCH=x64 pnpm test:packaged
+```
+
+测试会检查 Mach-O 架构；目标包缺失会失败，不会改测另一种架构。Apple Silicon 上执行
+Intel 包需要 Rosetta。发布 CI 分别执行两种 macOS 架构的测试。这些冒烟检查运行已解包的
+应用，不代表已经验证完整的 DMG、NSIS 或 DEB 安装流程。
 
 当前目标和分发策略：
 
@@ -164,7 +183,7 @@ Windows 首次注册后请注销并重新登录，使之后启动的客户端继
 
 公开发布流程：
 
-1. 稳定标签（例如 `v0.0.3`）先触发发布专属的完整验证任务。
+1. 稳定标签（例如 `v0.0.4`）先触发发布专属的完整验证任务。
 2. 源码、单元测试、构建、集成和 Electron 检查通过后，macOS、Windows、Linux
    分别完成打包、产物检查和 packaged smoke。
 3. 最终装配任务拒绝同名文件覆盖，并校验文件名、版本、SHA-256，以及更新元数据

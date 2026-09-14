@@ -1,4 +1,5 @@
 import { isConfigDocumentDirty, type ConfigurationDocument, type ConfigDocumentSnapshot } from './configuration-documents'
+import { ConfigurationEditTransactions } from './configuration-edit-transactions'
 
 type ExitDocument = Pick<ConfigurationDocument<ConfigDocumentSnapshot>, 'getSnapshot' | 'save' | 'subscribe'>
 interface ExitRegistry {
@@ -9,28 +10,34 @@ interface ExitRegistry {
 /** No serialization or persistence: operates directly on the in-memory document owners. */
 export class ConfigurationDocumentExitGuard {
   private epoch = 0
-  constructor(private readonly registries: ExitRegistry[]) {}
+  constructor(
+    private readonly registries: ExitRegistry[],
+    private readonly edits = new ConfigurationEditTransactions(),
+  ) {}
 
   private documents() { return this.registries.flatMap((registry) => registry.values()) }
 
   isBusy = () => this.documents().some((document) => document.getSnapshot().phase !== 'idle')
 
   subscribe = (listener: () => void) => {
-    const detach = this.documents().map((document) => document.subscribe(listener))
+    const detach = [this.edits.subscribe(listener), ...this.documents().map((document) => document.subscribe(listener))]
     return () => { for (const unsubscribe of detach) unsubscribe() }
   }
 
   private lock() {
     for (const registry of this.registries) registry.setShutdownLocked(true)
+    this.edits.setShutdownLocked(true)
     return true
   }
 
   unlock() {
     this.epoch += 1
     for (const registry of this.registries) registry.setShutdownLocked(false)
+    this.edits.setShutdownLocked(false)
   }
 
   lockIfClean() {
+    if (this.edits.isDirty()) return false
     if (this.documents().some((document) => {
       const state = document.getSnapshot()
       return state.phase !== 'idle' || isConfigDocumentDirty(state)
@@ -46,6 +53,7 @@ export class ConfigurationDocumentExitGuard {
 
   async saveAndLock() {
     const epoch = this.epoch
+    if (this.isBusy() || !this.edits.commit()) return false
     const documents = this.documents()
     const captured = documents.map((document) => ({ document, state: document.getSnapshot() }))
     if (captured.some(({ state }) => state.phase !== 'idle')) return false
@@ -56,7 +64,7 @@ export class ConfigurationDocumentExitGuard {
       return state.revision + (result.snapshot.content === state.draftText ? 0 : 1)
     }))
     const current = this.documents()
-    if (epoch !== this.epoch) return false
+    if (epoch !== this.epoch || this.edits.isDirty()) return false
     if (current.length !== documents.length || current.some((document) => !documents.includes(document))) return false
     if (captured.some(({ document }, index) => {
       const state = document.getSnapshot()

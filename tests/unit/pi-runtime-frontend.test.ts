@@ -108,6 +108,7 @@ class FakeFrontendPool {
   externalSubmitError: Error | null = null
   abortError: Error | null = null
   abortDelay: Promise<void> | null = null
+  nextStateReadGate: { sampled(): void; release: Promise<void> } | null = null
   createWithoutSessionFile = false
   rebindOnPrompt = false
   promptDelay: Promise<void> | null = null
@@ -289,15 +290,24 @@ class FakeFrontendPool {
     }
 
     let response: LocalPiRpcResponse
+    let sampledRuntime: ProjectRuntimeDescriptor | undefined
     switch (command.type) {
-      case 'get_state':
+      case 'get_state': {
+        sampledRuntime = structuredClone(runtimeState.descriptor)
         response = {
           type: 'response',
           command: 'get_state',
           success: true,
           data: structuredClone(runtimeState.state),
         }
+        const gate = this.nextStateReadGate
+        this.nextStateReadGate = null
+        if (gate) {
+          gate.sampled()
+          await gate.release
+        }
         break
+      }
       case 'get_commands':
         if (this.failNextHydration || this.failHydrationsRemaining > 0) {
           this.failNextHydration = false
@@ -408,7 +418,7 @@ class FakeFrontendPool {
         } as LocalPiRpcResponse
     }
     return {
-      runtime: structuredClone(runtimeState.descriptor),
+      runtime: sampledRuntime ?? structuredClone(runtimeState.descriptor),
       response,
     }
   }
@@ -1347,6 +1357,157 @@ describe('PiRuntimeFrontend', () => {
     })
     await frontend.dispose()
   })
+
+  it.each(['control', 'selected', 'cached hydration'] as const)(
+    'keeps settlement newer than a delayed %s state read',
+    async (readKind) => {
+      const { frontend, pool } = createHarness()
+      const target = { scope: projectScope, sessionFile: '/sessions/delayed-state.jsonl' }
+      await frontend.start(target)
+      const lease = await frontend.acquireControlRuntime(target)
+      pool.setRuntimeSessionState(lease.runtimeId, { isStreaming: true })
+      pool.emitEvent(runtimeEvent(lease.runtimeId, lease.generation, { type: 'agent_start' }))
+      if (readKind === 'cached hydration') {
+        await frontend.replace({ scope: projectScope, sessionFile: '/sessions/other.jsonl' })
+      }
+      const sampled = deferred()
+      const release = deferred()
+      pool.nextStateReadGate = { sampled: sampled.resolve, release: release.promise }
+      const pending = readKind === 'control' ? frontend.getControlRuntimeState(lease)
+        : readKind === 'selected' ? frontend.getState() : frontend.replace(target)
+      await sampled.promise
+      pool.setRuntimeSessionState(lease.runtimeId, { isStreaming: false })
+      pool.emitEvent(runtimeEvent(lease.runtimeId, lease.generation, { type: 'agent_settled' }))
+      release.resolve()
+      const result = await pending
+      if (readKind !== 'cached hydration') expect(result).toMatchObject({ isStreaming: true })
+      expect(frontend.listControlRuntimes().find((item) => item.runtimeId === lease.runtimeId))
+        .toMatchObject({ lifecycle: 'idle', outcome: 'completed' })
+      if (readKind !== 'control') expect(frontend.getSnapshot().sessionState?.isStreaming).toBe(false)
+      await frontend.dispose()
+    },
+  )
+
+  it('keeps an execution started after an idle control-state sample and accepts the next fresh read', async () => {
+    const { frontend, pool } = createHarness()
+    const lease = await frontend.acquireControlRuntime({ scope: projectScope, sessionFile: '/sessions/starting-after-read.jsonl' })
+    const sampled = deferred()
+    const release = deferred()
+    pool.nextStateReadGate = { sampled: sampled.resolve, release: release.promise }
+    const pending = frontend.getControlRuntimeState(lease)
+    await sampled.promise
+    pool.setRuntimeSessionState(lease.runtimeId, { isStreaming: true })
+    pool.emitEvent(runtimeEvent(lease.runtimeId, lease.generation, { type: 'agent_start' }))
+    release.resolve()
+    expect(await pending).toMatchObject({ isStreaming: false })
+    expect(frontend.listControlRuntimes()[0]).toMatchObject({ lifecycle: 'running', activity: 'prompt' })
+
+    // Command start/end and pin changes must not permanently veto a fresh authoritative read.
+    pool.setRuntimeSessionState(lease.runtimeId, { isStreaming: false, pendingMessageCount: 2 })
+    const nextSampled = deferred()
+    const nextRelease = deferred()
+    pool.nextStateReadGate = { sampled: nextSampled.resolve, release: nextRelease.promise }
+    const next = frontend.getControlRuntimeState(lease)
+    await nextSampled.promise
+    const otherLease = await frontend.acquireControlRuntime({ scope: projectScope, sessionFile: lease.sessionFile! })
+    await frontend.abortControlRuntime(lease)
+    frontend.releaseControlRuntime(otherLease)
+    nextRelease.resolve()
+    expect(await next).toMatchObject({ isStreaming: false, pendingMessageCount: 2 })
+    expect(frontend.listControlRuntimes()[0]).toMatchObject({ lifecycle: 'queued', queueCount: 2 })
+    await frontend.dispose()
+  })
+
+  it('treats agent_start after prompt acceptance as newer than an outstanding idle read', async () => {
+    const { frontend, pool } = createHarness()
+    const lease = await frontend.acquireControlRuntime({ scope: projectScope, sessionFile: '/sessions/accepted-before-read.jsonl' })
+    await frontend.submitControlPrompt(lease, 'Start work', 'prompt')
+    const sampled = deferred()
+    const release = deferred()
+    pool.nextStateReadGate = { sampled: sampled.resolve, release: release.promise }
+    const pending = frontend.getControlRuntimeState(lease)
+    await sampled.promise
+    pool.setRuntimeSessionState(lease.runtimeId, { isStreaming: true })
+    pool.emitEvent(runtimeEvent(lease.runtimeId, lease.generation, { type: 'agent_start' }))
+    release.resolve()
+    expect(await pending).toMatchObject({ isStreaming: false })
+    expect(frontend.listControlRuntimes()[0]).toMatchObject({ lifecycle: 'running', activity: 'prompt' })
+    await frontend.dispose()
+  })
+
+  it.each(['prompt', 'follow_up'] as const)('keeps settled execution when %s acceptance arrives late', async (mode) => {
+    const { frontend, pool } = createHarness()
+    const lease = await frontend.acquireControlRuntime({ scope: projectScope, sessionFile: '/sessions/settled-before-acceptance.jsonl' })
+    const sampled = deferred()
+    const release = deferred()
+    const submit = pool.externalSubmit.bind(pool)
+    vi.spyOn(pool, 'externalSubmit').mockImplementation(async (...args) => {
+      const result = await submit(...args)
+      sampled.resolve()
+      await release.promise
+      return result
+    })
+    const pending = frontend.submitControlPrompt(lease, 'Quick work', mode)
+    await sampled.promise
+    pool.emitEvent(runtimeEvent(lease.runtimeId, lease.generation, { type: 'agent_start' }))
+    if (mode === 'follow_up') {
+      pool.emitEvent(runtimeEvent(lease.runtimeId, lease.generation, { type: 'queue_update', steering: [], followUp: [] }))
+    }
+    pool.emitEvent(runtimeEvent(lease.runtimeId, lease.generation, { type: 'agent_settled' }))
+    release.resolve()
+    expect(await pending).toMatchObject({ acceptedMode: mode, handle: { runtimeId: lease.runtimeId } })
+    expect(frontend.listControlRuntimes()[0]).toMatchObject({ lifecycle: 'idle', queueCount: 0, outcome: 'completed' })
+    await frontend.dispose()
+  })
+
+  it('preserves accepted-turn ownership after an intervening idle read before agent_start', async () => {
+    const { frontend, pool } = createHarness()
+    const lease = await frontend.acquireControlRuntime({ scope: projectScope, sessionFile: '/sessions/read-before-acceptance.jsonl' })
+    const sampled = deferred()
+    const release = deferred()
+    const submit = pool.externalSubmit.bind(pool)
+    vi.spyOn(pool, 'externalSubmit').mockImplementation(async (...args) => {
+      const result = await submit(...args)
+      sampled.resolve()
+      await release.promise
+      return result
+    })
+    const pending = frontend.submitControlPrompt(lease, 'Accepted before events', 'prompt')
+    await sampled.promise
+    expect(await frontend.getControlRuntimeState(lease)).toMatchObject({ isStreaming: false })
+    release.resolve()
+    expect(await pending).toMatchObject({ acceptedMode: 'prompt' })
+    expect(frontend.listControlRuntimes()[0]).toMatchObject({ lifecycle: 'running', activity: 'prompt' })
+    await frontend.dispose()
+  })
+
+  it.each(['control', 'selected'] as const)(
+    'does not roll back a runtime generation when a delayed %s state read returns',
+    async (readKind) => {
+      const { frontend, pool } = createHarness()
+      const target = { scope: projectScope, sessionFile: '/sessions/state-before-rebind.jsonl' }
+      await frontend.start(target)
+      const lease = await frontend.acquireControlRuntime(target)
+      const sampled = deferred()
+      const release = deferred()
+      pool.nextStateReadGate = { sampled: sampled.resolve, release: release.promise }
+      const pending = readKind === 'control' ? frontend.getControlRuntimeState(lease) : frontend.getState()
+      await sampled.promise
+      await frontend.request({ type: 'new_session' })
+      const replacement = pool.runtime!
+      release.resolve()
+      if (readKind === 'control') {
+        await expect(pending).rejects.toMatchObject({ code: 'PI_RUNTIME_STALE_GENERATION' })
+      } else {
+        expect(await pending).toMatchObject({ sessionId: lease.sessionId })
+      }
+      expect(frontend.getActiveRuntimeIdentity()).toMatchObject({
+        generation: replacement.generation, sessionFile: replacement.sessionFile,
+      })
+      expect(frontend.listControlRuntimes()[0]).toMatchObject({ generation: replacement.generation })
+      await frontend.dispose()
+    },
+  )
 
   it('rejects a stale control handle after exact Runtime replacement', async () => {
     const { frontend, pool } = createHarness()
