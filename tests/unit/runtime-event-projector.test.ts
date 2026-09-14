@@ -39,8 +39,9 @@ const publicToolCall = {
 
 describe('embedded Pi event projection', () => {
   it.each([
-    ['JSON arguments', { partialArgs: '{"command":"pnpm test"', customInput: undefined, streamIndex: 0 }],
+    ['JSON arguments', { index: 0, partialArgs: '{"command":"pnpm test"', customInput: undefined, streamIndex: 0 }],
     ['grammar input', {
+      index: 1,
       partialArgs: undefined,
       customInput: { property: 'input', jsonBuffer: { input: 'pnpm test', started: true, closed: false } },
       streamIndex: 1,
@@ -76,7 +77,7 @@ describe('embedded Pi event projection', () => {
     expect(projectRuntimeEvent(event as unknown as AgentSessionEvent)).toEqual(event)
   })
 
-  it.each(['partialArgs', 'customInput', 'streamIndex', 'unknownProviderField'])(
+  it.each(['index', 'partialArgs', 'customInput', 'streamIndex', 'unknownProviderField'])(
     'rejects %s in final messages, completed tool calls and persisted entries',
     (field) => {
       const toolCall = { ...publicToolCall, [field]: 'not a public tool field' }

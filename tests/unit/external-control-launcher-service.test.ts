@@ -57,6 +57,7 @@ function harness() {
     platform: 'darwin',
     receiptPath: receipt,
     testTargetDirectory: bin,
+    uid: process.getuid?.() ?? 0,
   })
   return { bin, create, descriptor, executable, receipt, root }
 }
@@ -102,6 +103,7 @@ function darwinHarness(initialPath: string | null = null) {
     isPackaged: true,
     platform: 'darwin',
     receiptPath: receipt,
+    uid: process.getuid?.() ?? 0,
   })
   return { bin, create, descriptor, executable, receipt, root, userPath }
 }

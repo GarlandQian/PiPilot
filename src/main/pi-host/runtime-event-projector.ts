@@ -17,11 +17,13 @@ export function projectRuntimeEvent(event: AgentSessionEvent): LocalPiRpcEvent {
     const content = event.message.content.map((block) => {
       if (block.type !== 'toolCall') return block
       const streamingBlock: typeof block & {
+        index?: unknown
         partialArgs?: unknown
         customInput?: unknown
         streamIndex?: unknown
       } = block
       const {
+        index: _index,
         partialArgs: _partialArgs,
         customInput: _customInput,
         streamIndex: _streamIndex,
