@@ -12,7 +12,7 @@ PiPilot does not embed a parallel Agent Runtime or migrate Pi data into a
 PiPilot-specific format. Pi remains the owner of sessions, configuration, and
 resources; PiPilot owns the desktop experience.
 
-> **Project status:** `v0.0.3` is the current stable release; `v0.0.2` was the
+> **Project status:** `v0.0.4` is the current stable release; `v0.0.3` was the
 > first public release. The source repository and GitHub Releases are public.
 > Unsigned installers are distributed for manual download after native build
 > and packaged-smoke verification.
@@ -35,6 +35,8 @@ navigation; the installed release may still show the earlier interface.
   capabilities such as create, open, rename, duplicate, fork, and delete.
   Project headings open their workspace directly; adjacent actions create scoped
   sessions. Search, All/Running filters and Recent/Name sorting organize loaded sessions.
+  Catalog scans continue beyond 200 sessions in bounded batches and reuse unchanged
+  file metadata on refresh. Opening or deleting still revalidates the actual session file.
 - **Full conversation workflow** — questions on the right and replies on the left,
   per-response work logs, rendered Markdown in messages, reasoning, notifications,
   queued messages and tool/subagent narratives; code and configuration remain verbatim.
@@ -42,6 +44,8 @@ navigation; the installed release may still show the earlier interface.
   Follow-up, Steer, models, and Thinking controls. Running messages queue by
   default; sending and stopping remain separate actions, and pending images
   and long messages stay inspectable.
+  Unsent text, image attachments, and context references stay with their conversation
+  when switching sessions. These drafts are held in memory until the application quits.
   Historical work starts collapsed; live work stays open after completion unless
   you close it. Reasoning has its own visible disclosure, separate from tool logs.
   History reloads preserve newer streaming output and use persisted final tool results
@@ -74,7 +78,8 @@ navigation; the installed release may still show the earlier interface.
   draft; editing configuration invalidates previous connection-test results.
 - **Preferences** — searchable navigation, live appearance previews and custom fonts.
   Batched settings report success only after disk persistence and restore saved values
-  on failure. Quit waits for in-flight configuration saves.
+  on failure. Quit waits for in-flight configuration saves and includes unsubmitted
+  provider, model, and MCP form edits in its Save/Discard/Cancel confirmation.
 - **Desktop-native workflow** — light and dark themes, English and Simplified
   Chinese locales, configurable terminal typography, keyboard access, and a
   supported minimum window size of `1100×680`.
@@ -128,6 +133,14 @@ pnpm build
 pnpm test:electron
 ```
 
+CI and release builds share `.github/workflows/verify.yml`: unit contracts run
+on macOS, Windows, and Linux, and the complete Electron suite runs on macOS.
+Integration cases are part of that Electron suite. Provider contracts run the
+installed Pi SDK against isolated local HTTP/SSE fixtures for OpenAI Chat
+Completions, OpenAI Responses, Anthropic Messages, and Google Generative AI.
+They verify streaming, a real file-writing tool, its returned result, and the
+next prompt without using a real provider account or the developer's Pi data.
+
 The application is split into Electron Main, a sandboxed preload, and a React
 renderer. The renderer does not access Node.js, the filesystem, or Pi directly.
 Cross-process data moves through shared Zod contracts and allowlisted IPC.
@@ -144,6 +157,20 @@ pnpm package:mac
 pnpm package:win
 pnpm package:linux
 ```
+
+Packaged smoke tests default to the current Node architecture. After building
+both macOS targets, run each explicitly:
+
+```bash
+PIPILOT_PACKAGED_ARCH=arm64 pnpm test:packaged
+PIPILOT_PACKAGED_ARCH=x64 pnpm test:packaged
+```
+
+The tests check the Mach-O architecture and fail if the requested bundle is
+missing; they never substitute the other architecture. Intel execution on
+Apple Silicon requires Rosetta. Release CI runs both macOS targets separately.
+These smoke tests exercise the unpacked application; they do not claim to test
+the complete DMG, NSIS, or DEB installation flow.
 
 Current targets and distribution policy:
 
@@ -208,7 +235,7 @@ edit Codex, Claude Code, Pi, shell profile, or project MCP files.
 
 The public release flow is:
 
-1. A stable tag such as `v0.0.3` starts a release-owned full verification job.
+1. A stable tag such as `v0.0.4` starts a release-owned full verification job.
 2. After source, unit, build, integration, and Electron checks pass, macOS,
    Windows, and Linux package, inspect their artifacts, and run packaged
    smoke tests independently.

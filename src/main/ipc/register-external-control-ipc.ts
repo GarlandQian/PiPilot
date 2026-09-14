@@ -78,9 +78,9 @@ export function registerExternalControlIpc({
   const disposeLauncherInstall = registerValidatedHandler(
     externalControlLauncherInstallContract,
     isTrustedSender,
-    () => {
+    async () => {
       try {
-        return launcherService.install()
+        return await launcherService.install()
       } catch (error) {
         return mapExternalControlError(error)
       }
@@ -89,9 +89,9 @@ export function registerExternalControlIpc({
   const disposeLauncherUninstall = registerValidatedHandler(
     externalControlLauncherUninstallContract,
     isTrustedSender,
-    () => {
+    async () => {
       try {
-        return launcherService.uninstall()
+        return await launcherService.uninstall()
       } catch (error) {
         return mapExternalControlError(error)
       }

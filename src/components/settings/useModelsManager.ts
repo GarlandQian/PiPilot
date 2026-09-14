@@ -187,20 +187,22 @@ export function useModelsManager(document: ConfigurationDocument<ModelsConfigSna
       } else {
         next = upsertModelsProvider(next, value.id, definitionFromFormValues(value, []))
       }
-      updateDraft(next)
+      if (!updateDraft(next)) return false
       setError(null)
       setSelectedProviderId(value.id)
       setSelectedCustomModels(new Set())
       setProviderDialog(null)
+      return true
     } catch {
       setError(t('settings.models.editFailed'))
+      return false
     }
   }
 
   const submitModelForm = (value: ModelFormValue) => {
-    if (!modelDialog) return
+    if (!modelDialog) return false
     const provider = parsed.providers.find((entry) => entry.id === modelDialog.providerId)
-    if (!provider) return
+    if (!provider) return false
     try {
       const models = provider.models.map((model) => formValueFromModel(model))
       if (modelDialog.mode === 'edit') {
@@ -233,11 +235,13 @@ export function useModelsManager(document: ConfigurationDocument<ModelsConfigSna
         models,
         rawExisting,
       )
-      updateDraft(upsertModelsProvider(draftText, provider.id, definition))
+      if (!updateDraft(upsertModelsProvider(draftText, provider.id, definition))) return false
       setError(null)
       setModelDialog(null)
+      return true
     } catch {
       setError(t('settings.models.editFailed'))
+      return false
     }
   }
 

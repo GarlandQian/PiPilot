@@ -1,10 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { lstat, open, opendir, realpath } from 'node:fs/promises'
+import { lstat, open, realpath } from 'node:fs/promises'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { z } from 'zod'
 import {
-  SESSION_CATALOG_MAX_CANDIDATES,
   SESSION_CATALOG_MAX_CONCURRENT_READERS,
+  SESSION_CATALOG_MAX_DIAGNOSTIC_COUNT,
   SESSION_CATALOG_MAX_FILE_BYTES,
   SESSION_CATALOG_MAX_PAGE_ROWS,
   SESSION_CATALOG_MAX_REFRESH_BYTES,
@@ -32,6 +32,11 @@ import {
   type ConversationScopeResolver,
   type ResolvedConversationScope,
 } from './conversation-scope-resolver'
+import {
+  mapSessionReadBatches,
+  readSessionDirectoryBatches,
+  yieldCatalogScan,
+} from './official-pi-session-scan'
 
 export const currentOfficialPiSessionHeaderSchema = z
   .object({
@@ -104,6 +109,7 @@ interface Candidate {
 
 interface ParsedCandidate {
   candidate: Candidate
+  header: CurrentOfficialPiSessionHeader
   canonicalParentSession?: string
   contentDigest: string
   createdAt: string
@@ -148,6 +154,8 @@ interface CatalogCache {
   cursors: Map<SessionCatalogCursor, CursorState>
   cursorByIndex: Map<number, SessionCatalogCursor>
   diagnostics: SessionCatalogDiagnostic[]
+  /** Metadata is only a discovery cache; mutation paths always reread authority. */
+  indexedCandidates: Map<string, ParsedCandidate>
 }
 
 interface ResolvedOfficialPiSessionSelectionBase {
@@ -207,6 +215,7 @@ export interface OfficialPiSessionCatalogOptions {
   createId?: () => string
   now?: () => number
   yieldRefreshContinuation?: () => Promise<void>
+  yieldScanContinuation?: () => Promise<void>
 }
 
 interface RefreshCoordinator {
@@ -351,7 +360,7 @@ function projectDiagnostics(
     .sort(([left], [right]) => compareText(left, right))
     .map(([code, count]) => ({
       code,
-      count: Math.min(count, SESSION_CATALOG_MAX_CANDIDATES + 1),
+      count: Math.min(count, SESSION_CATALOG_MAX_DIAGNOSTIC_COUNT),
     }))
 }
 
@@ -501,62 +510,64 @@ async function validateRoot(observation: ObservedPiSessionDirectory) {
   return canonicalRoot
 }
 
-async function enumerateCandidates(
+async function* enumerateCandidates(
   root: string,
   diagnostics: Map<SessionCatalogDiagnosticCode, number>,
+  yieldContinuation: () => Promise<void>,
 ) {
-  const candidates: Candidate[] = []
-  const directory = await opendir(root)
-  let examined = 0
+  for await (const entries of readSessionDirectoryBatches(root, yieldContinuation)) {
+    const candidates = await mapWithConcurrency(
+      entries,
+      SESSION_CATALOG_MAX_CONCURRENT_READERS,
+      async (entry): Promise<Candidate | undefined> => {
+        if (!entry.name.endsWith('.jsonl')) return undefined
+        if (!entry.isFile() || entry.isSymbolicLink()) {
+          addDiagnostic(diagnostics, 'unsafeCandidate')
+          return undefined
+        }
+        const candidatePath = join(root, entry.name)
+        try {
+          const details = await lstat(candidatePath)
+          if (!details.isFile() || details.isSymbolicLink()) {
+            throw new CandidateIssue('unsafeCandidate')
+          }
+          if (details.size > SESSION_CATALOG_MAX_FILE_BYTES) {
+            throw new CandidateIssue('fileTooLarge')
+          }
+          const canonicalFile = await canonicalDirectFile(root, candidatePath)
+          return {
+            path: candidatePath,
+            canonicalFile,
+            identity: identityFromStat(details),
+            orderToken: createHash('sha256').update(canonicalFile).digest('hex'),
+          }
+        } catch (error) {
+          addDiagnostic(
+            diagnostics,
+            error instanceof CandidateIssue ? error.code : 'readFailed',
+          )
+          return undefined
+        }
+      },
+    )
+    yield candidates.filter((candidate): candidate is Candidate => candidate !== undefined)
+  }
+}
 
-  for await (const entry of directory) {
-    examined += 1
-    if (examined > SESSION_CATALOG_MAX_CANDIDATES) {
-      addDiagnostic(diagnostics, 'candidateLimit')
-      break
-    }
-    if (!entry.name.endsWith('.jsonl')) continue
-    if (!entry.isFile() || entry.isSymbolicLink()) {
-      addDiagnostic(diagnostics, 'unsafeCandidate')
-      continue
-    }
-
-    const candidatePath = join(root, entry.name)
+async function resolveCandidateLocations(
+  header: CurrentOfficialPiSessionHeader,
+  resolvedScope: ResolvedConversationScope,
+) {
+  const selectionMode = await resolveSelectionMode(header, resolvedScope)
+  let canonicalParentSession: string | undefined
+  if (header.parentSession && isAbsolute(header.parentSession)) {
     try {
-      const details = await lstat(candidatePath)
-      if (!details.isFile() || details.isSymbolicLink()) {
-        throw new CandidateIssue('unsafeCandidate')
-      }
-      if (details.size > SESSION_CATALOG_MAX_FILE_BYTES) {
-        throw new CandidateIssue('fileTooLarge')
-      }
-      const canonicalFile = await canonicalDirectFile(root, candidatePath)
-      candidates.push({
-        path: candidatePath,
-        canonicalFile,
-        identity: identityFromStat(details),
-        orderToken: createHash('sha256').update(canonicalFile).digest('hex'),
-      })
-    } catch (error) {
-      addDiagnostic(
-        diagnostics,
-        error instanceof CandidateIssue ? error.code : 'readFailed',
-      )
+      canonicalParentSession = await realpath(resolve(header.parentSession))
+    } catch {
+      // Optional lineage must not hide a valid session if its parent vanished.
     }
   }
-
-  candidates.sort((left, right) => compareText(left.canonicalFile, right.canonicalFile))
-  const accepted: Candidate[] = []
-  let admittedBytes = 0
-  for (const candidate of candidates) {
-    if (admittedBytes + candidate.identity.size > SESSION_CATALOG_MAX_REFRESH_BYTES) {
-      addDiagnostic(diagnostics, 'refreshByteLimit')
-      continue
-    }
-    admittedBytes += candidate.identity.size
-    accepted.push(candidate)
-  }
-  return accepted
+  return { selectionMode, canonicalParentSession }
 }
 
 async function parseCandidate(
@@ -703,17 +714,8 @@ async function parseCandidate(
 
   if (!header) throw new CandidateIssue('malformed')
 
-  const selectionMode = await resolveSelectionMode(header, resolvedScope)
-
-  let canonicalParentSession: string | undefined
-  if (header.parentSession && isAbsolute(header.parentSession)) {
-    try {
-      canonicalParentSession = await realpath(resolve(header.parentSession))
-    } catch {
-      // Parent lineage is optional navigation metadata. An unavailable parent
-      // must not hide an otherwise valid current-cwd session.
-    }
-  }
+  const { selectionMode, canonicalParentSession } =
+    await resolveCandidateLocations(header, resolvedScope)
 
   try {
     const finalDetails = await lstat(candidate.path)
@@ -746,6 +748,14 @@ async function parseCandidate(
     : undefined
   return {
     candidate,
+    header: {
+      type: 'session',
+      version: header.version,
+      id: header.id,
+      timestamp: header.timestamp,
+      cwd: header.cwd,
+      ...(header.parentSession ? { parentSession: header.parentSession } : {}),
+    },
     ...(canonicalParentSession ? { canonicalParentSession } : {}),
     contentDigest,
     createdAt: new Date(Math.max(0, createdTime)).toISOString(),
@@ -766,6 +776,7 @@ export class OfficialPiSessionCatalog {
   private readonly refreshes = new Map<string, RefreshCoordinator>()
   private readonly versions = new Map<string, number>()
   private readonly yieldRefreshContinuation: () => Promise<void>
+  private readonly yieldScanContinuation: () => Promise<void>
 
   constructor(
     private readonly scopeResolver: ConversationScopeResolver,
@@ -774,6 +785,7 @@ export class OfficialPiSessionCatalog {
   ) {
     this.createId = options.createId ?? randomUUID
     this.now = options.now ?? Date.now
+    this.yieldScanContinuation = options.yieldScanContinuation ?? yieldCatalogScan
     this.yieldRefreshContinuation = options.yieldRefreshContinuation ?? (() =>
       new Promise<void>((resolveContinuation) => {
         setTimeout(resolveContinuation, 0)
@@ -831,7 +843,14 @@ export class OfficialPiSessionCatalog {
     const scope = conversationScopeSchema.parse(rawScope)
     const key = conversationScopeKey(scope)
     const activeRefresh = this.refreshes.get(key)
-    if (activeRefresh) return activeRefresh.promise
+    if (activeRefresh) {
+      // A caller can request refresh after files changed while an earlier read
+      // slice is suspended. Join the same promise, but reconcile once more.
+      // Coalesce simultaneous requests within this pass into one invalidation;
+      // the existing foreground budget also bounds repeated later requests.
+      if (!activeRefresh.dirty) this.invalidate(scope)
+      return activeRefresh.promise
+    }
 
     this.invalidate(scope)
     return this.list(scope)
@@ -1051,11 +1070,15 @@ export class OfficialPiSessionCatalog {
   ) {
     let foregroundStartedAt = this.now()
     let foregroundScans = 0
+    let indexedCache = this.caches.get(key)
 
     while (true) {
       const version = coordinator.requestedVersion
       coordinator.dirty = false
-      const refreshed = await this.scan(scope, version, this.caches.get(key))
+      const refreshed = await this.scan(scope, version, indexedCache)
+      // Invalidations received during a scan share its completed file index.
+      // Retrying reconciliation must not reread every unchanged JSONL.
+      indexedCache = 'cache' in refreshed ? refreshed.cache : undefined
       foregroundScans += 1
       if (
         coordinator.dirty ||
@@ -1142,19 +1165,10 @@ export class OfficialPiSessionCatalog {
     }
 
     const diagnosticCounts = new Map<SessionCatalogDiagnosticCode, number>()
-    let candidates: Candidate[]
-    try {
-      candidates = await enumerateCandidates(root, diagnosticCounts)
-    } catch {
-      return { result: this.unavailable(scope) }
-    }
-
-    const budget = new RefreshReadBudget()
-    const reusableRowsByFileIdentity = new Map<string, InternalRow>()
-    if (
-      reusableCache?.cwd === resolvedScope.cwd &&
+    const canReuseIndex = reusableCache?.cwd === resolvedScope.cwd &&
       reusableCache.root === root
-    ) {
+    const reusableRowsByFileIdentity = new Map<string, InternalRow>()
+    if (canReuseIndex) {
       for (const row of reusableCache.rows) {
         const token = row.summary.selectionToken
         if (reusableCache.selections.get(token) === row) {
@@ -1165,34 +1179,70 @@ export class OfficialPiSessionCatalog {
         }
       }
     }
-    const parsed = await mapWithConcurrency(
-      candidates,
-      SESSION_CATALOG_MAX_CONCURRENT_READERS,
-      async (candidate) => {
-        try {
-          const reusableRow = reusableRowsByFileIdentity.get(
-            createCandidateFileIdentity(candidate),
-          )
-          return await parseCandidate(
-            candidate,
-            resolvedScope,
-            budget,
-            reusableRow && candidate.identity.size >= reusableRow.candidate.identity.size
-              ? reusableRow.candidate.identity.size
-              : undefined,
-          )
-        } catch (error) {
-          addDiagnostic(
-            diagnosticCounts,
-            error instanceof CandidateIssue ? error.code : 'readFailed',
-          )
-          return undefined
+    const cachedCandidate = (candidate: Candidate) => {
+      const indexed = canReuseIndex
+        ? reusableCache.indexedCandidates.get(candidate.canonicalFile)
+        : undefined
+      return indexed && sameIdentity(indexed.candidate.identity, candidate.identity)
+        ? indexed
+        : undefined
+    }
+    const indexedCandidates = new Map<string, ParsedCandidate>()
+    try {
+      for await (const candidates of enumerateCandidates(
+        root, diagnosticCounts, this.yieldScanContinuation,
+      )) {
+        const parsed = await mapSessionReadBatches(
+          candidates,
+          (candidate) => cachedCandidate(candidate) ? 0 : candidate.identity.size,
+          async (batch) => {
+            const budget = new RefreshReadBudget()
+            return Promise.all(batch.map(async (candidate) => {
+              try {
+                const cached = cachedCandidate(candidate)
+                if (cached) {
+                  // A cwd or parent symlink can change while the JSONL itself
+                  // does not. Re-resolve navigation metadata on every scan.
+                  return {
+                    ...cached,
+                    ...await resolveCandidateLocations(cached.header, resolvedScope),
+                    candidate,
+                    prefixDigest: cached.contentDigest,
+                  }
+                }
+                const reusableRow = reusableRowsByFileIdentity.get(
+                  createCandidateFileIdentity(candidate),
+                )
+                return await parseCandidate(
+                  candidate,
+                  resolvedScope,
+                  budget,
+                  reusableRow && candidate.identity.size >= reusableRow.candidate.identity.size
+                    ? reusableRow.candidate.identity.size
+                    : undefined,
+                )
+              } catch (error) {
+                addDiagnostic(
+                  diagnosticCounts,
+                  error instanceof CandidateIssue ? error.code : 'readFailed',
+                )
+                return undefined
+              }
+            }))
+          },
+          this.yieldScanContinuation,
+        )
+        for (const candidate of parsed) {
+          if (candidate) indexedCandidates.set(candidate.candidate.canonicalFile, candidate)
         }
-      },
-    )
+      }
+    } catch {
+      return { result: this.unavailable(scope) }
+    }
 
-    const parsedCandidates = parsed
-      .filter((candidate): candidate is ParsedCandidate => candidate !== undefined)
+    // Commit a complete generation. Missing or now-invalid files are naturally
+    // swept out instead of retaining a stale row from the previous index.
+    const parsedCandidates = [...indexedCandidates.values()]
     const recoveredSources = new Set(
       parsedCandidates
         .filter((candidate) => candidate.selectionMode === 'open')
@@ -1267,6 +1317,7 @@ export class OfficialPiSessionCatalog {
         cursors: new Map(),
         cursorByIndex: new Map(),
         diagnostics: projectDiagnostics(diagnosticCounts),
+        indexedCandidates,
       },
     }
   }

@@ -57,11 +57,23 @@ describe('workspace session catalog adapter', () => {
     const list = vi.fn().mockResolvedValue(ready([row(2)], cursor))
     const refresh = vi.fn().mockResolvedValue(ready([row(1)], cursor))
 
-    const result = await loadOfficialSessionCatalog({ list, refresh }, scope, true)
+    await expect(loadOfficialSessionCatalog({ list, refresh }, scope, true))
+      .rejects.toThrow('repeated continuation cursor')
 
     expect(refresh).toHaveBeenCalledOnce()
     expect(list).toHaveBeenCalledOnce()
-    expect(result.rows.map((item) => item.sessionId)).toEqual(['session-1', 'session-2'])
+  })
+
+  it('continues past four pages instead of truncating a directory at 200 sessions', async () => {
+    const allRows = Array.from({ length: 251 }, (_, index) => row(index))
+    const list = vi.fn(async (_scope: ConversationScope, cursor?: string) => {
+      const start = cursor ? Number(cursor.slice(4)) : 0
+      const end = Math.min(start + 50, allRows.length)
+      return ready(allRows.slice(start, end), end < allRows.length ? `cur_${end}` : null)
+    })
+    const result = await loadOfficialSessionCatalog({ list, refresh: vi.fn() }, scope)
+    expect(result.rows).toEqual(allRows)
+    expect(list).toHaveBeenCalledTimes(6)
   })
 
   it('rejects a response for another conversation scope', async () => {

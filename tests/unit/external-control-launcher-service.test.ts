@@ -71,6 +71,12 @@ function statefulDarwinPath(initial: string | null) {
   return { adapter, get value() { return value }, set value(next) { value = next } }
 }
 
+function deferred() {
+  let resolve: () => void = () => undefined
+  const promise = new Promise<void>((complete) => { resolve = complete })
+  return { promise, resolve }
+}
+
 function darwinHarness(initialPath: string | null = null) {
   const root = mkdtempSync(join(realpathSync(tmpdir()), 'pipilot-darwin-launcher-'))
   roots.push(root)
@@ -101,16 +107,16 @@ function darwinHarness(initialPath: string | null = null) {
 }
 
 describe('ExternalControlLauncherService', () => {
-  it('installs one marked wrapper and private receipt into the injected stable target', () => {
+  it('installs one marked wrapper and private receipt into the injected stable target', async () => {
     const fixture = harness()
     const service = fixture.create()
-    expect(service.inspect()).toEqual({
+    expect(await service.inspect()).toEqual({
       state: 'missing', managed: false, requiresClientRestart: false,
     })
-    expect(service.install()).toEqual({
+    expect(await service.install()).toEqual({
       state: 'installed', managed: true, requiresClientRestart: false,
     })
-    expect(service.inspect()).toEqual({
+    expect(await service.inspect()).toEqual({
       state: 'installed', managed: true, requiresClientRestart: false,
     })
 
@@ -123,62 +129,62 @@ describe('ExternalControlLauncherService', () => {
     expect(statSync(fixture.receipt).mode & 0o077).toBe(0)
   })
 
-  it('uninstalls only its marked wrapper and receipt and is idempotent afterward', () => {
+  it('uninstalls only its marked wrapper and receipt and is idempotent afterward', async () => {
     const fixture = harness()
     const service = fixture.create()
-    service.install()
+    await service.install()
     const launcher = join(fixture.bin, 'pipilot-mcp')
 
-    expect(service.uninstall()).toEqual({
+    expect(await service.uninstall()).toEqual({
       state: 'missing', managed: false, requiresClientRestart: false,
     })
     expect(existsSync(launcher)).toBe(false)
     expect(existsSync(fixture.receipt)).toBe(false)
-    expect(service.uninstall()).toEqual({
+    expect(await service.uninstall()).toEqual({
       state: 'missing', managed: false, requiresClientRestart: false,
     })
   })
 
-  it('cleans a valid stale receipt when its managed wrapper is already absent', () => {
+  it('cleans a valid stale receipt when its managed wrapper is already absent', async () => {
     const fixture = harness()
     const service = fixture.create()
-    service.install()
+    await service.install()
     unlinkSync(join(fixture.bin, 'pipilot-mcp'))
 
-    expect(service.uninstall()).toEqual({
+    expect(await service.uninstall()).toEqual({
       state: 'missing', managed: false, requiresClientRestart: false,
     })
     expect(existsSync(fixture.receipt)).toBe(false)
   })
 
-  it('refuses an exact unreceipted wrapper and a received wrapper changed before removal', () => {
+  it('refuses an exact unreceipted wrapper and a received wrapper changed before removal', async () => {
     const unowned = harness()
     writeFileSync(
       join(unowned.bin, 'pipilot-mcp'),
       renderExternalControlLauncherWrapper(unowned.executable, unowned.descriptor),
       { mode: 0o755 },
     )
-    expect(() => unowned.create().uninstall()).toThrow('not managed')
+    await expect(unowned.create().uninstall()).rejects.toThrow('not managed')
     expect(existsSync(join(unowned.bin, 'pipilot-mcp'))).toBe(true)
 
     const changed = harness()
     const service = changed.create()
-    service.install()
+    await service.install()
     writeFileSync(join(changed.bin, 'pipilot-mcp'), '#!/bin/sh\nexit 9\n', { mode: 0o755 })
-    expect(() => service.uninstall()).toThrow('changed before removal')
+    await expect(service.uninstall()).rejects.toThrow('changed before removal')
     expect(existsSync(changed.receipt)).toBe(true)
   })
 
   it.skipIf(process.platform === 'win32')(
     'restores the wrapper without replacing a recreated target when receipt removal fails',
-    () => {
+    async () => {
       const fixture = harness()
       const service = fixture.create()
-      service.install()
+      await service.install()
       const stateDirectory = join(fixture.root, 'state')
       chmodSync(stateDirectory, 0o500)
       try {
-        expect(() => service.uninstall()).toThrow()
+        await expect(service.uninstall()).rejects.toThrow()
         expect(readFileSync(join(fixture.bin, 'pipilot-mcp'), 'utf8')).toBe(
           renderExternalControlLauncherWrapper(fixture.executable, fixture.descriptor),
         )
@@ -189,18 +195,18 @@ describe('ExternalControlLauncherService', () => {
     },
   )
 
-  it('repairs a stale owned wrapper only when its receipt matches', () => {
+  it('repairs a stale owned wrapper only when its receipt matches', async () => {
     const fixture = harness()
-    fixture.create().install()
+    await fixture.create().install()
     const movedExecutable = join(fixture.root, 'PiPilot-moved')
     writeFileSync(movedExecutable, '#!/bin/sh\nexit 0\n', { mode: 0o755 })
     const moved = fixture.create(movedExecutable)
-    expect(moved.inspect().state).toBe('repair')
-    expect(moved.install().state).toBe('installed')
+    expect((await moved.inspect()).state).toBe('repair')
+    expect((await moved.install()).state).toBe('installed')
     expect(readFileSync(join(fixture.bin, 'pipilot-mcp'), 'utf8')).toContain(movedExecutable)
   })
 
-  it('recovers an exact wrapper whose receipt write was interrupted', () => {
+  it('recovers an exact wrapper whose receipt write was interrupted', async () => {
     const fixture = harness()
     const wrapper = renderExternalControlLauncherWrapper(
       fixture.executable,
@@ -208,41 +214,41 @@ describe('ExternalControlLauncherService', () => {
     )
     writeFileSync(join(fixture.bin, 'pipilot-mcp'), wrapper, { mode: 0o755 })
     const service = fixture.create()
-    expect(service.inspect().state).toBe('repair')
-    expect(service.install().state).toBe('installed')
+    expect((await service.inspect()).state).toBe('repair')
+    expect((await service.install()).state).toBe('installed')
     expect(readFileSync(join(fixture.bin, 'pipilot-mcp'), 'utf8')).toBe(wrapper)
   })
 
-  it('repairs an owned wrapper whose executable bit was removed', () => {
+  it('repairs an owned wrapper whose executable bit was removed', async () => {
     const fixture = harness()
     const service = fixture.create()
-    service.install()
+    await service.install()
     const launcher = join(fixture.bin, 'pipilot-mcp')
     chmodSync(launcher, 0o644)
 
-    expect(service.inspect().state).toBe('repair')
-    expect(service.install().state).toBe('installed')
+    expect((await service.inspect()).state).toBe('repair')
+    expect((await service.install()).state).toBe('installed')
     expect(statSync(launcher).mode & 0o777).toBe(0o755)
   })
 
-  it('does not replace an unowned file that merely contains the marker text', () => {
+  it('does not replace an unowned file that merely contains the marker text', async () => {
     const fixture = harness()
     writeFileSync(
       join(fixture.bin, 'pipilot-mcp'),
       '#!/bin/sh\necho "# PiPilot MCP launcher v1"\n',
       { mode: 0o755 },
     )
-    const snapshot = fixture.create().inspect()
+    const snapshot = (await fixture.create().inspect())
     expect(snapshot).toMatchObject({
       state: 'unsupported',
       error: { code: 'launcher_conflict' },
     })
   })
 
-  it('rejects group-writable install directories and relative test targets', () => {
+  it('rejects group-writable install directories and relative test targets', async () => {
     const fixture = harness()
     chmodSync(fixture.bin, 0o770)
-    expect(fixture.create().inspect()).toMatchObject({
+    expect(await fixture.create().inspect()).toMatchObject({
       state: 'unsupported',
       error: { code: 'launcher_unsafe_target' },
     })
@@ -255,12 +261,12 @@ describe('ExternalControlLauncherService', () => {
       receiptPath: fixture.receipt,
       testTargetDirectory: 'relative-bin',
     })
-    expect(relative.inspect().state).toBe('unsupported')
+    expect((await relative.inspect()).state).toBe('unsupported')
   })
 
   it.skipIf(process.platform === 'win32')(
     'allows sticky shared ancestors but rejects unsafe and symlinked ancestors',
-    () => {
+    async () => {
       const root = mkdtempSync(join(realpathSync('/tmp'), 'pipilot-launcher-resolution-'))
       roots.push(root)
       chmodSync(root, 0o700)
@@ -282,10 +288,10 @@ describe('ExternalControlLauncherService', () => {
           receiptPath: receipt,
         })
 
-      expect(create(home, bin).inspect().state).toBe('missing')
+      expect((await create(home, bin).inspect()).state).toBe('missing')
 
       chmodSync(home, 0o770)
-      expect(create(home, bin).inspect()).toMatchObject({
+      expect(await create(home, bin).inspect()).toMatchObject({
         state: 'unsupported',
         error: { code: 'launcher_unsafe_target' },
       })
@@ -293,14 +299,14 @@ describe('ExternalControlLauncherService', () => {
 
       const linkedHome = join(root, 'linked-home')
       symlinkSync(home, linkedHome)
-      expect(create(linkedHome, join(linkedHome, '.local', 'bin')).inspect()).toMatchObject({
+      expect(await create(linkedHome, join(linkedHome, '.local', 'bin')).inspect()).toMatchObject({
         state: 'unsupported',
         error: { code: 'launcher_unsafe_target' },
       })
     },
   )
 
-  it('does not throw during construction when the Windows registry tool is unavailable', () => {
+  it('does not throw during construction when the Windows registry tool is unavailable', async () => {
     expect(() => new ExternalControlLauncherService({
       descriptorPath: 'C:\\Users\\test\\AppData\\Roaming\\PiPilot\\descriptor.json',
       environment: {},
@@ -314,14 +320,134 @@ describe('ExternalControlLauncherService', () => {
 })
 
 describe('macOS launchd user PATH', () => {
-  it('installs from Finder PATH when launchd PATH is unset and restores the default on uninstall', () => {
+  it('coalesces status reads and serializes install/uninstall around an asynchronous probe', async () => {
+    const fixture = darwinHarness()
+    const service = fixture.create()
+    const gate = deferred()
+    const started = deferred()
+    vi.mocked(fixture.userPath.adapter.read).mockImplementationOnce(async () => {
+      started.resolve()
+      await gate.promise
+      return fixture.userPath.value
+    })
+    const first = service.inspect()
+    const second = service.inspect()
+    expect(second).toBe(first)
+    await started.promise
+    const install = service.install()
+    const uninstall = service.uninstall()
+    const after = service.inspect()
+    expect(after).not.toBe(first)
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    expect(fixture.userPath.adapter.write).not.toHaveBeenCalled()
+    gate.resolve()
+    expect((await first).state).toBe('missing')
+    expect((await install).state).toBe('installed')
+    expect((await uninstall).state).toBe('missing')
+    expect((await after).state).toBe('missing')
+    expect(fixture.userPath.value).toBeNull()
+    expect(existsSync(fixture.receipt)).toBe(false)
+  })
+
+  it('rolls back the PATH, wrapper, and receipt when the post-install probe times out', async () => {
+    const fixture = darwinHarness()
+    const service = fixture.create()
+    vi.mocked(fixture.userPath.adapter.read).mockImplementation(async () => {
+      if (existsSync(fixture.receipt)) throw new Error('probe timed out')
+      return fixture.userPath.value
+    })
+    await expect(service.install()).rejects.toMatchObject({ code: 'launcher_install_failed' })
+    expect(fixture.userPath.value).toBeNull()
+    expect(existsSync(fixture.receipt)).toBe(false)
+    expect(existsSync(join(fixture.bin, 'pipilot-mcp'))).toBe(false)
+    // A failed transaction does not poison the operation lane.
+    vi.mocked(fixture.userPath.adapter.read).mockImplementation(async () => fixture.userPath.value)
+    expect((await service.install()).state).toBe('installed')
+    expect((await service.uninstall()).state).toBe('missing')
+  })
+
+  it('does not replace a launcher changed externally while the verification probe is pending', async () => {
+    const fixture = darwinHarness()
+    const service = fixture.create()
+    const launcher = join(fixture.bin, 'pipilot-mcp')
+    const replacement = '#!/bin/sh\nexit 17\n'
+    vi.mocked(fixture.userPath.adapter.read).mockImplementation(async () => {
+      if (existsSync(fixture.receipt)) {
+        writeFileSync(launcher, replacement, { mode: 0o755 })
+        throw new Error('probe failed')
+      }
+      return fixture.userPath.value
+    })
+    await expect(service.install()).rejects.toBeDefined()
+    expect(readFileSync(launcher, 'utf8')).toBe(replacement)
+  })
+
+  it('restores an owned repair and its previous receipt when asynchronous verification fails', async () => {
+    const fixture = darwinHarness()
+    const service = fixture.create()
+    await service.install()
+    const launcher = join(fixture.bin, 'pipilot-mcp')
+    const previousReceipt = readFileSync(fixture.receipt, 'utf8')
+    const previousPath = fixture.userPath.value
+    chmodSync(launcher, 0o644)
+    vi.mocked(fixture.userPath.adapter.read).mockImplementation(async () => {
+      if ((statSync(launcher).mode & 0o100) !== 0) throw new Error('probe timed out')
+      return fixture.userPath.value
+    })
+    await expect(service.install()).rejects.toMatchObject({ code: 'launcher_install_failed' })
+    expect(fixture.userPath.value).toBe(previousPath)
+    expect(statSync(launcher).mode & 0o777).toBe(0o644)
+    expect(readFileSync(fixture.receipt, 'utf8')).toBe(previousReceipt)
+  })
+
+  it.each([null, '/usr/bin:/bin'])(
+    'retains PATH ownership when repairing an owned wrapper installed over %s',
+    async (originalPath) => {
+      const fixture = darwinHarness(originalPath)
+      const service = fixture.create()
+      await service.install()
+      const launcher = join(fixture.bin, 'pipilot-mcp')
+      const ownedMetadata = JSON.parse(readFileSync(fixture.receipt, 'utf8')).darwin
+      chmodSync(launcher, 0o644)
+
+      expect((await service.inspect()).state).toBe('repair')
+      expect((await service.install()).state).toBe('installed')
+      expect(statSync(launcher).mode & 0o777).toBe(0o755)
+      expect(JSON.parse(readFileSync(fixture.receipt, 'utf8')).darwin).toEqual(ownedMetadata)
+
+      expect(await service.uninstall()).toEqual({
+        state: 'missing', managed: false, requiresClientRestart: true,
+      })
+      expect(fixture.userPath.value).toBe(originalPath)
+      expect(existsSync(launcher)).toBe(false)
+      expect(existsSync(fixture.receipt)).toBe(false)
+    },
+  )
+
+  it('restores PATH and retains ownership when uninstall verification fails', async () => {
+    const fixture = darwinHarness()
+    const service = fixture.create()
+    await service.install()
+    const previousPath = fixture.userPath.value
+    const previousReceipt = readFileSync(fixture.receipt, 'utf8')
+    vi.mocked(fixture.userPath.adapter.read)
+      .mockResolvedValueOnce(previousPath)
+      .mockRejectedValueOnce(new Error('probe timed out'))
+    await expect(service.uninstall()).rejects.toMatchObject({ code: 'launcher_uninstall_failed' })
+    expect(fixture.userPath.value).toBe(previousPath)
+    expect(readFileSync(fixture.receipt, 'utf8')).toBe(previousReceipt)
+    expect(existsSync(join(fixture.bin, 'pipilot-mcp'))).toBe(true)
+    expect((await service.uninstall()).state).toBe('missing')
+  })
+
+  it('installs from Finder PATH when launchd PATH is unset and restores the default on uninstall', async () => {
     const fixture = darwinHarness()
     const service = fixture.create()
 
-    expect(service.inspect()).toEqual({
+    expect(await service.inspect()).toEqual({
       state: 'missing', managed: false, requiresClientRestart: false,
     })
-    expect(service.install()).toEqual({
+    expect(await service.install()).toEqual({
       state: 'installed', managed: true, requiresClientRestart: true,
     })
     expect(fixture.userPath.value).toBe(
@@ -335,7 +461,7 @@ describe('macOS launchd user PATH', () => {
       },
     })
 
-    expect(service.uninstall()).toEqual({
+    expect(await service.uninstall()).toEqual({
       state: 'missing', managed: false, requiresClientRestart: true,
     })
     expect(fixture.userPath.value).toBeNull()
@@ -343,39 +469,39 @@ describe('macOS launchd user PATH', () => {
     expect(existsSync(fixture.receipt)).toBe(false)
   })
 
-  it('prepends and removes exactly its entry while preserving unrelated PATH bytes', () => {
+  it('prepends and removes exactly its entry while preserving unrelated PATH bytes', async () => {
     const fixture = darwinHarness()
     const original = `/opt/homebrew/bin::relative:${fixture.bin}:/usr/bin:`
     fixture.userPath.value = original
     const service = fixture.create()
 
-    expect(service.install().requiresClientRestart).toBe(true)
+    expect((await service.install()).requiresClientRestart).toBe(true)
     expect(fixture.userPath.value).toBe(`${fixture.bin}:${original}`)
-    expect(service.uninstall().requiresClientRestart).toBe(true)
+    expect((await service.uninstall()).requiresClientRestart).toBe(true)
     expect(fixture.userPath.value).toBe(original)
   })
 
-  it('does not remove a private-directory PATH entry that PiPilot did not add', () => {
+  it('does not remove a private-directory PATH entry that PiPilot did not add', async () => {
     const fixture = darwinHarness()
     fixture.userPath.value = `${fixture.bin}:/usr/bin:/bin`
     const service = fixture.create()
 
-    expect(service.install()).toEqual({
+    expect(await service.install()).toEqual({
       state: 'installed', managed: true, requiresClientRestart: false,
     })
-    expect(service.uninstall()).toEqual({
+    expect(await service.uninstall()).toEqual({
       state: 'missing', managed: false, requiresClientRestart: false,
     })
     expect(fixture.userPath.value).toBe(`${fixture.bin}:/usr/bin:/bin`)
   })
 
-  it('recovers a valid managed launcher after launchd PATH is reset', () => {
+  it('recovers a valid managed launcher after launchd PATH is reset', async () => {
     const fixture = darwinHarness()
-    fixture.create().install()
+    await fixture.create().install()
     fixture.userPath.value = null
 
     const restored = fixture.create()
-    expect(restored.initialize()).toEqual({
+    expect(await restored.initialize()).toEqual({
       state: 'installed', managed: true, requiresClientRestart: true,
     })
     expect(fixture.userPath.value).toBe(
@@ -383,25 +509,25 @@ describe('macOS launchd user PATH', () => {
     )
   })
 
-  it('restores launchd PATH even when the inherited fallback already starts with the launcher', () => {
+  it('restores launchd PATH even when the inherited fallback already starts with the launcher', async () => {
     const fixture = darwinHarness()
-    fixture.create().install()
+    await fixture.create().install()
     fixture.userPath.value = null
 
     const restored = fixture.create(
       fixture.bin,
       `${fixture.bin}:/usr/bin:/bin`,
     )
-    expect(restored.initialize()).toEqual({
+    expect(await restored.initialize()).toEqual({
       state: 'installed', managed: true, requiresClientRestart: true,
     })
     expect(fixture.userPath.value).toBe(`${fixture.bin}:/usr/bin:/bin`)
   })
 
-  it('rejects unsafe and symlinked private target directories', () => {
+  it('rejects unsafe and symlinked private target directories', async () => {
     const unsafe = darwinHarness()
     chmodSync(unsafe.bin, 0o770)
-    expect(unsafe.create().inspect()).toMatchObject({
+    expect(await unsafe.create().inspect()).toMatchObject({
       state: 'unsupported',
       error: { code: 'launcher_unsafe_target' },
     })
@@ -409,35 +535,35 @@ describe('macOS launchd user PATH', () => {
     const linked = darwinHarness()
     const linkedBin = join(linked.root, 'linked-bin')
     symlinkSync(linked.bin, linkedBin)
-    expect(linked.create(linkedBin).inspect()).toMatchObject({
+    expect(await linked.create(linkedBin).inspect()).toMatchObject({
       state: 'unsupported',
       error: { code: 'launcher_unsafe_target' },
     })
   })
 
-  it('rolls PATH back exactly when install or uninstall completion fails', () => {
+  it('rolls PATH back exactly when install or uninstall completion fails', async () => {
     const original = '/usr/bin:/bin'
     const installPath = statefulDarwinPath(original)
-    expect(() => persistDarwinLauncherDirectory(
+    await expect(persistDarwinLauncherDirectory(
       installPath.adapter,
       undefined,
       '/private/pipilot/bin',
       () => { throw new Error('receipt failed') },
-    )).toThrow('receipt failed')
+    )).rejects.toThrow('receipt failed')
     expect(installPath.value).toBe(original)
 
     const merged = mergeDarwinUserPath(original, undefined, '/private/pipilot/bin')
     const uninstallPath = statefulDarwinPath(merged.value)
-    expect(() => persistDarwinLauncherDirectoryRemoval(
+    await expect(persistDarwinLauncherDirectoryRemoval(
       uninstallPath.adapter,
       '/private/pipilot/bin',
       merged.metadata,
       () => { throw new Error('file removal failed') },
-    )).toThrow('file removal failed')
+    )).rejects.toThrow('file removal failed')
     expect(uninstallPath.value).toBe(merged.value)
   })
 
-  it('preserves later PATH changes and validates resolution directory ownership', () => {
+  it('preserves later PATH changes and validates resolution directory ownership', async () => {
     const directory = '/private/pipilot/bin'
     const merged = mergeDarwinUserPath(null, '/usr/bin:/bin', directory)
     expect(removeDarwinLauncherDirectory(
@@ -455,7 +581,7 @@ describe('macOS launchd user PATH', () => {
 })
 
 describe('Windows user PATH merge', () => {
-  it('round-trips Unicode, whitespace, empty entries, and both registry string types', () => {
+  it('round-trips Unicode, whitespace, empty entries, and both registry string types', async () => {
     for (const type of ['REG_SZ', 'REG_EXPAND_SZ'] as const) {
       const value = {
         type,
@@ -467,7 +593,7 @@ describe('Windows user PATH merge', () => {
     }
   })
 
-  it('parses the quoted REG_SZ form emitted by reg export without trimming it', () => {
+  it('parses the quoted REG_SZ form emitted by reg export without trimming it', async () => {
     const text = [
       'Windows Registry Editor Version 5.00',
       '',
@@ -485,7 +611,7 @@ describe('Windows user PATH merge', () => {
     })
   })
 
-  it('returns null for an absent PATH and rejects malformed or duplicate values', () => {
+  it('returns null for an absent PATH and rejects malformed or duplicate values', async () => {
     const encode = (lines: string[]) => Buffer.concat([
       Buffer.from([0xff, 0xfe]),
       Buffer.from(lines.join('\r\n'), 'utf16le'),
@@ -518,7 +644,7 @@ describe('Windows user PATH merge', () => {
     ]))).toThrow('unescaped quote')
   })
 
-  it('preserves the original value verbatim and appends once', () => {
+  it('preserves the original value verbatim and appends once', async () => {
     const original = 'C:\\Tools;;%USERPROFILE%\\bin;'
     expect(mergeWindowsUserPath(original, 'C:\\Program Files\\PiPilot')).toEqual({
       changed: true,
@@ -533,7 +659,7 @@ describe('Windows user PATH merge', () => {
     })
   })
 
-  it('removes exactly one managed entry without normalizing unrelated PATH text', () => {
+  it('removes exactly one managed entry without normalizing unrelated PATH text', async () => {
     const metadata = { insertedSeparator: true, pathValueCreated: false }
     expect(removeWindowsLauncherDirectory(
       '  C:\\One;;C:\\Program Files\\PiPilot  ;%USERPROFILE%\\bin;',
@@ -558,7 +684,7 @@ describe('Windows user PATH merge', () => {
     )).toThrow('ambiguous')
   })
 
-  it('preserves PATH type and removes a PiPilot-created empty registry value', () => {
+  it('preserves PATH type and removes a PiPilot-created empty registry value', async () => {
     const original = {
       type: 'REG_SZ' as const,
       value: 'C:\\Program Files\\PiPilot',
@@ -571,7 +697,7 @@ describe('Windows user PATH merge', () => {
       write,
       remove: vi.fn(),
     }
-    expect(persistWindowsLauncherDirectoryRemoval(
+    expect(await persistWindowsLauncherDirectoryRemoval(
       adapter,
       'C:\\Program Files\\PiPilot',
       { insertedSeparator: false, pathValueCreated: false },
@@ -584,7 +710,7 @@ describe('Windows user PATH merge', () => {
       write: vi.fn(),
       remove: vi.fn(),
     }
-    expect(persistWindowsLauncherDirectoryRemoval(
+    expect(await persistWindowsLauncherDirectoryRemoval(
       createdAdapter,
       'C:\\Program Files\\PiPilot',
       { insertedSeparator: false, pathValueCreated: true },
@@ -593,7 +719,7 @@ describe('Windows user PATH merge', () => {
     expect(createdAdapter.write).not.toHaveBeenCalled()
   })
 
-  it('restores the exact original PATH when removal verification or receipt cleanup fails', () => {
+  it('restores the exact original PATH when removal verification or receipt cleanup fails', async () => {
     const original = {
       type: 'REG_EXPAND_SZ' as const,
       value: '%USERPROFILE%\\bin;;C:\\Program Files\\PiPilot',
@@ -606,11 +732,11 @@ describe('Windows user PATH merge', () => {
       write: vi.fn(),
       remove: vi.fn(),
     }
-    expect(() => persistWindowsLauncherDirectoryRemoval(
+    await expect(persistWindowsLauncherDirectoryRemoval(
       corruptedAdapter,
       'C:\\Program Files\\PiPilot',
       { insertedSeparator: true, pathValueCreated: false },
-    )).toThrow('did not persist exactly')
+    )).rejects.toThrow('did not persist exactly')
     expect(corruptedAdapter.write).toHaveBeenNthCalledWith(2, original)
 
     const receiptAdapter = {
@@ -621,16 +747,16 @@ describe('Windows user PATH merge', () => {
       write: vi.fn(),
       remove: vi.fn(),
     }
-    expect(() => persistWindowsLauncherDirectoryRemoval(
+    await expect(persistWindowsLauncherDirectoryRemoval(
       receiptAdapter,
       'C:\\Program Files\\PiPilot',
       { insertedSeparator: true, pathValueCreated: false },
       () => { throw new Error('receipt removal failed') },
-    )).toThrow('receipt removal failed')
+    )).rejects.toThrow('receipt removal failed')
     expect(receiptAdapter.write).toHaveBeenNthCalledWith(2, original)
   })
 
-  it('fails closed when the original PATH cannot be verified after uninstall rollback', () => {
+  it('fails closed when the original PATH cannot be verified after uninstall rollback', async () => {
     const original = {
       type: 'REG_EXPAND_SZ' as const,
       value: '%USERPROFILE%\\bin;;C:\\Program Files\\PiPilot',
@@ -644,16 +770,16 @@ describe('Windows user PATH merge', () => {
       remove: vi.fn(),
     }
 
-    expect(() => persistWindowsLauncherDirectoryRemoval(
+    await expect(persistWindowsLauncherDirectoryRemoval(
       adapter,
       'C:\\Program Files\\PiPilot',
       { insertedSeparator: true, pathValueCreated: false },
       () => { throw new Error('receipt removal failed') },
-    )).toThrow('rollback did not persist exactly')
+    )).rejects.toThrow('rollback did not persist exactly')
     expect(adapter.write).toHaveBeenNthCalledWith(2, original)
   })
 
-  it('fails closed when restoring the original PATH after uninstall throws', () => {
+  it('fails closed when restoring the original PATH after uninstall throws', async () => {
     const original = {
       type: 'REG_SZ' as const,
       value: 'C:\\Tools;C:\\Program Files\\PiPilot',
@@ -668,16 +794,16 @@ describe('Windows user PATH merge', () => {
       remove: vi.fn(),
     }
 
-    expect(() => persistWindowsLauncherDirectoryRemoval(
+    await expect(persistWindowsLauncherDirectoryRemoval(
       adapter,
       'C:\\Program Files\\PiPilot',
       { insertedSeparator: true, pathValueCreated: false },
       () => { throw new Error('receipt removal failed') },
-    )).toThrow('rollback did not persist exactly')
+    )).rejects.toThrow('rollback did not persist exactly')
     expect(adapter.write).toHaveBeenNthCalledWith(2, original)
   })
 
-  it('reads back the exact value and restores the original on mismatch', () => {
+  it('reads back the exact value and restores the original on mismatch', async () => {
     const original = { type: 'REG_SZ' as const, value: 'C:\\Original;;' }
     const write = vi.fn()
     const adapter = {
@@ -687,10 +813,10 @@ describe('Windows user PATH merge', () => {
       write,
       remove: vi.fn(),
     }
-    expect(() => persistWindowsLauncherDirectory(
+    await expect(persistWindowsLauncherDirectory(
       adapter,
       'C:\\Program Files\\PiPilot',
-    )).toThrow('did not persist exactly')
+    )).rejects.toThrow('did not persist exactly')
     expect(write).toHaveBeenNthCalledWith(1, {
       type: 'REG_SZ',
       value: 'C:\\Original;;C:\\Program Files\\PiPilot',
@@ -699,20 +825,20 @@ describe('Windows user PATH merge', () => {
     expect(adapter.remove).not.toHaveBeenCalled()
   })
 
-  it('removes a newly created value when post-write verification fails', () => {
+  it('removes a newly created value when post-write verification fails', async () => {
     const adapter = {
       read: vi.fn().mockReturnValueOnce(null).mockReturnValueOnce(null),
       write: vi.fn(),
       remove: vi.fn(),
     }
-    expect(() => persistWindowsLauncherDirectory(
+    await expect(persistWindowsLauncherDirectory(
       adapter,
       'C:\\Program Files\\PiPilot',
-    )).toThrow('did not persist exactly')
+    )).rejects.toThrow('did not persist exactly')
     expect(adapter.remove).toHaveBeenCalledOnce()
   })
 
-  it('restores the original PATH when the private receipt write fails', () => {
+  it('restores the original PATH when the private receipt write fails', async () => {
     const original = { type: 'REG_EXPAND_SZ' as const, value: '%USERPROFILE%\\bin' }
     const adapter = {
       read: vi.fn()
@@ -724,16 +850,16 @@ describe('Windows user PATH merge', () => {
       write: vi.fn(),
       remove: vi.fn(),
     }
-    expect(() => persistWindowsLauncherDirectory(
+    await expect(persistWindowsLauncherDirectory(
       adapter,
       'C:\\Program Files\\PiPilot',
       () => { throw new Error('receipt write failed') },
-    )).toThrow('receipt write failed')
+    )).rejects.toThrow('receipt write failed')
     expect(adapter.write).toHaveBeenNthCalledWith(2, original)
     expect(adapter.remove).not.toHaveBeenCalled()
   })
 
-  it('attempts rollback when the registry write reports failure', () => {
+  it('attempts rollback when the registry write reports failure', async () => {
     const original = { type: 'REG_SZ' as const, value: 'C:\\Original' }
     const adapter = {
       read: vi.fn().mockReturnValueOnce(original),
@@ -742,10 +868,10 @@ describe('Windows user PATH merge', () => {
         .mockImplementationOnce(() => undefined),
       remove: vi.fn(),
     }
-    expect(() => persistWindowsLauncherDirectory(
+    await expect(persistWindowsLauncherDirectory(
       adapter,
       'C:\\Program Files\\PiPilot',
-    )).toThrow('write failed')
+    )).rejects.toThrow('write failed')
     expect(adapter.write).toHaveBeenNthCalledWith(2, original)
   })
 })

@@ -3,6 +3,7 @@ import type { BrowserWindow, WebContents } from 'electron'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ConfigurationDocumentRegistry } from '../../src/renderer/configuration-documents'
 import { ConfigurationDocumentExitGuard } from '../../src/renderer/configuration-document-exit'
+import { ConfigurationEditTransactions } from '../../src/renderer/configuration-edit-transactions'
 import { ConfigurationShutdownGuard } from '../../src/main/application-update/configuration-shutdown-guard'
 import { ApplicationShutdownCoordinator } from '../../src/main/application-update/shutdown-coordinator'
 import { applicationShutdownEventSchema } from '../../src/shared/application-shutdown'
@@ -27,6 +28,51 @@ async function documentHarness() {
 afterEach(() => vi.useRealTimers())
 
 describe('configuration document exit', () => {
+  it('includes unsubmitted forms and stages valid fields before saving the document', async () => {
+    const { registry, document, save } = await documentHarness()
+    const edits = new ConfigurationEditTransactions()
+    const guard = new ConfigurationDocumentExitGuard([registry], edits)
+    const commit = vi.fn(() => document.updateDraft('{"provider":"new"}'))
+    edits.update({}, { dirty: true, revision: 1, commit })
+    expect(guard.lockIfClean()).toBe(false)
+    expect(await guard.saveAndLock()).toBe(true)
+    expect(commit).toHaveBeenCalledTimes(1)
+    expect(save).toHaveBeenCalledWith('{"provider":"new"}', 'base', false)
+    expect(edits.isLocked()).toBe(true)
+  })
+
+  it('keeps invalid form edits open, and discard cancellation preserves the edit', async () => {
+    const { registry, save } = await documentHarness()
+    const edits = new ConfigurationEditTransactions()
+    const guard = new ConfigurationDocumentExitGuard([registry], edits)
+    const owner = {}
+    edits.update(owner, { dirty: true, revision: 1, commit: () => false })
+    expect(await guard.saveAndLock()).toBe(false)
+    expect(save).not.toHaveBeenCalled()
+    expect(guard.discardAndLock()).toBe(true)
+    guard.unlock()
+    expect(edits.isDirty()).toBe(true)
+    expect(guard.lockIfClean()).toBe(false)
+    edits.update(owner, null)
+    expect(guard.lockIfClean()).toBe(true)
+  })
+
+  it('does not discard newer form edits arriving during a document save', async () => {
+    const { registry, document, save } = await documentHarness()
+    const edits = new ConfigurationEditTransactions()
+    const guard = new ConfigurationDocumentExitGuard([registry], edits)
+    const owner = {}
+    const commit = () => document.updateDraft('captured form')
+    edits.update(owner, { dirty: true, revision: 1, commit })
+    const gate = deferred<ReturnType<typeof saved>>()
+    save.mockImplementationOnce(() => gate.promise)
+    const saving = guard.saveAndLock()
+    edits.update(owner, { dirty: true, revision: 2, commit })
+    gate.resolve(saved('captured form'))
+    expect(await saving).toBe(false)
+    expect(edits.isLocked()).toBe(false)
+  })
+
   it('reports pending saves to the quit dialog and becomes clean only after acknowledgement', async () => {
     const { guard, document, save } = await documentHarness()
     document.updateDraft('captured')

@@ -21,7 +21,7 @@ describe('About update feedback', () => {
 
   it('shows action errors even when the authoritative snapshot is not an error state', () => {
     state.value = {
-      mode: 'electron', snapshot: { revision: 1, state: 'current', checkedAt: null, policy: { platform: 'macos', package: 'macos', capability: 'manual-release', currentVersion: '0.0.3', releaseUrl: 'https://github.com/GarlandQian/PiPilot/releases' } }, busy: false, errorMessage: 'Unable to open release page', dismissedVersion: null,
+      mode: 'electron', snapshot: { revision: 1, state: 'current', checkedAt: null, policy: { platform: 'macos', package: 'macos', capability: 'manual-release', currentVersion: '0.0.4', releaseUrl: 'https://github.com/GarlandQian/PiPilot/releases' } }, busy: false, errorMessage: 'Unable to open release page', dismissedVersion: null,
       check: vi.fn(), download: vi.fn(), install: vi.fn(), openRelease: vi.fn(), dismissNotice: vi.fn(),
     }
     const markup = renderToStaticMarkup(createElement(AboutSettings))
@@ -32,7 +32,7 @@ describe('About update feedback', () => {
 
   it('does not label a loaded idle update service as still loading', () => {
     state.value = {
-      mode: 'electron', snapshot: { revision: 1, state: 'idle', checkedAt: null, policy: { platform: 'macos', package: 'macos', capability: 'manual-release', currentVersion: '0.0.3', releaseUrl: 'https://github.com/GarlandQian/PiPilot/releases' } }, busy: false, errorMessage: null, dismissedVersion: null,
+      mode: 'electron', snapshot: { revision: 1, state: 'idle', checkedAt: null, policy: { platform: 'macos', package: 'macos', capability: 'manual-release', currentVersion: '0.0.4', releaseUrl: 'https://github.com/GarlandQian/PiPilot/releases' } }, busy: false, errorMessage: null, dismissedVersion: null,
       check: vi.fn(), download: vi.fn(), install: vi.fn(), openRelease: vi.fn(), dismissNotice: vi.fn(),
     }
     const markup = renderToStaticMarkup(createElement(AboutSettings))

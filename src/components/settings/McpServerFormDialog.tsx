@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { useConfigurationEditTransaction } from '@/store/configuration-documents'
 import { TbAdjustmentsHorizontal, TbPlug, TbTerminal2, TbWorld } from 'react-icons/tb'
 
 import { cn } from '@/lib/utils'
@@ -59,7 +60,7 @@ interface McpServerFormDialogProps {
    */
   existingNames: readonly string[]
   /** Called with the normalized value only when every field is valid. */
-  onSubmit: (value: McpServerFormValue) => void
+  onSubmit: (value: McpServerFormValue) => boolean | void
 }
 
 const DEFAULT_VALUE: McpServerFormValue = {
@@ -151,6 +152,7 @@ function McpServerFormDialog({
   }
 
   const handleSubmit = () => {
+    if (shutdownLocked) return false
     if (Object.keys(errors).length > 0) {
       setSubmitAttempted(true)
       setTouched({ name: true, command: true, url: true, env: true, headers: true })
@@ -161,9 +163,9 @@ function McpServerFormDialog({
         if (target?.matches('input')) target.focus()
         else target?.querySelector<HTMLInputElement>('input')?.focus()
       })
-      return
+      return false
     }
-    onSubmit({
+    return onSubmit({
       ...draft,
       name: draft.name.trim(),
       command: draft.command.trim(),
@@ -173,8 +175,9 @@ function McpServerFormDialog({
       url: draft.url.trim(),
       headers: draft.headers.map((row) => ({ key: row.key.trim(), value: row.value })),
       description: draft.description.trim(),
-    })
+    }) !== false
   }
+  const shutdownLocked = useConfigurationEditTransaction(open, { dirty: isDirty, revision: draft, commit: handleSubmit })
 
   const requiredMark = (
     <span className="text-destructive" aria-hidden="true">
@@ -190,7 +193,8 @@ function McpServerFormDialog({
         title={mode === 'add' ? t('mcp.form.title.add') : t('mcp.form.title.edit')}
         cancelLabel={t('mcp.form.cancel')}
         submitLabel={mode === 'add' ? t('mcp.form.submit.add') : t('mcp.form.submit.edit')}
-        onSubmit={handleSubmit}
+        onSubmit={() => { handleSubmit() }}
+        disabled={shutdownLocked}
       >
         <div className="@container/mcp-form flex min-w-0 flex-col gap-6">
           <fieldset className="min-w-0 space-y-4">

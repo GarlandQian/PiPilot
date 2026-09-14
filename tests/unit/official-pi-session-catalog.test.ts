@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import {
-  SESSION_CATALOG_MAX_CANDIDATES,
+  SESSION_CATALOG_MAX_SCAN_ENTRIES,
   SESSION_CATALOG_MAX_CONCURRENT_READERS,
   SESSION_CATALOG_MAX_FILE_BYTES,
   SESSION_CATALOG_MAX_PAGE_ROWS,
@@ -252,7 +252,7 @@ function runtimeIdentity(
 
 describe('OfficialPiSessionCatalog', () => {
   it('uses the fixed catalog bounds', () => {
-    expect(SESSION_CATALOG_MAX_CANDIDATES).toBe(200)
+    expect(SESSION_CATALOG_MAX_SCAN_ENTRIES).toBe(200)
     expect(SESSION_CATALOG_MAX_FILE_BYTES).toBe(64 * 1_024 * 1_024)
     expect(SESSION_CATALOG_MAX_REFRESH_BYTES).toBe(256 * 1_024 * 1_024)
     expect(SESSION_CATALOG_MAX_CONCURRENT_READERS).toBe(8)
@@ -386,9 +386,8 @@ describe('OfficialPiSessionCatalog', () => {
       await firstScanStarted
       const joinedRefresh = fixture.catalog.refresh(scope)
 
-      // A real lifecycle change still supersedes the first scan and requires a
-      // retry. A later explicit refresh must join that retry instead of making
-      // it stale again.
+      // Refreshes join one promise, but each active pass still needs to honor
+      // a request made after external files may have changed during its read.
       fixture.catalog.invalidate(scope)
       releaseFirstScan()
       await secondScanStarted
@@ -400,7 +399,7 @@ describe('OfficialPiSessionCatalog', () => {
         joinedRefresh,
         joinedRetry,
       ])
-      expect(resolveSpy).toHaveBeenCalledTimes(2)
+      expect(resolveSpy).toHaveBeenCalledTimes(3)
       expect(results.map((result) => result.rows[0]?.name)).toEqual([
         'after refresh',
         'after refresh',
@@ -515,7 +514,9 @@ describe('OfficialPiSessionCatalog', () => {
           selectionToken: initial.rows[0]?.selectionToken,
         })],
       })
-      expect(resolveSpy).toHaveBeenCalledTimes(totalScanCount)
+      // The explicit request during the follow-up also reconciles any files
+      // changed after that pass began, while reusing unchanged metadata.
+      expect(resolveSpy).toHaveBeenCalledTimes(totalScanCount + 1)
     } finally {
       continuationGate.resolve()
       for (const gate of scanGates) gate.resolve()
@@ -927,24 +928,40 @@ describe('OfficialPiSessionCatalog', () => {
     }
   })
 
-  it('stops after the bounded candidate window', async () => {
-    const fixture = await createCatalogFixture()
+  it('resumes directory slices and pages all sessions, including the newest beyond 200 entries', async () => {
+    const yieldScanContinuation = vi.fn(async () => undefined)
+    const fixture = await createCatalogFixture({ yieldScanContinuation })
     const observedFile = join(fixture.sessionDirectory, '000.jsonl')
     try {
       await writeSession(observedFile, { cwd: fixture.cwd, id: 'observed' })
-      for (let index = 1; index <= SESSION_CATALOG_MAX_CANDIDATES; index += 1) {
+      for (let index = 1; index <= SESSION_CATALOG_MAX_SCAN_ENTRIES + 1; index += 1) {
         await writeSession(
           join(fixture.sessionDirectory, `${String(index).padStart(3, '0')}.jsonl`),
-          { cwd: fixture.cwd, id: `session-${index}` },
+          {
+            cwd: fixture.cwd,
+            id: `session-${index}`,
+            activityAt: Date.UTC(2026, 7, 8, 0, index, 0),
+          },
         )
       }
       await fixture.observations.observe(scope, observedFile)
 
       const result = await fixture.catalog.list(scope)
-      expect(result.diagnostics).toEqual(expect.arrayContaining([
-        expect.objectContaining({ code: 'candidateLimit' }),
-      ]))
+      expect(result.diagnostics).toEqual([])
       expect(result.rows).toHaveLength(50)
+      expect(result.rows[0]?.sessionId).toBe('session-201')
+      const rows = [...result.rows]
+      let next = result.nextCursor
+      while (next) {
+        const page = await fixture.catalog.list(scope, next)
+        rows.push(...page.rows)
+        next = page.nextCursor
+      }
+      expect(rows).toHaveLength(202)
+      expect(new Set(rows.map((row) => row.sessionId)).size).toBe(202)
+      expect(yieldScanContinuation).toHaveBeenCalled()
+      const inventory = await fixture.catalog.listControlTargets(scope)
+      expect(inventory.targets).toHaveLength(202)
     } finally {
       await rm(fixture.root, { recursive: true, force: true })
     }

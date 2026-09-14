@@ -73,6 +73,7 @@ export interface ComposerEditorHandle {
 }
 
 interface ComposerEditorProps {
+  initialDocument?: JSONContent
   activeDescendantId?: string
   ariaControlsId?: string
   ariaDescribedBy?: string
@@ -325,6 +326,7 @@ export const ComposerEditor = React.forwardRef<ComposerEditorHandle, ComposerEdi
     ariaLabel,
     disabled,
     placeholder,
+    initialDocument,
     onChange,
     onKeyDown,
     onMentionKeyDown,
@@ -459,7 +461,7 @@ export const ComposerEditor = React.forwardRef<ComposerEditorHandle, ComposerEdi
     }, [])
 
     const editor = useEditor({
-      content: plainTextToComposerDocument(''),
+      content: initialDocument ?? plainTextToComposerDocument(''),
       editable: !disabled,
       enableContentCheck: true,
       enableInputRules: false,

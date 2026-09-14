@@ -39,6 +39,8 @@ export function useSessionOpening({
   const openingRef = React.useRef<SessionOpeningHandle | null>(null)
   const [selectionRevision, advanceSelectionRevision] = React.useReducer((revision: number) => revision + 1, 0)
   const sequence = React.useRef(0)
+  const switchSequence = React.useRef(0)
+  const [switching, setSwitching] = React.useState(false)
 
   React.useEffect(() => () => {
     cancelPiGenerationHydrationWaiter(openingRef)
@@ -59,10 +61,14 @@ export function useSessionOpening({
     operation: () => Promise<void>,
     sessionOpeningOperationId?: number,
   ) => {
+    const switchId = ++switchSequence.current
+    setSwitching(true)
     advanceSelectionRevision()
     abandonSessionOpening(sessionOpeningOperationId)
     // Workspace owns the operation error; this owner handles exact activation loading.
-    void operation().catch(() => undefined)
+    void operation().catch(() => undefined).finally(() => {
+      if (switchSequence.current === switchId) setSwitching(false)
+    })
   }, [abandonSessionOpening])
 
   const settleSessionOpening = React.useCallback((
@@ -149,5 +155,5 @@ export function useSessionOpening({
     }, opening.operationId)
   }, [abandonSessionOpening, requestSwitch, settleSessionOpening, t, workspace])
 
-  return { openingSession, selectionRevision, abandonSessionOpening, requestSwitch, requestSessionOpening }
+  return { openingSession, switching, selectionRevision, abandonSessionOpening, requestSwitch, requestSessionOpening }
 }

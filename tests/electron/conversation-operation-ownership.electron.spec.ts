@@ -104,6 +104,9 @@ export default function modelOperationGate(pi) {
 
     await ownerA.click()
     await expect(modelTrigger).toContainText('Fake Fast')
+    const composer = page.getByRole('textbox', { name: 'Message input', exact: true })
+    const unconfirmedDraft = 'Do not dispatch until this exact conversation is ready'
+    await composer.fill(unconfirmedDraft)
     await writeFile(join(gateDir, 'fake-reasoning.armed'), 'armed')
     await modelTrigger.click()
     await page.getByRole('option', { name: /Fake Reasoning/ }).click()
@@ -113,18 +116,18 @@ export default function modelOperationGate(pi) {
     await expect(modelTrigger).toContainText('Fake Chat')
     await ownerA.click()
     await expect(page.getByText(/^Loading conversation/u)).toBeVisible()
-    const composer = page.getByRole('textbox', { name: 'Message input', exact: true })
-    const unconfirmedDraft = 'Do not dispatch until this exact conversation is ready'
-    await composer.fill(unconfirmedDraft)
+    await expect(composer).toHaveAttribute('contenteditable', 'false')
     await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeDisabled()
     await composer.press('Enter')
     expect(fixture.prompts).not.toContain(unconfirmedDraft)
-    await expect(composer).toHaveText(unconfirmedDraft)
 
     await writeFile(join(gateDir, 'fake-reasoning.release'), 'release')
     await expect(modelTrigger).toContainText('Fake Reasoning', { timeout: 20_000 })
+    await expect(composer).toHaveAttribute('contenteditable', 'true')
     await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeEnabled()
     await expect(composer).toHaveText(unconfirmedDraft)
+    await composer.fill(`${unconfirmedDraft}; now confirmed`)
+    await expect(composer).toHaveText(`${unconfirmedDraft}; now confirmed`)
     await expect(composer).toHaveAttribute('aria-invalid', 'false')
     expect(fixture.prompts).not.toContain(unconfirmedDraft)
     await modelTrigger.click()

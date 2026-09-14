@@ -43,6 +43,87 @@ async function requestQuit(app: ElectronApplication) {
   await app.evaluate(({ app }) => { app.quit() })
 }
 
+async function modelsWorkspace(page: Page) {
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  await page.locator('[data-context-panel-nav-id="models"]').click()
+  return page.getByRole('main', { name: 'Models', exact: true })
+}
+
+test('protects an unsubmitted provider form and keeps invalid fields after cancelled Quit', async ({}, testInfo) => {
+  const { app, page, fixture, modelPath } = await setup(testInfo)
+  try {
+    const before = await readFile(modelPath, 'utf8')
+    const workspace = await modelsWorkspace(page)
+    await workspace.getByRole('button', { name: 'Add provider', exact: true }).click()
+    const form = page.getByRole('dialog', { name: 'Add provider', exact: true })
+    await form.getByRole('textbox', { name: 'Name', exact: true }).fill('Unsubmitted provider')
+    await requestQuit(app)
+    const quit = page.getByRole('alertdialog', { name: 'Save configuration before quitting?', exact: true })
+    await expect(quit).toBeVisible()
+    await quit.getByRole('button', { name: 'Save', exact: true }).click()
+    await expect(quit.getByRole('alert')).toBeVisible()
+    expect(await readFile(modelPath, 'utf8')).toBe(before)
+    await quit.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await expect(form.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('Unsubmitted provider')
+    await expect(form.getByText('Enter an ID', { exact: true })).toBeVisible()
+    await requestQuit(app)
+    const closed = app.waitForEvent('close')
+    await quit.getByRole('button', { name: 'Discard', exact: true }).click()
+    await closed
+    expect(await readFile(modelPath, 'utf8')).toBe(before)
+  } finally {
+    await cleanup(app)
+    await fixture.close()
+  }
+})
+
+test('saves an unsubmitted model form as part of the explicit Quit transaction', async ({}, testInfo) => {
+  const { app, page, fixture, modelPath } = await setup(testInfo)
+  try {
+    const workspace = await modelsWorkspace(page)
+    const row = workspace.locator('[data-model-id="fake-chat"]')
+    await row.getByRole('button', { name: 'Actions for Fake Chat', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Edit model', exact: true }).click()
+    const form = page.getByRole('dialog', { name: 'Edit model', exact: true })
+    await form.getByRole('textbox', { name: 'Name', exact: true }).fill('Saved from open form')
+    await requestQuit(app)
+    const quit = page.getByRole('alertdialog', { name: 'Save configuration before quitting?', exact: true })
+    await expect(quit).toBeVisible()
+    const closed = app.waitForEvent('close')
+    await quit.getByRole('button', { name: 'Save', exact: true }).click()
+    await closed
+    const saved = JSON.parse(await readFile(modelPath, 'utf8'))
+    expect(saved.providers.fixture.models.find((model: { id: string }) => model.id === 'fake-chat').name).toBe('Saved from open form')
+  } finally {
+    await cleanup(app)
+    await fixture.close()
+  }
+})
+
+test('saves an unsubmitted MCP server form without starting its command on Quit', async ({}, testInfo) => {
+  const { app, page, fixture, mcpPath } = await setup(testInfo)
+  try {
+    await page.getByRole('button', { name: 'Settings', exact: true }).click()
+    await page.locator('[data-context-panel-nav-id="integrations"]').click()
+    const workspace = page.getByRole('main', { name: 'Integrations', exact: true })
+    await workspace.getByRole('tab', { name: 'MCP', exact: true }).click()
+    await workspace.getByRole('button', { name: 'Add server', exact: true }).click()
+    const form = page.getByRole('dialog', { name: 'Add MCP server', exact: true })
+    await form.getByRole('textbox', { name: 'Server name', exact: true }).fill('quit-fixture')
+    await form.getByRole('textbox', { name: 'Command', exact: true }).fill('pipilot-test-command-must-not-run')
+    await requestQuit(app)
+    const quit = page.getByRole('alertdialog', { name: 'Save configuration before quitting?', exact: true })
+    await expect(quit).toBeVisible()
+    const closed = app.waitForEvent('close')
+    await quit.getByRole('button', { name: 'Save', exact: true }).click()
+    await closed
+    expect(JSON.parse(await readFile(mcpPath, 'utf8')).mcpServers['quit-fixture'].command).toBe('pipilot-test-command-must-not-run')
+  } finally {
+    await cleanup(app)
+    await fixture.close()
+  }
+})
+
 async function holdNextModelsSaveAcknowledgement(app: ElectronApplication) {
   return app.evaluateHandle(({ ipcMain }, channel) => {
     // Keep the actual validation and disk write. Only the final acknowledgement

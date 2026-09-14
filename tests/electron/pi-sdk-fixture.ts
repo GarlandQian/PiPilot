@@ -2,9 +2,16 @@ import { createServer, type Server } from 'node:http'
 import { mkdir, writeFile } from 'node:fs/promises'
 import type { AddressInfo } from 'node:net'
 import { join } from 'node:path'
+import {
+  createFixtureStreamWriter,
+  fixtureRequestPath,
+  readFixtureRequest,
+  type FixtureProviderProtocol,
+} from './pi-sdk-fixture-protocols'
 
 interface PiSdkFixtureOptions {
   agentDir: string
+  protocol?: FixtureProviderProtocol
   globalPackages?: readonly string[]
   includeReasoningModel?: boolean
   completionDelays?: Readonly<Record<string, number>>
@@ -28,49 +35,8 @@ interface PiSdkFixtureOptions {
 export interface PiSdkFixture {
   env: NodeJS.ProcessEnv
   prompts: string[]
+  requests: { protocol: FixtureProviderProtocol; prompt: string; hasWriteResult: boolean }[]
   close(): Promise<void>
-}
-
-function messageText(value: unknown): string {
-  if (typeof value === 'string') return value
-  if (!Array.isArray(value)) return ''
-  return value
-    .map((part) => (
-      typeof part === 'object' && part !== null &&
-      'type' in part && part.type === 'text' &&
-      'text' in part && typeof part.text === 'string'
-        ? part.text
-        : ''
-    ))
-    .join('')
-}
-
-function latestUserPrompt(body: unknown): string {
-  if (
-    typeof body !== 'object' || body === null ||
-    !('messages' in body) || !Array.isArray(body.messages)
-  ) return ''
-  for (let index = body.messages.length - 1; index >= 0; index -= 1) {
-    const message = body.messages[index]
-    if (
-      typeof message === 'object' && message !== null &&
-      'role' in message && message.role === 'user' &&
-      'content' in message
-    ) return messageText(message.content)
-  }
-  return ''
-}
-
-function hasToolResult(body: unknown, toolCallId: string): boolean {
-  if (
-    typeof body !== 'object' || body === null ||
-    !('messages' in body) || !Array.isArray(body.messages)
-  ) return false
-  return body.messages.some((message) => (
-    typeof message === 'object' && message !== null &&
-    'role' in message && message.role === 'tool' &&
-    'tool_call_id' in message && message.tool_call_id === toolCallId
-  ))
 }
 
 function delay(milliseconds: number) {
@@ -91,15 +57,19 @@ async function closeServer(server: Server) {
  * The app still imports and runs the bundled SDK in utilityProcess. Only the
  * provider endpoint and user resources are deterministic: an isolated Pi
  * Agent directory contains official models/settings/extension/skill files,
- * while a local OpenAI-compatible SSE server supplies model responses.
+ * while a local protocol-specific SSE server supplies model responses.
  */
 export async function startPiSdkFixture(
   options: PiSdkFixtureOptions,
 ): Promise<PiSdkFixture> {
   const prompts: string[] = []
+  const requests: PiSdkFixture['requests'] = []
+  const protocol = options.protocol ?? 'openai-completions'
   const server = createServer((request, response) => {
-    if (request.method !== 'POST' || request.url !== '/v1/chat/completions') {
-      response.writeHead(404).end()
+    if (request.method !== 'POST' || !fixtureRequestPath(protocol, request.url ?? '')) {
+      response.writeHead(404, { 'content-type': 'application/json' }).end(JSON.stringify({
+        error: { message: `Unsupported fixture route: ${request.method} ${new URL(request.url ?? '/', 'http://fixture.invalid').pathname}` },
+      }))
       return
     }
     const chunks: Buffer[] = []
@@ -107,124 +77,37 @@ export async function startPiSdkFixture(
     request.on('end', () => {
       void (async () => {
         const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown
-        const prompt = latestUserPrompt(body)
+        const { prompt, model, hasWriteResult } = readFixtureRequest(protocol, body)
         prompts.push(prompt)
+        requests.push({ protocol, prompt, hasWriteResult })
         await options.promptGates?.[prompt]
         const promptDelay = options.promptDelays?.[prompt] ?? 0
         if (promptDelay > 0) await delay(promptDelay)
-        const model = typeof body === 'object' && body !== null &&
-          'model' in body && typeof body.model === 'string'
-          ? body.model
-          : 'fake-chat'
         const content = `Fixture response: ${prompt}`
-        const created = Math.floor(Date.now() / 1_000)
-        response.writeHead(200, {
-          'cache-control': 'no-cache',
-          connection: 'keep-alive',
-          'content-type': 'text/event-stream',
-        })
+        const stream = createFixtureStreamWriter(protocol, response, model)
         const writeTool = options.writeToolPrompts?.[prompt]
-        const writeToolCallId = 'call_pipilot_fixture_write'
-        if (writeTool && !hasToolResult(body, writeToolCallId)) {
+        if (writeTool && !hasWriteResult) {
           const commentary = options.writeToolCommentary?.[prompt]
           if (commentary) {
-            response.write(`data: ${JSON.stringify({
-              id: 'chatcmpl-pipilot-fixture-write',
-              object: 'chat.completion.chunk',
-              created,
-              model,
-              choices: [{
-                index: 0,
-                delta: { role: 'assistant', content: commentary.text },
-                finish_reason: null,
-              }],
-            })}\n\n`)
+            stream.text(commentary.text)
             if (commentary.delayMs > 0) await delay(commentary.delayMs)
           }
-          response.write(`data: ${JSON.stringify({
-            id: 'chatcmpl-pipilot-fixture-write',
-            object: 'chat.completion.chunk',
-            created,
-            model,
-            choices: [{
-              index: 0,
-              delta: {
-                role: 'assistant',
-                tool_calls: [{
-                  index: 0,
-                  id: writeToolCallId,
-                  type: 'function',
-                  function: {
-                    name: 'write',
-                    arguments: JSON.stringify(writeTool),
-                  },
-                }],
-              },
-              finish_reason: null,
-            }],
-          })}\n\n`)
-          response.write(`data: ${JSON.stringify({
-            id: 'chatcmpl-pipilot-fixture-write',
-            object: 'chat.completion.chunk',
-            created,
-            model,
-            choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
-            usage: {
-              prompt_tokens: 12,
-              completion_tokens: 8,
-              total_tokens: 20,
-            },
-          })}\n\n`)
-          response.end('data: [DONE]\n\n')
+          stream.writeTool(writeTool)
+          stream.finish(true)
           return
         }
         const reasoningDelay = options.reasoningDelays?.[prompt]
         if (reasoningDelay !== undefined) {
-          response.write(`data: ${JSON.stringify({
-            id: 'chatcmpl-pipilot-fixture',
-            object: 'chat.completion.chunk',
-            created,
-            model,
-            choices: [{
-              index: 0,
-              delta: {
-                role: 'assistant',
-                reasoning_content: `Fixture reasoning: ${prompt}`,
-              },
-              finish_reason: null,
-            }],
-          })}\n\n`)
+          stream.thinking(`Fixture reasoning: ${prompt}`)
           if (reasoningDelay > 0) await delay(reasoningDelay)
           await options.reasoningGates?.[prompt]
         }
-        response.write(`data: ${JSON.stringify({
-          id: 'chatcmpl-pipilot-fixture',
-          object: 'chat.completion.chunk',
-          created,
-          model,
-          choices: [{
-            index: 0,
-            delta: { role: 'assistant', content },
-            finish_reason: null,
-          }],
-        })}\n\n`)
+        stream.text(content)
         const completionDelay = options.completionDelays?.[prompt] ?? 0
         if (completionDelay > 0) await delay(completionDelay)
-        response.write(`data: ${JSON.stringify({
-          id: 'chatcmpl-pipilot-fixture',
-          object: 'chat.completion.chunk',
-          created,
-          model,
-          choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
-          usage: {
-            prompt_tokens: 12,
-            completion_tokens: 8,
-            total_tokens: 20,
-          },
-        })}\n\n`)
-        response.end('data: [DONE]\n\n')
+        stream.finish(false)
       })().catch((error) => {
-        response.writeHead(500, { 'content-type': 'text/plain' })
+        if (!response.headersSent) response.writeHead(500, { 'content-type': 'text/plain' })
         response.end(error instanceof Error ? error.message : 'Fixture failure')
       })
     })
@@ -234,7 +117,9 @@ export async function startPiSdkFixture(
     server.listen(0, '127.0.0.1', resolveListen)
   })
   const address = server.address() as AddressInfo
-  const baseUrl = `http://127.0.0.1:${address.port}/v1`
+  const apiPath = protocol.startsWith('openai-') ? '/v1'
+    : protocol === 'google-generative-ai' ? '/v1beta' : ''
+  const baseUrl = `http://127.0.0.1:${address.port}${apiPath}`
 
   await Promise.all([
     mkdir(join(options.agentDir, 'extensions'), { recursive: true }),
@@ -245,12 +130,12 @@ export async function startPiSdkFixture(
       providers: {
         fixture: {
           baseUrl,
-          api: 'openai-completions',
+          api: protocol,
           apiKey: 'fixture-key',
-          compat: {
+          ...(protocol === 'openai-completions' ? { compat: {
             supportsDeveloperRole: false,
             supportsReasoningEffort: false,
-          },
+          } } : {}),
           models: [
             {
               id: 'fake-chat',
@@ -386,6 +271,7 @@ export default function pipilotE2eExtension(pi) {
       PI_TELEMETRY: '0',
     },
     prompts,
+    requests,
     close: () => closeServer(server),
   }
 }

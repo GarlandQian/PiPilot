@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { useConfigurationEditTransaction } from '@/store/configuration-documents'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -49,7 +50,7 @@ interface ModelsProviderFormDialogProps {
   /** Provider ids already taken (case-insensitive); the edited id is excluded. */
   existingIds: readonly string[]
   /** Called with the form value only when every field is valid. */
-  onSubmit: (value: ProviderFormValue) => void
+  onSubmit: (value: ProviderFormValue) => boolean | void
 }
 
 const DEFAULT_VALUE: ProviderFormValue = {
@@ -156,21 +157,23 @@ export function ModelsProviderFormDialog({
   }
 
   const handleSubmit = () => {
+    if (shutdownLocked) return false
     if (Object.keys(errors).length > 0) {
       if (errors.headers) setAdvancedOpen(true)
       setSubmitAttempted(true)
       setTouched({ id: true, headers: true })
-      return
+      return false
     }
-    onSubmit({
+    return onSubmit({
       ...draft,
       id: draft.id.trim(),
       name: draft.name.trim(),
       baseUrl: draft.baseUrl.trim(),
       api: draft.api.trim(),
       headers: draft.headers.map((row) => ({ key: row.key.trim(), value: row.value })),
-    })
+    }) !== false
   }
+  const shutdownLocked = useConfigurationEditTransaction(open, { dirty: isDirty, revision: draft, commit: handleSubmit })
 
   const requiredMark = (
     <span className="text-destructive" aria-hidden="true">
@@ -193,7 +196,8 @@ export function ModelsProviderFormDialog({
         submitLabel={t(mode === 'add'
           ? 'settings.models.form.submitAdd'
           : 'settings.models.form.submitEdit')}
-        onSubmit={handleSubmit}
+        onSubmit={() => { handleSubmit() }}
+        disabled={shutdownLocked}
       >
         <div className="flex flex-col gap-6">
           <ModelsFormGroup title={t('settings.models.form.identitySection')}>

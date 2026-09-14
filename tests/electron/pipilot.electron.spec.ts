@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process'
 import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
+import type { IpcMainInvokeEvent } from 'electron'
 import {
   _electron as electron,
   expect,
@@ -13,6 +14,7 @@ import {
   normalizeWindowBounds,
 } from '../../src/main/windows/window-state'
 import { PIPILOT_VERSION } from '../../src/shared/build-info'
+import { ipcChannels } from '../../src/shared/ipc/contracts'
 import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from '../../src/shared/settings'
 import { startPiSdkFixture } from './pi-sdk-fixture'
 import { selectInspectorView } from './select-inspector-view'
@@ -30,6 +32,51 @@ async function selectWorkspaceFromSystemDialog(
       value: async () => ({ canceled: false, filePaths: [selectedPath] }),
     })
   }, workspacePath)
+}
+
+async function holdCommandAcknowledgements(electronApp: ElectronApplication, match: {
+  commandType: 'prompt' | 'get_entries'
+  message?: string
+  entryId?: string
+}) {
+  return electronApp.evaluateHandle(({ ipcMain }, { channel, commandType, message, entryId }) => {
+    // Run real validation and SDK work. Gate every matching successful reply
+    // so a second refresh cannot complete hydration before assertions finish.
+    type Handler = (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown
+    const handlers = (ipcMain as unknown as { _invokeHandlers: Map<string, Handler> })._invokeHandlers
+    const original = handlers.get(channel)
+    if (!original) throw new Error('The Pi command IPC handler is not registered')
+    let release!: () => void
+    const acknowledgement = new Promise<void>((resolve) => { release = resolve })
+    const gate = {
+      accepted: false,
+      release,
+      restore: () => {
+        ipcMain.removeHandler(channel)
+        ipcMain.handle(channel, original)
+      },
+    }
+    ipcMain.removeHandler(channel)
+    ipcMain.handle(channel, async (event, ...args: unknown[]) => {
+      const request = args[0] as { command?: { type?: string; message?: string } } | undefined
+      if (request?.command?.type !== commandType ||
+          (message !== undefined && request.command.message !== message)) {
+        return original(event, ...args)
+      }
+      const result = await original(event, ...args) as {
+        ok?: boolean
+        value?: { success?: boolean; data?: { entries?: Array<{ id?: string }> } }
+      }
+      if (!result?.ok || !result.value?.success) return result
+      if (entryId !== undefined && !result.value.data?.entries?.some((entry) => entry.id === entryId)) {
+        return result
+      }
+      gate.accepted = true
+      await acknowledgement
+      return result
+    })
+    return gate
+  }, { channel: ipcChannels.localPiCommand, ...match })
 }
 
 test('waits for renderer subscriptions before starting configured Pi', async ({}, testInfo) => {
@@ -2866,7 +2913,24 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
       },
     })
 
-    await composer.fill('@fixture')
+    const draftSourceSession = await page.evaluate(() => window.pipilot!.localPi.runtime.status())
+    await expect(page.evaluate(() => window.pipilot!.localPi.runtime.command({
+      type: 'set_session_name', name: 'Draft isolation source',
+    }))).resolves.toMatchObject({ success: true })
+    const draftSourceRow = page.getByRole('button', { name: 'Draft isolation source', exact: true })
+    await expect(draftSourceRow).toBeVisible()
+    const inspector = page.getByRole('complementary', { name: 'Inspector' })
+    await selectInspectorView(inspector, 'Files')
+    const draftSourceFolder = inspector.getByRole('button').filter({ hasText: /^src$/u })
+    await expect(draftSourceFolder).toBeVisible()
+    if (await draftSourceFolder.getAttribute('aria-expanded') !== 'true') await draftSourceFolder.click()
+    const draftSourceFile = inspector.getByRole('button').filter({ hasText: /^example\.ts$/u })
+    await composer.fill('')
+    await draftSourceFile.click({ button: 'right' })
+    await page.getByRole('menuitem', { name: 'Add to composer', exact: true }).click()
+    await expect(page.locator('[data-composer-mention-kind="file"]')).toHaveCount(1)
+    await expect(composer).toBeFocused()
+    await composer.pressSequentially(' @fixture')
     await expect(mentionMenu).toBeVisible()
     await mentionMenu.getByRole('option', { name: /^fixture-skill\b/u }).click()
     await composer.pressSequentially('ordinary draft')
@@ -2883,27 +2947,43 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
       exact: true,
     })
     await expect(switchingDraftImage).toBeAttached()
-    await projectSession.click()
-    await expect(page.getByText('Loading conversation…', { exact: true })).toBeVisible()
-    const inspector = page.getByRole('complementary', { name: 'Inspector' })
-    await expect(inspector.getByRole('region', { name: 'Files', exact: true })
-      .getByText('Loading Pi session data…', { exact: true }))
-      .toBeVisible()
-    await expect(inspector.getByText('example.ts', { exact: true })).toHaveCount(0)
-    await selectInspectorView(inspector, 'Changes')
-    await expect(inspector.getByRole('region', { name: 'Changes', exact: true })
-      .getByText('Loading Pi session data…', { exact: true }))
-      .toBeVisible()
-    await expect(inspector.getByRole('region', { name: continuousDiffPaths[0] }))
-      .toHaveCount(0)
-    await expect(page.getByRole('button', { name: 'Navigate conversation', exact: true })).toBeDisabled()
-    await expect(page.getByRole('dialog', { name: 'Navigate conversation', exact: true })).toHaveCount(0)
-    await selectInspectorView(inspector, 'Files')
-    await expect(mentionMenu).toHaveCount(0)
-    await expect(mentionAtoms).toHaveCount(0)
-    await expect(composer).toHaveText('ordinary draft @typed stale query')
-    await expect(switchingDraftImage).toBeAttached()
-    await switchingDraftImage.click()
+    const sourceDraftText = await composer.innerText()
+    const sourcePreview = await page.getByRole('img', { name: 'survives-session-switch.png', exact: true }).getAttribute('src')
+    const hydrationGate = await holdCommandAcknowledgements(electronApp, {
+      commandType: 'get_entries',
+      entryId: '00000000-0000-4000-8000-000000000101',
+    })
+    try {
+      await projectSession.click()
+      await expect.poll(() => hydrationGate.evaluate((state) => state.accepted)).toBe(true)
+      await expect(page.getByText('Loading conversation…', { exact: true })).toBeVisible()
+      await expect(transcriptLog.locator('[data-user-message-image]')).toHaveCount(0)
+      await expect(transcriptLog.getByText('Selected session history response', { exact: true }))
+        .toHaveCount(0)
+      await expect(inspector.getByRole('region', { name: 'Files', exact: true })
+        .getByText('Loading Pi session data…', { exact: true }))
+        .toBeVisible()
+      // The workspace tree stays mounted to retain expansion, but must not
+      // expose the previous session's files while target hydration is pending.
+      await expect(inspector.getByText('example.ts', { exact: true })).toBeHidden()
+      await selectInspectorView(inspector, 'Changes')
+      await expect(inspector.getByRole('region', { name: 'Changes', exact: true })
+        .getByText('Loading Pi session data…', { exact: true }))
+        .toBeVisible()
+      await expect(inspector.getByRole('region', { name: continuousDiffPaths[0] }))
+        .toHaveCount(0)
+      await expect(page.getByRole('button', { name: 'Navigate conversation', exact: true })).toBeDisabled()
+      await expect(page.getByRole('dialog', { name: 'Navigate conversation', exact: true })).toHaveCount(0)
+      await selectInspectorView(inspector, 'Files')
+      await expect(mentionMenu).toHaveCount(0)
+      await expect(mentionAtoms).toHaveCount(0)
+      await expect(composer).toHaveText('')
+      await expect(switchingDraftImage).toHaveCount(0)
+      await expect(page.getByText('Loading conversation…', { exact: true })).toBeVisible()
+    } finally {
+      await hydrationGate.evaluate((state) => { state.release(); state.restore() })
+      await hydrationGate.dispose()
+    }
     await expect(transcriptLog.getByText('Selected session history response', { exact: true }))
       .toBeVisible()
     await expect(page.getByRole('button', {
@@ -2913,6 +2993,107 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
     await expect(page.getByText('Loading conversation…', { exact: true })).toHaveCount(0)
     await expect(page.getByRole('alertdialog', { name: 'Operation failed' }))
       .toHaveCount(0)
+
+    await test.step('isolates and restores text, image, mentions, and undo across A → B → A', async () => {
+      await expect(composer).toHaveAttribute('contenteditable', 'true')
+      await composer.click()
+      await composer.pressSequentially('target-only draft @example')
+      await expect(mentionMenu).toBeVisible()
+      await mentionMenu.getByRole('option', { name: /src\/example\.ts/ }).click()
+      await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeEnabled()
+      await page.locator('input[type="file"]').setInputFiles({
+        name: 'target-only.png', mimeType: 'image/png', buffer: pixelPng,
+      })
+      const targetImage = page.getByRole('button', { name: 'Remove image target-only.png', exact: true })
+      await expect(targetImage).toBeAttached()
+      const targetDraftText = await composer.innerText()
+
+      await draftSourceRow.click()
+      await expect.poll(() => page.evaluate(() => window.pipilot!.localPi.runtime.status()))
+        .toMatchObject({ sessionState: { sessionId: draftSourceSession.sessionState!.sessionId } })
+      await expect(page.getByText('Loading conversation…', { exact: true })).toHaveCount(0)
+      await expect(composer).toHaveText(sourceDraftText)
+      await expect(page.locator('[data-composer-mention-kind="skill"]')).toHaveCount(1)
+      await expect(page.locator('[data-composer-mention-kind="file"]')).toHaveCount(1)
+      await expect(mentionMenu).toHaveCount(0)
+      await expect(switchingDraftImage).toBeAttached()
+      await expect(targetImage).toHaveCount(0)
+      await expect(page.getByRole('img', { name: 'survives-session-switch.png', exact: true }))
+        .toHaveAttribute('src', sourcePreview!)
+
+      // A new editor visit has no foreign undo transaction. Its restored
+      // document is the baseline; new native edits can still be undone.
+      await composer.focus()
+      await page.keyboard.press(`${shortcutModifier}+z`)
+      await expect(composer).toHaveText(sourceDraftText)
+      await page.keyboard.press(process.platform === 'darwin' ? 'Meta+ArrowDown' : 'Control+End')
+      await composer.pressSequentially(' edited again')
+      await expect(composer).toContainText('edited again')
+      await page.keyboard.press(`${shortcutModifier}+z`)
+      await expect(composer).toHaveText(sourceDraftText)
+      await expect(mentionAtoms).toHaveCount(2)
+
+      await projectSession.click()
+      await expect(transcriptLog.getByText('Selected session history response', { exact: true })).toBeVisible()
+      await expect(composer).toHaveText(targetDraftText)
+      await expect(page.locator('[data-composer-mention-kind="file"]')).toHaveCount(1)
+      await expect(page.locator('[data-composer-mention-kind="skill"]')).toHaveCount(0)
+      await expect(switchingDraftImage).toHaveCount(0)
+      await expect(targetImage).toBeAttached()
+      await composer.focus()
+      await page.keyboard.press(`${shortcutModifier}+z`)
+      await expect(composer).toHaveText(targetDraftText)
+      await composer.fill('')
+      await targetImage.click()
+    })
+
+    await test.step('acknowledges a sent draft after A → B → A without clearing B', async () => {
+      const otherDraft = 'Keep this unsent draft in the other session'
+      const delayedPrompt = 'accepted while its composer is remounted'
+      await composer.fill(otherDraft)
+      await draftSourceRow.click()
+      await expect(composer).toHaveText(sourceDraftText)
+      await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeEnabled()
+      await composer.fill(delayedPrompt)
+      await expect(switchingDraftImage).toBeAttached()
+      const gate = await holdCommandAcknowledgements(electronApp, {
+        commandType: 'prompt', message: delayedPrompt,
+      })
+      try {
+        await page.getByRole('button', { name: 'Send', exact: true }).click()
+        await expect.poll(() => gate.evaluate((state) => state.accepted)).toBe(true)
+        await expect(composer).toHaveText(delayedPrompt)
+
+        await projectSession.click()
+        await expect(composer).toHaveText(otherDraft)
+        await expect(switchingDraftImage).toHaveCount(0)
+        await draftSourceRow.click()
+        await expect.poll(() => page.evaluate(() => window.pipilot!.localPi.runtime.status()))
+          .toMatchObject({ sessionState: { sessionId: draftSourceSession.sessionState!.sessionId } })
+        await expect(page.getByText('Loading conversation…', { exact: true })).toHaveCount(0)
+        await expect(composer).toHaveText(delayedPrompt)
+        // The earlier file-tree request was already consumed. Its removed
+        // reference must not be replayed into a later draft on a new visit.
+        await expect(page.locator('[data-composer-mention-kind="file"]')).toHaveCount(0)
+        await expect(switchingDraftImage).toBeAttached()
+
+        await gate.evaluate((state) => state.release())
+        await expect(composer).toHaveText('')
+        await expect(switchingDraftImage).toHaveCount(0)
+        await expect(transcriptLog.getByText(`Fixture response: ${delayedPrompt}`, { exact: true }))
+          .toBeVisible()
+        expect(piFixture.prompts.filter((prompt) => prompt === delayedPrompt)).toHaveLength(1)
+
+        await projectSession.click()
+        await expect(composer).toHaveText(otherDraft)
+        await composer.fill('')
+        await expect(transcriptLog.getByText('Selected session history response', { exact: true }))
+          .toBeVisible()
+      } finally {
+        await gate.evaluate((state) => { state.release(); state.restore() })
+        await gate.dispose()
+      }
+    })
 
     const subagentCall = page.locator(
       '[data-subagent-call-id="fixture-subagent-call"]',
@@ -3205,6 +3386,8 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
     await expect(page.getByRole('menuitemradio', { name: 'Pi shell' })).toHaveCount(0)
     await expect(page.getByRole('menuitemradio', { name: 'Outline', exact: true })).toHaveCount(0)
     await page.getByRole('menuitemradio', { name: 'Files', exact: true }).press('Escape')
+    await expect(inspector.getByRole('button', { name: 'Switch inspector view', exact: true }))
+      .toBeFocused()
     await composer.fill('/')
     await expect(slashMenu).toBeVisible()
     await expect(slashMenu.getByText('Commands', { exact: true })).toBeVisible()

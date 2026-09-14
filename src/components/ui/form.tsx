@@ -33,6 +33,7 @@ interface FormDialogProps {
   submitLabel: React.ReactNode
   onSubmit: () => void | Promise<void>
   submitDisabled?: boolean
+  disabled?: boolean
   className?: string
   bodyClassName?: string
   children: React.ReactNode
@@ -47,12 +48,13 @@ function FormDialog({
   submitLabel,
   onSubmit,
   submitDisabled,
+  disabled = false,
   className,
   bodyClassName,
   children,
 }: FormDialogProps) {
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(next) => { if (!disabled) onOpenChange(next) }}>
       <DialogContent
         className={cn(
           'flex max-h-[min(85vh,800px)] flex-col gap-0 p-0 sm:max-w-[760px]',
@@ -63,14 +65,14 @@ function FormDialog({
           <DialogTitle>{title}</DialogTitle>
           {description ? <DialogDescription>{description}</DialogDescription> : null}
         </DialogHeader>
-        <div className={cn('scroll-slim min-h-0 flex-1 overflow-y-auto px-6 py-4', bodyClassName)}>
+        <div inert={disabled || undefined} className={cn('scroll-slim min-h-0 flex-1 overflow-y-auto px-6 py-4', bodyClassName)}>
           {children}
         </div>
         <DialogFooter className="shrink-0 border-t border-border px-6 py-4">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" disabled={disabled} onClick={() => onOpenChange(false)}>
             {cancelLabel}
           </Button>
-          <Button variant="accent" onClick={() => void onSubmit()} disabled={submitDisabled}>
+          <Button variant="accent" onClick={() => void onSubmit()} disabled={disabled || submitDisabled}>
             {submitLabel}
           </Button>
         </DialogFooter>

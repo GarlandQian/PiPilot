@@ -28,7 +28,7 @@ vi.mock('node:fs', async (importOriginal) => {
   }
 })
 vi.mock('electron', () => ({
-  app: { getVersion: () => '0.0.3', isPackaged: false },
+  app: { getVersion: () => '0.0.4', isPackaged: false },
   shell: { openExternal: vi.fn() },
   ipcMain: {
     removeHandler: (channel: string) => electronMock.handlers.delete(channel),

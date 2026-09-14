@@ -74,12 +74,16 @@ test('keeps the unified desktop workspace usable with the official Pi configurat
         await expect(page.locator('[data-navigation-layout="sidebar"]')).toBeVisible()
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
         await expect.poll(() => page.locator('[data-composer-surface]').evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
-        const questionBounds = await question.boundingBox()
-        const answerBounds = await answer.boundingBox()
-        expect(questionBounds).not.toBeNull()
-        expect(answerBounds).not.toBeNull()
-        expect(questionBounds!.x).toBeGreaterThan(answerBounds!.x + 10)
-        expect(questionBounds!.x + questionBounds!.width).toBeCloseTo(answerBounds!.x + answerBounds!.width, 0)
+        // Resizing also changes Inspector visibility and scrollbar width.
+        // Measure both elements in one layout, then await responsive settlement.
+        await expect.poll(() => page.evaluate(() => {
+          const question = document.querySelector('[data-conversation-question]')?.getBoundingClientRect()
+          const answer = document.querySelector('.conversation-answer-content')?.getBoundingClientRect()
+          return {
+            inset: Boolean(question && answer && question.left > answer.left + 10),
+            aligned: Boolean(question && answer && Math.abs(question.right - answer.right) < 0.5),
+          }
+        })).toEqual({ inset: true, aligned: true })
         await page.mouse.move(width - 10, 10)
         await page.screenshot({ path: testInfo.outputPath(`desktop-${theme}-${width}.png`), animations: 'disabled' })
       }

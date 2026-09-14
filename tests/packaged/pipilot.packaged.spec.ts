@@ -27,6 +27,7 @@ import { PIPILOT_VERSION } from '../../src/shared/build-info'
 import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from '../../src/shared/settings'
 import { createWindowsUserPathAdapter } from '../../src/main/external-control/launcher-service'
 import { startPiSdkFixture } from '../electron/pi-sdk-fixture'
+import { resolvePackagedExecutable as resolvePackagedTarget, verifyPackagedArchitecture } from './resolve-packaged-executable'
 
 const require = createRequire(import.meta.url)
 const packagedWorkspaceId = '11111111-1111-4111-8111-111111111111'
@@ -156,42 +157,8 @@ async function createPackagedPiPackage(root: string) {
 }
 
 function resolvePackagedExecutable() {
-  const explicitPath = process.env.PIPILOT_PACKAGED_APP_PATH
-  if (explicitPath) {
-    const resolvedPath = resolve(explicitPath)
-    if (process.platform === 'darwin' && resolvedPath.endsWith('.app')) {
-      const bundledExecutable = join(
-        resolvedPath,
-        'Contents',
-        'MacOS',
-        'PiPilot',
-      )
-      if (!existsSync(bundledExecutable)) {
-        throw new Error(`The PiPilot application bundle has no executable: ${resolvedPath}`)
-      }
-      return bundledExecutable
-    }
-    return resolvedPath
-  }
-
-  const candidates = process.platform === 'darwin'
-    ? [
-        'release/mac-arm64/PiPilot.app/Contents/MacOS/PiPilot',
-        'release/mac/PiPilot.app/Contents/MacOS/PiPilot',
-        'release/mac-x64/PiPilot.app/Contents/MacOS/PiPilot',
-      ]
-    : process.platform === 'win32'
-      ? ['release/win-unpacked/PiPilot.exe']
-      : ['release/linux-unpacked/pipilot']
-  const executable = candidates
-    .map((candidate) => resolve(candidate))
-    .find((candidate) => existsSync(candidate))
-
-  if (!executable) {
-    throw new Error(
-      'No unpacked PiPilot application was found. Run the current-platform package:dir command first.',
-    )
-  }
+  const executable = resolvePackagedTarget()
+  verifyPackagedArchitecture(executable)
   return executable
 }
 
@@ -1080,7 +1047,7 @@ test('runs the installed stable MCP command headlessly through the private bridg
 
   let browser: Browser | null = null
   let page: Page | null = null
-  let restoreWindowsPath: (() => void) | null = null
+  let restoreWindowsPath: (() => Promise<void>) | null = null
   try {
     browser = await connectToPackagedApp(debugPort, appProcess, () => launchOutput)
     page = await findPiPilotPage(browser)
@@ -1090,20 +1057,20 @@ test('runs the installed stable MCP command headlessly through the private bridg
         process.env,
         join(userDataPath, 'registry-adapter-smoke'),
       )
-      const original = adapter.read()
-      restoreWindowsPath = () => {
-        if (original) adapter.write(original)
-        else adapter.remove()
+      const original = await adapter.read()
+      restoreWindowsPath = async () => {
+        if (original) await adapter.write(original)
+        else await adapter.remove()
       }
       for (const type of ['REG_SZ', 'REG_EXPAND_SZ'] as const) {
         const value = {
           type,
           value: '  C:\\工具;;%USERPROFILE%\\bin;C:\\Program Files\\PiPilot  ',
         }
-        adapter.write(value)
-        expect(adapter.read()).toEqual(value)
+        await adapter.write(value)
+        expect(await adapter.read()).toEqual(value)
       }
-      restoreWindowsPath()
+      await restoreWindowsPath()
     }
     const disabled = await page.evaluate(() => window.pipilot!.externalControl.get())
     expect(disabled).toMatchObject({ enabled: false, state: 'disabled' })
@@ -1363,7 +1330,7 @@ test('runs the installed stable MCP command headlessly through the private bridg
   } finally {
     await stopPackagedApp(page, browser, appProcess)
     await piFixture.close()
-    restoreWindowsPath?.()
+    await restoreWindowsPath?.()
     await Promise.all([
       rm(userDataPath, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }),
       rm(fixtureRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }),

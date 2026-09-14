@@ -105,47 +105,11 @@ jobs:
   verify:
     name: Verify source and Electron workflows
     needs: preflight
-    runs-on: macos-26
-    timeout-minutes: 60
     permissions:
       contents: read
-    steps:
-      - name: Check out source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Install pnpm
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
-        with:
-          version: 12.3.4
-      - name: Install Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24.18.0
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-      - name: Typecheck
-        run: pnpm typecheck
-      - name: Unit tests
-        run: pnpm test:unit
-      - name: Build
-        run: pnpm build
-      - name: Integration tests
-        run: pnpm test:integration
-      - name: Electron E2E
-        run: pnpm test:electron
-      - name: Upload failure artifacts
-        if: ${{ failure() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: release-verification-failures-${{ needs.preflight.outputs.version }}
-          path: |
-            test-results/
-            playwright-report/
-          if-no-files-found: ignore
-          retention-days: 14
+    uses: ./.github/workflows/verify.yml
+    with:
+      artifact_prefix: release-${{ needs.preflight.outputs.version }}
 
   package:
     name: Package ${{ matrix.platform }}
@@ -222,7 +186,35 @@ jobs:
           sudo chmod 4755 "$sandbox"
           test "$(stat -c '%u:%g:%a' "$sandbox")" = '0:0:4755'
       - name: Smoke-test package
+        if: ${{ matrix.platform != 'macos' }}
         run: ${{ matrix.smoke }}
+        env:
+          PIPILOT_PACKAGED_ARCH: x64
+      - name: Smoke-test macOS ARM64 package
+        if: ${{ matrix.platform == 'macos' }}
+        run: pnpm test:packaged --output=test-results/packaged-arm64
+        env:
+          PIPILOT_PACKAGED_ARCH: arm64
+      - name: Prepare macOS Intel execution
+        if: ${{ matrix.platform == 'macos' }}
+        shell: bash
+        run: |
+          if ! arch -x86_64 /usr/bin/true; then
+            sudo softwareupdate --install-rosetta --agree-to-license
+          fi
+      - name: Smoke-test macOS Intel package
+        if: ${{ matrix.platform == 'macos' }}
+        run: pnpm test:packaged --output=test-results/packaged-x64
+        env:
+          PIPILOT_PACKAGED_ARCH: x64
+      - name: Upload package test failure artifacts
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: packaged-failures-${{ matrix.platform }}-${{ needs.preflight.outputs.version }}
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Upload release candidate
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

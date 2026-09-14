@@ -1,7 +1,9 @@
 import { z } from 'zod'
 import { workspaceIdSchema } from './schemas/workspace'
 
-export const SESSION_CATALOG_MAX_CANDIDATES = 200
+// These are work-slice budgets, not limits on discoverable sessions. Directory
+// enumeration resumes after yielding; the catalog pages the complete index.
+export const SESSION_CATALOG_MAX_SCAN_ENTRIES = 200
 // Official Pi sessions routinely grow beyond the former 8 MiB metadata cap.
 // Keep catalog reads bounded, but large enough that a normal long-running
 // conversation remains discoverable and selectable.
@@ -11,6 +13,7 @@ export const SESSION_CATALOG_MAX_CONCURRENT_READERS = 8
 export const SESSION_CATALOG_MAX_PAGE_ROWS = 50
 export const SESSION_CATALOG_NAME_LIMIT = 256
 export const SESSION_CATALOG_PREVIEW_LIMIT = 512
+export const SESSION_CATALOG_MAX_DIAGNOSTIC_COUNT = 201
 
 export const conversationScopeSchema = z.discriminatedUnion('kind', [
   z
@@ -84,7 +87,7 @@ export type SessionCatalogDiagnosticCode = z.infer<
 export const sessionCatalogDiagnosticSchema = z
   .object({
     code: sessionCatalogDiagnosticCodeSchema,
-    count: z.number().int().positive().max(SESSION_CATALOG_MAX_CANDIDATES + 1),
+    count: z.number().int().positive().max(SESSION_CATALOG_MAX_DIAGNOSTIC_COUNT),
   })
   .strict()
 

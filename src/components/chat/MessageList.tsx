@@ -7,8 +7,7 @@ import { useFollowingViewport } from './useFollowingViewport'
 import { UserMessage, AgentMessage, ThinkingMessage, NoticeMessage, PlanModeMessage, ResponseActions, agentAnimationKey, type ThinkingDurationRegistry } from './ConversationMessages'
 import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
-import { groupConversationTurns } from '@/renderer/pi-rpc/presentation'
-import { projectResponsePresentation, type ResponsePresentationSegment } from '@/renderer/pi-rpc/response-presentation'
+import { createConversationResponseProjector, type ResponsePresentation, type ResponsePresentationSegment } from '@/renderer/pi-rpc/response-presentation'
 import { ConversationResponse } from './ConversationResponse'
 import { MarkdownContent } from './markdown/MarkdownContent'
 import { useConversationOperationFeedback } from '@/renderer/composer/use-operation-feedback'
@@ -40,6 +39,58 @@ export interface ConversationJumpRequest {
   entryId: string
   sequence: number
 }
+
+const NO_TURN_KEYS: ReadonlySet<string> = new Set()
+const renderPrompt = (turn: Extract<Turn, { kind: 'user' }>) => <UserMessage turn={turn} />
+
+/** Completed rows receive stable data and flags while the live row advances. */
+const ConversationRow = React.memo(function ConversationRow({ response, anchorNodes, highlighted,
+  sessionKey, selectedSubagentId, subagentFocusRequest, onOpenSubagent, onPlanAction,
+  animateAgentKeys, streamingAgentKeys, hiddenResponseActionIds, motionEnabled,
+  onTypingChange, thinkingDurations, forkBusy, forkingId, onFork, canFork,
+}: Pick<MessageListProps, 'sessionKey' | 'selectedSubagentId' | 'subagentFocusRequest' | 'onOpenSubagent' | 'onPlanAction'> & {
+  response: ResponsePresentation
+  anchorNodes: Map<string, HTMLDivElement>
+  highlighted: boolean
+  animateAgentKeys: ReadonlySet<string>
+  streamingAgentKeys: ReadonlySet<string>
+  hiddenResponseActionIds: ReadonlySet<string>
+  motionEnabled: boolean
+  onTypingChange(key: string, typing: boolean): void
+  thinkingDurations: ThinkingDurationRegistry
+  forkBusy: boolean
+  forkingId: string | undefined
+  onFork(turn: Extract<Turn, { kind: 'response-actions' }>): void
+  canFork: boolean
+}) {
+  const anchorRef = React.useCallback((node: HTMLDivElement | null) => {
+    if (!response.anchorEntryId) return
+    if (node) anchorNodes.set(response.anchorEntryId, node)
+    else anchorNodes.delete(response.anchorEntryId)
+  }, [anchorNodes, response.anchorEntryId])
+  const renderSegment = (item: ResponsePresentationSegment, visible: boolean): React.ReactNode => {
+    if (item.kind === 'activity-run') return <ToolActivityRegion run={item.run} visible={visible}
+      sessionKey={sessionKey} selectedSubagentId={selectedSubagentId} focusRequest={subagentFocusRequest} onOpenSubagent={onOpenSubagent} />
+    const turn = item.turn
+    switch (turn.kind) {
+      case 'user': return <UserMessage turn={turn} />
+      case 'agent': {
+        const key = agentAnimationKey(turn)
+        return <AgentMessage turn={turn} animationKey={key} animateOnMount={animateAgentKeys.has(key)}
+          motionEnabled={motionEnabled} onTypingChange={onTypingChange} streaming={streamingAgentKeys.has(key)} />
+      }
+      case 'thinking': return <ThinkingMessage turn={turn} thinkingDurations={thinkingDurations} />
+      case 'notice': return <NoticeMessage turn={turn} />
+      case 'plan': return <PlanModeMessage turn={turn} onAction={onPlanAction} />
+      case 'activity': return <ResponseActivityRow activity={turn.activity} />
+      case 'response-actions': return hiddenResponseActionIds.has(turn.id) ? null : <ResponseActions
+        turn={turn} forkBusy={forkBusy} forking={forkingId === turn.id} onFork={onFork} canFork={Boolean(turn.forkEntryId && canFork)} />
+      default: return null
+    }
+  }
+  return <ConversationResponse response={response} sessionKey={sessionKey} focusRequest={subagentFocusRequest}
+    highlighted={highlighted} anchorRef={anchorRef} renderPrompt={renderPrompt} renderSegment={renderSegment} />
+})
 
 export function MessageList({
   emptyState,
@@ -202,47 +253,16 @@ export function MessageList({
     }, 1_600)
   }, [anchorNodes, jumpRequest, ready, sessionKey, motionEnabled, pauseFollowing])
 
-  const fork = (
+  const fork = React.useCallback((
     turn: Extract<Turn, { kind: 'response-actions' }>,
   ) => {
     const entryId = turn.forkEntryId
     if (!entryId || !onFork) return
     void forkFeedback.run(turn.id, () => onFork(entryId), t('sidebar.operationError.title'))
-  }
+  }, [forkFeedback.run, onFork, t])
 
-  const responseGroups = React.useMemo(() => groupConversationTurns(turns), [turns])
-  const projectedResponseGroups = React.useMemo(() => responseGroups.map((group, index) =>
-    projectResponsePresentation(group, { active: index === responseGroups.length - 1, status }),
-  ), [responseGroups, status])
-  const renderSegment = (item: ResponsePresentationSegment, visible: boolean): React.ReactNode => {
-    if (item.kind === 'activity-run') return <ToolActivityRegion
-      run={item.run}
-      visible={visible}
-      sessionKey={sessionKey}
-      selectedSubagentId={selectedSubagentId}
-      focusRequest={subagentFocusRequest}
-      onOpenSubagent={onOpenSubagent}
-    />
-    const turn = item.turn
-    switch (turn.kind) {
-      case 'user': return <UserMessage turn={turn} />
-      case 'agent': {
-        const animationKey = agentAnimationKey(turn)
-        return <AgentMessage turn={turn} animationKey={animationKey}
-          animateOnMount={animateAgentKeys.has(animationKey)} motionEnabled={motionEnabled}
-          onTypingChange={handleTypingChange} streaming={streamingAgentKeys.has(animationKey)} />
-      }
-      case 'thinking': return <ThinkingMessage turn={turn} thinkingDurations={thinkingDurations} />
-      case 'notice': return <NoticeMessage turn={turn} />
-      case 'plan': return <PlanModeMessage turn={turn} onAction={onPlanAction} />
-      case 'activity': return <ResponseActivityRow activity={turn.activity} />
-      case 'response-actions':
-        return hiddenResponseActionIds.has(turn.id) ? null : <ResponseActions
-          turn={turn} forkBusy={forkFeedback.pending !== null} forking={forkFeedback.pending?.action === turn.id}
-          onFork={fork} canFork={Boolean(turn.forkEntryId && onFork)} />
-      default: return null
-    }
-  }
+  const responseProjector = React.useMemo(() => createConversationResponseProjector(), [sessionKey])
+  const projectedResponseGroups = React.useMemo(() => responseProjector.project(turns, status), [responseProjector, turns, status])
   const transcriptTyping = animateAgentKeys.size > 0 ||
     streamingAgentKeys.size > 0 ||
     typingAgentKeys.size > 0
@@ -284,18 +304,26 @@ export function MessageList({
                 {t('chat.historyTruncated')}
               </div>
             )}
-            {projectedResponseGroups.map((response) => <ConversationResponse
+            {projectedResponseGroups.map((response) => <ConversationRow
               key={`${sessionKey}:${response.id}`}
               response={response}
               sessionKey={sessionKey}
-              focusRequest={subagentFocusRequest}
+              subagentFocusRequest={subagentFocusRequest}
               highlighted={Boolean(response.anchorEntryId && highlightedEntryId === response.anchorEntryId)}
-              anchorRef={response.anchorEntryId ? (node) => {
-                if (node) anchorNodes.set(response.anchorEntryId!, node)
-                else anchorNodes.delete(response.anchorEntryId!)
-              } : undefined}
-              renderPrompt={(turn) => <UserMessage turn={turn} />}
-              renderSegment={renderSegment}
+              anchorNodes={anchorNodes}
+              selectedSubagentId={selectedSubagentId}
+              onOpenSubagent={onOpenSubagent}
+              onPlanAction={onPlanAction}
+              animateAgentKeys={response.segments.some((item) => item.kind === 'turn' && item.turn.kind === 'agent' && animateAgentKeys.has(agentAnimationKey(item.turn))) ? animateAgentKeys : NO_TURN_KEYS}
+              streamingAgentKeys={response.segments.some((item) => item.kind === 'turn' && item.turn.kind === 'agent' && streamingAgentKeys.has(agentAnimationKey(item.turn))) ? streamingAgentKeys : NO_TURN_KEYS}
+              hiddenResponseActionIds={response.segments.some((item) => item.kind === 'turn' && hiddenResponseActionIds.has(item.turn.id)) ? hiddenResponseActionIds : NO_TURN_KEYS}
+              motionEnabled={motionEnabled}
+              onTypingChange={handleTypingChange}
+              thinkingDurations={thinkingDurations}
+              forkBusy={forkFeedback.pending !== null}
+              forkingId={forkFeedback.pending?.action}
+              onFork={fork}
+              canFork={Boolean(onFork)}
             />)}
             {projectedResponseGroups.length === 0 && (status === 'running' || status === 'planning') ? (
               <div className="flex items-center gap-2 text-caption text-muted-foreground" role="status">
