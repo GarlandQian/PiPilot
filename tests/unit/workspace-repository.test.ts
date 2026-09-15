@@ -41,8 +41,13 @@ describe('WorkspaceRepository', () => {
       expect(snapshot.recent.every((workspace) => !('path' in workspace))).toBe(true)
 
       const persisted = await readFile(filePath, 'utf8')
-      expect(persisted).toContain(JSON.stringify(firstPath))
-      expect(persisted).toContain(JSON.stringify(secondPath))
+      const persistedDocument = JSON.parse(persisted) as {
+        recent: Array<{ path: string }>
+      }
+      expect(persistedDocument.recent.map((workspace) => workspace.path)).toEqual([
+        secondPath,
+        firstPath,
+      ])
       expect((await stat(filePath)).mode & 0o777).toBe(0o600)
       expect(JSON.parse(persisted)).not.toHaveProperty('currentId')
       expect(JSON.parse(persisted)).not.toHaveProperty('sessionPins')

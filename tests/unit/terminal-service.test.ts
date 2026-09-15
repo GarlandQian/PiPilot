@@ -323,7 +323,7 @@ describe('TerminalService', () => {
     async (platform) => {
       const root = await temporaryDirectory(`terminal-shell-${platform}`)
       const configuredShell = join(root, 'test-shell')
-      await writeFile(configuredShell, '', { mode: 0o755 })
+      await writeFile(configuredShell, '#!/bin/sh\n', { mode: 0o755 })
       const launches: Array<{ file: string; args: string[] }> = []
       const service = new TerminalService(
         () => firstScope,
