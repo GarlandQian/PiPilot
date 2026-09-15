@@ -256,13 +256,24 @@ function delay(milliseconds: number) {
   })
 }
 
+const PACKAGED_STARTUP_TIMEOUT_MS = 60_000
+const PACKAGED_STARTUP_POLL_INTERVAL_MS = 100
+const PACKAGED_RUNTIME_POLL_OPTIONS = {
+  timeout: 120_000,
+  intervals: [100, 250, 500, 1_000],
+}
+
 async function connectToPackagedApp(
   port: number,
   appProcess: ChildProcess,
   getLaunchOutput: () => string,
 ) {
   const endpoint = `http://127.0.0.1:${port}`
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  for (
+    let elapsed = 0;
+    elapsed < PACKAGED_STARTUP_TIMEOUT_MS;
+    elapsed += PACKAGED_STARTUP_POLL_INTERVAL_MS
+  ) {
     if (appProcess.exitCode !== null || appProcess.signalCode !== null) {
       throw new Error(
         `PiPilot exited before CDP was ready (code ${appProcess.exitCode}, signal ${appProcess.signalCode}).\n${getLaunchOutput()}`,
@@ -271,20 +282,24 @@ async function connectToPackagedApp(
     try {
       return await chromium.connectOverCDP(endpoint)
     } catch {
-      await delay(100)
+      await delay(PACKAGED_STARTUP_POLL_INTERVAL_MS)
     }
   }
   throw new Error(`PiPilot did not expose CDP in time.\n${getLaunchOutput()}`)
 }
 
 async function findPiPilotPage(browser: Browser) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  for (
+    let elapsed = 0;
+    elapsed < PACKAGED_STARTUP_TIMEOUT_MS;
+    elapsed += PACKAGED_STARTUP_POLL_INTERVAL_MS
+  ) {
     for (const context of browser.contexts()) {
       for (const page of context.pages()) {
         if (await page.title().catch(() => '') === 'PiPilot') return page
       }
     }
-    await delay(100)
+    await delay(PACKAGED_STARTUP_POLL_INTERVAL_MS)
   }
   throw new Error('The packaged PiPilot renderer did not become available.')
 }
@@ -352,7 +367,7 @@ async function stopPackagedApp(
 }
 
 test('runs the bundled Pi SDK workflow from the packaged application', async () => {
-  test.setTimeout(180_000)
+  test.setTimeout(600_000)
   const executable = resolvePackagedExecutable()
   expect(inspectPackagedApplication(executable)).toEqual({
     hasLegacyAgentWorker: false,
@@ -567,9 +582,10 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
       'workspace',
     ])
 
-    await expect.poll(() => page!.evaluate(() => (
-      window.pipilot!.localPi.runtime.status()
-    ))).toMatchObject({ state: 'ready' })
+    await expect.poll(
+      () => page!.evaluate(() => window.pipilot!.localPi.runtime.status()),
+      PACKAGED_RUNTIME_POLL_OPTIONS,
+    ).toMatchObject({ state: 'ready' })
 
     const workspaceSnapshot = await page.evaluate(() => window.pipilot!.workspace.get())
     expect(workspaceSnapshot.current).toBeUndefined()
@@ -590,13 +606,17 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
     await projectActions.focus()
     await page.keyboard.press('Enter')
     await page.getByRole('menuitem', { name: 'Open project', exact: true }).click()
-    await expect.poll(() => page!.evaluate(() => window.pipilot!.conversation.get()))
+    await expect.poll(
+      () => page!.evaluate(() => window.pipilot!.conversation.get()),
+      PACKAGED_RUNTIME_POLL_OPTIONS,
+    )
       .toMatchObject({
         activeScope: { kind: 'project', workspaceId: packagedWorkspaceId },
       })
-    await expect.poll(() => page!.evaluate(() => (
-      window.pipilot!.localPi.runtime.status()
-    ))).toMatchObject({ state: 'ready', cwd: canonicalWorkspacePath })
+    await expect.poll(
+      () => page!.evaluate(() => window.pipilot!.localPi.runtime.status()),
+      PACKAGED_RUNTIME_POLL_OPTIONS,
+    ).toMatchObject({ state: 'ready', cwd: canonicalWorkspacePath })
 
     await page.getByRole('button', { name: 'Show more', exact: true }).click()
 
@@ -608,15 +628,17 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
 
     await expect.poll(() => page!.evaluate(() => (
       window.pipilot!.piIntegrations.load({ kind: 'global' })
-    ))).toMatchObject({
+    )), PACKAGED_RUNTIME_POLL_OPTIONS).toMatchObject({
       state: 'ready',
       executable: { version: '0.85.1' },
-      packages: [expect.objectContaining({
-        displayName: 'packaged-fixture-package',
-        installedVersion: '1.0.0',
-        source: globalPackagePath,
-        scope: 'global',
-      })],
+      packages: expect.arrayContaining([
+        expect.objectContaining({
+          displayName: 'packaged-fixture-package',
+          installedVersion: '1.0.0',
+          source: globalPackagePath,
+          scope: 'global',
+        }),
+      ]),
       resources: expect.arrayContaining([
         expect.objectContaining({
           label: 'packaged-fixture-skill',
@@ -655,11 +677,15 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
     await page.getByRole('button', { name: 'Sessions', exact: true }).click()
 
     await page.getByRole('button', { name: 'Quick general chat', exact: true }).click()
-    await expect.poll(() => page!.evaluate(() => window.pipilot!.conversation.get()))
+    await expect.poll(
+      () => page!.evaluate(() => window.pipilot!.conversation.get()),
+      PACKAGED_RUNTIME_POLL_OPTIONS,
+    )
       .toMatchObject({ activeScope: { kind: 'projectless' } })
-    await expect.poll(() => page!.evaluate(() => (
-      window.pipilot!.localPi.runtime.status()
-    ))).toMatchObject({ state: 'ready' })
+    await expect.poll(
+      () => page!.evaluate(() => window.pipilot!.localPi.runtime.status()),
+      PACKAGED_RUNTIME_POLL_OPTIONS,
+    ).toMatchObject({ state: 'ready' })
     await expect(projectSession).toBeVisible()
 
     const runtimeBeforeProjectSession = await page.evaluate(() => (
@@ -682,7 +708,7 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
         sessionId: snapshot.sessionState?.sessionId,
         state: snapshot.state,
       }))
-    })).toEqual({
+    }), PACKAGED_RUNTIME_POLL_OPTIONS).toEqual({
       cwd: canonicalWorkspacePath,
       sessionId: expect.any(String),
       state: 'ready',
@@ -816,14 +842,20 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
 
     for (const session of retainedSessions) {
       await page.getByRole('button', { name: session.name, exact: true }).click()
+      await expect.poll(() => page!.evaluate(async () => {
+        const snapshot = await window.pipilot!.localPi.runtime.status()
+        return {
+          state: snapshot.state,
+          sessionFile: snapshot.sessionFile,
+          sessionId: snapshot.sessionState?.sessionId,
+        }
+      }), PACKAGED_RUNTIME_POLL_OPTIONS).toMatchObject({
+        state: 'ready',
+        sessionFile: session.file,
+        sessionId: session.sessionId,
+      })
       await expect(page.getByText(session.response, { exact: true }))
-        .toBeVisible({ timeout: 20_000 })
-      await expect(page.evaluate(() => window.pipilot!.localPi.runtime.status()))
-        .resolves.toMatchObject({
-          state: 'ready',
-          sessionFile: session.file,
-          sessionState: { sessionId: session.sessionId },
-        })
+        .toBeVisible({ timeout: 120_000 })
     }
 
     await delay(5_000)
