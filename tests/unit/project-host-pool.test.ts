@@ -350,6 +350,7 @@ describe('ProjectHostPool', () => {
       type: 'runtime.create',
     }))
     expect(createRequest?.command).not.toHaveProperty('sessionDir')
+    expect(createRequest?.options).toMatchObject({ timeoutMs: 120_000 })
     await pool.dispose()
   })
 

@@ -26,6 +26,9 @@ import {
 } from './pi-host-controller'
 import { RuntimeMaintenanceBusyError, RuntimeMaintenanceGate, type RuntimeMaintenancePermit } from './runtime-maintenance-gate'
 
+// Cold packaged Intel startup loads the SDK extension graph under Rosetta.
+const PROJECT_RUNTIME_CREATE_TIMEOUT_MS = 120_000
+
 export type ProjectHostScopeKind = 'project' | 'projectless'
 
 export interface ProjectHostScope {
@@ -1324,7 +1327,7 @@ export class ProjectHostPool {
       ...(sessionDir === undefined ? {} : { sessionDir }),
       ...(sessionFile === undefined ? {} : { sessionFile }),
       ...(forkSessionFile === undefined ? {} : { forkSessionFile }),
-    })
+    }, { timeoutMs: PROJECT_RUNTIME_CREATE_TIMEOUT_MS })
     if (this.hosts.get(entry.hostKey) !== entry || entry.state !== 'ready') {
       throw new ProjectHostPoolError(
         'HOST_CRASHED',

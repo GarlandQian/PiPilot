@@ -26,7 +26,8 @@ import {
 } from '../../shared/pi-host-protocol'
 
 export const PI_HOST_EXPECTED_SDK_VERSION = '0.85.1'
-export const DEFAULT_PI_HOST_HANDSHAKE_TIMEOUT_MS = 15_000
+// Packaged Intel builds may initialize the Electron utility under Rosetta.
+export const DEFAULT_PI_HOST_HANDSHAKE_TIMEOUT_MS = 60_000
 export const DEFAULT_PI_HOST_REQUEST_TIMEOUT_MS = 30_000
 export const DEFAULT_PI_HOST_SHUTDOWN_TIMEOUT_MS = 2_000
 export const DEFAULT_PI_HOST_MAX_PENDING_REQUESTS = 128
