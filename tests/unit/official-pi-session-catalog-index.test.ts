@@ -160,7 +160,10 @@ describe('official Pi session metadata index', () => {
     const f = await fixture()
     const file = await f.write('one')
     const headerCwd = join(f.root, 'old-project')
-    const contents = f.contents('one').replace(join(f.root, 'project'), headerCwd)
+    const contents = f.contents('one').replace(
+      JSON.stringify(join(f.root, 'project')),
+      JSON.stringify(headerCwd),
+    )
     await fs.writeFile(file, contents)
     await f.observations.observe(scope, file)
     const first = await f.catalog.list(scope)
