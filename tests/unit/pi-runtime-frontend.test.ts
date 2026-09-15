@@ -2495,7 +2495,7 @@ describe('PiRuntimeFrontend', () => {
     await frontend.dispose()
   })
 
-  it('maps Host recovery failure to one non-recoverable activation error', async () => {
+  it('retries Host recovery failure once before reporting a non-recoverable activation error', async () => {
     const { frontend, pool } = createHarness()
     pool.createError = new ProjectHostPoolError(
       'HOST_RECOVERY_FAILED',
@@ -2509,7 +2509,7 @@ describe('PiRuntimeFrontend', () => {
       code: 'PI_RUNTIME_HOST_RECOVERY_FAILED',
       recoverable: false,
     })
-    expect(pool.createCount).toBe(1)
+    expect(pool.createCount).toBe(2)
     expect(frontend.getSnapshot()).toMatchObject({
       state: 'error',
       diagnostics: [{ code: 'PI_RUNTIME_HOST_RECOVERY_FAILED' }],
