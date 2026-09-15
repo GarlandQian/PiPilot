@@ -111,6 +111,39 @@ describe('external-control local bridge', () => {
     expect(clientCounts[clientCounts.length - 1]).toBe(0)
   })
 
+  it('retries transient descriptor publication races during client connect', async () => {
+    if (process.platform === 'win32') return
+    const directory = temporaryDirectory()
+    const descriptor = new ExternalControlDescriptorRepository(
+      join(directory, 'descriptor.json'),
+    )
+    const server = new ConversationMcpBridgeServer({
+      descriptorRepository: descriptor,
+      temporaryDirectory: '/tmp',
+      handler() {
+        return { conversations: [], nextCursor: null, diagnostics: [] }
+      },
+    })
+    const active = await server.start()
+    let reads = 0
+    vi.spyOn(descriptor, 'read').mockImplementation(() => {
+      reads += 1
+      if (reads === 1) {
+        throw new ExternalControlError(
+          'pipilot_unavailable',
+          'PiPilot External Control is unavailable.',
+        )
+      }
+      return active
+    })
+
+    const client = new ConversationMcpBridgeClient(descriptor)
+    await expect(client.connect(1_000)).resolves.toBeUndefined()
+    expect(reads).toBeGreaterThan(1)
+    client.close()
+    await server.close()
+  })
+
   it('rolls back descriptor and socket directory when listen fails', async () => {
     if (process.platform === 'win32') return
     const directory = temporaryDirectory()

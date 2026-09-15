@@ -589,10 +589,16 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
       'workspace',
     ])
 
-    await expect.poll(
-      () => page!.evaluate(() => window.pipilot!.localPi.runtime.status()),
-      PACKAGED_RUNTIME_POLL_OPTIONS,
-    ).toMatchObject({ state: 'ready' })
+    await expect.poll(async () => {
+      const snapshot = await page!.evaluate(() => window.pipilot!.localPi.runtime.status())
+      return snapshot.state === 'ready'
+        ? 'ready'
+        : JSON.stringify({
+          state: snapshot.state,
+          stderr: snapshot.stderr,
+          diagnostics: snapshot.diagnostics,
+        })
+    }, PACKAGED_RUNTIME_POLL_OPTIONS).toBe('ready')
 
     const workspaceSnapshot = await page.evaluate(() => window.pipilot!.workspace.get())
     expect(workspaceSnapshot.current).toBeUndefined()
