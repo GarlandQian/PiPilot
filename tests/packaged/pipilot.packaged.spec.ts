@@ -263,6 +263,12 @@ const PACKAGED_RUNTIME_POLL_OPTIONS = {
   timeout: 120_000,
   intervals: [100, 250, 500, 1_000],
 }
+// Rosetta can also take longer to start the packaged MCP entrypoint while
+// reporting that a stopped desktop bridge is unavailable.
+const PACKAGED_MCP_EXIT_TIMEOUT_MS = process.platform === 'darwin' &&
+  process.env.PIPILOT_PACKAGED_ARCH === 'x64'
+  ? 60_000
+  : 10_000
 
 async function connectToPackagedApp(
   port: number,
@@ -1250,7 +1256,7 @@ test('runs the installed stable MCP command headlessly through the private bridg
     expect(unexpectedPackagedMcpStderr(stderr)).toBe('')
 
     stdioProcess.stdin?.end()
-    expect(await waitForProcessExit(stdioProcess, 10_000)).toBe(true)
+    expect(await waitForProcessExit(stdioProcess, PACKAGED_MCP_EXIT_TIMEOUT_MS)).toBe(true)
     expect(stdioProcess.exitCode).toBe(0)
     await expect.poll(() => page!.evaluate(() => (
       window.pipilot!.externalControl.get()
@@ -1284,7 +1290,7 @@ test('runs the installed stable MCP command headlessly through the private bridg
     unavailable.stderr?.on('data', (chunk: Buffer) => {
       unavailableStderr += chunk.toString('utf8')
     })
-    expect(await waitForProcessExit(unavailable, 10_000)).toBe(true)
+    expect(await waitForProcessExit(unavailable, PACKAGED_MCP_EXIT_TIMEOUT_MS)).toBe(true)
     expect(unavailable.exitCode).toBe(1)
     expect(unexpectedPackagedMcpStdout(unavailableStdout)).toBe('')
     expect(unexpectedPackagedMcpStderr(unavailableStderr)).toBe(
@@ -1315,7 +1321,7 @@ test('runs the installed stable MCP command headlessly through the private bridg
     stopped.stderr?.on('data', (chunk: Buffer) => {
       stoppedStderr += chunk.toString('utf8')
     })
-    expect(await waitForProcessExit(stopped, 10_000)).toBe(true)
+    expect(await waitForProcessExit(stopped, PACKAGED_MCP_EXIT_TIMEOUT_MS)).toBe(true)
     expect(stopped.exitCode).toBe(1)
     expect(unexpectedPackagedMcpStdout(stoppedStdout)).toBe('')
     expect(unexpectedPackagedMcpStderr(stoppedStderr)).toBe(
