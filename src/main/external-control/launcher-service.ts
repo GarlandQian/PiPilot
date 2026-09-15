@@ -1058,6 +1058,9 @@ export class ExternalControlLauncherService {
     const pathValue = this.options.testTargetDirectory
       ? this.options.testTargetDirectory
       : this.environment.PATH
+    const pathEntries = this.options.testTargetDirectory
+      ? [this.options.testTargetDirectory]
+      : pathValue?.split(POSIX_PATH_DELIMITER) ?? []
     if (!pathValue || pathValue.includes('\0')) {
       return { snapshot: unsupported(
         'launcher_unsafe_target',
@@ -1073,7 +1076,7 @@ export class ExternalControlLauncherService {
       stableTargets.add(resolve(this.options.homeDirectory, 'bin', LAUNCHER_NAME))
     }
 
-    for (const rawDirectory of pathValue.split(POSIX_PATH_DELIMITER)) {
+    for (const rawDirectory of pathEntries) {
       if (!rawDirectory || !isAbsolute(rawDirectory) || /[\0\r\n]/u.test(rawDirectory)) {
         return { snapshot: unsupported(
           'launcher_unsafe_target',
