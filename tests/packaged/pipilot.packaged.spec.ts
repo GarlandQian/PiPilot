@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import { once } from 'node:events'
 import { existsSync, readdirSync, realpathSync } from 'node:fs'
 import {
@@ -160,6 +160,18 @@ function resolvePackagedExecutable() {
   const executable = resolvePackagedTarget()
   verifyPackagedArchitecture(executable)
   return executable
+}
+
+function spawnPackagedApplication(
+  executable: string,
+  args: string[],
+  options: SpawnOptions,
+) {
+  const useRosetta = process.platform === 'darwin'
+    && process.env.PIPILOT_PACKAGED_ARCH === 'x64'
+  return useRosetta
+    ? spawn('/usr/bin/arch', ['-x86_64', executable, ...args], options)
+    : spawn(executable, args, options)
 }
 
 function resolveAsarApi() {
@@ -495,7 +507,7 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
 
   const debugPort = await reserveDebugPort()
   let launchOutput = ''
-  const appProcess = spawn(
+  const appProcess = spawnPackagedApplication(
     executable,
     [
       `--remote-debugging-port=${debugPort}`,
@@ -937,7 +949,7 @@ test('offers the macOS launcher from a Finder-style packaged environment', async
 
   const debugPort = await reserveDebugPort()
   let launchOutput = ''
-  const appProcess = spawn(executable, [
+  const appProcess = spawnPackagedApplication(executable, [
     `--remote-debugging-port=${debugPort}`,
     `--user-data-dir=${join(userDataPath, 'browser-data')}`,
   ], {
@@ -1025,7 +1037,7 @@ test('runs the installed stable MCP command headlessly through the private bridg
 
   const debugPort = await reserveDebugPort()
   let launchOutput = ''
-  const appProcess = spawn(executable, [
+  const appProcess = spawnPackagedApplication(executable, [
     `--remote-debugging-port=${debugPort}`,
     `--user-data-dir=${join(userDataPath, 'browser-data')}`,
   ], {
@@ -1279,7 +1291,7 @@ test('runs the installed stable MCP command headlessly through the private bridg
 
     const restartDebugPort = await reserveDebugPort()
     let restartOutput = ''
-    const restartedAppProcess = spawn(executable, [
+    const restartedAppProcess = spawnPackagedApplication(executable, [
       `--remote-debugging-port=${restartDebugPort}`,
       `--user-data-dir=${join(userDataPath, 'browser-data')}`,
     ], {
