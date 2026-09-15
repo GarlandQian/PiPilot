@@ -256,7 +256,8 @@ function delay(milliseconds: number) {
   })
 }
 
-const PACKAGED_STARTUP_TIMEOUT_MS = 60_000
+// Rosetta can take longer to expose Chromium's debugging endpoint on a cold runner.
+const PACKAGED_STARTUP_TIMEOUT_MS = 120_000
 const PACKAGED_STARTUP_POLL_INTERVAL_MS = 100
 const PACKAGED_RUNTIME_POLL_OPTIONS = {
   timeout: 120_000,
@@ -959,7 +960,7 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
 
 test('offers the macOS launcher from a Finder-style packaged environment', async () => {
   test.skip(process.platform !== 'darwin', 'macOS launchd PATH behavior is platform-native')
-  test.setTimeout(60_000)
+  test.setTimeout(180_000)
   const executable = resolvePackagedExecutable()
   const temporaryDirectory = realpathSync.native(tmpdir())
   const userDataPath = await mkdtemp(join(
@@ -1039,7 +1040,7 @@ test('offers the macOS launcher from a Finder-style packaged environment', async
 })
 
 test('runs the installed stable MCP command headlessly through the private bridge', async () => {
-  test.setTimeout(180_000)
+  test.setTimeout(300_000)
   const executable = resolvePackagedExecutable()
   const userDataPath = await mkdtemp(join(packagedTemporaryDirectory, 'pipilot-packaged-smoke-mcp-'))
   const fixtureRoot = await mkdtemp(join(packagedTemporaryDirectory, 'pipilot-packaged-mcp-fixture-'))
