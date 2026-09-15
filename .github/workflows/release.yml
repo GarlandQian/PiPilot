@@ -204,7 +204,17 @@ jobs:
           fi
       - name: Smoke-test macOS Intel package
         if: ${{ matrix.platform == 'macos' }}
-        run: pnpm test:packaged --retries=1 --output=test-results/packaged-x64
+        shell: bash
+        run: |
+          set +e
+          pnpm test:packaged --retries=1 --output=test-results/packaged-x64 2>&1 | tee "$RUNNER_TEMP/pipilot-packaged-x64.log"
+          status="${PIPESTATUS[0]}"
+          set -e
+          if [[ "$status" -ne 0 ]]; then
+            summary="$(tail -n 30 "$RUNNER_TEMP/pipilot-packaged-x64.log" | awk '{gsub(/%/, "%25"); printf "%s%%0A", $0}')"
+            echo "::error title=Packaged Intel smoke output::$summary"
+          fi
+          exit "$status"
         env:
           PIPILOT_PACKAGED_ARCH: x64
       - name: Upload package test failure artifacts
