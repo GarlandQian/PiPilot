@@ -123,10 +123,10 @@ jobs:
       matrix:
         include:
           - platform: macos
-            # Keep Rosetta coverage on the stable macOS 15 arm64 image. The
-            # macOS 26 image repeatedly flaked while running the x64 package
-            # even though the native arm64 smoke passed.
-            runner: macos-15
+            # The macOS 15 image does not complete this dual-architecture
+            # electron-builder job; keep package production on macOS 26 while
+            # the release smoke remains covered by Rosetta.
+            runner: macos-26
             command: pnpm package:mac
             smoke: pnpm test:packaged
             artifact_paths: |
