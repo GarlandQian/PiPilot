@@ -15,7 +15,7 @@ export function projectRuntimeEvent(event: AgentSessionEvent): LocalPiRpcEvent {
     // Pi 0.85.1 shallow-copies message_start while tool blocks can still carry
     // the provider's scratch buffers. Final messages remain strictly validated.
     const content = event.message.content.map((block) => {
-      if (block.type !== 'toolCall') return block
+      if (block.type === 'image') return block
       const streamingBlock: typeof block & {
         index?: unknown
         partialArgs?: unknown
@@ -24,11 +24,19 @@ export function projectRuntimeEvent(event: AgentSessionEvent): LocalPiRpcEvent {
       } = block
       const {
         index: _index,
+        ...withoutIndex
+      } = streamingBlock
+      if (block.type !== 'toolCall') return withoutIndex
+      const {
         partialArgs: _partialArgs,
         customInput: _customInput,
         streamIndex: _streamIndex,
         ...toolCall
-      } = streamingBlock
+      } = withoutIndex as typeof block & {
+        partialArgs?: unknown
+        customInput?: unknown
+        streamIndex?: unknown
+      }
       return toolCall
     })
     return localPiRpcEventSchema.parse(projectPiHostDto({

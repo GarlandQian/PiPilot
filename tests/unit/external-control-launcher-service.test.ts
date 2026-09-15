@@ -321,7 +321,7 @@ describe('ExternalControlLauncherService', () => {
   })
 })
 
-describe('macOS launchd user PATH', () => {
+describe.skipIf(process.platform === 'win32')('macOS launchd user PATH', () => {
   it('coalesces status reads and serializes install/uninstall around an asynchronous probe', async () => {
     const fixture = darwinHarness()
     const service = fixture.create()

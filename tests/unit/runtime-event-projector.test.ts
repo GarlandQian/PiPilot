@@ -49,10 +49,12 @@ describe('embedded Pi event projection', () => {
   ])('removes SDK %s scratch fields only from starting tool blocks', (_label, scratch) => {
     const text = Object.freeze({ type: 'text', text: 'Running tests', textSignature: 'text-signature' })
     const thinking = Object.freeze({ type: 'thinking', thinking: 'Checking the implementation', thinkingSignature: 'thinking-signature' })
+    const streamingText = Object.freeze({ ...text, index: 0 })
+    const streamingThinking = Object.freeze({ ...thinking, index: 1 })
     const toolCall = Object.freeze({ ...publicToolCall, ...scratch })
     const message = Object.freeze({
       ...assistantMessage([]),
-      content: Object.freeze([text, thinking, toolCall]),
+      content: Object.freeze([streamingText, streamingThinking, toolCall]),
     })
     const event = Object.freeze({ type: 'message_start', message })
     const before = structuredClone(event)
