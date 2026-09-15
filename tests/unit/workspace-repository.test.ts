@@ -50,7 +50,9 @@ describe('WorkspaceRepository', () => {
         canonicalSecondPath,
         canonicalFirstPath,
       ])
-      expect((await stat(filePath)).mode & 0o777).toBe(0o600)
+      if (process.platform !== 'win32') {
+        expect((await stat(filePath)).mode & 0o777).toBe(0o600)
+      }
       expect(JSON.parse(persisted)).not.toHaveProperty('currentId')
       expect(JSON.parse(persisted)).not.toHaveProperty('sessionPins')
     } finally {
