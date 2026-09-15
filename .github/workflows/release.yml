@@ -239,7 +239,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Build package for Intel smoke
-        run: pnpm package:mac
+        # The Intel runner only needs the native x64 artifact. Asking
+        # electron-builder for arm64 there makes cross-architecture native
+        # dependency preparation fail before the smoke test can start.
+        run: pnpm build && pnpm exec electron-builder --mac --x64 --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       - name: Smoke-test macOS Intel package
