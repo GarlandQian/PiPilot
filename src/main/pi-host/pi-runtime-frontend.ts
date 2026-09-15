@@ -1423,10 +1423,11 @@ export class PiRuntimeFrontend {
        */
       if (
         attempt === 0 &&
-        failure.recoverable &&
+        (failure.recoverable || failure.code === 'PI_RUNTIME_HOST_RECOVERY_FAILED') &&
         (failure.code === 'PI_RUNTIME_CONFIRMATION_FAILED' ||
           failure.code === 'PI_RUNTIME_OPERATION_FAILED' ||
-          failure.code === 'PI_RUNTIME_STALE_GENERATION')
+          failure.code === 'PI_RUNTIME_STALE_GENERATION' ||
+          failure.code === 'PI_RUNTIME_HOST_RECOVERY_FAILED')
       ) {
         return this.activate(target, options, attempt + 1)
       }

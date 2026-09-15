@@ -334,7 +334,8 @@ function unexpectedPackagedMcpStderr(stderr: string) {
       line.includes('dbus/bus.cc:') ||
       line.includes('dbus/object_proxy.cc:') ||
       line.includes('Failed to connect to the bus:') ||
-      line.includes('org.freedesktop.DBus')
+      line.includes('org.freedesktop.DBus') ||
+      line.includes('Network service crashed or was terminated, restarting service.')
     ))
     .join('\n')
 }
