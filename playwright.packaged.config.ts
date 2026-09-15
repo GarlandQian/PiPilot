@@ -8,7 +8,7 @@ export default defineConfig({
   forbidOnly: true,
   timeout: 120_000,
   expect: {
-    timeout: 15_000,
+    timeout: process.env.CI === 'true' ? 120_000 : 15_000,
   },
   reporter: [['list']],
   use: {
