@@ -44,7 +44,9 @@ jobs:
 
   desktop:
     name: Build and real Electron contracts
-    runs-on: macos-26
+    # Keep the real Electron contract suite on the stable macOS 15 arm64
+    # image while the macOS 26 image transition is still flaky.
+    runs-on: macos-15
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
