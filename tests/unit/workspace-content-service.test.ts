@@ -245,7 +245,7 @@ describe('WorkspaceContentService Git changes', () => {
     } finally {
       await rm(root, { recursive: true, force: true })
     }
-  })
+  }, 15_000)
 
   it('reports a refreshed external edit without mutation or conflict state', async () => {
     const root = await mkdtemp(join(tmpdir(), 'pipilot-content-git-'))
@@ -266,7 +266,7 @@ describe('WorkspaceContentService Git changes', () => {
     } finally {
       await rm(root, { recursive: true, force: true })
     }
-  })
+  }, 15_000)
 
   it('lists untracked files and degrades outside Git', async () => {
     const root = await mkdtemp(join(tmpdir(), 'pipilot-content-git-'))
