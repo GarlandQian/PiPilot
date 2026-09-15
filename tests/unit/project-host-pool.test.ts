@@ -294,7 +294,8 @@ describe('ProjectHostPool', () => {
   })
   it('gates desktop/external commands, cold acquisition and restart while allowing the exact maintenance owner', async () => {
     const { pool, controllers } = createHarness()
-    const created = await pool.createRuntime(projectA, { sessionFile: '/sessions/owned.jsonl' })
+    const ownedSessionFile = resolve('/sessions/owned.jsonl')
+    const created = await pool.createRuntime(projectA, { sessionFile: ownedSessionFile })
     await pool.bindRuntime(created.runtimeId, created.generation)
     const gate = deferred()
     const entered = deferred()
@@ -318,7 +319,7 @@ describe('ProjectHostPool', () => {
     }, created.generation)).resolves.toBeUndefined()
     gate.resolve()
     await expect(applying).resolves.toMatchObject({ admitted: true, value: { generation: 2 } })
-    expect(pool.getHost(projectA)?.runtimes[0]?.leaseKey).toBe('/sessions/owned.jsonl')
+    expect(pool.getHost(projectA)?.runtimes[0]?.leaseKey).toBe(ownedSessionFile)
     await pool.dispose()
   })
 

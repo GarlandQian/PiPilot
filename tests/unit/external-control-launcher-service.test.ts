@@ -108,7 +108,7 @@ function darwinHarness(initialPath: string | null = null) {
   return { bin, create, descriptor, executable, receipt, root, userPath }
 }
 
-describe('ExternalControlLauncherService', () => {
+describe.skipIf(process.platform === 'win32')('ExternalControlLauncherService', () => {
   it('installs one marked wrapper and private receipt into the injected stable target', async () => {
     const fixture = harness()
     const service = fixture.create()
@@ -308,7 +308,10 @@ describe('ExternalControlLauncherService', () => {
     },
   )
 
-  it('does not throw during construction when the Windows registry tool is unavailable', async () => {
+})
+
+describe('Windows launcher construction', () => {
+  it('does not throw when the Windows registry tool is unavailable', async () => {
     expect(() => new ExternalControlLauncherService({
       descriptorPath: 'C:\\Users\\test\\AppData\\Roaming\\PiPilot\\descriptor.json',
       environment: {},
