@@ -1,6 +1,6 @@
-import { mkdtemp, realpath, rm } from 'node:fs/promises'
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TerminalService } from '../../src/main/terminal/terminal-service'
 import { PIPILOT_VERSION } from '../../src/shared/build-info'
@@ -322,12 +322,14 @@ describe('TerminalService', () => {
     'uses the configured executable Unix shell on %s',
     async (platform) => {
       const root = await temporaryDirectory(`terminal-shell-${platform}`)
+      const configuredShell = join(root, 'test-shell')
+      await writeFile(configuredShell, '', { mode: 0o755 })
       const launches: Array<{ file: string; args: string[] }> = []
       const service = new TerminalService(
         () => firstScope,
         async (scope) => ({ scope, cwd: root }),
         {
-          environment: { SHELL: '/bin/sh' },
+          environment: { SHELL: configuredShell },
           platform,
           spawnPty: (file, args, options) => {
             launches.push({ file, args })
@@ -337,9 +339,8 @@ describe('TerminalService', () => {
       )
 
       const created = await service.create(firstScope, 80, 24)
-      const canonicalShell = await realpath('/bin/sh')
-      const shellParts = canonicalShell.split('/')
-      expect(created.shell).toBe(shellParts[shellParts.length - 1])
+      const canonicalShell = await realpath(configuredShell)
+      expect(created.shell).toBe(basename(canonicalShell))
       expect(launches).toEqual([{ file: canonicalShell, args: ['-l'] }])
       await service.dispose()
     },

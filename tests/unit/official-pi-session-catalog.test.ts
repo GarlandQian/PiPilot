@@ -5,6 +5,7 @@ import {
   mkdtemp,
   readFile,
   realpath,
+  rename,
   rm,
   symlink,
   truncate,
@@ -826,8 +827,16 @@ describe('OfficialPiSessionCatalog', () => {
         scope,
         refreshedInodeRow.selectionToken,
       )
+      const replacementInodeFile = join(
+        fixture.sessionDirectory,
+        'replacement-inode.jsonl',
+      )
+      await writeSession(replacementInodeFile, {
+        cwd: fixture.cwd,
+        id: 'changed-inode',
+      })
       await rm(inodeFile)
-      await writeSession(inodeFile, { cwd: fixture.cwd, id: 'changed-inode' })
+      await rename(replacementInodeFile, inodeFile)
       await expect(fixture.catalog.revalidateDeletionTarget(inodeTarget))
         .rejects.toMatchObject({ code: 'SESSION_CATALOG_SELECTION_STALE' })
     } finally {
