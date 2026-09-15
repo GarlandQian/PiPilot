@@ -31,13 +31,33 @@ export class ConversationMcpBridgeClient {
   async connect(timeoutMs = 5_000) {
     if (this.ready && this.socket && !this.socket.destroyed) return
     if (this.connectPromise) return this.connectPromise
-    const pending = this.openConnection(timeoutMs)
+    const pending = this.openConnectionUntilDeadline(timeoutMs)
     this.connectPromise = pending
     try {
       await pending
     } finally {
       if (this.connectPromise === pending) this.connectPromise = null
     }
+  }
+
+  private async openConnectionUntilDeadline(timeoutMs: number) {
+    const deadline = Date.now() + Math.max(1, timeoutMs)
+    let lastError: unknown
+    while (Date.now() < deadline) {
+      try {
+        await this.openConnection(Math.max(1, deadline - Date.now()))
+        return
+      } catch (error) {
+        lastError = error
+        const remaining = deadline - Date.now()
+        if (remaining <= 0) break
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, Math.min(50, remaining))
+          timer.unref()
+        })
+      }
+    }
+    throw lastError ?? new Error('bridge connection timeout')
   }
 
   private async openConnection(timeoutMs: number) {
