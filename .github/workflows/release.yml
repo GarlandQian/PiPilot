@@ -123,9 +123,8 @@ jobs:
       matrix:
         include:
           - platform: macos
-            # The macOS 15 image does not complete this dual-architecture
-            # electron-builder job; keep package production on macOS 26 while
-            # the release smoke remains covered by Rosetta.
+            # Keep the dual-architecture package build on macOS 26. The x64
+            # smoke runs natively on macos-15-intel in the job below.
             runner: macos-26
             command: pnpm package:mac
             smoke: pnpm test:packaged
@@ -198,28 +197,6 @@ jobs:
         run: pnpm test:packaged --output=test-results/packaged-arm64
         env:
           PIPILOT_PACKAGED_ARCH: arm64
-      - name: Prepare macOS Intel execution
-        if: ${{ matrix.platform == 'macos' }}
-        shell: bash
-        run: |
-          if ! arch -x86_64 /usr/bin/true; then
-            sudo softwareupdate --install-rosetta --agree-to-license
-          fi
-      - name: Smoke-test macOS Intel package
-        if: ${{ matrix.platform == 'macos' }}
-        shell: bash
-        run: |
-          set +e
-          pnpm test:packaged --retries=1 --output=test-results/packaged-x64 2>&1 | tee "$RUNNER_TEMP/pipilot-packaged-x64.log"
-          status="${PIPESTATUS[0]}"
-          set -e
-          if [[ "$status" -ne 0 ]]; then
-            summary="$(tail -n 80 "$RUNNER_TEMP/pipilot-packaged-x64.log" | awk '{gsub(/%/, "%25"); printf "%s%%0A", $0}')"
-            echo "::error title=Packaged Intel smoke output::$summary"
-          fi
-          exit "$status"
-        env:
-          PIPILOT_PACKAGED_ARCH: x64
       - name: Upload package test failure artifacts
         if: ${{ failure() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -236,10 +213,62 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  package-macos-intel-smoke:
+    name: Smoke-test macOS Intel package
+    needs: [preflight, verify]
+    if: ${{ needs.preflight.result == 'success' && needs.verify.result == 'success' }}
+    permissions:
+      contents: read
+    runs-on: macos-15-intel
+    timeout-minutes: 100
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 12.3.4
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.18.0
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build package for Intel smoke
+        run: pnpm package:mac
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Smoke-test macOS Intel package
+        shell: bash
+        run: |
+          set +e
+          pnpm test:packaged --retries=1 --output=test-results/packaged-x64 2>&1 | tee "$RUNNER_TEMP/pipilot-packaged-x64.log"
+          status="${PIPESTATUS[0]}"
+          set -e
+          if [[ "$status" -ne 0 ]]; then
+            summary="$(tail -n 80 "$RUNNER_TEMP/pipilot-packaged-x64.log" | awk '{gsub(/%/, "%25"); printf "%s%%0A", $0}')"
+            echo "::error title=Packaged Intel smoke output::$summary"
+          fi
+          exit "$status"
+        env:
+          PIPILOT_PACKAGED_ARCH: x64
+      - name: Upload Intel smoke failure artifacts
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: packaged-failures-macos-intel-${{ needs.preflight.outputs.version }}
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
   assemble:
     name: Assemble and publish public Release
-    needs: [preflight, verify, package]
-    if: ${{ needs.preflight.result == 'success' && needs.verify.result == 'success' && needs.package.result == 'success' }}
+    needs: [preflight, verify, package, package-macos-intel-smoke]
+    if: ${{ needs.preflight.result == 'success' && needs.verify.result == 'success' && needs.package.result == 'success' && needs['package-macos-intel-smoke'].result == 'success' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
