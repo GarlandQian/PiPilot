@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -44,9 +44,11 @@ describe('WorkspaceRepository', () => {
       const persistedDocument = JSON.parse(persisted) as {
         recent: Array<{ path: string }>
       }
+      const canonicalFirstPath = await realpath(firstPath)
+      const canonicalSecondPath = await realpath(secondPath)
       expect(persistedDocument.recent.map((workspace) => workspace.path)).toEqual([
-        secondPath,
-        firstPath,
+        canonicalSecondPath,
+        canonicalFirstPath,
       ])
       expect((await stat(filePath)).mode & 0o777).toBe(0o600)
       expect(JSON.parse(persisted)).not.toHaveProperty('currentId')
