@@ -1253,7 +1253,10 @@ test('runs the installed stable MCP command headlessly through the private bridg
       window.pipilot!.externalControl.get()
     ))).toMatchObject({ connectedClients: 1 })
     expect(messages.every((message) => message.jsonrpc === '2.0')).toBe(true)
-    expect(unexpectedPackagedMcpStderr(stderr)).toBe('')
+    const unexpectedStderr = unexpectedPackagedMcpStderr(stderr)
+    if (unexpectedStderr) {
+      throw new Error(`Unexpected packaged MCP stderr:\n${unexpectedStderr}`)
+    }
 
     stdioProcess.stdin?.end()
     expect(await waitForProcessExit(stdioProcess, PACKAGED_MCP_EXIT_TIMEOUT_MS)).toBe(true)
