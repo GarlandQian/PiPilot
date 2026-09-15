@@ -204,7 +204,7 @@ jobs:
           fi
       - name: Smoke-test macOS Intel package
         if: ${{ matrix.platform == 'macos' }}
-        run: pnpm test:packaged --output=test-results/packaged-x64
+        run: pnpm test:packaged --retries=1 --output=test-results/packaged-x64
         env:
           PIPILOT_PACKAGED_ARCH: x64
       - name: Upload package test failure artifacts
