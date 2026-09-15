@@ -15,7 +15,6 @@ export function projectRuntimeEvent(event: AgentSessionEvent): LocalPiRpcEvent {
     // Pi 0.85.1 shallow-copies message_start while tool blocks can still carry
     // the provider's scratch buffers. Final messages remain strictly validated.
     const content = event.message.content.map((block) => {
-      if (block.type === 'image') return block
       const streamingBlock: typeof block & {
         index?: unknown
         partialArgs?: unknown
