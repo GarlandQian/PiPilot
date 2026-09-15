@@ -335,7 +335,10 @@ function unexpectedPackagedMcpStderr(stderr: string) {
       line.includes('dbus/object_proxy.cc:') ||
       line.includes('Failed to connect to the bus:') ||
       line.includes('org.freedesktop.DBus') ||
-      line.includes('Network service crashed or was terminated, restarting service.')
+      line.includes('Network service crashed or was terminated, restarting service.') ||
+      line.includes('ui/gl/gl_display.cc:') ||
+      line.includes('ui/gl/init/gl_initializer_mac.cc:') ||
+      line.includes('Exiting GPU process due to errors during initialization')
     ))
     .join('\n')
 }
