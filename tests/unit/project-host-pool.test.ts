@@ -587,7 +587,7 @@ describe('ProjectHostPool', () => {
     ).toMatchObject({
       command: {
         type: 'session.rename',
-        sessionFile: '/sessions/a/inactive.jsonl',
+        sessionFile: resolve('/sessions/a/inactive.jsonl'),
         name: 'Renamed session',
       },
     })
@@ -689,7 +689,7 @@ describe('ProjectHostPool', () => {
     await expect(pool.createRuntime(projectA, {
       sessionDir: '/sessions/a',
       sessionFile: '/sessions/a/retry.jsonl',
-    })).resolves.toMatchObject({ sessionFile: '/sessions/a/retry.jsonl' })
+    })).resolves.toMatchObject({ sessionFile: resolve('/sessions/a/retry.jsonl') })
     expect(controllers).toHaveLength(3)
     await pool.dispose()
   })
@@ -710,7 +710,7 @@ describe('ProjectHostPool', () => {
       sessionDir: '/sessions/projectless',
       sessionFile: '/sessions/projectless/one.jsonl',
     })).resolves.toMatchObject({
-      sessionFile: '/sessions/projectless/one.jsonl',
+      sessionFile: resolve('/sessions/projectless/one.jsonl'),
     })
     expect(controllers).toHaveLength(2)
     await pool.dispose()
