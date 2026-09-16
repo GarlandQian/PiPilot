@@ -1055,7 +1055,7 @@ test('offers the macOS launcher from a Finder-style packaged environment', async
   }
 })
 
-test('runs the installed stable MCP command headlessly through the private bridge', async () => {
+test('runs the installed stable MCP command headlessly through the private bridge', async ({}, testInfo) => {
   test.setTimeout(300_000)
   const executable = resolvePackagedExecutable()
   const userDataPath = await mkdtemp(join(packagedTemporaryDirectory, 'pipilot-packaged-smoke-mcp-'))
@@ -1064,6 +1064,18 @@ test('runs the installed stable MCP command headlessly through the private bridg
     ? dirname(executable)
     : join(userDataPath, 'launcher-bin')
   await mkdir(launcherDirectory, { recursive: true, mode: 0o700 })
+  const legacyWindowsReceiptPath = join(userDataPath, 'external-control', 'launcher-receipt.json')
+  const legacyWindowsReceipt = `${JSON.stringify({
+    version: 1,
+    platform: 'win32',
+    launcherPath: join(launcherDirectory, 'pipilot-mcp.exe'),
+    // Old installations used a different fingerprint format and cannot prove PATH ownership.
+    fingerprint: 'a'.repeat(64),
+  })}\n`
+  if (process.platform === 'win32') {
+    await mkdir(dirname(legacyWindowsReceiptPath), { recursive: true })
+    await writeFile(legacyWindowsReceiptPath, legacyWindowsReceipt, 'utf8')
+  }
   const pathKey = Object.keys(process.env)
     .find((key) => key.toLocaleLowerCase('en-US') === 'path') ?? 'PATH'
   const launcherEnvironment = {
@@ -1155,11 +1167,26 @@ test('runs the installed stable MCP command headlessly through the private bridg
       const windowsLauncher = join(launcherDirectory, 'pipilot-mcp.exe')
       expect(existsSync(windowsLauncher)).toBe(true)
       expect(readWindowsPeSubsystem(await readFile(windowsLauncher))).toBe(3)
+      // Exercise upgrades with the real Windows registry adapter outside CI as well.
+      // Merely inspecting a legacy receipt must not claim ownership or change it.
+      const launcher = await page.evaluate(() => (
+        window.pipilot!.externalControl.getLauncher()
+      ))
+      expect(['missing', 'installed']).toContain(launcher.state)
+      expect(launcher.managed).toBe(false)
+      expect(await readFile(legacyWindowsReceiptPath, 'utf8')).toBe(legacyWindowsReceipt)
+      await page.getByRole('button', { name: 'Settings', exact: true }).click()
+      await page.getByRole('region', { name: 'Settings', exact: true })
+        .getByRole('button', { name: 'Integrations', exact: true }).click()
+      await page.getByRole('tab', { name: 'External Control', exact: true }).click()
+      await expect(page.getByText('Unavailable', { exact: true })).toHaveCount(0)
+      if (launcher.state === 'missing') {
+        await expect(page.getByRole('button', { name: 'Install', exact: true })).toBeVisible()
+      } else {
+        await expect(page.getByRole('button', { name: 'Uninstall', exact: true })).toHaveCount(0)
+      }
+      await page.screenshot({ path: testInfo.outputPath('windows-legacy-launcher.png') })
       if (process.env.CI === 'true') {
-        const launcher = await page.evaluate(() => (
-          window.pipilot!.externalControl.getLauncher()
-        ))
-        expect(['missing', 'installed']).toContain(launcher.state)
         if (launcher.state === 'missing') {
           expect(await page.evaluate(() => (
             window.pipilot!.externalControl.installLauncher()

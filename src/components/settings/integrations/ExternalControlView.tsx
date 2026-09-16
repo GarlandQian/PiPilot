@@ -192,7 +192,9 @@ export function ExternalControlView({ active = true }: { active?: boolean }) {
                 {t(
                   launcherState === 'installed' && launcher && !launcher.managed
                     ? 'settings.externalControl.launcher.state.installed.unmanaged.desc'
-                    : `settings.externalControl.launcher.state.${launcherState}.desc`,
+                    : launcherState === 'unsupported' && launcher?.error
+                      ? `settings.externalControl.launcher.error.${launcher.error.code}`
+                      : `settings.externalControl.launcher.state.${launcherState}.desc`,
                 )}
               </p>
               {launcher?.requiresClientRestart ? (

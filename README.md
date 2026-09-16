@@ -12,8 +12,8 @@ PiPilot does not embed a parallel Agent Runtime or migrate Pi data into a
 PiPilot-specific format. Pi remains the owner of sessions, configuration, and
 resources; PiPilot owns the desktop experience.
 
-> **Project status:** `v0.0.4` is the current stable release; `v0.0.3` was the
-> first public release. The source repository and GitHub Releases are public.
+> **Project status:** `v0.0.5` is the current stable release; `v0.0.4` was the
+> previous stable release. The source repository and GitHub Releases are public.
 > Unsigned installers are distributed for manual download after native build
 > and packaged-smoke verification.
 
@@ -235,7 +235,7 @@ edit Codex, Claude Code, Pi, shell profile, or project MCP files.
 
 The public release flow is:
 
-1. A stable tag such as `v0.0.4` starts a release-owned full verification job.
+1. A stable tag such as `v0.0.5` starts a release-owned full verification job.
 2. After source, unit, build, integration, and Electron checks pass, macOS,
    Windows, and Linux package, inspect their artifacts, and run packaged
    smoke tests independently.
