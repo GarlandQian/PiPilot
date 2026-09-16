@@ -89,6 +89,7 @@ interface LauncherReceipt {
 type ReceiptRead =
   | { state: 'missing' }
   | { state: 'invalid' }
+  | { state: 'legacy-windows'; identity: FileIdentity }
   | { state: 'valid'; identity: FileIdentity; receipt: LauncherReceipt }
 
 interface Inspection {
@@ -786,10 +787,12 @@ export class ExternalControlLauncherService {
 
   private async uninstallInternal() {
     const receipt = this.readReceipt()
-    if (receipt.state === 'invalid') {
+    if (receipt.state === 'invalid' || receipt.state === 'legacy-windows') {
       throw new ExternalControlLauncherServiceError(
         'launcher_conflict',
-        'The existing PiPilot MCP launcher receipt is invalid.',
+        receipt.state === 'legacy-windows'
+          ? 'The legacy PiPilot MCP launcher receipt does not establish PATH ownership.'
+          : 'The existing PiPilot MCP launcher receipt is invalid.',
       )
     }
     if (receipt.state === 'missing') {
@@ -1361,11 +1364,25 @@ export class ExternalControlLauncherService {
     const changed = await persistWindowsLauncherDirectory(
       adapter,
       win32.dirname(inspection.targetPath!),
-      (_updated, metadata) => this.writeReceipt(
-        inspection.targetPath!,
-        normalizeWindowsPathEntry(win32.dirname(inspection.targetPath!)),
-        metadata,
-      ),
+      (_updated, metadata) => {
+        if (inspection.receipt?.state === 'legacy-windows') {
+          const current = this.readReceipt()
+          if (
+            current.state !== 'legacy-windows' ||
+            !sameIdentity(inspection.receipt.identity, current.identity)
+          ) {
+            throw new ExternalControlLauncherServiceError(
+              'launcher_conflict',
+              'The legacy PiPilot MCP launcher receipt changed before installation.',
+            )
+          }
+        }
+        this.writeReceipt(
+          inspection.targetPath!,
+          normalizeWindowsPathEntry(win32.dirname(inspection.targetPath!)),
+          metadata,
+        )
+      },
     )
     if (!changed) return inspection.snapshot
     return externalControlLauncherSnapshotSchema.parse({
@@ -1530,8 +1547,28 @@ export class ExternalControlLauncherService {
         uid: this.uid,
         privateFile: this.platform !== 'win32',
       })
-      const raw = JSON.parse(file.contents) as Partial<LauncherReceipt>
+      const raw = JSON.parse(file.contents) as Partial<
+        Omit<LauncherReceipt, 'version'> & { version: number }
+      >
       const keys = Object.keys(raw).sort()
+      if (
+        this.platform === 'win32' &&
+        raw.version === 1 &&
+        raw.platform === 'win32' &&
+        keys.join(',') === 'fingerprint,launcherPath,platform,version' &&
+        typeof raw.launcherPath === 'string' &&
+        !/[\0\r\n]/u.test(raw.launcherPath) &&
+        win32.isAbsolute(raw.launcherPath) &&
+        raw.launcherPath.toLocaleLowerCase('en-US') ===
+          this.options.executablePath?.toLocaleLowerCase('en-US') &&
+        typeof raw.fingerprint === 'string' &&
+        /^[a-f0-9]{64}$/u.test(raw.fingerprint)
+      ) {
+        // v1 fingerprints do not provide the metadata needed to undo a PATH edit.
+        // Retain the record without claiming ownership or checking it against the
+        // v2 fingerprint algorithm; a new PATH edit will create a real v2 receipt.
+        return { state: 'legacy-windows', identity: file }
+      }
       const expectedKeys = raw.platform === 'win32'
         ? ['fingerprint', 'launcherPath', 'platform', 'version', 'windows']
         : raw.platform === 'darwin' && raw.darwin !== undefined
