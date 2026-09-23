@@ -622,7 +622,7 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
     })
     await projectActions.focus()
     await page.keyboard.press('Enter')
-    await page.getByRole('menuitem', { name: 'Open project', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'New session', exact: true }).click()
     await expect.poll(
       () => page!.evaluate(() => window.pipilot!.conversation.get()),
       PACKAGED_RUNTIME_POLL_OPTIONS,
