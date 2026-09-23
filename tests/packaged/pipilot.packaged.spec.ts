@@ -637,10 +637,12 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
 
     await page.getByRole('button', { name: 'Show more', exact: true }).click()
 
-    const projectSession = page.getByRole('button', {
-      name: 'Packaged existing session',
-      exact: true,
-    })
+    const projectSession = page
+      .getByRole('region', { name: 'Projects', exact: true })
+      .getByRole('button', {
+        name: 'Packaged existing session',
+        exact: true,
+      })
     await expect(projectSession).toBeVisible()
 
     await expect.poll(() => page!.evaluate(() => (
