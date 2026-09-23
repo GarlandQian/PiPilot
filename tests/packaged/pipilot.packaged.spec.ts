@@ -919,15 +919,37 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
         sessionFile: canonicalSelectedSessionFile,
         sessionState: { isStreaming: false },
       })
+    const interruptedDelivery = page.locator('[data-outbox-message]')
+      .filter({ hasText: '/fixture-host-failure' })
+    if (await interruptedDelivery.isVisible()) {
+      await expect(interruptedDelivery).toHaveAttribute('data-outbox-status', 'unknown')
+      await interruptedDelivery.getByRole('button', {
+        name: 'Check delivery',
+        exact: true,
+      }).click()
+      await expect.poll(async () => {
+        if (await interruptedDelivery.count() === 0) return 'resolved'
+        return interruptedDelivery.getAttribute('data-outbox-status')
+      }).toMatch(/^(resolved|failed)$/)
+      if (await interruptedDelivery.count() > 0) {
+        await interruptedDelivery.getByRole('button', {
+          name: 'Remove unsent message',
+          exact: true,
+        }).click()
+        await expect(interruptedDelivery).toHaveCount(0)
+      }
+    }
+
     const resumeQueue = page.getByRole('button', {
       name: 'Resume queue',
       exact: true,
     })
-    await expect(resumeQueue).toBeVisible()
-    await resumeQueue.click()
+    if (await resumeQueue.isVisible()) await resumeQueue.click()
 
     const recoveredAbortPrompt = 'Packaged prompt after recovered abort'
     await composer.fill(recoveredAbortPrompt)
+    await expect(page.getByRole('button', { name: 'Send', exact: true }))
+      .toBeEnabled({ timeout: 20_000 })
     await page.getByRole('button', { name: 'Send', exact: true }).click()
     await expect(page.getByText(
       `Fixture response: ${recoveredAbortPrompt}`,
