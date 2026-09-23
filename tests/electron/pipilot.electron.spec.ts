@@ -3643,6 +3643,8 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
     })
     await expect(firstChangedFile).toBeAttached()
     await expect(lastChangedFile).toBeAttached()
+    await firstChangedFile.scrollIntoViewIfNeeded()
+    await expect(firstChangedFile).toBeVisible()
     await expect(firstChangedFile).toContainText('export const change1 = 1')
     await lastChangedFile.scrollIntoViewIfNeeded()
     await expect(lastChangedFile).toBeVisible()
