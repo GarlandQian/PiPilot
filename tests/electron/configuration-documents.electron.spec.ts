@@ -42,6 +42,8 @@ test('retains target-owned MCP drafts through project A/B/A and semantic tab nav
     await page.waitForLoadState('domcontentloaded')
     await page.setViewportSize({ width: 1_440, height: 900 })
     await addProject(app, page, projectA)
+    await page.getByRole('region', { name: 'Projects', exact: true })
+      .getByRole('button', { name: 'New session in project-A', exact: true }).click()
     await expect(page.getByRole('button', { name: 'Project actions for project-A', exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
     await page.locator('[data-context-panel-nav-id="integrations"]').click()
