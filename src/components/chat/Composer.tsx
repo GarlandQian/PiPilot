@@ -81,6 +81,9 @@ import {
 import { useConversationOperationFeedback } from '@/renderer/composer/use-operation-feedback'
 import { ModelPicker, type PiModelOption } from './ModelPicker'
 import { PendingMessageRail } from './PendingMessageRail'
+import { ComposerOutbox } from './ComposerOutbox'
+import { useComposerOutbox } from '@/renderer/composer/use-composer-outbox'
+import type { PiSubmissionStatus } from '@/renderer/pi-rpc/delivery-state'
 import {
   ComposerEditor,
   type ComposerEditorChange,
@@ -137,13 +140,18 @@ export interface ComposerProps {
     text: string,
     action: SubmitAction,
     images?: readonly LocalPiImageContent[],
+    submissionId?: string,
   ): Promise<void>
+  onCheckSubmission(submissionId: string): Promise<PiSubmissionStatus>
   onStop(): void | Promise<void>
   onThinkingChange(level: LocalPiThinkingLevel): void | Promise<void>
   onRunningSubmitPreferenceChange(value: RunningSubmitPreference): void
   onSetQueueMode(kind: 'steering' | 'followUp', mode: ComposerQueueMode): Promise<void>
   onPromoteFollowUp(itemId: string): Promise<void>
   onRemoveQueuedMessage(itemId: string): Promise<void>
+  onEditQueuedMessage(itemId: string, text: string, images?: readonly LocalPiImageContent[], expectedRevision?: number): Promise<void>
+  onResumeQueue(): Promise<void>
+  onClearQueue(): Promise<void>
   onCompleteCommandArguments?(
     commandName: string,
     argumentPrefix: string,
@@ -497,12 +505,14 @@ function SessionComposer({
   supportsImages,
   onModelChange,
   onSubmit,
+  onCheckSubmission,
   onStop,
   onThinkingChange,
-  onRunningSubmitPreferenceChange,
-  onSetQueueMode,
   onPromoteFollowUp,
   onRemoveQueuedMessage,
+  onEditQueuedMessage,
+  onResumeQueue,
+  onClearQueue,
   onCompleteCommandArguments,
   onSearchContext,
 }: ComposerProps & {
@@ -521,6 +531,7 @@ function SessionComposer({
   const submitFeedback = useConversationOperationFeedback(operationOwnerKey)
   const stopFeedback = useConversationOperationFeedback(operationOwnerKey)
   const submitting = Boolean(submitFeedback.pending)
+  const outbox = useComposerOutbox({ draftKey, scopeKey, onSubmit, onCheckSubmission })
   const [commandPickerOpen, setCommandPickerOpen] = React.useState(false)
   const [slashActiveId, setSlashActiveId] = React.useState<string | null>(null)
   const [commandArgumentState, setCommandArgumentState] =
@@ -1129,10 +1140,6 @@ function SessionComposer({
       return
     }
     if ((!message.trim() && capturedAttachments.length === 0) || submitting) return
-    if (action !== 'prompt' && !message.trim() && capturedAttachments.length > 0) {
-      setSubmitError(t('composer.queueImageNeedsText'))
-      return
-    }
     if (capturedAttachments.length > 0 && !supportsImages) {
       setSubmitError(t('composer.imageUnsupportedModel'))
       return
@@ -1146,8 +1153,15 @@ function SessionComposer({
         () => isCurrent() && scopeKeyRef.current === capturedScopeKey,
       )
       if (!images || !isCurrent()) return
-      await onSubmit(message, action, images)
+      let saved
+      try {
+        saved = await outbox.save(message, action, images)
+      } catch {
+        throw new Error(t('composer.outboxStorageFailed'))
+      }
       const remainingDraft = drafts.acknowledge(draftKey, capturedDraft)
+      // Pi acceptance belongs to the saved message, not to this editor visit.
+      void outbox.send(saved)
       if (!isCurrent() || scopeKeyRef.current !== capturedScopeKey) return
       const currentDocument = editorRef.current?.capture()
       if (currentDocument && shouldClearCapturedComposer(
@@ -1168,7 +1182,8 @@ function SessionComposer({
     draftKey,
     drafts,
     officialExecutableNames,
-    onSubmit,
+    outbox.save,
+    outbox.send,
     submitting,
     submitFeedback.run,
     supportsImages,
@@ -1187,7 +1202,9 @@ function SessionComposer({
     submitting,
     stopping: Boolean(stopFeedback.pending),
   })
-  const submitMode = actionState.submit
+  const submitMode = queue.paused && !extensionCommand
+    ? { action: 'follow_up' as const, kind: 'queue' as const }
+    : actionState.submit
   const primaryAction = submitMode.action
 
   const handleEditorKeyDown = React.useCallback((event: KeyboardEvent) => {
@@ -1258,9 +1275,7 @@ function SessionComposer({
     (submissionConflict ? conflictMessage : null) ??
     (attachments.length > 0 && !supportsImages
       ? t('composer.imageUnsupportedModel')
-      : primaryAction !== 'prompt' && attachments.length > 0 && !editorChange.hasContent
-        ? t('composer.queueImageNeedsText')
-        : null)
+      : null)
   const submitLabel = t(submitMode.kind === 'queue'
     ? 'composer.queue'
     : submitMode.kind === 'steer'
@@ -1275,15 +1290,24 @@ function SessionComposer({
   return (
     <div data-composer-root className="shrink-0 bg-background px-6 pb-4 pt-3">
       <div className="mx-auto min-w-0 w-full max-w-(--conversation-width)">
+        <ComposerOutbox
+          items={outbox.items}
+          storageError={outbox.storageError}
+          connected={connected}
+          onCheck={outbox.check}
+          onRetry={outbox.retry}
+          onRemove={outbox.remove}
+        />
         <PendingMessageRail
           key={operationOwnerKey}
           operationOwnerKey={operationOwnerKey}
           queue={queue}
-          runningSubmitPreference={runningSubmitPreference}
-          onRunningSubmitPreferenceChange={onRunningSubmitPreferenceChange}
-          onSetQueueMode={onSetQueueMode}
+          stopping={Boolean(stopFeedback.pending)}
           onPromoteFollowUp={onPromoteFollowUp}
           onRemoveQueuedMessage={onRemoveQueuedMessage}
+          onEditQueuedMessage={onEditQueuedMessage}
+          onResumeQueue={onResumeQueue}
+          onClearQueue={onClearQueue}
         />
         <div
           data-composer-surface
@@ -1291,7 +1315,7 @@ function SessionComposer({
           aria-busy={submitting}
           className={cn(
             'min-w-0 border border-input/70 bg-composer shadow-(--shadow-composer) transition-colors duration-(--duration-fast) focus-within:border-ring/70 motion-reduce:transition-none',
-            queue.pendingCount > 0 ? 'rounded-b-(--radius-composer) rounded-t-none' : 'rounded-(--radius-composer)',
+            queue.pendingCount > 0 || queue.paused ? 'rounded-b-(--radius-composer) rounded-t-none' : 'rounded-(--radius-composer)',
             dragging && 'border-sage bg-sage/5',
           )}
           onDragEnter={(event) => {

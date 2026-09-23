@@ -1,4 +1,4 @@
-import type { LocalPiRpcEvent, LocalPiSessionState } from '../../shared/local-pi'
+import type { LocalPiDeliverySnapshot, LocalPiRpcEvent, LocalPiSessionState } from '../../shared/local-pi'
 import type { PiHostUiRequestEventEnvelope } from '../../shared/pi-host-protocol'
 
 export interface RuntimeActivity {
@@ -14,15 +14,22 @@ export interface RuntimeActivity {
   readonly retryRunning: boolean
   readonly summarizationRunning: boolean
   readonly queuedMessages: number
+  /** Delivery state is independent of the SDK's native queue and get_state samples. */
+  readonly deliveryRevision: number
+  readonly managedMessages: number
+  readonly managedReadyMessages: number
+  readonly managedDeliveringMessages: number
+  readonly managedSdkMessages: number
+  readonly managedAcceptingMessages: number
   readonly activeToolCalls: ReadonlySet<string>
   readonly pendingUiRequests: ReadonlySet<string>
-  readonly outcome?: 'completed' | 'failed'
+  readonly outcome?: 'completed' | 'failed' | 'cancelled'
 }
 
 export interface RuntimeActivitySummary {
   lifecycle: 'idle' | 'accepting' | 'running' | 'queued'
   queueCount: number
-  outcome?: 'completed' | 'failed'
+  outcome?: 'completed' | 'failed' | 'cancelled'
   activity?: 'prompt' | 'tool' | 'retry' | 'compaction' | 'summarization' | 'interaction'
 }
 
@@ -38,6 +45,8 @@ export type RuntimeActivityAction =
   | { type: 'command_finished' }
   | { type: 'prompt_accepted'; mode: 'prompt' | 'queued'; expectedEventRevision: number }
   | { type: 'session_state'; state: LocalPiSessionState | null; expectedStateRevision: number }
+  | { type: 'delivery_state'; delivery: LocalPiDeliverySnapshot }
+  | { type: 'delivery_reset' }
   | { type: 'event'; event: LocalPiRpcEvent }
   | { type: 'ui_request'; request: PiHostUiRequestEventEnvelope['request'] }
   | { type: 'ui_responded'; id: string }
@@ -54,6 +63,12 @@ export function createRuntimeActivity(state?: LocalPiSessionState | null): Runti
     retryRunning: false,
     summarizationRunning: false,
     queuedMessages: state?.pendingMessageCount ?? 0,
+    deliveryRevision: -1,
+    managedMessages: 0,
+    managedReadyMessages: 0,
+    managedDeliveringMessages: 0,
+    managedSdkMessages: 0,
+    managedAcceptingMessages: 0,
     activeToolCalls: new Set(),
     pendingUiRequests: new Set(),
     ...(state?.isStreaming === false ? { outcome: 'completed' as const } : {}),
@@ -112,6 +127,15 @@ export function reduceRuntimeActivity(
         queuedMessages: action.state.pendingMessageCount,
         ...(action.state.isStreaming ? { outcome: undefined } : {}),
       } : {}))
+    case 'delivery_state': {
+      const next = reduceDeliveryState(activity, action.delivery)
+      return next ? observe(activity, next) : activity
+    }
+    case 'delivery_reset':
+      return observe(activity, advance(activity, {
+        deliveryRevision: -1, managedMessages: 0, managedReadyMessages: 0,
+        managedDeliveringMessages: 0, managedSdkMessages: 0, managedAcceptingMessages: 0,
+      }))
     case 'ui_responded':
       return updateSet(activity, 'pendingUiRequests', action.id, false)
     case 'ui_request':
@@ -132,6 +156,8 @@ export function reduceRuntimeActivity(
 
 function reduceEvent(activity: RuntimeActivity, event: LocalPiRpcEvent): RuntimeActivity | undefined {
   switch (event.type) {
+    case 'delivery_state':
+      return reduceDeliveryState(activity, event.delivery)
     case 'agent_start':
     case 'turn_start':
       return activity.agentRunning && activity.outcome === undefined
@@ -141,11 +167,12 @@ function reduceEvent(activity: RuntimeActivity, event: LocalPiRpcEvent): Runtime
       if (event.willRetry) {
         return activity.retryRunning ? activity : advance(activity, { retryRunning: true })
       }
-      let outcome: 'completed' | 'failed' = 'completed'
+      let outcome: RuntimeActivity['outcome'] = 'completed'
       for (let index = event.messages.length - 1; index >= 0; index -= 1) {
         const message = event.messages[index]
         if (message?.role !== 'assistant') continue
-        outcome = message.stopReason === 'error' ? 'failed' : 'completed'
+        outcome = message.stopReason === 'error' ? 'failed'
+          : message.stopReason === 'aborted' ? 'cancelled' : 'completed'
         break
       }
       // agent_end can precede follow-up work. Only agent_settled ends the execution.
@@ -188,15 +215,29 @@ function reduceEvent(activity: RuntimeActivity, event: LocalPiRpcEvent): Runtime
   }
 }
 
+function reduceDeliveryState(activity: RuntimeActivity, delivery: LocalPiDeliverySnapshot): RuntimeActivity | undefined {
+  if (delivery.revision <= activity.deliveryRevision) return undefined
+  return advance(activity, {
+    deliveryRevision: delivery.revision,
+    managedMessages: delivery.items.length,
+    managedReadyMessages: delivery.paused ? 0 : delivery.items.filter((item) => item.status === 'queued').length,
+    managedDeliveringMessages: delivery.items.filter((item) => item.status === 'delivering').length,
+    managedSdkMessages: delivery.items.filter((item) => item.mode === 'steer' && item.status === 'delivering').length,
+    managedAcceptingMessages: delivery.receipts.filter((receipt) => receipt.status === 'accepting').length,
+  })
+}
+
 function hasExecutionActivity(activity: RuntimeActivity): boolean {
   return activity.agentRunning || activity.compactionRunning || activity.retryRunning ||
-    activity.summarizationRunning || activity.activeToolCalls.size > 0 || activity.pendingUiRequests.size > 0
+    activity.summarizationRunning || activity.managedDeliveringMessages > 0 ||
+    activity.activeToolCalls.size > 0 || activity.pendingUiRequests.size > 0
 }
 
 /** Pins and accepting commands protect runtime ownership even when the SDK reports idle. */
 export function isRuntimeIdle(activity: RuntimeActivity): boolean {
   return activity.controlPins === 0 && activity.pendingCommands === 0 &&
-    activity.queuedMessages === 0 && !hasExecutionActivity(activity)
+    activity.queuedMessages === 0 && activity.managedReadyMessages === 0 &&
+    activity.managedAcceptingMessages === 0 && !hasExecutionActivity(activity)
 }
 
 /** A second, authoritative veto used after asynchronous LRU/configuration probes. */
@@ -204,19 +245,26 @@ export function isSessionStateBusy(state: LocalPiSessionState): boolean {
   return state.isStreaming || state.isCompacting || state.pendingMessageCount > 0
 }
 
+export function isDeliverySnapshotBusy(delivery: LocalPiDeliverySnapshot): boolean {
+  return delivery.receipts.some((receipt) => receipt.status === 'accepting') ||
+    delivery.items.some((item) => item.status === 'delivering' ||
+      (!delivery.paused && item.status === 'queued'))
+}
+
 export function summarizeRuntimeActivity(activity: RuntimeActivity): RuntimeActivitySummary {
-  const lifecycle = activity.pendingCommands > 0 ? 'accepting'
-    : activity.queuedMessages > 0 ? 'queued'
+  const externalQueuedMessages = Math.max(0, activity.queuedMessages - activity.managedSdkMessages)
+  const lifecycle = activity.pendingCommands > 0 || activity.managedAcceptingMessages > 0 ? 'accepting'
+    : externalQueuedMessages > 0 || activity.managedReadyMessages > 0 ? 'queued'
     : hasExecutionActivity(activity) ? 'running' : 'idle'
   const detail = activity.pendingUiRequests.size > 0 ? 'interaction'
     : activity.summarizationRunning ? 'summarization'
     : activity.compactionRunning ? 'compaction'
     : activity.retryRunning ? 'retry'
     : activity.activeToolCalls.size > 0 ? 'tool'
-    : activity.agentRunning ? 'prompt' : undefined
+    : activity.agentRunning || activity.managedDeliveringMessages > 0 ? 'prompt' : undefined
   return {
     lifecycle,
-    queueCount: activity.queuedMessages,
+    queueCount: externalQueuedMessages + activity.managedMessages,
     ...(activity.outcome ? { outcome: activity.outcome } : {}),
     ...(detail ? { activity: detail } : {}),
   }

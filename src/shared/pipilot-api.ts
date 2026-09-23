@@ -14,6 +14,7 @@ import type {
   WorkspaceSwitchResult,
 } from './schemas/workspace'
 import type {
+  WorkspaceChangeStage,
   WorkspaceDiffFile,
   WorkspaceDiffSnapshot,
   WorkspaceDirectorySnapshot,
@@ -25,6 +26,7 @@ import type {
   TerminalEvent,
   TerminalResizeResult,
   TerminalSession,
+  TerminalSummary,
 } from './terminal'
 import type {
   LocalPiExtensionUiEvent,
@@ -157,9 +159,14 @@ export interface PiPilotApi {
   }
   readonly changes: {
     list(workspaceId: string): Promise<WorkspaceDiffSnapshot>
-    read(workspaceId: string, path: string): Promise<WorkspaceDiffFile>
+    read(workspaceId: string, path: string, stage?: WorkspaceChangeStage): Promise<WorkspaceDiffFile>
   }
   readonly terminal: {
+    list(scope: ConversationScope): Promise<TerminalSummary[]>
+    attach(scope: ConversationScope, terminalId: string, cols: number, rows: number): Promise<TerminalSession>
+    rename(scope: ConversationScope, terminalId: string, title: string): Promise<TerminalSummary>
+    close(scope: ConversationScope, terminalId: string): Promise<TerminalActionResult>
+    clear(scope: ConversationScope, terminalId: string): Promise<TerminalActionResult>
     create(scope: ConversationScope, cols: number, rows: number): Promise<TerminalSession>
     input(scope: ConversationScope, terminalId: string, data: string): Promise<TerminalActionResult>
     kill(scope: ConversationScope, terminalId: string): Promise<TerminalActionResult>

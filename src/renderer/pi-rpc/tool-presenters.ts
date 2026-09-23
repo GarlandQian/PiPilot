@@ -1,6 +1,7 @@
 import type {
   SubagentOutputPresentation,
   SubagentPresentation,
+  SubagentRunPresentation,
   SubagentTaskPresentation,
   SubagentTimelineEvent,
   StructuredValueProjection,
@@ -235,7 +236,7 @@ function escapeMarkdownText(value: string) {
 }
 
 function knownSubagentResult(value: unknown) {
-  for (const key of ['output', 'result', 'message', 'error', 'summary'] as const) {
+  for (const key of ['output', 'result', 'message', 'error', 'errorMessage', 'summary'] as const) {
     const candidate = ownText(value, key)
     if (candidate?.trim()) return candidate
   }
@@ -244,7 +245,7 @@ function knownSubagentResult(value: unknown) {
   if (!results?.length) return null
   const sections: string[] = []
   for (const [index, result] of results.slice(0, MAX_SUBAGENT_TASKS).entries()) {
-    const text = ['output', 'result', 'message', 'error']
+    const text = ['output', 'result', 'message', 'error', 'errorMessage', 'summary']
       .map((key) => ownText(result, key))
       .find((candidate) => candidate?.trim())
     if (!text) continue
@@ -306,6 +307,7 @@ function normalizeSubagentOutput(
 type TimelineBuildResult = {
   events: readonly SubagentTimelineEvent[]
   omittedCount: number
+  runs?: readonly SubagentRunPresentation[]
 }
 
 function boundTimelineEvents(
@@ -364,21 +366,35 @@ function toolActionMarkdown(name: string, args: unknown) {
   const normalized = name.trim() || 'tool'
   const key = normalized.toLowerCase()
   const detail = key === 'bash' || key === 'shell'
-    ? ownString(args, 'command', 1_200)
+    ? ownText(args, 'command')
     : ['read', 'edit', 'write', 'ls', 'find', 'grep'].includes(key)
       ? ownString(args, 'path', 1_200) ?? ownString(args, 'file_path', 1_200)
       : null
   const boundedName = boundedFirstLine(normalized, 120) ?? 'tool'
-  if (!detail) return boundedName
-  return detail
+  return boundedMarkdown(detail || boundedName, MAX_SUBAGENT_TIMELINE_ITEM_BYTES)
 }
 
 function resultFailed(value: unknown) {
   const exitCode = readOwnDataProperty(value, 'exitCode')
   const stopReason = ownString(value, 'stopReason', 32)?.toLowerCase()
-  return (typeof exitCode === 'number' && exitCode !== 0 && exitCode !== -1) ||
-    stopReason === 'error' ||
-    stopReason === 'aborted'
+  if (stopReason === 'aborted') return false
+  return (typeof exitCode === 'number' && Number.isFinite(exitCode) && exitCode !== 0 && exitCode !== -1) ||
+    stopReason === 'error'
+}
+
+function subagentRunStatus(value: unknown, successfulExitConfirmed: boolean): ToolCall['status'] | undefined {
+  const stopReason = ownString(value, 'stopReason', 32)?.toLowerCase()
+  if (stopReason === 'aborted') return 'cancelled'
+  if (stopReason === 'error') return 'failed'
+  const exitCode = readOwnDataProperty(value, 'exitCode')
+  if (typeof exitCode === 'number' && Number.isFinite(exitCode) && exitCode !== -1) {
+    if (exitCode !== 0) return 'failed'
+    if (successfulExitConfirmed) return 'success'
+    return isDetached(value) ? 'detached' : undefined
+  }
+  if (isDetached(value)) return 'detached'
+  if (typeof exitCode !== 'number' || !Number.isFinite(exitCode)) return undefined
+  return 'running'
 }
 
 function resultMessages(value: unknown): readonly unknown[] {
@@ -393,10 +409,11 @@ function timelineFromResultDetails(
   const resultValues = safeArray(readOwnDataProperty(details, 'results'))
   const results = resultValues?.length
     ? resultValues.slice(0, MAX_SUBAGENT_TIMELINE_RESULTS)
-    : resultMessages(details).length > 0
+    : resultMessages(details).length > 0 || typeof readOwnDataProperty(details, 'exitCode') === 'number'
       ? [details]
       : []
   const events: SubagentTimelineEvent[] = []
+  const runs: SubagentRunPresentation[] = []
   let sequence = 0
   let sourceOmittedCount = resultValues
     ? Math.max(0, resultValues.length - results.length)
@@ -407,7 +424,7 @@ function timelineFromResultDetails(
     kind: SubagentTimelineEvent['kind'],
     state: SubagentTimelineEvent['state'],
     markdown: { markdown: string; truncated: boolean },
-    metadata: Pick<SubagentTimelineEvent, 'agent' | 'toolName'> = {},
+    metadata: Pick<SubagentTimelineEvent, 'agent' | 'toolName' | 'runId' | 'source'> = {},
   ) => {
     events.push({
       id,
@@ -418,12 +435,29 @@ function timelineFromResultDetails(
       truncated: markdown.truncated,
       ...(metadata.agent ? { agent: metadata.agent } : {}),
       ...(metadata.toolName ? { toolName: metadata.toolName } : {}),
+      ...(metadata.runId ? { runId: metadata.runId } : {}),
+      ...(metadata.source ? { source: metadata.source } : {}),
     })
     sequence += 1
   }
 
   for (const [resultIndex, result] of results.entries()) {
     const agent = ownString(result, 'agent', 64) ?? undefined
+    const runId = `result:${resultIndex}`
+    const task = cleanTaskMarkdown(readOwnDataProperty(result, 'task'), MAX_SUBAGENT_SINGLE_TASK_BYTES)
+    const rawStep = readOwnDataProperty(result, 'step')
+    const step = typeof rawStep === 'number' && Number.isSafeInteger(rawStep) && rawStep > 0 && rawStep <= MAX_SUBAGENT_TASKS ? rawStep : undefined
+    const mode = ownString(details, 'mode', 32)
+    const taskId = mode === 'parallel' ? `tasks:${resultIndex}`
+      : mode === 'chain' && step !== undefined ? `chain:${step - 1}`
+        : mode === 'single' ? 'single:0' : undefined
+    const partial = input.resultIsPartial === true || input.phase === 'running'
+    const completedChainStep = mode === 'chain' && resultIndex < results.length - 1
+    const runStatus = subagentRunStatus(result, !partial || completedChainStep)
+    const awaitingCompletion = partial && !completedChainStep && !runStatus && readOwnDataProperty(result, 'exitCode') === 0
+    const runActive = runStatus === 'running' || runStatus === 'detached' || (!runStatus && partial)
+    const summary = timelineMarkdown(knownSubagentResult(result))
+    runs.push({ id: runId, agent, taskMarkdown: task?.markdown, taskTruncated: task?.truncated, taskId, step, status: runStatus, awaitingCompletion, ...(summary ? { summary: { ...summary, kind: runStatus === 'failed' ? 'error' : runActive ? 'progress' : 'result' } } : {}) })
     const allMessages = resultMessages(result)
     const messages = allMessages.slice(0, MAX_SUBAGENT_TIMELINE_MESSAGES)
     sourceOmittedCount += Math.max(0, allMessages.length - messages.length)
@@ -445,6 +479,7 @@ function timelineFromResultDetails(
     }
     const finalAssistantTextKey = assistantTextKeys[assistantTextKeys.length - 1]
     const failed = resultFailed(result)
+    const cancelled = runStatus === 'cancelled'
 
     for (const [messageIndex, message] of messages.entries()) {
       const role = ownString(message, 'role', 32)
@@ -462,15 +497,15 @@ function timelineFromResultDetails(
               ? 'failed'
               : failedTool === false
                 ? 'complete'
-                : input.resultIsPartial
+                : runActive
                   ? 'active'
-                  : 'complete'
+                  : cancelled ? 'cancelled' : 'unknown'
             append(
               `${eventId}:tool`,
               'tool',
               state,
-              { markdown: toolActionMarkdown(toolName, readOwnDataProperty(part, 'arguments')), truncated: false },
-              { agent, toolName },
+              toolActionMarkdown(toolName, readOwnDataProperty(part, 'arguments')),
+              { agent, toolName, runId, source: 'tool' },
             )
             continue
           }
@@ -481,10 +516,10 @@ function timelineFromResultDetails(
           const final = key === finalAssistantTextKey
           append(
             `${eventId}:text`,
-            final ? (failed ? 'error' : 'result') : 'progress',
-            failed && final ? 'failed' : input.resultIsPartial ? 'active' : 'complete',
+            final && !runActive ? (failed ? 'error' : 'result') : 'progress',
+            cancelled && final ? 'cancelled' : failed && final ? 'failed' : runActive ? 'active' : 'complete',
             markdown,
-            { agent },
+            { agent, runId, source: 'assistant' },
           )
         }
         continue
@@ -493,17 +528,23 @@ function timelineFromResultDetails(
       const toolName = ownString(message, 'toolName', 120) ?? undefined
       const isError = ownBoolean(message, 'isError') === true
       for (const [contentIndex, part] of parts.entries()) {
-        const markdown = timelineMarkdown(
-          ownString(part, 'type', 32) === 'text' ? ownText(part, 'text') : undefined,
-        )
-        if (!markdown) continue
+        const text = ownString(part, 'type', 32) === 'text' ? ownText(part, 'text') : undefined
+        if (!text?.trim()) continue
+        // Tool output is literal evidence; scheduler-like lines and terminal
+        // control characters in it are not assistant instructions to remove.
+        const projected = projectPlainText(text, {
+          maxStringBytes: MAX_SUBAGENT_TIMELINE_ITEM_BYTES,
+          maxDisplayBytes: MAX_SUBAGENT_TIMELINE_ITEM_BYTES,
+          maxCopyBytes: MAX_SUBAGENT_TIMELINE_ITEM_BYTES,
+        })
+        const markdown = { markdown: projected.copyText, truncated: projected.truncated }
         const eventId = `result:${resultIndex}:message:${messageIndex}:content:${contentIndex}:result`
         append(
           eventId,
-          isError ? 'error' : input.resultIsPartial ? 'progress' : 'result',
-          isError ? 'failed' : input.resultIsPartial ? 'active' : 'complete',
+          isError ? 'error' : 'result',
+          isError ? 'failed' : 'complete',
           markdown,
-          { agent, toolName },
+          { agent, toolName, runId, source: 'tool' },
         )
       }
     }
@@ -523,9 +564,9 @@ function timelineFromResultDetails(
       )
     }
   }
-  if (events.length === 0) return undefined
+  if (events.length === 0 && runs.length === 0) return undefined
 
-  return boundTimelineEvents(events, sourceOmittedCount)
+  return { ...boundTimelineEvents(events, sourceOmittedCount), runs }
 }
 
 function appendFallbackTimelineEvent(
@@ -540,6 +581,7 @@ function appendFallbackTimelineEvent(
     state: output.kind === 'error' ? 'failed' : input.resultIsPartial ? 'active' : 'complete',
     markdown: output.markdown,
     truncated: output.truncated,
+    source: 'summary',
   })
 }
 
@@ -593,10 +635,9 @@ function legacyArgumentBody(
 
 function genericPresentation(input: ToolPresentationInput): ToolCall {
   const kind = input.fallback?.kind ?? toolKind(input.name)
-  // Shell commands already have a safe, purpose-built summary. Rendering the
-  // full argument object adds noise (and often repeats the command) without
-  // giving the user useful context.
-  const projectedArguments = kind === 'shell' || input.args === undefined
+  // Preserve original arguments for the secondary source disclosure. Shell
+  // summaries still use the command, never the serialized argument object.
+  const projectedArguments = input.args === undefined
     ? undefined
     : input.argsPresentation === 'plain-text' && typeof input.args === 'string'
       ? projectPlainText(input.args)
@@ -659,11 +700,21 @@ function subagentPresenter(input: ToolPresentationInput, base: ToolCall): ToolCa
     resultIndicatesDetached(input.resultText)
   const output = normalizeSubagentOutput(input)
   const timeline = timelineFromResultDetails(input.resultDetails, input, output)
-  const status: ToolCall['status'] = input.isError === true
-    ? 'failed'
-    : detached
-      ? 'detached'
-      : base.status
+  const runStates = timeline?.runs?.map((run) => run.status) ?? []
+  const reportedStatus = input.phase !== 'complete' || runStates.length === 0
+    ? undefined
+    : runStates.includes('running') ? 'running'
+      : runStates.includes('detached') ? 'detached'
+        : runStates.includes('failed') ? 'failed'
+          : runStates.includes('cancelled') ? 'cancelled'
+            : runStates.every((state) => state === 'success') ? 'success' : undefined
+  const status: ToolCall['status'] = reportedStatus === 'cancelled'
+    ? 'cancelled'
+    : input.isError === true
+      ? 'failed'
+      : reportedStatus ?? (detached
+        ? 'detached'
+        : base.status)
 
   if (input.args === undefined) {
     return {
@@ -681,6 +732,7 @@ function subagentPresenter(input: ToolPresentationInput, base: ToolCall): ToolCa
         ...(timeline ? {
           timeline: timeline.events,
           timelineOmittedCount: timeline.omittedCount,
+          runs: timeline.runs,
         } : {}),
       },
       malformed: undefined,
@@ -738,6 +790,7 @@ function subagentPresenter(input: ToolPresentationInput, base: ToolCall): ToolCa
       ...(timeline ? {
         timeline: timeline.events,
         timelineOmittedCount: timeline.omittedCount,
+        runs: timeline.runs,
       } : {}),
     },
     malformed,
@@ -758,6 +811,12 @@ export function presentToolCall(input: ToolPresentationInput): ToolCall {
   return presenter ? presenter(input, base) : base
 }
 
+function sameSubagentRun(previous: SubagentRunPresentation, next: SubagentRunPresentation) {
+  return !(next.agent && previous.agent && next.agent !== previous.agent) &&
+    !(next.taskMarkdown && previous.taskMarkdown && next.taskMarkdown !== previous.taskMarkdown) &&
+    !(next.taskId && previous.taskId && next.taskId !== previous.taskId)
+}
+
 export function mergeSubagentPresentation(
   previous: SubagentPresentation | undefined,
   next: SubagentPresentation | undefined,
@@ -766,21 +825,47 @@ export function mergeSubagentPresentation(
   if (!next) return previous
   const hasNextTasks = next.tasks.length > 0 || next.malformed
   const hasNextTimeline = Boolean(next.timeline?.length) ||
-    (next.timelineOmittedCount ?? 0) > 0
+    (next.timelineOmittedCount ?? 0) > 0 || Boolean(next.runs?.length)
   const timelineById = new Map<string, SubagentTimelineEvent>()
-  for (const event of previous.timeline ?? []) timelineById.set(event.id, event)
+  for (const event of previous.timeline ?? []) {
+    const nextRun = next.runs?.find((run) => run.id === event.runId)
+    const previousRun = previous.runs?.find((run) => run.id === event.runId)
+    if (nextRun && previousRun && !sameSubagentRun(previousRun, nextRun)) continue
+    const settled = nextRun?.status === 'success' || nextRun?.status === 'failed' || nextRun?.status === 'cancelled'
+    // A final snapshot can omit earlier messages. Keep those observed messages,
+    // but never leave an unmatched tool falsely running after the child settles.
+    const retained: SubagentTimelineEvent = settled && event.state === 'active'
+      ? { ...event, state: event.kind === 'tool' ? nextRun?.status === 'cancelled' ? 'cancelled' : 'unknown' : 'complete' }
+      : event
+    timelineById.set(event.id, retained)
+  }
   for (const event of next.timeline ?? []) timelineById.set(event.id, event)
   const mergedTimeline = boundTimelineEvents(
     [...timelineById.values()].sort((left, right) => left.sequence - right.sequence),
     Math.max(previous.timelineOmittedCount ?? 0, next.timelineOmittedCount ?? 0),
   )
   const timeline = hasNextTimeline ? mergedTimeline.events : previous.timeline
+  const runs = next.runs?.length ? next.runs.map((run) => {
+    const previousRun = previous.runs?.find((candidate) => candidate.id === run.id)
+    if (!previousRun || !sameSubagentRun(previousRun, run)) return run
+    return {
+      ...previousRun,
+      ...run,
+      agent: run.agent ?? previousRun.agent,
+      taskId: run.taskId ?? previousRun.taskId,
+      step: run.step ?? previousRun.step,
+      taskMarkdown: run.taskMarkdown ?? previousRun.taskMarkdown,
+      taskTruncated: run.taskTruncated ?? previousRun.taskTruncated,
+      summary: run.summary ?? previousRun.summary,
+    }
+  }) : previous.runs
   return {
     mode: hasNextTasks ? next.mode : previous.mode,
     tasks: hasNextTasks ? next.tasks : previous.tasks,
     omittedTaskCount: hasNextTasks ? next.omittedTaskCount : previous.omittedTaskCount,
     malformed: hasNextTasks ? next.malformed : previous.malformed,
     output: next.output !== undefined ? next.output : previous.output,
+    runs,
     ...(timeline ? { timeline } : {}),
     ...(hasNextTimeline || next.timelineOmittedCount !== undefined
       ? { timelineOmittedCount: mergedTimeline.omittedCount }
@@ -794,6 +879,9 @@ export function toolCallCopyText(call: ToolCall) {
   if (call.subagent) {
     const values = call.subagent.tasks.map((task) => `${task.agent}\n${task.markdown}`)
     for (const event of call.subagent.timeline ?? []) values.push(event.markdown)
+    for (const run of call.subagent.runs ?? []) {
+      if (run.summary && !values.includes(run.summary.markdown)) values.push(run.summary.markdown)
+    }
     if (call.subagent.output && !values.includes(call.subagent.output.markdown)) {
       values.push(call.subagent.output.markdown)
     }

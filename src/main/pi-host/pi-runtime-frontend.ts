@@ -6,6 +6,8 @@ import {
   LOCAL_PI_RUNTIME_SESSION_STATUS_MAX_ITEMS,
   localPiRuntimeSnapshotSchema,
   localPiSessionStateSchema,
+  localPiDeliverySnapshotSchema,
+  type LocalPiDeliverySnapshot,
   type LocalPiExtensionUiResponse,
   type LocalPiRendererRpcCommand,
   type LocalPiRpcEvent,
@@ -43,6 +45,7 @@ import {
   createRuntimeActivity,
   isRuntimeIdle,
   isSessionStateBusy,
+  isDeliverySnapshotBusy,
   reduceRuntimeActivity,
   summarizeRuntimeActivity,
   type RuntimeActivity,
@@ -141,6 +144,7 @@ export function projectRuntimeSessionStatuses(
       sessionId: summary.sessionId,
       ...(summary.selectionToken ? { selectionToken: summary.selectionToken } : {}),
       status,
+      ...(summary.activity === 'interaction' ? { needsUserInput: true } : {}),
       ...(summary.queueCount > 0
         ? { pendingMessageCount: Math.min(
             summary.queueCount,
@@ -852,12 +856,17 @@ export class PiRuntimeFrontend {
       // Every affected Runtime is checked before the first extension shutdown.
       for (const { runtime, identity } of targets) {
         try {
-          const result = await this.pool.command(
-            runtime.runtimeId, { type: 'get_state' }, identity.generation, undefined, permit,
-          )
+          const [result, deliveryResult] = await Promise.all([
+            this.pool.command(runtime.runtimeId, { type: 'get_state' }, identity.generation, undefined, permit),
+            this.pool.command(runtime.runtimeId, { type: 'get_delivery_state', expectedSessionId: runtime.descriptor.sessionId }, identity.generation, undefined, permit),
+          ])
           const state = this.parseStateResponse(result.response)
+          const delivery = this.parseDeliveryResponse(deliveryResult.response)
+          if (isDeliverySnapshotBusy(delivery) && result.runtime.generation === identity.generation &&
+            deliveryResult.runtime.generation === identity.generation) this.observeDeliveryResponse(runtime, deliveryResult.response)
           if (!stillIdle() || result.runtime.generation !== identity.generation ||
-              isSessionStateBusy(state)) {
+              deliveryResult.runtime.generation !== identity.generation ||
+              isSessionStateBusy(state) || isDeliverySnapshotBusy(delivery)) {
             return outcome('pending')
           }
         } catch {
@@ -1102,6 +1111,7 @@ export class PiRuntimeFrontend {
       return response
     }
     this.setRuntimeDescriptor(runtime, result.runtime)
+    this.observeDeliveryResponse(runtime, response)
     if (runtimeRebound || (this.isSessionChanging(command.type) && response.success)) {
       const refreshed = await this.refreshSession(runtime)
       runtime.snapshot = refreshed.snapshot
@@ -1637,6 +1647,7 @@ export class PiRuntimeFrontend {
     if (generationChanged) {
       this.clearControlLeases(runtime)
     }
+    if (generationChanged || sessionChanged) this.updateActivity(runtime, { type: 'delivery_reset' })
     runtime.descriptor = descriptor
     if (!generationChanged) return
 
@@ -1791,11 +1802,10 @@ export class PiRuntimeFrontend {
     const activityRevision = current.activity.revision
     const generation = current.descriptor.generation
     try {
-      const result = await this.pool.command(
-        current.runtimeId,
-        { type: 'get_state' },
-        generation,
-      )
+      const [result, deliveryResult] = await Promise.all([
+        this.pool.command(current.runtimeId, { type: 'get_state' }, generation),
+        this.pool.command(current.runtimeId, { type: 'get_delivery_state', expectedSessionId: current.descriptor.sessionId }, generation),
+      ])
       if (!result.response.success || result.response.command !== 'get_state') {
         return false
       }
@@ -1807,12 +1817,16 @@ export class PiRuntimeFrontend {
         current.runtimeId === this.active?.runtimeId ||
         current.descriptor.generation !== generation ||
         result.runtime.generation !== generation ||
+        deliveryResult.runtime.generation !== generation ||
         current.activity.revision !== activityRevision ||
         !isRuntimeIdle(current.activity) ||
         isSessionStateBusy(parsed.data)
       ) {
         return false
       }
+      this.parseDeliveryResponse(deliveryResult.response)
+      this.observeDeliveryResponse(current, deliveryResult.response)
+      if (!isRuntimeIdle(current.activity)) return false
       const confirmedSessionFile = result.runtime.sessionFile ??
         parsed.data.sessionFile ?? sessionFile
       if (!this.isPersistedSessionFile(confirmedSessionFile)) return false
@@ -1846,6 +1860,26 @@ export class PiRuntimeFrontend {
     return parsed.data
   }
 
+  private parseDeliveryResponse(response: LocalPiRpcResponse): LocalPiDeliverySnapshot {
+    const data = response.success && response.command === 'get_delivery_state'
+      ? localPiDeliverySnapshotSchema.safeParse(response.data) : null
+    if (!data?.success) {
+      throw new PiRuntimeFrontendError('PI_RUNTIME_CONFIRMATION_FAILED', 'Pi did not confirm its pending message state.')
+    }
+    return data.data
+  }
+
+  private observeDeliveryResponse(runtime: ActiveRuntime, response: LocalPiRpcResponse): void {
+    if (!response.success) return
+    const delivery = response.command === 'submit_message' ? response.data.delivery
+      : response.command === 'get_delivery_state' || response.command === 'mutate_delivery' || response.command === 'resume_delivery' || response.command === 'clear_delivery'
+        ? response.data : null
+    if (delivery && this.updateActivity(runtime, { type: 'delivery_state', delivery })) {
+      this.publishControlRuntimes()
+      if (runtime.runtimeId !== this.active?.runtimeId && isRuntimeIdle(runtime.activity)) this.scheduleIdleReclaim(runtime.hostScope)
+    }
+  }
+
   private async hydrate(
     descriptor: ProjectRuntimeDescriptor,
     _prepared: { scope: ProjectHostScope; sessionFile?: string; forkSessionFile?: string },
@@ -1853,10 +1887,12 @@ export class PiRuntimeFrontend {
   ): Promise<LocalPiRuntimeSnapshot> {
     const runtime = this.runtimes.get(descriptor.runtimeId)
     const expectedStateRevision = runtime?.activity.stateRevision
-    const [stateResult, commandsResult] = await Promise.all([
+    const [stateResult, commandsResult, deliveryResult] = await Promise.all([
       this.pool.command(descriptor.runtimeId, { type: 'get_state' }, descriptor.generation, undefined, maintenancePermit),
       this.pool.command(descriptor.runtimeId, { type: 'get_commands' }, descriptor.generation, undefined, maintenancePermit),
+      this.pool.command(descriptor.runtimeId, { type: 'get_delivery_state', expectedSessionId: descriptor.sessionId }, descriptor.generation, undefined, maintenancePermit),
     ])
+    const delivery = this.parseDeliveryResponse(deliveryResult.response)
     const state = this.parseStateResponse(stateResult.response)
     if (!commandsResult.response.success) {
       throw new PiRuntimeFrontendError(
@@ -1886,19 +1922,29 @@ export class PiRuntimeFrontend {
         'Pi returned an invalid runtime snapshot.',
       )
     }
-    return runtime && this.runtimes.get(descriptor.runtimeId) === runtime &&
-      runtime.descriptor.generation === descriptor.generation && expectedStateRevision !== undefined
-      ? this.mergeSnapshotActivity(runtime, snapshot.data, expectedStateRevision)
-      : snapshot.data
+    if (runtime && this.runtimes.get(descriptor.runtimeId) === runtime &&
+      runtime.descriptor.generation === descriptor.generation && expectedStateRevision !== undefined) {
+      const merged = this.mergeSnapshotActivity(runtime, snapshot.data, expectedStateRevision)
+      this.updateActivity(runtime, { type: 'delivery_state', delivery })
+      return merged
+    }
+    return snapshot.data
   }
 
   private async refreshSession(active: ActiveRuntime) {
     const expectedStateRevision = active.activity.stateRevision
-    const result = await this.pool.command(
-      active.runtimeId,
-      { type: 'get_state' },
-      active.descriptor.generation,
-    )
+    const expectedGeneration = active.descriptor.generation
+    const expectedSessionId = active.descriptor.sessionId
+    const [result, deliveryResult] = await Promise.all([
+      this.pool.command(active.runtimeId, { type: 'get_state' }, expectedGeneration),
+      this.pool.command(active.runtimeId, { type: 'get_delivery_state', expectedSessionId }, expectedGeneration),
+    ])
+    if (this.runtimes.get(active.runtimeId) !== active ||
+      active.descriptor.generation !== expectedGeneration || active.descriptor.sessionId !== expectedSessionId ||
+      result.runtime.generation !== expectedGeneration || deliveryResult.runtime.generation !== expectedGeneration) {
+      throw new PiRuntimeFrontendError('PI_RUNTIME_STALE_GENERATION', 'The Pi session changed while its pending messages were being refreshed.')
+    }
+    const delivery = this.parseDeliveryResponse(deliveryResult.response)
     const state = this.parseStateResponse(result.response)
     const descriptor = result.runtime
     const parsed = localPiRuntimeSnapshotSchema.safeParse({
@@ -1919,7 +1965,9 @@ export class PiRuntimeFrontend {
         'Pi changed the session but did not confirm its new state.',
       )
     }
-    return { descriptor, snapshot: this.mergeSnapshotActivity(active, parsed.data, expectedStateRevision) }
+    const snapshot = this.mergeSnapshotActivity(active, parsed.data, expectedStateRevision)
+    this.updateActivity(active, { type: 'delivery_state', delivery })
+    return { descriptor, snapshot }
   }
 
   private async prepareTarget(target: PiRuntimeFrontendTarget) {
@@ -2093,7 +2141,7 @@ export class PiRuntimeFrontend {
 
   private rememberRuntimeStatus(
     runtime: ActiveRuntime,
-    status: Extract<LocalPiRuntimeSessionStatus['status'], 'completed' | 'failed'>,
+    status: Extract<LocalPiRuntimeSessionStatus['status'], 'completed' | 'failed' | 'cancelled'>,
   ): void {
     const sessionId = runtime.descriptor.sessionId ||
       runtime.snapshot.sessionState?.sessionId

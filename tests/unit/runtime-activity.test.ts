@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
   createRuntimeActivity,
+  isDeliverySnapshotBusy,
   isRuntimeIdle,
   isSessionStateBusy,
   reduceRuntimeActivity,
   summarizeRuntimeActivity,
   type RuntimeActivity,
 } from '../../src/main/pi-host/runtime-activity'
-import type { LocalPiRpcEvent, LocalPiSessionState } from '../../src/shared/local-pi'
+import type { LocalPiDeliverySnapshot, LocalPiRpcEvent, LocalPiSessionState } from '../../src/shared/local-pi'
 
 const idleState: LocalPiSessionState = {
   thinkingLevel: 'medium',
@@ -23,6 +24,14 @@ const idleState: LocalPiSessionState = {
 
 function event(activity: RuntimeActivity, input: LocalPiRpcEvent) {
   return reduceRuntimeActivity(activity, { type: 'event', event: input })
+}
+
+function delivery(status: LocalPiDeliverySnapshot['items'][number]['status'], paused = false): LocalPiDeliverySnapshot {
+  return {
+    revision: 1, paused,
+    items: [{ id: 'item', submissionId: 'submission', message: 'Later', mode: 'follow_up', status }],
+    receipts: [],
+  }
 }
 
 describe('runtime activity ownership', () => {
@@ -49,6 +58,32 @@ describe('runtime activity ownership', () => {
     expect(isRuntimeIdle(ended)).toBe(false)
     expect(summarizeRuntimeActivity(ended)).toMatchObject({ lifecycle: 'running', outcome: 'completed' })
     expect(isRuntimeIdle(event(ended, { type: 'agent_settled' }))).toBe(true)
+  })
+
+  it.each([
+    ['stop', 'completed'], ['error', 'failed'], ['aborted', 'cancelled'],
+  ] as const)('retains %s as %s through settlement and idle reads until the next run', (stopReason, outcome) => {
+    let state = event(createRuntimeActivity(), { type: 'agent_start' })
+    state = event(state, {
+      type: 'agent_end', willRetry: false,
+      messages: [{
+        role: 'assistant', content: [], api: 'test', provider: 'fixture', model: 'fixture',
+        usage: {
+          input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason, timestamp: 1,
+      }],
+    })
+    expect(summarizeRuntimeActivity(state)).toMatchObject({ lifecycle: 'running', outcome })
+    state = event(state, { type: 'agent_settled' })
+    state = reduceRuntimeActivity(state, {
+      type: 'session_state', state: idleState, expectedStateRevision: state.stateRevision,
+    })
+    expect(summarizeRuntimeActivity(state)).toEqual({ lifecycle: 'idle', queueCount: 0, outcome })
+    expect(isRuntimeIdle(state)).toBe(true)
+    expect(summarizeRuntimeActivity(event(state, { type: 'agent_start' })))
+      .toEqual({ lifecycle: 'running', queueCount: 0, activity: 'prompt' })
   })
 
   it('preserves independently observed retry, tools, and extension UI when get_state looks idle', () => {
@@ -142,6 +177,55 @@ describe('runtime activity ownership', () => {
       type: 'prompt_accepted', mode: 'prompt', expectedEventRevision: state.eventRevision,
     })
     expect(summarizeRuntimeActivity(state)).toEqual({ lifecycle: 'running', queueCount: 0, activity: 'prompt' })
+  })
+
+  it.each([
+    ['queued', false, 'queued', false],
+    ['delivering', false, 'running', false],
+    ['delivering', true, 'running', false],
+    ['frozen', true, 'idle', true],
+    ['unknown', false, 'idle', true],
+    ['queued', true, 'idle', true],
+  ] as const)('keeps %s (paused=%s) visible with lifecycle %s and reclaimable=%s', (status, paused, lifecycle, idle) => {
+    const snapshot = delivery(status, paused)
+    let state = event(createRuntimeActivity(idleState), { type: 'delivery_state', delivery: snapshot })
+    state = event(state, { type: 'agent_settled' })
+    state = reduceRuntimeActivity(state, { type: 'session_state', state: idleState, expectedStateRevision: state.stateRevision })
+    expect(summarizeRuntimeActivity(state)).toMatchObject({ lifecycle, queueCount: 1 })
+    expect(isRuntimeIdle(state)).toBe(idle)
+    expect(isDeliverySnapshotBusy(snapshot)).toBe(!idle)
+    expect(state.queuedMessages).toBe(0)
+  })
+
+  it('counts managed native steering once while retaining separate host and extension queues', () => {
+    let state = event(createRuntimeActivity(idleState), { type: 'queue_update', steering: ['managed steer', 'extension'], followUp: [] })
+    state = event(state, { type: 'delivery_state', delivery: {
+      revision: 1, paused: false, receipts: [], items: [
+        { id: 'steer', submissionId: 'one', message: 'managed steer', mode: 'steer', status: 'delivering' },
+        { id: 'later', submissionId: 'two', message: 'Later', mode: 'follow_up', status: 'queued' },
+      ],
+    } })
+    expect(summarizeRuntimeActivity(state)).toMatchObject({ lifecycle: 'queued', queueCount: 3, activity: 'prompt' })
+    expect(isRuntimeIdle(state)).toBe(false)
+  })
+
+  it('protects a reserved acceptance before it has an item and releases terminal receipts', () => {
+    const snapshot: LocalPiDeliverySnapshot = { revision: 1, paused: false, items: [], receipts: [{ submissionId: 'one', status: 'accepting' }] }
+    let state = event(createRuntimeActivity(idleState), { type: 'delivery_state', delivery: snapshot })
+    expect(isRuntimeIdle(state)).toBe(false)
+    expect(isDeliverySnapshotBusy(snapshot)).toBe(true)
+    expect(summarizeRuntimeActivity(state)).toMatchObject({ lifecycle: 'accepting', queueCount: 0 })
+    state = event(state, { type: 'delivery_state', delivery: { ...snapshot, revision: 2, receipts: [{ submissionId: 'one', status: 'unknown' }] } })
+    expect(isRuntimeIdle(state)).toBe(true)
+  })
+
+  it('rejects stale ledger reads but accepts revision zero after a runtime session reset', () => {
+    const queued = event(createRuntimeActivity(idleState), { type: 'delivery_state', delivery: delivery('queued') })
+    const stale = reduceRuntimeActivity(queued, { type: 'delivery_state', delivery: { ...delivery('frozen', true), revision: 0 } })
+    expect(stale).toBe(queued)
+    let reset = reduceRuntimeActivity(stale, { type: 'delivery_reset' })
+    reset = reduceRuntimeActivity(reset, { type: 'delivery_state', delivery: { ...delivery('frozen', true), revision: 0 } })
+    expect(summarizeRuntimeActivity(reset)).toMatchObject({ lifecycle: 'idle', queueCount: 1 })
   })
 
   it.each([

@@ -38,7 +38,8 @@ interface ApplyTerminalTypographyOptions {
   container: StyledTarget
   fontFamily: string
   fontSize: number
-  wordWrap: boolean
+  /** Kept for callers that share code typography settings; PTYs always fit. */
+  wordWrap?: boolean
   scheduler?: TerminalFrameScheduler
   onDimensions(dimensions: { cols: number; rows: number }): void
 }
@@ -49,7 +50,6 @@ export function applyTerminalTypography({
   container,
   fontFamily,
   fontSize,
-  wordWrap,
   scheduler = browserTerminalFrameScheduler,
   onDimensions,
 }: ApplyTerminalTypographyOptions): () => void {
@@ -66,11 +66,9 @@ export function applyTerminalTypography({
   const frame = scheduler.request(() => {
     const proposed = fitAddon?.proposeDimensions()
     if (!proposed || proposed.cols < 2 || proposed.rows < 1) return
-    const cols = wordWrap ? proposed.cols : Math.max(120, proposed.cols)
+    const cols = proposed.cols
     if (terminal.element) {
-      terminal.element.style.minWidth = wordWrap
-        ? '0'
-        : `${Math.ceil(cols * fontSize * 0.62)}px`
+      terminal.element.style.minWidth = '0'
     }
     terminal.resize(cols, proposed.rows)
     onDimensions({ cols, rows: proposed.rows })

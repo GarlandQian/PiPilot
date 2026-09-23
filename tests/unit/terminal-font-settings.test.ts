@@ -73,9 +73,9 @@ describe('live terminal typography', () => {
 
     callbacks[0](0)
     expect(resize).toHaveBeenCalledOnce()
-    expect(resize).toHaveBeenCalledWith(120, 24)
-    expect(elementStyle.minWidth).toBe('1191px')
-    expect(onDimensions).toHaveBeenCalledWith({ cols: 120, rows: 24 })
+    expect(resize).toHaveBeenCalledWith(80, 24)
+    expect(elementStyle.minWidth).toBe('0')
+    expect(onDimensions).toHaveBeenCalledWith({ cols: 80, rows: 24 })
 
     dispose()
     expect(scheduler.cancel).toHaveBeenCalledWith(7)

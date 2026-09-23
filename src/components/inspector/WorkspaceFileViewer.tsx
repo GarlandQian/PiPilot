@@ -1,9 +1,11 @@
 import * as React from 'react'
 import {
   TbArrowLeft,
+  TbAt,
   TbCheck,
   TbCopy,
   TbFile,
+  TbGitCompare,
   TbLoader2,
   TbRefresh,
   TbX,
@@ -25,6 +27,8 @@ type MarkdownMode = 'preview' | 'source'
 
 export interface WorkspaceFileViewerProps {
   path: string
+  workspaceName?: string
+  fileNavigation?: React.ReactNode
   preview?: WorkspaceFilePreview
   loading: boolean
   refreshing?: boolean
@@ -33,6 +37,8 @@ export interface WorkspaceFileViewerProps {
   onClose: () => void
   onRetry?: () => void
   onRefresh?: () => void
+  onShowChanges?: () => void
+  onAddToComposer?: () => void
 }
 
 function typeLabel(
@@ -80,6 +86,8 @@ function SourceDocument({
 
 export function WorkspaceFileViewer({
   path,
+  workspaceName,
+  fileNavigation,
   preview,
   loading,
   refreshing = false,
@@ -88,6 +96,8 @@ export function WorkspaceFileViewer({
   onClose,
   onRetry,
   onRefresh,
+  onShowChanges,
+  onAddToComposer,
 }: WorkspaceFileViewerProps) {
   const t = useT()
   const classification = React.useMemo(() => classifyWorkspaceFile(path), [path])
@@ -178,16 +188,20 @@ export function WorkspaceFileViewer({
         </Tooltip>
 
         <div className="min-w-0 flex-1 px-0.5">
-          <h2 className="truncate font-mono text-caption font-medium text-foreground" title={path}>
+          {fileNavigation ?? <h2 className="truncate font-mono text-caption font-medium text-foreground" title={path}>
             {boundedPath}
-          </h2>
+          </h2>}
           <p className="truncate text-micro text-muted-foreground">
+            {workspaceName ? `${workspaceName} · ` : null}
             {t('inspector.preview.metadata', {
               type: fileType,
               size: preview ? formatWorkspaceFileSize(preview.size) : t('inspector.preview.unknownSize'),
             })}
           </p>
         </div>
+
+        {onShowChanges ? <Button variant="ghost" size="icon-xs" onClick={onShowChanges} aria-label={t('inspector.files.showChanges')} title={t('inspector.files.showChanges')}><TbGitCompare aria-hidden /></Button> : null}
+        {onAddToComposer ? <Button variant="ghost" size="icon-xs" onClick={onAddToComposer} aria-label={t('inspector.files.addToComposer')} title={t('inspector.files.addToComposer')}><TbAt aria-hidden /></Button> : null}
 
         {textPreview ? (
           <Tooltip>

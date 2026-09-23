@@ -1,5 +1,6 @@
 import { mkdir } from 'node:fs/promises'
 import type { AgentSessionRuntime } from '@earendil-works/pi-coding-agent'
+import type { RuntimeDelivery } from './runtime-delivery'
 import type {
   ExternalControlAcceptedMode,
   ExternalControlRequestedMode,
@@ -24,6 +25,7 @@ export interface RuntimeDispatchResult {
 
 export interface RuntimeDispatchContext {
   emitEvent?(event: LocalPiRpcEvent): void
+  delivery?: RuntimeDelivery
 }
 
 export interface RuntimeExternalSubmitCommand {
@@ -482,11 +484,32 @@ export async function dispatchRuntimeCommand(
     // Cancellation is a control-plane operation. Signal it before any
     // filesystem work so a blocked prompt/tool cannot delay its own abort.
     if (command.type === 'abort') {
-      await session.abort()
+      if (context.delivery) await context.delivery.pauseAndAbort()
+      else {
+        session.clearQueue()
+        await session.abort()
+      }
       return { replaced: false, response: noDataSuccess('abort') }
     }
     await ensureRuntimeSessionDirectory(session)
     switch (command.type) {
+      case 'submit_message':
+      case 'get_delivery_state':
+      case 'mutate_delivery':
+      case 'clear_delivery':
+      case 'resume_delivery': {
+        const delivery = context.delivery
+        if (!delivery) throw new Error('Durable message delivery is unavailable for this runtime.')
+        const data = command.type === 'submit_message' ? await delivery.submit(command)
+          : command.type === 'mutate_delivery' ? await delivery.mutate(command)
+            : command.type === 'clear_delivery' ? delivery.clear(command.revision)
+            : command.type === 'resume_delivery' ? await delivery.resume(command.revision)
+              : delivery.snapshot(command.submissionId)
+        return {
+          replaced: false,
+          response: successResponse({ type: 'response', command: command.type, success: true, data }),
+        }
+      }
       case 'prompt':
         return dispatchPrompt(runtime, command)
       case 'steer':

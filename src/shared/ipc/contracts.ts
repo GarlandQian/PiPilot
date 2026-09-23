@@ -31,6 +31,7 @@ import {
   type WorkspaceSnapshot,
 } from '../schemas/workspace'
 import {
+  workspaceChangeStageSchema,
   workspaceDiffFileSchema,
   workspaceDiffSnapshotSchema,
   workspaceDirectorySnapshotSchema,
@@ -47,6 +48,8 @@ import {
   terminalResizeResultSchema,
   terminalRowsSchema,
   terminalSessionSchema,
+  terminalSummarySchema,
+  terminalTitleSchema,
 } from '../terminal'
 import {
   localPiExtensionUiEventSchema,
@@ -140,6 +143,11 @@ export const ipcChannels = {
   settingsUpdate: 'pipilot:settings:update',
   shellOpenExternal: 'pipilot:shell:open-external',
   terminalCreate: 'pipilot:terminal:create',
+  terminalList: 'pipilot:terminal:list',
+  terminalAttach: 'pipilot:terminal:attach',
+  terminalRename: 'pipilot:terminal:rename',
+  terminalClose: 'pipilot:terminal:close',
+  terminalClear: 'pipilot:terminal:clear',
   terminalEvent: 'pipilot:terminal:event',
   terminalInput: 'pipilot:terminal:input',
   terminalKill: 'pipilot:terminal:kill',
@@ -504,9 +512,14 @@ export const workspaceFilesListContract = defineIpcContract(ipcChannels.workspac
 export const workspaceFilePreviewContract = defineIpcContract(ipcChannels.workspaceFilePreview, z.object({ ...workspaceContentRequestFields, path: workspaceRelativePathSchema }).strict(), workspaceFilePreviewSchema)
 export const workspaceFilesSearchContract = defineIpcContract(ipcChannels.workspaceFilesSearch, z.object({ ...workspaceContentRequestFields, query: z.string().max(512) }).strict(), workspacePathSearchResultSchema)
 export const workspaceDiffListContract = defineIpcContract(ipcChannels.workspaceDiffList, z.object(workspaceContentRequestFields).strict(), workspaceDiffSnapshotSchema)
-export const workspaceDiffReadContract = defineIpcContract(ipcChannels.workspaceDiffRead, z.object({ ...workspaceContentRequestFields, path: workspaceRelativePathSchema }).strict(), workspaceDiffFileSchema)
+export const workspaceDiffReadContract = defineIpcContract(ipcChannels.workspaceDiffRead, z.object({ ...workspaceContentRequestFields, path: workspaceRelativePathSchema, stage: workspaceChangeStageSchema.default('unstaged') }).strict(), workspaceDiffFileSchema)
 
 const terminalRequestFields = { ...requestFields, scope: conversationScopeSchema, terminalId: terminalIdSchema }
+export const terminalListContract = defineIpcContract(ipcChannels.terminalList, z.object({ ...requestFields, scope: conversationScopeSchema }).strict(), z.array(terminalSummarySchema))
+export const terminalAttachContract = defineIpcContract(ipcChannels.terminalAttach, z.object({ ...terminalRequestFields, cols: terminalColumnsSchema, rows: terminalRowsSchema }).strict(), terminalSessionSchema)
+export const terminalRenameContract = defineIpcContract(ipcChannels.terminalRename, z.object({ ...terminalRequestFields, title: terminalTitleSchema }).strict(), terminalSummarySchema)
+export const terminalCloseContract = defineIpcContract(ipcChannels.terminalClose, z.object(terminalRequestFields).strict(), terminalActionResultSchema)
+export const terminalClearContract = defineIpcContract(ipcChannels.terminalClear, z.object(terminalRequestFields).strict(), terminalActionResultSchema)
 export const terminalCreateContract = defineIpcContract(ipcChannels.terminalCreate, z.object({ ...requestFields, scope: conversationScopeSchema, cols: terminalColumnsSchema, rows: terminalRowsSchema }).strict(), terminalSessionSchema)
 export const terminalInputContract = defineIpcContract(ipcChannels.terminalInput, z.object({ ...terminalRequestFields, data: z.string().min(1).max(TERMINAL_INPUT_LIMIT) }).strict(), terminalActionResultSchema)
 export const terminalResizeContract = defineIpcContract(ipcChannels.terminalResize, z.object({ ...terminalRequestFields, cols: terminalColumnsSchema, rows: terminalRowsSchema }).strict(), terminalResizeResultSchema)

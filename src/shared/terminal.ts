@@ -4,13 +4,13 @@ import { conversationScopeSchema } from './conversation-scope'
 export const TERMINAL_INPUT_LIMIT = 64 * 1024
 export const TERMINAL_OUTPUT_EVENT_LIMIT = 64 * 1024
 export const TERMINAL_REPLAY_LIMIT = 1024 * 1024
-export const TERMINAL_MAX_COUNT = 4
 export const TERMINAL_MIN_COLUMNS = 2
 export const TERMINAL_MAX_COLUMNS = 500
 export const TERMINAL_MIN_ROWS = 1
 export const TERMINAL_MAX_ROWS = 300
 
 export const terminalIdSchema = z.uuid()
+export const terminalTitleSchema = z.string().trim().min(1).max(128)
 
 export const terminalColumnsSchema = z
   .number()
@@ -24,13 +24,24 @@ export const terminalRowsSchema = z
   .min(TERMINAL_MIN_ROWS)
   .max(TERMINAL_MAX_ROWS)
 
-export const terminalSessionSchema = z
+export const terminalSummarySchema = z
   .object({
     scope: conversationScopeSchema,
     terminalId: terminalIdSchema,
+    title: terminalTitleSchema,
     shell: z.string().min(1).max(128),
     cols: terminalColumnsSchema,
     rows: terminalRowsSchema,
+    status: z.enum(['running', 'exited']),
+    exitCode: z.number().int().min(-1).max(2 ** 31 - 1).optional(),
+    signal: z.number().int().nonnegative().max(255).optional(),
+  })
+  .strict()
+
+export type TerminalSummary = z.infer<typeof terminalSummarySchema>
+
+export const terminalSessionSchema = terminalSummarySchema
+  .extend({
     replay: z.string().max(TERMINAL_REPLAY_LIMIT),
     sequence: z.number().int().nonnegative(),
     reused: z.boolean(),

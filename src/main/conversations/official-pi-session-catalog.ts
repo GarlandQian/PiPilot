@@ -1293,6 +1293,10 @@ export class OfficialPiSessionCatalog {
           createdAt: candidate.createdAt,
           modifiedAt: candidate.modifiedAt,
           selectionToken,
+          catalogId: `cat_${createHash('sha256').update(JSON.stringify([
+            conversationScopeKey(scope), candidate.candidate.canonicalFile,
+            candidate.sessionId, candidate.createdAt,
+          ])).digest('hex')}`,
         })
         const row = {
           candidate: candidate.candidate,

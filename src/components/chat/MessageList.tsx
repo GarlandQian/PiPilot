@@ -32,6 +32,7 @@ interface MessageListProps {
   selectedSubagentId?: string | null
   subagentFocusRequest?: SubagentInspectorFocusRequest | null
   onOpenSubagent?: (toolCallId: string) => void
+  onOpenCommand?: (toolCallId: string) => void
 }
 
 export interface ConversationJumpRequest {
@@ -45,10 +46,10 @@ const renderPrompt = (turn: Extract<Turn, { kind: 'user' }>) => <UserMessage tur
 
 /** Completed rows receive stable data and flags while the live row advances. */
 const ConversationRow = React.memo(function ConversationRow({ response, anchorNodes, highlighted,
-  sessionKey, selectedSubagentId, subagentFocusRequest, onOpenSubagent, onPlanAction,
+  sessionKey, selectedSubagentId, subagentFocusRequest, onOpenSubagent, onOpenCommand, onPlanAction,
   animateAgentKeys, streamingAgentKeys, hiddenResponseActionIds, motionEnabled,
   onTypingChange, thinkingDurations, forkBusy, forkingId, onFork, canFork,
-}: Pick<MessageListProps, 'sessionKey' | 'selectedSubagentId' | 'subagentFocusRequest' | 'onOpenSubagent' | 'onPlanAction'> & {
+}: Pick<MessageListProps, 'sessionKey' | 'selectedSubagentId' | 'subagentFocusRequest' | 'onOpenSubagent' | 'onOpenCommand' | 'onPlanAction'> & {
   response: ResponsePresentation
   anchorNodes: Map<string, HTMLDivElement>
   highlighted: boolean
@@ -70,7 +71,7 @@ const ConversationRow = React.memo(function ConversationRow({ response, anchorNo
   }, [anchorNodes, response.anchorEntryId])
   const renderSegment = (item: ResponsePresentationSegment, visible: boolean): React.ReactNode => {
     if (item.kind === 'activity-run') return <ToolActivityRegion run={item.run} visible={visible}
-      sessionKey={sessionKey} selectedSubagentId={selectedSubagentId} focusRequest={subagentFocusRequest} onOpenSubagent={onOpenSubagent} />
+      sessionKey={sessionKey} selectedSubagentId={selectedSubagentId} focusRequest={subagentFocusRequest} onOpenSubagent={onOpenSubagent} onOpenCommand={onOpenCommand} />
     const turn = item.turn
     switch (turn.kind) {
       case 'user': return <UserMessage turn={turn} />
@@ -106,6 +107,7 @@ export function MessageList({
   selectedSubagentId,
   subagentFocusRequest,
   onOpenSubagent,
+  onOpenCommand,
 }: MessageListProps) {
   const t = useT()
   const { appearance } = useSettings()
@@ -313,6 +315,7 @@ export function MessageList({
               anchorNodes={anchorNodes}
               selectedSubagentId={selectedSubagentId}
               onOpenSubagent={onOpenSubagent}
+              onOpenCommand={onOpenCommand}
               onPlanAction={onPlanAction}
               animateAgentKeys={response.segments.some((item) => item.kind === 'turn' && item.turn.kind === 'agent' && animateAgentKeys.has(agentAnimationKey(item.turn))) ? animateAgentKeys : NO_TURN_KEYS}
               streamingAgentKeys={response.segments.some((item) => item.kind === 'turn' && item.turn.kind === 'agent' && streamingAgentKeys.has(agentAnimationKey(item.turn))) ? streamingAgentKeys : NO_TURN_KEYS}

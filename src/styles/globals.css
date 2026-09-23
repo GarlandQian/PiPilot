@@ -9,30 +9,30 @@
 :root,
 .light {
   color-scheme: light;
-  --color-background: #fbfaf8;
-  --color-foreground: #292824;
-  --color-surface: #fbfaf8;
+  --color-background: #fcfcfd;
+  --color-foreground: #27303d;
+  --color-surface: #fcfcfd;
   --color-surface-raised: #ffffff;
-  --color-surface-inset: #f0efeb;
-  --color-sidebar: #f0efeb;
-  --color-selected: #e5e2dc;
+  --color-surface-inset: #f1f3f6;
+  --color-sidebar: #f1f3f6;
+  --color-selected: #dfe6ef;
   --color-composer: #ffffff;
   --color-card: hsl(0 0% 100%);
   --color-card-foreground: var(--color-foreground);
   --color-popover: hsl(0 0% 100%);
   --color-popover-foreground: var(--color-foreground);
-  --color-primary: #39332c;
+  --color-primary: #34465d;
   --color-primary-foreground: hsl(220 14% 97%);
-  --color-secondary: #eae8e3;
-  --color-secondary-foreground: #39332c;
-  --color-muted: #f0eeea;
-  --color-muted-foreground: #706c65;
-  --color-accent: #e9e4dc;
-  --color-accent-foreground: #292824;
-  --color-border: #e2ded7;
-  --color-input: #cfc8bd;
-  --color-ring: #98643c;
-  --color-sage: #98643c;
+  --color-secondary: #e8ecf2;
+  --color-secondary-foreground: #34465d;
+  --color-muted: #f0f2f5;
+  --color-muted-foreground: #687486;
+  --color-accent: #e5ecf5;
+  --color-accent-foreground: #27303d;
+  --color-border: #e0e5ec;
+  --color-input: #c9d1dc;
+  --color-ring: #4e749e;
+  --color-sage: #4e749e;
   --color-sage-foreground: hsl(220 14% 97%);
   --color-success: #287548;
   --color-warning: #946414;
@@ -50,7 +50,7 @@
   --radius-lg: 8px;
   --radius: var(--radius-md); /* legacy alias */
   --radius-composer: 12px;
-  --conversation-width: 860px;
+  --conversation-width: 880px;
   --shadow-composer: 0 5px 24px rgb(55 40 20 / 5%);
 
   /* motion */
@@ -78,32 +78,32 @@
 
 .dark {
   color-scheme: dark;
-  --color-background: #1b1c1e;
-  --color-foreground: #e9e5df;
-  --color-surface: #1b1c1e;
-  --color-surface-raised: #2b2b2d;
-  --color-surface-inset: #161719;
-  --color-sidebar: #161719;
-  --color-selected: #33312f;
-  --color-composer: #252527;
-  --color-card: #252527;
+  --color-background: #191c22;
+  --color-foreground: #e4e9f1;
+  --color-surface: #191c22;
+  --color-surface-raised: #282e38;
+  --color-surface-inset: #13161c;
+  --color-sidebar: #13161c;
+  --color-selected: #2b3545;
+  --color-composer: #222730;
+  --color-card: #222730;
   --color-card-foreground: var(--color-foreground);
-  --color-popover: #2b2b2d;
+  --color-popover: #282e38;
   --color-popover-foreground: var(--color-foreground);
   --color-primary: hsl(240 6% 93%);
   --color-primary-foreground: hsl(240 6% 9%);
-  --color-secondary: #343231;
-  --color-secondary-foreground: #e9e5df;
-  --color-muted: #29292b;
-  --color-muted-foreground: #aaa59e;
-  --color-accent: #383431;
-  --color-accent-foreground: #e9e5df;
-  --color-border: #383637;
-  --color-input: #4d4742;
+  --color-secondary: #303847;
+  --color-secondary-foreground: #e4e9f1;
+  --color-muted: #252b35;
+  --color-muted-foreground: #9ca9ba;
+  --color-accent: #2d3a4e;
+  --color-accent-foreground: #e4e9f1;
+  --color-border: #303744;
+  --color-input: #414e62;
   --shadow-composer: 0 3px 16px rgb(0 0 0 / 16%), 0 1px 3px rgb(0 0 0 / 10%);
-  --color-ring: #d0a47d;
-  --color-sage: #d0a47d;
-  --color-sage-foreground: #25211d;
+  --color-ring: #91b2de;
+  --color-sage: #91b2de;
+  --color-sage-foreground: #172232;
   --color-success: #88c69e;
   --color-warning: #ddba73;
   --color-warning-foreground: hsl(40 60% 12%);
@@ -358,6 +358,13 @@
   }
 }
 
+/* Chronological transcript: prose is the primary surface, tools are compact
+   interleaved evidence. New events never change earlier prose typography. */
+.conversation-flow > * + * { margin-top: 18px; }
+.conversation-flow > [data-response-segment='tools'],
+.conversation-flow > [data-response-segment='thinking'] { margin-top: 12px; }
+.conversation-flow > [data-response-segment='response-actions'] { margin-top: 8px; }
+
 /* ================= Markdown body (agent prose) ================= */
 .conversation-question-content .md-body {
   font-size: var(--app-font-size);
@@ -366,12 +373,6 @@
 .conversation-answer-content .md-body {
   font-size: calc(var(--app-font-size) + 1px);
   line-height: 1.8;
-}
-[data-response-region='work'] .conversation-answer-content .md-body,
-[data-response-region='work'] .md-body {
-  font-size: var(--app-font-size);
-  color: var(--color-muted-foreground);
-  line-height: 1.65;
 }
 .md-body {
   min-width: 0;

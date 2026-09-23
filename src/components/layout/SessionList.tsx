@@ -1,10 +1,10 @@
 import * as React from 'react'
 import {
   TbAlertCircle,
-  TbCheck,
+  TbArchive,
+  TbArchiveOff,
   TbChevronDown,
   TbChevronRight,
-  TbClock,
   TbCopy,
   TbDots,
   TbFolder,
@@ -44,6 +44,12 @@ export interface SidebarConversationItem {
   status?: AgentStatus
   activityState?: SessionActivityState
   selected?: boolean
+  pinned?: boolean
+  archived?: boolean
+  needsAttention?: boolean
+  unread?: boolean
+  organizationKey?: string
+  scopeLabel?: string
 }
 
 export type SidebarProjectCatalog =
@@ -60,6 +66,7 @@ export interface SidebarProjectNavigation {
   project: WorkspaceSummary
   expanded: boolean
   catalog: SidebarProjectCatalog
+  activeCount?: number
 }
 
 export interface ConversationListActions {
@@ -69,87 +76,91 @@ export interface ConversationListActions {
   onRenameCommit(item: SidebarConversationItem, title: string): void
   onDuplicate(item: SidebarConversationItem): void
   onDelete(item: SidebarConversationItem): void
+  onPin?(item: SidebarConversationItem, pinned: boolean): void
+  onArchive?(item: SidebarConversationItem, archived: boolean): void
 }
 
 interface ConversationListProps extends ConversationListActions {
   activeSessionId: string
   items: readonly SidebarConversationItem[]
   emptyLabel?: string
-  variant: 'project' | 'recent'
+  variant: 'project' | 'recent' | 'focus'
 }
 
 const statusLabelKey = {
-  idle: 'agent.status.idle',
   planning: 'agent.status.planning',
   running: 'agent.status.running',
-  completed: 'agent.status.completed',
   failed: 'agent.status.failed',
-  cancelled: 'agent.status.cancelled',
 } as const
 
 export type SidebarSessionIndicatorState =
   | 'loading'
-  | 'waiting'
   | 'running'
-  | 'completed'
+  | 'attention'
+  | 'unread'
   | 'failed'
-  | 'released'
+  | 'none'
 
 export function resolveSidebarSessionIndicatorState({
   loading = false,
   status,
   activityState,
+  needsAttention = false,
+  unread = false,
 }: {
   loading?: boolean
   status?: AgentStatus
   activityState?: SessionActivityState
+  needsAttention?: boolean
+  unread?: boolean
 }): SidebarSessionIndicatorState {
   if (loading || activityState === 'opening') return 'loading'
-  if (activityState) return activityState
-  if (status === 'planning' || status === 'running') return 'running'
-  if (status === 'failed') return 'failed'
-  if (status === 'idle' || status === 'completed' || status === 'cancelled') {
-    return 'completed'
-  }
-  return 'released'
+  if (status === 'failed' || activityState === 'failed') return 'failed'
+  if (needsAttention) return 'attention'
+  if (status === 'cancelled') return 'none'
+  // "waiting" describes queued prompts, not a request for user input.
+  if (activityState === 'running' || activityState === 'waiting' ||
+    (!activityState && (status === 'planning' || status === 'running'))) return 'running'
+  return unread ? 'unread' : 'none'
 }
 
 function StatusIndicator({
   loading = false,
   status,
   activityState,
+  needsAttention = false,
+  unread = false,
 }: {
   loading?: boolean
   status?: AgentStatus
   activityState?: SessionActivityState
+  needsAttention?: boolean
+  unread?: boolean
 }) {
   const t = useT()
   const indicatorState = resolveSidebarSessionIndicatorState({
     loading,
     status,
     activityState,
+    needsAttention,
+    unread,
   })
-  if (indicatorState === 'released') {
+  if (indicatorState === 'none') {
     return <span className="block size-5 shrink-0" aria-hidden />
   }
 
-  const label = indicatorState === 'loading'
+  const label = indicatorState === 'attention' ? t('nav.redesign.attention') : indicatorState === 'loading'
     ? t('sidebar.session.loading')
-    : indicatorState === 'waiting'
-      ? t('sidebar.session.waiting')
-      : indicatorState === 'running'
-        ? t(status === 'planning' ? statusLabelKey.planning : statusLabelKey.running)
-        : indicatorState === 'completed'
-          ? t(status === 'cancelled' ? statusLabelKey.cancelled : statusLabelKey.completed)
-          : t(statusLabelKey.failed)
+    : indicatorState === 'running'
+      ? t(activityState === 'waiting' && status !== 'running' && status !== 'planning'
+        ? 'nav.redesign.waiting' : status === 'planning' ? statusLabelKey.planning : statusLabelKey.running)
+      : indicatorState === 'unread' ? t('nav.redesign.unread') : t(statusLabelKey.failed)
 
-  const icon = indicatorState === 'loading' || indicatorState === 'running'
+  const icon = indicatorState === 'attention' ? <TbAlertCircle className="size-3.5 text-warning" aria-hidden /> : indicatorState === 'loading' || indicatorState === 'running'
     ? <TbLoader2 className="size-3.5 animate-spin text-sage motion-reduce:animate-none" aria-hidden />
-    : indicatorState === 'waiting'
-      ? <TbClock className="size-3.5 text-warning" aria-hidden />
-      : indicatorState === 'completed'
-        ? <TbCheck className="size-3.5 text-success" aria-hidden />
-        : <TbAlertCircle className="size-3.5 text-destructive" aria-hidden />
+    : indicatorState === 'unread'
+      ? <span className="size-1.5 rounded-full bg-sage" aria-hidden />
+      : <TbAlertCircle className="size-3.5 text-destructive" aria-hidden />
 
   return (
     <Tooltip>
@@ -177,22 +188,29 @@ function ConversationRow({
   onRenameCommit,
   onDuplicate,
   onDelete,
+  onPin,
+  onArchive,
+  showScope,
 }: {
   item: SidebarConversationItem
   active: boolean
   renaming: boolean
+  showScope?: boolean
 } & Omit<ConversationListActions, 'renamingSelectionToken'>) {
   const t = useT()
   const title = sidebarConversationTitle(item.summary, t('sidebar.session.untitled'))
   const [renameText, setRenameText] = React.useState(title)
+  const [requestedRename, setRequestedRename] = React.useState(false)
+  const renamingHere = renaming && requestedRename
   const inputRef = React.useRef<HTMLInputElement>(null)
   const skipBlurCommit = React.useRef(false)
 
   React.useEffect(() => {
-    if (!renaming) return
+    if (!renaming) setRequestedRename(false)
+    if (!renamingHere) return
     setRenameText(title)
     requestAnimationFrame(() => inputRef.current?.select())
-  }, [renaming, title])
+  }, [renaming, renamingHere, title])
 
   const cancelRename = () => {
     skipBlurCommit.current = true
@@ -203,12 +221,12 @@ function ConversationRow({
   return (
     <li className="group/conversation relative" data-session-activity={item.activityState}>
       <div className={cn(
-        'relative grid min-h-8 grid-cols-[minmax(0,1fr)_20px_28px] items-center gap-1 rounded-lg pl-2.5 pr-1 transition-colors duration-(--duration-fast)',
+        'relative grid min-h-9 grid-cols-[minmax(0,1fr)_20px_24px] items-center gap-1 rounded-md border-l-2 py-1 pl-2 pr-0.5 transition-colors duration-(--duration-fast)',
         active
-          ? 'bg-selected text-foreground'
-          : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+          ? 'border-sage bg-selected text-foreground'
+          : 'border-transparent text-muted-foreground hover:bg-accent/50 hover:text-foreground',
       )}>
-        {renaming ? (
+        {renamingHere ? (
           <input
             ref={inputRef}
             name="session-title"
@@ -243,22 +261,33 @@ function ConversationRow({
           </button>
         )}
 
-        {!renaming && (
-          <span className={cn(
-            'pointer-events-none relative z-10 truncate text-app',
-            active && 'font-medium',
-          )}>
-            {title}
-          </span>
+        {!renamingHere && (
+          <div className="pointer-events-none relative z-10 min-w-0">
+            <span className={cn('flex min-w-0 items-center gap-1.5 text-caption', active && 'font-medium')}>
+              <span className="truncate">{title}</span>
+              {item.pinned && <TbPin className="size-3 shrink-0 text-sage" aria-label={t('nav.redesign.pinned')} />}
+              {item.archived && <TbArchive className="size-3 shrink-0" aria-label={t('nav.redesign.archived')} />}
+            </span>
+            {showScope && <span className="mt-0.5 block truncate text-micro text-muted-foreground/75">
+              {item.scopeLabel} · {t(item.status === 'failed' || item.activityState === 'failed' ? 'agent.status.failed'
+                : item.needsAttention ? 'nav.redesign.attention'
+                : item.unread ? 'nav.redesign.unread'
+                : item.activityState === 'waiting' ? 'nav.redesign.waiting'
+                  : item.activityState === 'running' ? 'nav.redesign.running'
+                    : item.selected ? 'nav.redesign.current' : 'nav.redesign.pinned')}
+            </span>}
+          </div>
         )}
 
         <StatusIndicator
           loading={item.loading}
           status={item.status}
           activityState={item.activityState}
+          needsAttention={item.needsAttention}
+          unread={!active && item.unread}
         />
 
-        {!renaming ? (
+        {!renamingHere ? (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
@@ -266,14 +295,26 @@ function ConversationRow({
                 size="icon-xs"
                 aria-label={t('sidebar.session.actions')}
                 disabled={item.loading || item.disabled}
-                className={cn('relative z-10 size-7 opacity-0 group-hover/conversation:opacity-100 group-focus-within/conversation:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100', active && 'opacity-100')}
+                className={cn('relative z-10 size-6 opacity-0 group-hover/conversation:opacity-100 group-focus-within/conversation:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100', active && 'opacity-100')}
                 onClick={(event) => event.stopPropagation()}
               >
                 <TbDots aria-hidden />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-44">
-              <DropdownMenuItem onSelect={() => onRenameStart(item)}>
+              {onPin && <DropdownMenuItem onSelect={() => onPin(item, !item.pinned)}>
+                {item.pinned ? <TbPinnedOff aria-hidden /> : <TbPin aria-hidden />}
+                {t(item.pinned ? 'nav.redesign.unpinTask' : 'nav.redesign.pinTask')}
+              </DropdownMenuItem>}
+              {onArchive && <DropdownMenuItem onSelect={() => onArchive(item, !item.archived)}>
+                {item.archived ? <TbArchiveOff aria-hidden /> : <TbArchive aria-hidden />}
+                {t(item.archived ? 'nav.redesign.restoreTask' : 'nav.redesign.archiveTask')}
+              </DropdownMenuItem>}
+              {(onPin || onArchive) && <DropdownMenuSeparator />}
+              <DropdownMenuItem onSelect={() => {
+                setRequestedRename(true)
+                onRenameStart(item)
+              }}>
                 <TbPencil aria-hidden />
                 {t('sidebar.session.rename')}
               </DropdownMenuItem>
@@ -308,6 +349,8 @@ export function ConversationList({
   onRenameCommit,
   onDuplicate,
   onDelete,
+  onPin,
+  onArchive,
 }: ConversationListProps) {
   if (items.length === 0) {
     return emptyLabel
@@ -328,6 +371,9 @@ export function ConversationList({
           onRenameCommit={onRenameCommit}
           onDuplicate={onDuplicate}
           onDelete={onDelete}
+          onPin={onPin}
+          onArchive={onArchive}
+          showScope={variant === 'focus'}
         />
       ))}
     </ul>
@@ -340,7 +386,7 @@ export interface ProjectNavigationGroupProps extends ConversationListActions {
   projects: readonly SidebarProjectNavigation[]
   onAddProject(): void
   onToggleProject(projectId: string, expanded: boolean): void
-  onActivateProject(projectId: string): void
+  onResumeProject(projectId: string): void
   onStartProjectTask(projectId: string): void
   onLoadMore(projectId: string): void
   onPinProject(projectId: string, pinned: boolean): void
@@ -351,7 +397,6 @@ function ProjectChildren({
   navigation,
   activeSessionId,
   actions,
-  onActivateProject,
   onStartProjectTask,
   onLoadMore,
   onAddProject,
@@ -360,7 +405,6 @@ function ProjectChildren({
   navigation: SidebarProjectNavigation
   activeSessionId: string
   actions: ConversationListActions
-  onActivateProject(projectId: string): void
   onStartProjectTask(projectId: string): void
   onLoadMore(projectId: string): void
   onAddProject(): void
@@ -397,9 +441,9 @@ function ProjectChildren({
       <button
         type="button"
         className="w-full rounded-sm px-2 py-1 text-left text-caption text-muted-foreground outline-none transition-colors duration-(--duration-fast) hover:bg-accent/60 hover:text-foreground focus-visible:focus-ring"
-        onClick={() => onActivateProject(project.id)}
+        onClick={() => onStartProjectTask(project.id)}
       >
-        {t('sidebar.project.openToLoad')}
+        {t('sidebar.project.startTask')}
       </button>
     )
   }
@@ -476,7 +520,7 @@ export function ProjectNavigationGroup({
   renamingSelectionToken,
   onAddProject,
   onToggleProject,
-  onActivateProject,
+  onResumeProject,
   onStartProjectTask,
   onLoadMore,
   onPinProject,
@@ -486,6 +530,8 @@ export function ProjectNavigationGroup({
   onRenameCommit,
   onDuplicate,
   onDelete,
+  onPin,
+  onArchive,
 }: ProjectNavigationGroupProps) {
   const t = useT()
   const conversationActions: ConversationListActions = {
@@ -495,6 +541,8 @@ export function ProjectNavigationGroup({
     onRenameCommit,
     onDuplicate,
     onDelete,
+    onPin,
+    onArchive,
   }
 
   return (
@@ -528,13 +576,13 @@ export function ProjectNavigationGroup({
           {t('sidebar.projects.empty')}
         </button>
       ) : (
-        <ul className="flex flex-col gap-1.5">
+        <ul className="flex flex-col gap-2">
           {projects.map((navigation) => {
             const { project } = navigation
             const active = project.id === activeProjectId
             return (
               <li key={project.id}>
-                <div className="group/project grid min-h-8 grid-cols-[22px_minmax(0,1fr)_28px_28px] items-center gap-0.5 rounded-lg px-1 transition-colors duration-(--duration-fast) hover:bg-accent/45 focus-within:bg-accent/45">
+                <div className="group/project grid min-h-8 grid-cols-[20px_minmax(0,1fr)_24px_24px] items-center gap-0.5 rounded-md px-1 transition-colors duration-(--duration-fast) hover:bg-accent/45 focus-within:bg-accent/45">
                   <button
                     type="button"
                     aria-expanded={navigation.expanded}
@@ -551,12 +599,12 @@ export function ProjectNavigationGroup({
                   </button>
                   <button
                     type="button"
-                    aria-label={`${t('sidebar.project.open')}: ${project.name}`}
+                    aria-label={t('nav.redesign.resumeProject', { name: project.name })}
                     aria-current={active ? 'true' : undefined}
                     disabled={!project.available}
                     onClick={() => {
                       if (!navigation.expanded) onToggleProject(project.id, true)
-                      onActivateProject(project.id)
+                      onResumeProject(project.id)
                     }}
                     className="flex min-h-8 min-w-0 items-center gap-1.5 rounded-sm text-left outline-none focus-visible:focus-ring disabled:cursor-default"
                   >
@@ -571,9 +619,10 @@ export function ProjectNavigationGroup({
                       {project.name}
                     </span>
                     {project.pinned ? <TbPin className="size-3 shrink-0 text-muted-foreground" aria-hidden /> : null}
+                    {Boolean(navigation.activeCount) && <span className="ml-auto flex items-center gap-1 text-micro tabular-nums text-sage" aria-label={t('nav.redesign.activeCount', { count: navigation.activeCount ?? 0 })}><span className="size-1.5 rounded-full bg-sage" />{navigation.activeCount}</span>}
                     {navigation.catalog.status === 'ready' && navigation.catalog.loadedCount !== undefined && (
                       <span
-                        className="ml-auto shrink-0 pl-1 text-micro font-normal tabular-nums text-muted-foreground/70"
+                        className={cn('shrink-0 pl-1 text-micro font-normal tabular-nums text-muted-foreground/55', !navigation.activeCount && 'ml-auto')}
                         title={t('sidebar.sessions.loadedCount', { count: navigation.catalog.loadedCount })}
                         aria-label={t('sidebar.sessions.loadedCount', { count: navigation.catalog.loadedCount })}
                       >
@@ -587,7 +636,7 @@ export function ProjectNavigationGroup({
                       <Button
                         variant="ghost"
                         size="icon-xs"
-                        className="size-7 text-muted-foreground/75 hover:text-foreground"
+                        className="size-6 text-muted-foreground/75 hover:text-foreground"
                         aria-label={t('sidebar.project.newSessionIn', { name: project.name })}
                         disabled={!project.available}
                         onClick={() => onStartProjectTask(project.id)}
@@ -604,7 +653,7 @@ export function ProjectNavigationGroup({
                         variant="ghost"
                         size="icon-xs"
                         aria-label={t('sidebar.project.actions', { name: project.name })}
-                        className="size-7 text-muted-foreground/75 hover:text-foreground data-[state=open]:text-foreground"
+                        className="size-6 text-muted-foreground/75 hover:text-foreground data-[state=open]:text-foreground"
                       >
                         <TbDots aria-hidden />
                       </Button>
@@ -619,10 +668,10 @@ export function ProjectNavigationGroup({
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         disabled={!project.available}
-                        onSelect={() => onActivateProject(project.id)}
+                        onSelect={() => onResumeProject(project.id)}
                       >
                         <TbFolderOpen aria-hidden />
-                        {t('sidebar.project.open')}
+                        {t('nav.redesign.resumeTask')}
                       </DropdownMenuItem>
                       <DropdownMenuSeparator />
                       <DropdownMenuItem onSelect={() => onPinProject(project.id, !project.pinned)}>
@@ -644,12 +693,11 @@ export function ProjectNavigationGroup({
                 </div>
 
                 {navigation.expanded && (
-                  <div className="mb-1 ml-5 mt-0.5">
+                  <div className="mb-1 ml-3.5 mt-0.5 border-l border-border/50 pl-2">
                     <ProjectChildren
                       navigation={navigation}
                       activeSessionId={active ? activeSessionId : ''}
                       actions={conversationActions}
-                      onActivateProject={onActivateProject}
                       onStartProjectTask={onStartProjectTask}
                       onLoadMore={onLoadMore}
                       onAddProject={onAddProject}

@@ -474,6 +474,7 @@ function appendMessage(
           : 'failed',
       body: message.command,
       output: message.output,
+      ...(typeof message.exitCode === 'number' ? { exitCode: message.exitCode } : {}),
     }, key, anchorEntryId)
     return
   }

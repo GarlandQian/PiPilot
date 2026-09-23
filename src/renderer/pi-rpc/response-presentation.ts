@@ -11,7 +11,7 @@ import { groupConversationTurns } from './presentation'
 
 export type ResponsePresentationRegion = 'work' | 'answer' | 'persistent'
 
-/** Keep these as keyed siblings when a live answer becomes work commentary. */
+/** Stable chronological segments; classification never hides assistant text. */
 export type ResponsePresentationSegment = ToolActivitySequenceItem & {
   region: ResponsePresentationRegion
 }
@@ -61,17 +61,12 @@ function answerCandidateId(turns: readonly Turn[]): string | null {
 
 function regionForTurn(
   turn: Turn,
-  answerId: string | null,
 ): ResponsePresentationRegion {
-  if (turn.kind === 'agent' && turn.id === answerId) return 'answer'
   switch (turn.kind) {
     case 'tool':
       return 'work'
     case 'agent':
-      // Partial text carries its own failure/abort label in the renderer.
-      return turn.state === 'error' || turn.state === 'aborted'
-        ? 'persistent'
-        : 'work'
+      return 'answer'
     case 'activity':
       return turn.activity.kind === 'notification' ||
         turn.activity.kind === 'extension-error' ||
@@ -148,13 +143,9 @@ function responseStatus(
 /**
  * Projects one user-led response without rewriting its transcript. Only the
  * leading prompt is extracted; every remaining source turn stays in order.
- * Persistent cards and notices stay visible when work is collapsed. Copy and
- * fork actions remain authoritative source turns, including their provenance.
- *
- * The flat sequence deliberately avoids moving streamed text between separate
- * work/answer parents when a subsequent tool reveals that text was commentary.
- * Thinking is included only when an actual thinking turn exists in the input,
- * and its own disclosure always remains outside the work-log collapse.
+ * Text, tools and public thinking retain their chronological positions. Copy
+ * and fork actions remain authoritative source turns with their provenance.
+ * The final answer candidate informs execution state, never text visibility.
  */
 export function projectResponsePresentation(
   group: ConversationResponseGroup,
@@ -179,7 +170,7 @@ export function projectResponsePresentation(
   for (const turn of turns) {
     if (turn.kind === 'thinking') work.thinkingCount += 1
     work.hasActiveWork ||= isActive && turnHasActiveWork(turn)
-    if (regionForTurn(turn, answerId) !== 'work') continue
+    if (regionForTurn(turn) !== 'work') continue
     work.count += 1
     if (turn.kind === 'tool') {
       work.toolCount += 1
@@ -191,7 +182,7 @@ export function projectResponsePresentation(
 
   const segments = projectToolActivitySequence(turns).map<ResponsePresentationSegment>((item) => ({
     ...item,
-    region: item.kind === 'activity-run' ? 'work' : regionForTurn(item.turn, answerId),
+    region: item.kind === 'activity-run' ? 'work' : regionForTurn(item.turn),
   }))
 
   return {

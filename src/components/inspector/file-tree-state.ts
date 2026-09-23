@@ -6,13 +6,14 @@ export function replaceFileTreeChildren(
   path: string,
   children: FileNode[],
   truncated: boolean,
+  invalidateCached = true,
 ): FileNode {
   if (root.path === path) {
     const previous = new Map(root.children?.map((child) => [child.path, child]))
     const merged = children.map((child) => {
       const cached = previous.get(child.path)
       return child.type === 'dir' && cached?.type === 'dir' && cached.children !== undefined
-        ? { ...child, children: cached.children, truncated: cached.truncated }
+        ? { ...child, children: cached.children, truncated: cached.truncated, loaded: invalidateCached ? child.loaded : cached.loaded }
         : child
     })
     return { ...root, children: merged, loaded: true, truncated }
@@ -21,7 +22,7 @@ export function replaceFileTreeChildren(
     ...root,
     children: root.children?.map((child) => child.type === 'dir' &&
       (child.path === path || path.startsWith(`${child.path}/`))
-      ? replaceFileTreeChildren(child, path, children, truncated)
+      ? replaceFileTreeChildren(child, path, children, truncated, invalidateCached)
       : child),
   }
 }

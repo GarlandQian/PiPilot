@@ -104,6 +104,9 @@ export const officialPiSessionSummarySchema = z
     createdAt: z.iso.datetime(),
     modifiedAt: z.iso.datetime(),
     selectionToken: sessionCatalogSelectionTokenSchema,
+    // Presentation identity only: it never authorizes opening or mutating a file.
+    // Distinguishes physical copies with identical official session headers.
+    catalogId: z.string().regex(/^cat_[a-f0-9]{64}$/u).optional(),
   })
   .strict()
 

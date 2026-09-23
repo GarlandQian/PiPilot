@@ -15,6 +15,8 @@ export interface ComposerSubmitMode {
 }
 
 export interface ComposerQueueState {
+  revision?: number
+  paused?: boolean
   pendingCount: number
   detailsKnown: boolean
   steering: readonly string[]
@@ -29,6 +31,7 @@ export interface PendingRailItem extends PiQueuedMessage {
   kind: 'steering' | 'followUp'
   canPromote: boolean
   canRemove: boolean
+  canEdit: boolean
 }
 
 export interface PendingRailPresentation {
@@ -55,13 +58,11 @@ export function normalizeRunningSubmitPreference(
 export function deriveComposerSubmitMode(
   isStreaming: boolean,
   hasExtensionCommand: boolean,
-  runningSubmit: RunningSubmitPreference = 'queue',
+  _runningSubmit: RunningSubmitPreference = 'queue',
 ): ComposerSubmitMode {
   if (!isStreaming) return { action: 'prompt', kind: 'send' }
   if (hasExtensionCommand) return { action: 'prompt', kind: 'run-now' }
-  return runningSubmit === 'steer'
-    ? { action: 'steer', kind: 'steer' }
-    : { action: 'follow_up', kind: 'queue' }
+  return { action: 'follow_up', kind: 'queue' }
 }
 
 export function deriveComposerActionState(input: {
@@ -85,8 +86,7 @@ export function deriveComposerActionState(input: {
     submit,
     canSubmit: input.ready && !input.submitting && !input.hasConflict &&
       (input.hasContent || input.imageCount > 0) &&
-      (input.imageCount === 0 || input.supportsImages) &&
-      (submit.action === 'prompt' || input.hasContent),
+      (input.imageCount === 0 || input.supportsImages),
     canStop: input.ready && input.isStreaming && !input.stopping,
   }
 }
@@ -120,19 +120,21 @@ export function projectPendingRail(
       ...item,
       kind: 'steering' as const,
       canPromote: false,
-      canRemove: losslessMutationAvailable,
+      canRemove: item.status !== 'delivering' && (Boolean(item.submissionId) || losslessMutationAvailable),
+      canEdit: item.status !== 'unknown' && item.status !== 'delivering' && (Boolean(item.submissionId) || losslessMutationAvailable),
     })),
     ...queue.followUpItems.map((item) => ({
       ...item,
       kind: 'followUp' as const,
-      canPromote: losslessMutationAvailable,
-      canRemove: losslessMutationAvailable,
+      canPromote: item.status !== 'unknown' && item.status !== 'delivering' && (Boolean(item.submissionId) || losslessMutationAvailable),
+      canRemove: item.status !== 'delivering' && (Boolean(item.submissionId) || losslessMutationAvailable),
+      canEdit: item.status !== 'unknown' && item.status !== 'delivering' && (Boolean(item.submissionId) || losslessMutationAvailable),
     })),
   ]
   const next = items[0]
 
   return {
-    visible: queue.pendingCount > 0,
+    visible: queue.pendingCount > 0 || Boolean(queue.paused),
     count: queue.pendingCount,
     detailsKnown: queue.detailsKnown,
     losslessMutationAvailable,

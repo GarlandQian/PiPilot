@@ -282,6 +282,34 @@ describe('OfficialPiSessionCatalog', () => {
     }
   })
 
+  it('provides stable distinct presentation identities for physical copies without exposing their paths', async () => {
+    const fixture = await createCatalogFixture()
+    const firstFile = join(fixture.sessionDirectory, 'first.jsonl')
+    const copiedFile = join(fixture.sessionDirectory, 'copy.jsonl')
+    try {
+      await writeSession(firstFile, { cwd: fixture.cwd, id: 'same-session', name: 'First' })
+      await writeSession(copiedFile, { cwd: fixture.cwd, id: 'same-session', name: 'Copy' })
+      await fixture.observations.observe(scope, firstFile)
+      const initial = await fixture.catalog.refresh(scope)
+      expect(initial.rows).toHaveLength(2)
+      const ids = initial.rows.map((row) => row.catalogId)
+      expect(ids.every((id) => /^cat_[a-f0-9]{64}$/u.test(id ?? ''))).toBe(true)
+      expect(new Set(ids).size).toBe(2)
+      expect(JSON.stringify(initial.rows)).not.toContain(fixture.sessionDirectory)
+
+      // Name/content changes and a fresh application catalog keep organization.
+      await writeSession(firstFile, { cwd: fixture.cwd, id: 'same-session', name: 'Renamed' })
+      const restarted = new OfficialPiSessionCatalog(fixture.resolver, fixture.observations)
+      const refreshed = await restarted.refresh(scope)
+      expect(refreshed.rows.find((row) => row.name === 'Renamed')?.catalogId)
+        .toBe(initial.rows.find((row) => row.name === 'First')?.catalogId)
+      expect(refreshed.rows.find((row) => row.name === 'Copy')?.catalogId)
+        .toBe(initial.rows.find((row) => row.name === 'Copy')?.catalogId)
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true })
+    }
+  })
+
   it('revalidates Main-only control targets across append-only growth', async () => {
     const fixture = await createCatalogFixture()
     const sessionFile = join(fixture.sessionDirectory, 'controlled.jsonl')

@@ -23,6 +23,7 @@ import {
   type WorkspaceRepository,
 } from '../repositories/workspace-repository'
 import type { ApplicationUrlPolicy } from '../security/url-policy'
+import type { TerminalService } from '../terminal/terminal-service'
 import {
   WorkspaceContentError,
   type WorkspaceContentService,
@@ -39,6 +40,7 @@ interface RegisterWorkspaceIpcOptions {
   repository: WorkspaceRepository
   contentService: WorkspaceContentService
   contextService: Pick<ConversationContextService, 'getSnapshot' | 'newConversation'>
+  terminalService: Pick<TerminalService, 'disposeScope'>
 }
 
 function mapWorkspaceError(error: unknown): never {
@@ -76,6 +78,7 @@ export function registerWorkspaceIpc({
   repository,
   contentService,
   contextService,
+  terminalService,
 }: RegisterWorkspaceIpcOptions) {
   const isTrustedSender = createTrustedSenderValidator(policy, getMainWindow)
 
@@ -138,6 +141,7 @@ export function registerWorkspaceIpc({
         const activeScope = contextService.getSnapshot().activeScope
         if (activeScope.kind === 'project' && activeScope.workspaceId === workspaceId) {
           const activation = await contextService.newConversation({ kind: 'projectless' })
+          await terminalService.disposeScope({ kind: 'project', workspaceId })
           return {
             activeRemoved: true as const,
             workspaceId,
@@ -146,6 +150,7 @@ export function registerWorkspaceIpc({
           }
         }
 
+        await terminalService.disposeScope({ kind: 'project', workspaceId })
         return {
           activeRemoved: false as const,
           workspaceId,
@@ -194,8 +199,8 @@ export function registerWorkspaceIpc({
   registerValidatedHandler(
     workspaceDiffReadContract,
     isTrustedSender,
-    ({ workspaceId, path }) =>
-      contentService.readDiff(workspaceId, path).catch(mapWorkspaceContentError),
+    ({ workspaceId, path, stage }) =>
+      contentService.readDiff(workspaceId, path, stage).catch(mapWorkspaceContentError),
   )
   repository.subscribe((snapshot) => {
     const window = getMainWindow()

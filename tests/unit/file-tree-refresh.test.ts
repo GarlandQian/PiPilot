@@ -8,6 +8,13 @@ function directory(path: string, children?: FileNode[]): FileNode {
 const file = (path: string): FileNode => ({ path, name: path.split('/').pop()!, type: 'file' })
 
 describe('file tree refresh ownership', () => {
+  it('preserves loaded directory state when visible expanded directories are refreshed explicitly', () => {
+    const src = directory('src', [file('src/current.ts')])
+    const original = directory('.', [src])
+    const updated = replaceFileTreeChildren(original, '.', [directory('src')], false, false)
+    expect(updated.children?.[0]?.loaded).toBe(true)
+    expect(updated.children?.[0]?.children).toBe(src.children)
+  })
   it('retains cached descendants while the new directory entry is marked for revalidation', () => {
     const child = directory('src/nested', [file('src/nested/entry.ts')])
     const src = directory('src', [child])

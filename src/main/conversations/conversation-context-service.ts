@@ -9,7 +9,6 @@ import type { LocalPiRuntimeSnapshot } from '../../shared/local-pi'
 import type { ConversationNavigationRepository } from '../repositories/conversation-navigation-repository'
 import {
   ConversationScopeError,
-  conversationScopeKey,
   type ConversationScopeResolver,
 } from './conversation-scope-resolver'
 import { OfficialPiSessionActivationError, type OfficialPiSessionActivationService } from './official-pi-session-activation-service'
@@ -27,8 +26,6 @@ interface ConversationContextServiceOptions {
   deletionService: SessionDeletionService
   navigationRepository: ConversationNavigationRepository
   scopeResolver: ConversationScopeResolver
-  disposeScope?(scope: ConversationScope): Promise<void>
-  onScopeDisposalError?(): void
 }
 
 export class ConversationContextService {
@@ -37,16 +34,12 @@ export class ConversationContextService {
   private readonly deletionService: SessionDeletionService
   private readonly navigationRepository: ConversationNavigationRepository
   private readonly scopeResolver: ConversationScopeResolver
-  private readonly disposeScope: (scope: ConversationScope) => Promise<void>
-  private readonly onScopeDisposalError: () => void
 
   constructor(options: ConversationContextServiceOptions) {
     this.activationService = options.activationService
     this.deletionService = options.deletionService
     this.navigationRepository = options.navigationRepository
     this.scopeResolver = options.scopeResolver
-    this.disposeScope = options.disposeScope ?? (async () => undefined)
-    this.onScopeDisposalError = options.onScopeDisposalError ?? (() => undefined)
   }
 
   getSnapshot() {
@@ -75,10 +68,9 @@ export class ConversationContextService {
   ): Promise<ConversationActivationResult> {
     const scope = conversationScopeSchema.parse(rawScope)
     return this.enqueue(async () => {
-      const previousScope = this.navigationRepository.get().activeScope
       const runtime = await this.activationService.start(scope)
       const result = this.confirmedActivation(scope, runtime)
-      await this.commitScope(scope, previousScope)
+      this.navigationRepository.setActiveScope(scope)
       return result
     })
   }
@@ -89,12 +81,12 @@ export class ConversationContextService {
   ) {
     const scope = conversationScopeSchema.parse(rawScope)
     return this.enqueue(async () => {
-      const previousScope = this.navigationRepository.get().activeScope
       const result = await this.activationService.open(
         scope,
         selectionToken,
       )
-      await this.commitScope(scope, previousScope)
+      // Navigation changes selection, not ownership of a project's terminal.
+      this.navigationRepository.setActiveScope(scope)
       return result
     })
   }
@@ -130,17 +122,6 @@ export class ConversationContextService {
       )
     }
     return result.data
-  }
-
-  private async commitScope(scope: ConversationScope, previousScope: ConversationScope) {
-    this.navigationRepository.setActiveScope(scope)
-    if (conversationScopeKey(previousScope) === conversationScopeKey(scope)) return
-    try {
-      await this.disposeScope(previousScope)
-    } catch {
-      // Activation is already committed. Cleanup cannot restore the old scope.
-      try { this.onScopeDisposalError() } catch { /* isolate diagnostics */ }
-    }
   }
 
   private async availableStartupScope(scope: ConversationScope) {
