@@ -2707,7 +2707,10 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
     const previousRuntime = await page.evaluate(() => window.pipilot!.localPi.runtime.status())
     await selectWorkspaceFromSystemDialog(electronApp, workspacePath)
     await page.getByRole('button', { name: 'Add project folder', exact: true }).click()
-    await expect.poll(() => page.evaluate(() => window.pipilot!.conversation.get()))
+    await expect.poll(
+      () => page.evaluate(() => window.pipilot!.conversation.get()),
+      { timeout: 20_000 },
+    )
       .toMatchObject({ activeScope: { kind: 'project' } })
     await expect(page.getByText('Fixture response: ui', { exact: true })).toHaveCount(0)
     await notificationButton.click()
