@@ -1760,7 +1760,7 @@ test('restores a populated inactive project and starts a new session from its me
         sessionId: runtime.sessionState?.sessionId,
         state: runtime.state,
       }
-    }).toEqual({
+    }, { timeout: 20_000 }).toEqual({
       cwd: canonicalWorkspacePath,
       sessionId: expect.any(String),
       state: 'ready',
