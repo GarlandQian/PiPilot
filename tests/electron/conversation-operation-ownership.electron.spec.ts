@@ -19,7 +19,8 @@ async function seedNamedConversation(page: Page, name: string) {
   await page.evaluate((title) => window.pipilot!.localPi.runtime.command({
     type: 'set_session_name', name: title,
   }), name)
-  await expect(page.getByRole('button', { name, exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Projects', exact: true })
+    .getByRole('button', { name, exact: true })).toBeVisible()
 }
 
 test('keeps model feedback on its exact visit and blocks submission during A/B/A hydration', async ({}, testInfo) => {
@@ -81,8 +82,9 @@ export default function modelOperationGate(pi) {
     await expect(modelTrigger).toContainText('Fake Chat', { timeout: 20_000 })
     await expect(page.locator('[data-conversation-action-error]')).toHaveCount(0)
     await seedNamedConversation(page, 'Operation owner B')
-    const ownerA = page.getByRole('button', { name: 'Operation owner A', exact: true })
-    const ownerB = page.getByRole('button', { name: 'Operation owner B', exact: true })
+    const projects = page.getByRole('region', { name: 'Projects', exact: true })
+    const ownerA = projects.getByRole('button', { name: 'Operation owner A', exact: true })
+    const ownerB = projects.getByRole('button', { name: 'Operation owner B', exact: true })
 
     await ownerA.click()
     await expect(modelTrigger).toContainText('Fake Chat')

@@ -35,10 +35,10 @@ describe('build metadata', () => {
   })
 
   it('keeps only the Node-mode helper fuse enabled among Electron execution controls', async () => {
-    const fuseHook = await readFile(
+    const fuseHook = (await readFile(
       join(process.cwd(), 'build', 'apply-electron-fuses.cjs'),
       'utf8',
-    )
+    )).replaceAll('\r\n', '\n')
 
     expect(fuseHook).toContain('[FuseV1Options.RunAsNode]: true')
     expect(fuseHook).toContain('[FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false')

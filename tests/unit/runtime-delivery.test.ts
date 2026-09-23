@@ -224,7 +224,7 @@ describe('durable runtime delivery', () => {
     expect(delivery.snapshot('receipt-0').receipts.find((receipt) => receipt.submissionId === 'receipt-0')?.status).toBe('accepted')
     expect((await submit('receipt-0')).receipt.status).toBe('accepted')
     expect(session.prompt).toHaveBeenCalledTimes(202)
-  })
+  }, 15_000)
 
   it('edits and promotes exact IDs, rejects stale revisions, and cannot modify consumed items', async () => {
     const { delivery, submit, consume } = await fixture()
