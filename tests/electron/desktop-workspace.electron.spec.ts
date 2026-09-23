@@ -54,7 +54,8 @@ test('keeps the unified desktop workspace usable with the official Pi configurat
     await expect(page.getByRole('log', { name: 'Conversation' })).toContainText('Fixture response:')
     await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0)
     await page.evaluate(() => window.pipilot!.localPi.runtime.command({ type: 'set_session_name', name: 'Desktop workspace review' }))
-    await expect(page.getByRole('button', { name: 'Desktop workspace review', exact: true })).toBeVisible()
+    const projectTasks = page.getByRole('region', { name: 'Projects', exact: true })
+    await expect(projectTasks.getByRole('button', { name: 'Desktop workspace review', exact: true })).toBeVisible()
 
     const question = page.locator('[data-conversation-question]').first()
     const answer = page.locator('.conversation-answer-content').first()
@@ -93,7 +94,7 @@ test('keeps the unified desktop workspace usable with the official Pi configurat
     await expect(page.locator('[data-navigation-layout="rail"]')).toBeVisible()
     await expect(input).toBeVisible()
     await page.getByRole('button', { name: 'Toggle context panel', exact: true }).click()
-    await expect(page.getByRole('button', { name: 'Desktop workspace review', exact: true })).toBeVisible()
+    await expect(projectTasks.getByRole('button', { name: 'Desktop workspace review', exact: true })).toBeVisible()
 
     await input.fill('@')
     await expect(page.getByRole('listbox')).toBeVisible()

@@ -91,8 +91,8 @@ test('retains target-owned MCP drafts through project A/B/A and semantic tab nav
     await editor.fill(draftB)
 
     await page.getByRole('button', { name: 'Sessions', exact: true }).click()
-    await page.getByRole('button', { name: 'Project actions for project-A', exact: true }).click()
-    await page.getByRole('menuitem', { name: 'Open project', exact: true }).click()
+    await page.getByRole('region', { name: 'Projects', exact: true })
+      .getByRole('button', { name: 'Resume a task in project-A', exact: true }).click()
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
     await expect(settings.getByText('project-A', { exact: true })).toBeVisible()
     await expect(editor).toHaveValue(draftA)
