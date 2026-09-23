@@ -693,7 +693,7 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
     }).first()).toBeVisible()
     await page.getByRole('button', { name: 'Sessions', exact: true }).click()
 
-    await page.getByRole('button', { name: 'Quick general chat', exact: true }).click()
+    await page.getByRole('button', { name: 'New general chat', exact: true }).click()
     await expect.poll(
       () => page!.evaluate(() => window.pipilot!.conversation.get()),
       PACKAGED_RUNTIME_POLL_OPTIONS,
