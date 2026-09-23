@@ -76,7 +76,7 @@ test('connects project actions, conversation navigation and resource views witho
     await page.screenshot({ path: testInfo.outputPath('workbench-background-dark.png'), animations: 'disabled' })
     await expect(projectTasks.getByRole('button', { name: 'Workspace review', exact: true }))
       .toHaveCount(0, { timeout: 15_000 })
-    await page.getByRole('button', { name: 'All', exact: true }).click()
+    await page.getByRole('button', { name: 'Tasks', exact: true }).click()
     await projectTasks.getByRole('button', { name: 'Workspace review', exact: true }).click()
     await expect(page.getByRole('log', { name: 'Conversation' })).toContainText('Fixture response: Run background review')
   } finally {
