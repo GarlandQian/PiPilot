@@ -64,6 +64,7 @@ function pendingItem(overrides: Partial<PendingRailItem> = {}): PendingRailItem 
     locallyOwned: true,
     canPromote: true,
     canRemove: true,
+    canEdit: true,
     ...overrides,
   }
 }
@@ -77,11 +78,11 @@ function renderPendingRail(item: PendingRailItem) {
       followUp: [item.text], followUpItems: [item],
       steeringMode: 'one-at-a-time', followUpMode: 'one-at-a-time',
     },
-    runningSubmitPreference: 'queue',
-    onRunningSubmitPreferenceChange: () => undefined,
-    onSetQueueMode: async () => undefined,
     onPromoteFollowUp: async () => undefined,
     onRemoveQueuedMessage: async () => undefined,
+    onEditQueuedMessage: async () => undefined,
+    onResumeQueue: async () => undefined,
+    onClearQueue: async () => undefined,
   }))
 }
 

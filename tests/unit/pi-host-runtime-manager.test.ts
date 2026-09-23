@@ -218,6 +218,53 @@ describe('Pi Host RuntimeManager', () => {
     ])
   })
 
+  it('checks delivery ownership at admission and returns durable queue payloads after Stop', async () => {
+    const { manager, sessionDir } = await createFixture()
+    const created = await manager.create({ runtimeId: 'rt_delivery', sessionDir })
+    await manager.bindRuntime(created.runtimeId, created.generation)
+    const runtimes = Reflect.get(manager, 'runtimes') as Map<string, { runtime: { session: AgentSession } }>
+    const session = runtimes.get(created.runtimeId)!.runtime.session
+    vi.spyOn(session, 'isStreaming', 'get').mockReturnValue(true)
+    vi.spyOn(session, 'abort').mockResolvedValue(undefined)
+    const command = { type: 'submit_message' as const, submissionId: 'durable-1', message: 'queued payload', mode: 'auto' as const, expectedSessionId: created.sessionId }
+    await expect(manager.command(created.runtimeId, { ...command, expectedSessionId: 'another-session' })).rejects.toMatchObject({ code: 'RUNTIME_STALE_GENERATION' })
+    expect((await manager.command(created.runtimeId, command)).response).toMatchObject({ success: true, command: 'submit_message', data: { receipt: { status: 'accepted', acceptedMode: 'follow_up' } } })
+    expect(session.getFollowUpMessages()).toEqual([])
+    await manager.command(created.runtimeId, { type: 'abort' })
+    expect(session.getFollowUpMessages()).toEqual([])
+    expect((await manager.command(created.runtimeId, { type: 'get_delivery_state', submissionId: 'durable-1', expectedSessionId: created.sessionId })).response).toMatchObject({
+      success: true, data: { paused: true, items: [{ submissionId: 'durable-1', message: 'queued payload', status: 'frozen' }] },
+    })
+  })
+
+  it('delivers one managed follow-up through the command lane after the agent settles', async () => {
+    const { manager, sessionDir } = await createFixture()
+    const created = await manager.create({ runtimeId: 'rt_delivery_pump', sessionDir })
+    await manager.bindRuntime(created.runtimeId, created.generation)
+    const runtimes = Reflect.get(manager, 'runtimes') as Map<string, { runtime: { session: AgentSession } }>
+    const session = runtimes.get(created.runtimeId)!.runtime.session
+    const streaming = vi.spyOn(session, 'isStreaming', 'get').mockReturnValue(true)
+    const prompt = vi.spyOn(session, 'prompt').mockImplementation(async (_message, options) => {
+      options?.preflightResult?.(true)
+      streaming.mockReturnValue(true)
+    })
+    for (const submissionId of ['one', 'two']) await manager.command(created.runtimeId, { type: 'submit_message', submissionId, message: submissionId, mode: 'auto' })
+    expect(prompt).not.toHaveBeenCalled()
+    expect(session.getFollowUpMessages()).toEqual([])
+    streaming.mockReturnValue(false)
+    emitSessionEvent(manager, created.runtimeId, { type: 'agent_settled' })
+    await manager.command(created.runtimeId, { type: 'get_state' })
+    expect(prompt).toHaveBeenCalledTimes(1)
+    expect(prompt).toHaveBeenCalledWith('one', expect.any(Object))
+    const remaining = await manager.command(created.runtimeId, { type: 'get_delivery_state' })
+    expect(remaining.response).toMatchObject({ success: true, data: { items: [{ message: 'two', status: 'queued' }] } })
+    streaming.mockReturnValue(false)
+    emitSessionEvent(manager, created.runtimeId, { type: 'agent_settled' })
+    await manager.command(created.runtimeId, { type: 'get_state' })
+    expect(prompt).toHaveBeenCalledTimes(2)
+    expect(prompt).toHaveBeenLastCalledWith('two', expect.any(Object))
+  })
+
   it('increments generation after new and switch while keeping the Host cwd', async () => {
     const { manager, cwd, sessionDir } = await createFixture()
     const created = await manager.create({
@@ -596,6 +643,38 @@ describe('Pi Host RuntimeManager', () => {
       { type: 'get_state' },
       2,
     )).resolves.toMatchObject({ runtime: { generation: 2 } })
+  })
+
+  it('reports extension abort persistence failures without rejecting an unobserved Promise', async () => {
+    let requestAbort!: () => void
+    const { manager, sessionDir, agentDir } = await createFixture([{
+      name: 'abort-error-boundary',
+      factory: (pi) => {
+        pi.on('session_start', (_event, context) => { requestAbort = () => context.abort() })
+      },
+    }])
+    const events: Array<{ event: { type: string; event?: string; extensionPath?: string; error?: string } }> = []
+    const fatalErrors: unknown[] = []
+    manager.subscribeEvents((record) => events.push(record))
+    manager.subscribeFatalErrors((error) => fatalErrors.push(error))
+    const created = await manager.create({ runtimeId: 'rt_extension_abort_error', sessionDir })
+    await manager.bindRuntime(created.runtimeId, created.generation)
+    const runtimes = Reflect.get(manager, 'runtimes') as Map<string, { runtime: { session: AgentSession } }>
+    const abort = vi.spyOn(runtimes.get(created.runtimeId)!.runtime.session, 'abort')
+    // A filesystem obstruction makes the durable Stop fail after cancellation
+    // is requested, even though the SDK's actual abort can still complete.
+    await mkdir(join(agentDir, 'pipilot'), { recursive: true })
+    await writeFile(join(agentDir, 'pipilot', 'outbox'), 'not a directory')
+
+    requestAbort()
+    await vi.waitFor(() => expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ event: expect.objectContaining({
+        type: 'extension_error', extensionPath: '<pipilot:delivery>', event: 'abort', error: expect.any(String),
+      }) }),
+    ])))
+    expect(abort).toHaveBeenCalledOnce()
+    expect(fatalErrors).toEqual([])
+    expect((await manager.command(created.runtimeId, { type: 'get_state' })).response.success).toBe(true)
   })
 
   it('lets abort preempt a streaming command that has not returned', async () => {

@@ -47,6 +47,7 @@ import {
   type InspectorTab,
 } from '@/components/inspector/InspectorPanel'
 import { InspectorPortalHost } from '@/components/inspector/InspectorPortalHost'
+import { TerminalDrawer } from '@/components/inspector/TerminalDrawer'
 import { PanelResizeHandle } from '@/components/layout/PanelResizeHandle'
 import {
   SettingsLayout,
@@ -84,7 +85,6 @@ import type { LocalPiImageContent } from '@/shared/local-pi'
 import type { WorkspacePathSearchEntry } from '@/shared/workspace-content'
 import type { WorkspaceSummary } from '@/shared/schemas/workspace'
 import type {
-  SubagentInspectorFocusRequest,
   SubagentInspectorSelection,
 } from '@/types/chat'
 import {
@@ -141,6 +141,10 @@ export default function App() {
     requestSwitch, requestSessionOpening,
   } = useSessionOpening({ workspace, pi, transcriptLoading })
   const [inspectorTab, setInspectorTab] = React.useState<InspectorTab>('files')
+  const [resourceExpanded, setResourceExpanded] = React.useState(false)
+  const [terminalOpen, setTerminalOpen] = React.useState(false)
+  const toggleTerminal = React.useCallback(() => setTerminalOpen((open) => !open), [])
+  const previousResourceTab = React.useRef<InspectorTab>('files')
   const [inspectorContainer] = React.useState(() => {
     const container = document.createElement('div')
     container.className = 'h-full min-h-0'
@@ -170,11 +174,22 @@ export default function App() {
   const [subagentSelection, setSubagentSelection] = React.useState<
     SubagentInspectorSelection | null
   >(null)
-  const [subagentFocusRequest, setSubagentFocusRequest] = React.useState<
-    SubagentInspectorFocusRequest | null
-  >(null)
   const subagentSelectionSequence = React.useRef(0)
-  const subagentFocusSequence = React.useRef(0)
+  const subagentReturnFocus = React.useRef<HTMLElement | null>(null)
+  const [commandSelection, setCommandSelection] = React.useState<{ sessionKey: string; toolCallId: string } | null>(null)
+  const commandReturnFocus = React.useRef<HTMLElement | null>(null)
+
+  React.useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.key !== '`' || !(event.ctrlKey || event.metaKey)) return
+      if (event.target instanceof Element && event.target.closest('[role="dialog"], [role="alertdialog"]')) return
+      if (!conversationWorkspace) return
+      event.preventDefault()
+      toggleTerminal()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [conversationWorkspace, toggleTerminal])
 
   const run = React.useCallback((operation: () => Promise<void>) => {
     void operation().catch(() => undefined)
@@ -227,6 +242,8 @@ export default function App() {
     if (!conversationReady || workspace.activeScope.kind !== 'project') return
     const candidate = projectComposerMentionCandidates([entry], []).files[0]
     if (!candidate) return
+    setResourceExpanded(false)
+    setCompactInspectorOpen(false)
     setRail('sessions')
     setComposerMentionInsertionRequest({
       candidate,
@@ -237,33 +254,28 @@ export default function App() {
   const selectedTool = usePiTranscriptToolCall(subagentSelection?.sessionKey === conversationSessionKey
     ? subagentSelection?.toolCallId ?? null : null)
   const selectedSubagentCall = selectedTool?.subagent ? selectedTool : null
-  const compactInspectorVisible = compactInspectorOpen || Boolean(selectedSubagentCall)
+  const commandTool = usePiTranscriptToolCall(commandSelection?.sessionKey === conversationSessionKey
+    ? commandSelection.toolCallId : null)
+  const selectedCommandCall = commandTool?.kind === 'shell' ? commandTool : null
+  const compactInspectorVisible = compactInspectorOpen
 
   React.useEffect(() => {
-    if (subagentSelection && !selectedSubagentCall) setSubagentSelection(null)
+    if (commandSelection && !selectedCommandCall) {
+      setCommandSelection(null)
+      setInspectorTab((tab) => tab === 'command' ? previousResourceTab.current : tab)
+    }
+  }, [commandSelection, selectedCommandCall])
+
+  React.useEffect(() => {
+    if (subagentSelection && !selectedSubagentCall) {
+      setSubagentSelection(null)
+      setInspectorTab((tab) => tab === 'subagent' ? previousResourceTab.current : tab)
+    }
   }, [selectedSubagentCall, subagentSelection])
 
   React.useEffect(() => {
-    if (!conversationWorkspace || !selectedSubagentCall) return
-    if (compactConversation) {
-      setCompactInspectorOpen((current) => {
-        if (!current && !compactInspectorReturnFocusRef.current) {
-          compactInspectorReturnFocusRef.current = document.activeElement instanceof HTMLElement
-            ? document.activeElement
-            : null
-        }
-        return true
-      })
-      return
-    }
-    setPanelLayout((current) => current.inspectorOpen
-      ? current
-      : { ...current, inspectorOpen: true })
-  }, [compactConversation, conversationWorkspace, selectedSubagentCall])
-
-  React.useEffect(() => {
     setConversationJump(null)
-    setSubagentFocusRequest(null)
+    setResourceExpanded(false)
   }, [conversationSessionKey])
   const navigateConversationOutline = React.useCallback((entryId: string) => {
     if (!conversationSessionKey) return
@@ -275,32 +287,35 @@ export default function App() {
   }, [conversationSessionKey])
   const closeSubagentExecution = React.useCallback(() => {
     if (!subagentSelection) return
-    setSubagentFocusRequest({
-      sessionKey: subagentSelection.sessionKey,
-      toolCallId: subagentSelection.toolCallId,
-      sequence: ++subagentFocusSequence.current,
-    })
     setSubagentSelection(null)
+    setInspectorTab((tab) => tab === 'subagent' ? previousResourceTab.current : tab)
+    requestAnimationFrame(() => {
+      const tab = document.getElementById(`resource-tab-${previousResourceTab.current}`)
+      if (tab?.checkVisibility()) tab.focus()
+      else if (subagentReturnFocus.current?.isConnected) subagentReturnFocus.current.focus()
+    })
   }, [subagentSelection])
   const openSubagentExecution = React.useCallback((toolCallId: string) => {
     if (!conversationSessionKey) return
     if (
       subagentSelection?.sessionKey === conversationSessionKey &&
-      subagentSelection.toolCallId === toolCallId
+      subagentSelection.toolCallId === toolCallId &&
+      inspectorTab === 'subagent' &&
+      (compactConversation ? compactInspectorOpen : panelLayout.inspectorOpen)
     ) {
       closeSubagentExecution()
       return
     }
-    setSubagentFocusRequest(null)
+    if (inspectorTab !== 'subagent' && inspectorTab !== 'command') previousResourceTab.current = inspectorTab
+    subagentReturnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    setInspectorTab('subagent')
     setSubagentSelection({
       sessionKey: conversationSessionKey,
       toolCallId,
       sequence: ++subagentSelectionSequence.current,
     })
     if (compactConversation) {
-      compactInspectorReturnFocusRef.current = document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null
+      compactInspectorReturnFocusRef.current = subagentReturnFocus.current
       setCompactInspectorOpen(true)
     } else {
       setPanelLayout((current) => current.inspectorOpen
@@ -312,7 +327,29 @@ export default function App() {
     compactConversation,
     conversationSessionKey,
     subagentSelection,
+    inspectorTab,
+    compactInspectorOpen,
+    panelLayout.inspectorOpen,
   ])
+  const openCommandExecution = React.useCallback((toolCallId: string) => {
+    if (!conversationSessionKey) return
+    commandReturnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    if (compactConversation) compactInspectorReturnFocusRef.current = commandReturnFocus.current
+    if (inspectorTab !== 'subagent' && inspectorTab !== 'command') previousResourceTab.current = inspectorTab
+    setCommandSelection({ sessionKey: conversationSessionKey, toolCallId })
+    setInspectorTab('command')
+    if (compactConversation) setCompactInspectorOpen(true)
+    else setPanelLayout((current) => ({ ...current, inspectorOpen: true }))
+  }, [compactConversation, conversationSessionKey, inspectorTab, setCompactInspectorOpen, setPanelLayout])
+  const closeCommandExecution = React.useCallback(() => {
+    setCommandSelection(null)
+    setInspectorTab((tab) => tab === 'command' ? previousResourceTab.current : tab)
+    requestAnimationFrame(() => {
+      const tab = document.getElementById(`resource-tab-${previousResourceTab.current}`)
+      if (tab?.checkVisibility()) tab.focus()
+      else if (commandReturnFocus.current?.isConnected) commandReturnFocus.current.focus()
+    })
+  }, [])
   const commandCatalogState: ComposerCommandCatalogState = conversation.status === 'empty'
     ? { state: 'unavailable' }
     : conversation.status === 'loading'
@@ -413,13 +450,14 @@ export default function App() {
     text: string,
     action: 'prompt' | 'follow_up' | 'steer',
     images: readonly LocalPiImageContent[] = [],
+    submissionId?: string,
   ) => {
     if (images.length === 0 && opensMcpSettings(text)) {
       setIntegrationsTab('mcp')
       setSettingsSection('integrations')
       return
     }
-    await actions.send(text, action, images)
+    await actions.send(text, action, images, submissionId)
   }, [actions, setSettingsSection])
 
   const runPlanAction = React.useCallback(async (
@@ -446,14 +484,18 @@ export default function App() {
 
   const inspectorPanel = (
     <InspectorPanel
-      width={panelLayout.inspectorWidth}
+      width={resourceExpanded && !compactConversation ? '100%' : panelLayout.inspectorWidth}
+      expanded={resourceExpanded}
+      onExpand={compactConversation ? undefined : () => setResourceExpanded((value) => !value)}
       visible={conversationWorkspace && (compactConversation
         ? compactInspectorVisible
         : panelLayout.inspectorOpen)}
       onClose={() => {
+        setResourceExpanded(false)
         if (compactConversation) setCompactInspectorOpen(false)
         else setPanelLayout((current) => ({ ...current, inspectorOpen: false }))
-        if (selectedSubagentCall) closeSubagentExecution()
+        if (inspectorTab === 'subagent' && selectedSubagentCall) closeSubagentExecution()
+        if (inspectorTab === 'command' && selectedCommandCall) closeCommandExecution()
       }}
       activeTab={inspectorTab}
       onActiveTabChange={setInspectorTab}
@@ -461,11 +503,14 @@ export default function App() {
       onPreviewStateChange={setInspectorPreview}
       conversation={conversation}
       sessionKey={conversationSessionKey}
+      refreshRevision={`${conversationScopeKey(workspace.activeScope)}:${pi.status}:${pi.session?.isStreaming ?? false}`}
       onAddWorkspaceReference={conversationReady && workspace.activeScope.kind === 'project'
         ? addWorkspaceReferenceToComposer
         : undefined}
       subagentCall={selectedSubagentCall}
       onCloseSubagent={closeSubagentExecution}
+      commandCall={selectedCommandCall}
+      onCloseCommand={closeCommandExecution}
     />
   )
   const compactSettingsDetailVisible = frameLayoutMode === 'settings-compact' && compactSettingsDetailOpen
@@ -495,9 +540,11 @@ export default function App() {
             >
               <SessionsPanel
                 hidden={!conversationWorkspace}
+                conversationReady={conversationReady}
                 renamingSelectionToken={renamingToken}
                 deletingSelectionToken={deletingSelectionToken}
                 isOpeningSessionRow={isOpeningSessionRow}
+                navigationRevision={selectionRevision}
                 onSelect={openConversation}
                 onNewPrimary={newPrimarySession}
                 onNewProjectless={() => {
@@ -528,10 +575,6 @@ export default function App() {
                   if (deletingSelectionToken) return
                   setDeletionError(null)
                   setPendingDeletion(item)
-                }}
-                onActivateProject={(workspaceId) => {
-                  requestSwitch(() => workspace.openWorkspace(workspaceId))
-                  setRail('sessions')
                 }}
                 onStartProjectTask={(workspaceId) => {
                   requestSwitch(() => workspace.newSession({
@@ -576,7 +619,7 @@ export default function App() {
           )}
 
           <main
-            hidden={!conversationWorkspace}
+            hidden={!conversationWorkspace || (resourceExpanded && panelLayout.inspectorOpen && !compactConversation)}
             className="relative flex min-w-0 flex-1 flex-col overflow-x-hidden bg-surface"
           >
             <ConversationHeader
@@ -586,8 +629,9 @@ export default function App() {
               status={conversationReady ? pi.status : undefined}
               onNavigate={navigateConversationOutline}
               onNewConversation={newPrimarySession}
+              terminalOpen={terminalOpen}
+              onToggleTerminal={toggleTerminal}
               onShowChanges={() => {
-                if (selectedSubagentCall) closeSubagentExecution()
                 setInspectorTab('diff')
                 if (compactConversation) setCompactInspectorOpen(true)
                 else setPanelLayout((current) => ({ ...current, inspectorOpen: true }))
@@ -631,9 +675,10 @@ export default function App() {
               status={pi.status}
               onFork={actions.fork}
               onPlanAction={runPlanAction}
-              selectedSubagentId={selectedSubagentCall?.id ?? null}
-              subagentFocusRequest={subagentFocusRequest}
+              selectedSubagentId={inspectorTab === 'subagent' && (compactConversation ? compactInspectorOpen : panelLayout.inspectorOpen)
+                ? selectedSubagentCall?.id ?? null : null}
               onOpenSubagent={openSubagentExecution}
+              onOpenCommand={openCommandExecution}
             />
             {conversationReady ? (
               <ActiveControlBar
@@ -674,6 +719,7 @@ export default function App() {
               onModelChange={actions.selectModel}
               onThinkingChange={actions.selectThinking}
               onSubmit={submitComposer}
+              onCheckSubmission={actions.checkSubmission}
               onStop={actions.abort}
               onRunningSubmitPreferenceChange={(runningSubmit) => {
                 updateSettings({ composer: { runningSubmit } })
@@ -681,12 +727,22 @@ export default function App() {
               onSetQueueMode={actions.setQueueMode}
               onPromoteFollowUp={actions.promoteFollowUp}
               onRemoveQueuedMessage={actions.removeQueuedMessage}
+              onEditQueuedMessage={actions.editQueuedMessage}
+              onResumeQueue={actions.resumeQueue}
+              onClearQueue={actions.clearQueue}
               onCompleteCommandArguments={conversationReady
                 ? actions.completeCommandArguments
                 : undefined}
               onSearchContext={workspace.activeScope.kind === 'project'
                 ? workspace.searchWorkspacePaths
                 : undefined}
+            />
+            <TerminalDrawer
+              open={terminalOpen && conversationWorkspace && !(resourceExpanded && panelLayout.inspectorOpen && !compactConversation)}
+              onOpenChange={setTerminalOpen}
+              scope={workspace.activeScope}
+              scopeName={workspace.activeScope.kind === 'project' ? workspace.workspace?.name ?? '' : t('conversation.projectless')}
+              projectIds={workspace.recentProjects.map((project) => project.id)}
             />
           </main>
 
@@ -705,7 +761,7 @@ export default function App() {
 
           {conversationWorkspace && panelLayout.inspectorOpen && !compactConversation && (
             <>
-              <PanelResizeHandle
+              {!resourceExpanded && <PanelResizeHandle
                 width={panelLayout.inspectorWidth}
                 min={INSPECTOR_MIN_WIDTH}
                 max={INSPECTOR_MAX_WIDTH}
@@ -715,8 +771,8 @@ export default function App() {
                   setPanelLayout((current) => ({ ...current, inspectorWidth }))
                 }}
                 side="right"
-              />
-              <InspectorPortalHost container={inspectorContainer} />
+              />}
+              <InspectorPortalHost container={inspectorContainer} expanded={resourceExpanded} />
             </>
           )}
         </div>
@@ -727,7 +783,8 @@ export default function App() {
           open={compactInspectorVisible}
           onOpenChange={(open) => {
             setCompactInspectorOpen(open)
-            if (!open && selectedSubagentCall) closeSubagentExecution()
+            if (!open && inspectorTab === 'subagent' && selectedSubagentCall) closeSubagentExecution()
+            if (!open && inspectorTab === 'command' && selectedCommandCall) closeCommandExecution()
           }}
         >
           <DialogContent

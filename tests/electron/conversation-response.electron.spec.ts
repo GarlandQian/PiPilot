@@ -29,16 +29,11 @@ function responseFor(page: Page, prompt: string) {
   })
 }
 
-async function expectWorkVisibility(response: Locator, expanded: boolean) {
-  await expect(response.locator('[data-response-work-toggle]')).toHaveAttribute('aria-expanded', String(expanded))
-  await expect.poll(() => response.locator('[data-response-region="work"]').evaluateAll((elements, expanded) => (
-    elements.length > 0 && elements.every((element) => (element as HTMLElement).hidden === !expanded)
-  ), expanded)).toBe(true)
-  // aria-controls must target all work wrappers, including lazy, hidden rows.
-  await expect.poll(() => response.locator('[data-response-work-toggle]').evaluate((element) => {
-    const ids = element.getAttribute('aria-controls')?.split(' ').filter(Boolean) ?? []
-    return ids.length > 0 && ids.every((id) => document.getElementById(id)?.dataset.responseRegion === 'work')
-  })).toBe(true)
+async function expectContinuousTimeline(response: Locator) {
+  await expect(response.locator('[data-response-work-toggle]')).toHaveCount(0)
+  await expect.poll(() => response.locator('[data-response-region]').evaluateAll((elements) => (
+    elements.length > 0 && elements.every((element) => !(element as HTMLElement).hidden)
+  ))).toBe(true)
 }
 
 async function expectNoHorizontalOverflow(page: Page) {
@@ -88,32 +83,29 @@ test('preserves live work reading, text identity, and final actions across settl
     expect(await retainedCommentary.evaluate((element) => element.closest('[data-response-region]')?.getAttribute('data-response-region'))).toBe('answer')
 
     await expect.poll(() => readFile(writeTarget, 'utf8').catch(() => ''), { timeout: 20_000 }).toBe(writeContent)
-    await expectWorkVisibility(response, true)
+    await expectContinuousTimeline(response)
     await expect.poll(() => retainedCommentary.evaluate((element) => (
-      element.isConnected && element.closest('[data-response-region]')?.getAttribute('data-response-region') === 'work'
+      element.isConnected && element.closest('[data-response-region]')?.getAttribute('data-response-region') === 'answer'
     ))).toBe(true)
     expect(await commentaryBody.evaluate((element, retained) => element === retained, retainedCommentary)).toBe(true)
 
-    // New SSE reasoning and answer text must not undo a manual collapse.
-    await response.locator('[data-response-work-toggle]').click()
-    await expectWorkVisibility(response, false)
+    // New tools and SSE reasoning must not hide earlier assistant commentary.
+    await expectContinuousTimeline(response)
     const reasoning = response.getByRole('button', { name: /^(?:Thinking|Thought)/ })
     await expect(reasoning).toBeVisible()
     await expect(reasoning).toHaveAttribute('aria-expanded', 'true')
     await expect(response.getByText(`Fixture reasoning: ${prompt}`, { exact: true })).toBeVisible()
-    const answer = response.locator('[data-response-region="answer"]')
+    const answer = response.locator('[data-response-region="answer"]').filter({ hasText: `Fixture response: ${prompt}` })
     await expect(answer).toContainText(`Fixture response: ${prompt}`)
     await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible()
-    await expectWorkVisibility(response, false)
+    await expectContinuousTimeline(response)
     expect(await retainedCommentary.evaluate((element) => element.isConnected)).toBe(true)
 
-    // Once explicitly reopened, finishing must not retract the work being read.
-    await response.locator('[data-response-work-toggle]').click()
-    await expectWorkVisibility(response, true)
+    // Finishing preserves every visible source segment and the thinking disclosure.
+    await expectContinuousTimeline(response)
     await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0)
-    await expectWorkVisibility(response, true)
+    await expectContinuousTimeline(response)
     await expect(reasoning).toHaveAttribute('aria-expanded', 'true')
-    await expect(response.locator('[data-response-work-toggle]')).toContainText('Work completed')
     const copy = response.getByRole('button', { name: 'Copy response', exact: true })
     await expect(copy).toBeVisible()
     await expect(response.getByRole('button', { name: 'Fork from this response', exact: true })).toBeEnabled()
@@ -122,18 +114,18 @@ test('preserves live work reading, text identity, and final actions across settl
 
     const named = await page.evaluate(() => window.pipilot!.localPi.runtime.command({ type: 'set_session_name', name: 'Response reading fixture' }))
     expect(named.success).toBe(true)
-    await expect(page.getByRole('button', { name: 'Response reading fixture', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Response reading fixture', exact: true }).first()).toBeVisible()
     await page.getByRole('button', { name: 'New general chat', exact: true }).click()
     await expect(page.locator('[data-conversation-welcome]')).toBeVisible()
-    await page.getByRole('button', { name: 'Response reading fixture', exact: true }).click()
+    await page.getByRole('button', { name: 'Response reading fixture', exact: true }).first().click()
     await expect(answer).toContainText(`Fixture response: ${prompt}`)
-    await expectWorkVisibility(response, false)
+    await expectContinuousTimeline(response)
     await expect(reasoning).toBeVisible()
     await expect(reasoning).toHaveAttribute('aria-expanded', 'false')
     await reasoning.click()
     await expect(reasoning).toHaveAttribute('aria-expanded', 'true')
     await expect(response.locator('p').filter({ hasText: `Fixture reasoning: ${prompt}` })).toBeVisible()
-    await expectWorkVisibility(response, false)
+    await expectContinuousTimeline(response)
     await expect(response.getByRole('button', { name: 'Copy response', exact: true })).toBeVisible()
     await expect(response.getByRole('button', { name: 'Fork from this response', exact: true })).toBeEnabled()
 
@@ -143,14 +135,13 @@ test('preserves live work reading, text identity, and final actions across settl
       for (const width of [1440, 1100]) {
         await page.setViewportSize({ width, height: width === 1100 ? 680 : 900 })
         await expectNoHorizontalOverflow(page)
-        await expectWorkVisibility(response, false)
+        await expectContinuousTimeline(response)
         if (width === 1440) await expect(page.getByRole('button', { name: 'Jump to latest', exact: true })).toHaveCount(0)
         await page.mouse.move(width - 10, 10)
         await page.screenshot({ path: testInfo.outputPath(`conversation-response-${theme}-${width}.png`), animations: 'disabled' })
       }
     }
-    await response.locator('[data-response-work-toggle]').click()
-    await expectWorkVisibility(response, true)
+    await expectContinuousTimeline(response)
     await expectNoHorizontalOverflow(page)
     await page.screenshot({ path: testInfo.outputPath('conversation-response-expanded-dark-1100.png'), animations: 'disabled' })
     expect(fixture.prompts.filter((value) => value === prompt)).toHaveLength(2)
@@ -179,7 +170,7 @@ export default function responseFixture(pi) {
 `)
 }
 
-test('keeps warning and error notifications and stopped-response notices visible outside collapsed work', async ({}, testInfo) => {
+test('keeps warning and error notifications and stopped-response notices visible in the chronological timeline', async ({}, testInfo) => {
   test.setTimeout(90_000)
   const userData = testInfo.outputPath('user-data')
   const agentDir = testInfo.outputPath('pi-agent')
@@ -234,23 +225,21 @@ test('keeps warning and error notifications and stopped-response notices visible
     await expect(error).toBeVisible()
     await expect(warning.locator('strong')).toHaveText('review the response output')
     await expect(error.locator('strong')).toHaveText('this exact notification stays visible')
-    await expectWorkVisibility(response, true)
+    await expectContinuousTimeline(response)
     const thinking = response.getByRole('button', { name: /^(?:Thinking|Thought)/, includeHidden: true })
     await expect(thinking).toHaveCount(0)
-    await response.locator('[data-response-work-toggle]').click()
-    await expectWorkVisibility(response, false)
+    await expectContinuousTimeline(response)
     await expect(warning).toBeVisible()
     await expect(error).toBeVisible()
     releaseProvider()
     await expect(thinking).toBeVisible()
     await expect(thinking).toHaveAttribute('aria-expanded', 'true')
     await expect(response.getByText(`Fixture reasoning: ${prompt}`, { exact: true })).toBeVisible()
-    await expectWorkVisibility(response, false)
+    await expectContinuousTimeline(response)
     await expect(response.locator('[data-response-region="answer"]')).toContainText(`Fixture response: ${prompt}`)
     await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0)
-    await expectWorkVisibility(response, false)
-    // Thinking stays independently readable, including when it first arrives
-    // while tool work is closed. Completion must not retract an open disclosure.
+    await expectContinuousTimeline(response)
+    // Thinking remains independently readable. Completion must not retract it.
     await expect(thinking).toBeVisible()
     await expect(thinking).toHaveAttribute('aria-expanded', 'true')
     await expect(response.getByRole('button', { name: /^Thought for [1-9]\d*s$/ })).toBeVisible()
@@ -259,26 +248,24 @@ test('keeps warning and error notifications and stopped-response notices visible
     await expect(response.getByText(`Fixture reasoning: ${prompt}`, { exact: true })).toBeHidden()
     await thinking.click()
     await expect(response.locator('p').filter({ hasText: `Fixture reasoning: ${prompt}` })).toBeVisible()
-    await expectWorkVisibility(response, false)
+    await expectContinuousTimeline(response)
     await expectNoHorizontalOverflow(page)
     await page.screenshot({ path: testInfo.outputPath('conversation-persistent-records-light-1100.png'), animations: 'disabled' })
 
     await send(page, stoppedPrompt)
     const stopped = responseFor(page, stoppedPrompt)
-    await expectWorkVisibility(stopped, true)
+    await expectContinuousTimeline(stopped)
     await expect.poll(() => fixture.prompts.filter((value) => value === stoppedPrompt).length, { timeout: 20_000 }).toBe(2)
     await expect(stopped.getByText(`Fixture reasoning: ${stoppedPrompt}`, { exact: true })).toBeVisible()
-    await stopped.locator('[data-response-work-toggle]').click()
-    await expectWorkVisibility(stopped, false)
+    await expectContinuousTimeline(stopped)
     await expect(stopped.getByRole('button', { name: /^Thinking/ })).toBeVisible()
     await expect(stopped.getByText(`Fixture reasoning: ${stoppedPrompt}`, { exact: true })).toBeVisible()
     await expect(stopped.getByText('Fixture warning: review the response output.', { exact: true })).toHaveCount(0)
     await expect(stopped.getByText('Fixture error: this exact notification stays visible.', { exact: true })).toHaveCount(0)
     await page.getByRole('button', { name: 'Stop', exact: true }).click()
     await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0)
-    await expectWorkVisibility(stopped, false)
+    await expectContinuousTimeline(stopped)
     await expect(stopped.getByText('Response stopped.', { exact: true })).toBeVisible()
-    await expect(stopped.locator('[data-response-work-toggle]')).toContainText('Response stopped')
     await expect(stopped.getByRole('button', { name: 'Copy response', exact: true })).toHaveCount(0)
     await expect(warning).toBeVisible()
     await expect(error).toBeVisible()

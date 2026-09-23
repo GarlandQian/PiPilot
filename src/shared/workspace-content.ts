@@ -120,8 +120,18 @@ export const workspaceFilePreviewSchema = z.discriminatedUnion('kind', [
 
 export type WorkspaceFilePreview = z.infer<typeof workspaceFilePreviewSchema>
 
+export const workspaceChangeStageSchema = z.enum(['staged', 'unstaged'])
+export type WorkspaceChangeStage = z.infer<typeof workspaceChangeStageSchema>
+
+export function workspaceChangeId(path: string, stage: WorkspaceChangeStage) {
+  return `${stage}:${path}`
+}
+
 export const workspaceChangeSummarySchema = z
   .object({
+    id: z.string().min(1).max(4_105),
+    stage: workspaceChangeStageSchema,
+    revision: fileFingerprintSchema,
     path: workspaceRelativePathSchema,
     previousPath: workspaceRelativePathSchema.optional(),
     status: workspaceFileStatusSchema,

@@ -1,14 +1,17 @@
 import { expect, type Locator, type Page } from '@playwright/test'
 
-export type InspectorViewName = 'Files' | 'Changes' | 'Terminal'
+export type InspectorViewName = 'Files' | 'Changes' | 'Terminal' | 'Agents'
 
 export async function selectInspectorView(
   target: Page | Locator,
   name: InspectorViewName,
 ) {
-  const page = 'page' in target ? target.page() : target
-  await target.getByRole('button', { name: 'Switch inspector view', exact: true }).click()
-  // The view menu is portaled outside the inspector, including in compact dialogs.
-  await page.getByRole('menuitemradio', { name, exact: true }).click()
-  await expect(target.getByRole('region', { name, exact: true })).toBeVisible()
+  if (name === 'Terminal') {
+    const toggle = target.getByRole('button', { name: 'Terminal', exact: true })
+    if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click()
+    await expect(target.locator('[data-terminal-drawer]')).toBeVisible()
+    return
+  }
+  await target.getByRole('tab', { name, exact: true }).click()
+  await expect(target.getByRole('tabpanel', { name, exact: true })).toBeVisible()
 }

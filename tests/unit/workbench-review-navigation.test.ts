@@ -1,8 +1,21 @@
 import { describe, expect, it } from 'vitest'
-import { sessionCatalogLoadTargets } from '../../src/components/frame/session-catalog-search'
+import { projectlessCatalogNeedsDiscovery, sessionCatalogLoadTargets } from '../../src/components/frame/session-catalog-search'
 import { filterWorkbenchNotifications } from '../../src/components/frame/notification-presentation'
 
 describe('workbench catalog discovery', () => {
+  it('discovers general chats when restoring a project leaves the startup loading placeholder untouched', () => {
+    expect(projectlessCatalogNeedsDiscovery('electron', 'project', 'loading')).toBe(true)
+    expect(projectlessCatalogNeedsDiscovery('electron', 'project')).toBe(true)
+    expect(projectlessCatalogNeedsDiscovery('electron', 'projectless')).toBe(true)
+    // The active general-chat load is owned by the provider; errors require a manual retry.
+    expect(projectlessCatalogNeedsDiscovery('electron', 'projectless', 'loading')).toBe(false)
+    for (const status of ['ready', 'notLoaded', 'error', 'unavailable', 'activationUnavailable']) {
+      expect(projectlessCatalogNeedsDiscovery('electron', 'project', status)).toBe(false)
+    }
+    expect(projectlessCatalogNeedsDiscovery('unavailable', 'project')).toBe(false)
+    expect(projectlessCatalogNeedsDiscovery('unavailable', 'project', 'loading')).toBe(false)
+  })
+
   it('searches unloaded collapsed projects without changing saved expansion or reloading failures', () => {
     const expanded = new Map([['open', true], ['closed', false]])
     const projects = [
@@ -15,6 +28,7 @@ describe('workbench catalog discovery', () => {
     ]
     expect(sessionCatalogLoadTargets(projects, expanded, false)).toEqual(['open'])
     expect(sessionCatalogLoadTargets(projects, expanded, true)).toEqual(['open', 'closed'])
+    expect(sessionCatalogLoadTargets(projects, expanded, false, new Set(['closed', 'failed', 'missing']))).toEqual(['open', 'closed'])
     expect([...expanded]).toEqual([['open', true], ['closed', false]])
     expect(projects[1]?.catalogStatus).toBeUndefined()
   })

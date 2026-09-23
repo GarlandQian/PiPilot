@@ -4,6 +4,8 @@ const {
 } = require('node:path')
 const {
   copyFileSync,
+  chmodSync,
+  lstatSync,
   readFileSync,
   writeFileSync,
 } = require('node:fs')
@@ -62,7 +64,50 @@ function createWindowsConsoleLauncher(executablePath) {
   writeFileSync(launcherPath, executable)
 }
 
+function repairPackagedTerminalHelpers(context) {
+  if (context.electronPlatformName !== 'darwin') return
+  const { Arch } = require('electron-builder')
+  const architecture = Arch[context.arch]
+  const architectures = architecture === 'universal' ? ['arm64', 'x64'] : [architecture]
+  if (architectures.some((arch) => arch !== 'arm64' && arch !== 'x64')) {
+    throw new Error(`Unsupported macOS terminal packaging architecture: ${context.arch}`)
+  }
+  const packageRoot = join(
+    context.appOutDir,
+    `${context.packager.appInfo.productFilename}.app`,
+    'Contents',
+    'Resources',
+    'app.asar.unpacked',
+    'node_modules',
+    'node-pty',
+  )
+  for (const arch of architectures) {
+    const candidates = [
+      join(packageRoot, 'build', 'Release', 'spawn-helper'),
+      join(packageRoot, 'prebuilds', `darwin-${arch}`, 'spawn-helper'),
+    ]
+    let found = false
+    for (const helper of candidates) {
+      const details = lstatSync(helper, { throwIfNoEntry: false })
+      if (!details) continue
+      if (!details.isFile()) {
+        throw new Error(`Packaged node-pty spawn helper must be a regular file: ${helper}`)
+      }
+      // Dependency installs/caches can strip executable bits. Repair only the
+      // helper in the packaged payload, before signing, independently of dev.
+      chmodSync(helper, details.mode | 0o111)
+      found = true
+    }
+    if (!found) {
+      throw new Error(`Packaged node-pty spawn helper is missing for darwin-${arch}: ${packageRoot}`)
+    }
+  }
+}
+
+exports.repairPackagedTerminalHelpers = repairPackagedTerminalHelpers
+
 exports.default = async function applyElectronFuses(context) {
+  repairPackagedTerminalHelpers(context)
   const {
     flipFuses,
     FuseV1Options,

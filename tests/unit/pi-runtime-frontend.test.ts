@@ -18,6 +18,7 @@ import { PiHostControllerError } from '../../src/main/pi-host/pi-host-controller
 import { RuntimeMaintenanceGate, type RuntimeMaintenancePermit } from '../../src/main/pi-host/runtime-maintenance-gate'
 import type { ConversationScope } from '../../src/shared/conversation-scope'
 import type {
+  LocalPiDeliverySnapshot,
   LocalPiExtensionUiResponse,
   LocalPiRpcEvent,
   LocalPiRpcCommand,
@@ -29,6 +30,8 @@ import type {
 import {
   LOCAL_PI_RUNTIME_SESSION_PENDING_MAX,
   LOCAL_PI_RUNTIME_SESSION_STATUS_MAX_ITEMS,
+  localPiRuntimeSessionStatusSchema,
+  localPiDeliverySnapshotSchema,
 } from '../../src/shared/local-pi'
 import {
   PI_HOST_PROTOCOL_VERSION,
@@ -70,6 +73,7 @@ function sessionState(
 }
 
 class FakeFrontendPool {
+  readonly deliveryStates = new Map<string, LocalPiDeliverySnapshot>()
   readonly maintenanceGate = new RuntimeMaintenanceGate()
   assertAdmission(cwd: string) {
     this.maintenanceGate.assertAdmission(cwd)
@@ -292,6 +296,12 @@ class FakeFrontendPool {
     let response: LocalPiRpcResponse
     let sampledRuntime: ProjectRuntimeDescriptor | undefined
     switch (command.type) {
+      case 'get_delivery_state':
+        response = {
+          type: 'response', command: 'get_delivery_state', success: true,
+          data: structuredClone(this.deliveryStates.get(runtimeId) ?? { revision: 0, paused: false, items: [], receipts: [] }),
+        }
+        break
       case 'get_state': {
         sampledRuntime = structuredClone(runtimeState.descriptor)
         response = {
@@ -552,6 +562,9 @@ class FakeFrontendPool {
   }
 
   emitEvent(event: PiHostEventEnvelope) {
+    if (event.event.type === 'delivery_state') {
+      this.deliveryStates.set(event.runtimeId, localPiDeliverySnapshotSchema.parse(event.event.delivery))
+    }
     for (const listener of this.eventListeners) listener(structuredClone(event))
   }
 
@@ -864,6 +877,17 @@ function runtimeEvent(
     runtimeGeneration,
     sequence: 1,
     event: event as unknown as PiHostDtoRecord,
+  }
+}
+
+function managedDelivery(
+  status: LocalPiDeliverySnapshot['items'][number]['status'],
+  paused = false,
+  revision = 1,
+): LocalPiDeliverySnapshot {
+  return {
+    revision, paused, receipts: [],
+    items: [{ id: 'managed-item', submissionId: 'submission', message: 'Later', mode: 'follow_up', status }],
   }
 }
 
@@ -1562,6 +1586,35 @@ describe('PiRuntimeFrontend', () => {
     await frontend.dispose()
   })
 
+  it('projects background interaction separately from queued work and clears it after response', async () => {
+    const { frontend, pool } = createHarness()
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' })
+    const selected = frontend.getActiveRuntimeIdentity()
+    const background = await frontend.acquireControlRuntime({
+      scope: projectScope, sessionFile: '/sessions/background.jsonl',
+    })
+    const status = () => frontend.getSnapshot().sessionStatuses?.find((item) =>
+      item.sessionId === background.sessionId)
+    pool.emitEvent(runtimeEvent(background.runtimeId, background.generation, {
+      type: 'queue_update', steering: [], followUp: ['queued'],
+    }))
+    expect(status()).toMatchObject({ status: 'running', pendingMessageCount: 1 })
+    expect(status()?.needsUserInput).toBeUndefined()
+
+    pool.emitUiRequest(uiRequest(background.runtimeId, background.generation, 'background-input', 'confirm'))
+    expect(localPiRuntimeSessionStatusSchema.parse(status())).toMatchObject({
+      status: 'running', pendingMessageCount: 1, needsUserInput: true,
+    })
+    expect(status()?.selected).toBeUndefined()
+    await frontend.respondToControlExtensionUi(background, {
+      type: 'extension_ui_response', id: 'background-input', confirmed: true,
+    })
+    expect(status()).toMatchObject({ status: 'running', pendingMessageCount: 1 })
+    expect(status()?.needsUserInput).toBeUndefined()
+    expect(frontend.getActiveRuntimeIdentity()).toEqual(selected)
+    await frontend.dispose()
+  })
+
   it('lets Main cancel blocking UI while a background Runtime binds', async () => {
     const { frontend, pool } = createHarness()
     await frontend.start({
@@ -2168,6 +2221,165 @@ describe('PiRuntimeFrontend', () => {
     await vi.waitFor(() => {
       expect(pool.runtimeForSession('/sessions/running.jsonl')).toBeNull()
     })
+    expect(pool.runtimeForSession('/sessions/selected.jsonl')).not.toBeNull()
+    await frontend.dispose()
+  })
+
+  it.each(['queued', 'delivering', 'accepting'] as const)('protects managed %s while the SDK is idle, then reclaims frozen work', async (status) => {
+    const { frontend, pool } = createHarness({ maxRetainedIdleRuntimesPerHost: 0, isPersistedSessionFile: () => true })
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/managed.jsonl' })
+    const background = pool.runtime!
+    const delivery = status === 'accepting'
+      ? { revision: 1, paused: false, items: [], receipts: [{ submissionId: 'submission', status: 'accepting' as const }] }
+      : managedDelivery(status)
+    pool.emitEvent(runtimeEvent(background.runtimeId, background.generation, { type: 'delivery_state', delivery }))
+    await frontend.replace({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' })
+    pool.emitEvent(runtimeEvent(background.runtimeId, background.generation, { type: 'agent_settled' }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(pool.runtimeForSession('/sessions/managed.jsonl')).not.toBeNull()
+    expect(frontend.listControlRuntimes().find((item) => item.runtimeId === background.runtimeId))
+      .toMatchObject({ lifecycle: status === 'delivering' ? 'running' : status, queueCount: status === 'accepting' ? 0 : 1 })
+
+    pool.emitEvent(runtimeEvent(background.runtimeId, background.generation, { type: 'delivery_state', delivery: managedDelivery('frozen', true, 2) }))
+    expect(frontend.getSnapshot().sessionStatuses?.find((item) => item.sessionId === background.sessionId)?.status).not.toBe('running')
+    await vi.waitFor(() => expect(pool.runtimeForSession('/sessions/managed.jsonl')).toBeNull())
+    expect(pool.runtimeForSession('/sessions/selected.jsonl')).not.toBeNull()
+    await frontend.dispose()
+  })
+
+  it('checks authoritative delivery before LRU reclamation even when its event was missed', async () => {
+    const { frontend, pool } = createHarness({ maxRetainedIdleRuntimesPerHost: 0, isPersistedSessionFile: () => true })
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/missed-delivery-event.jsonl' })
+    const background = pool.runtime!
+    pool.deliveryStates.set(background.runtimeId, managedDelivery('queued'))
+    await frontend.replace({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' })
+    await vi.waitFor(() => expect(frontend.listControlRuntimes().find((item) => item.runtimeId === background.runtimeId))
+      .toMatchObject({ lifecycle: 'queued', queueCount: 1 }))
+    expect(pool.runtimeForSession('/sessions/missed-delivery-event.jsonl')).not.toBeNull()
+    expect(pool.disposeCalls).toEqual([])
+    await frontend.dispose()
+  })
+
+  it('checks authoritative delivery before applying configuration even when its event was missed', async () => {
+    const { frontend, pool } = createHarness()
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/missed-delivery-event.jsonl' })
+    const runtime = pool.runtime!
+    pool.deliveryStates.set(runtime.runtimeId, managedDelivery('queued'))
+    expect(await frontend.applyConfiguration(configurationAttempt())).toMatchObject({ state: 'pending' })
+    expect(pool.reloadCalls).toEqual([])
+    expect(frontend.listControlRuntimes()[0]).toMatchObject({ lifecycle: 'queued', queueCount: 1 })
+    await frontend.dispose()
+  })
+
+  it('hydrates frozen queue counts without marking them running or letting SDK reads erase them', async () => {
+    const { frontend, pool } = createHarness()
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/frozen.jsonl' })
+    const runtime = pool.runtime!
+    await frontend.replace({ scope: projectScope, sessionFile: '/sessions/other.jsonl' })
+    pool.deliveryStates.set(runtime.runtimeId, managedDelivery('frozen', true))
+    await frontend.replace({ scope: projectScope, sessionFile: '/sessions/frozen.jsonl' })
+    expect(frontend.listControlRuntimes().find((item) => item.runtimeId === runtime.runtimeId))
+      .toMatchObject({ lifecycle: 'idle', queueCount: 1 })
+    expect((await frontend.getState()).pendingMessageCount).toBe(0)
+    expect(frontend.listControlRuntimes().find((item) => item.runtimeId === runtime.runtimeId))
+      .toMatchObject({ lifecycle: 'idle', queueCount: 1 })
+    expect(frontend.getSnapshot().sessionState?.pendingMessageCount).toBe(0)
+    expect(frontend.getSnapshot().sessionStatuses?.find((item) => item.sessionId === runtime.sessionId))
+      .toMatchObject({ status: 'completed', pendingMessageCount: 1 })
+    await frontend.dispose()
+  })
+
+  it('does not install an older session ledger when session changes overlap during refresh', async () => {
+    const { frontend, pool } = createHarness()
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/original.jsonl' })
+    const runtimeId = pool.runtime!.runtimeId
+    pool.deliveryStates.set(runtimeId, managedDelivery('frozen', true, 100))
+    const sampled = deferred()
+    const release = deferred()
+    pool.nextStateReadGate = { sampled: sampled.resolve, release: release.promise }
+    const firstChange = frontend.request({ type: 'new_session' })
+    await sampled.promise
+    pool.deliveryStates.set(runtimeId, managedDelivery('queued', false, 1))
+    await frontend.request({ type: 'new_session' })
+    const currentSessionId = frontend.getSnapshot().sessionState?.sessionId
+    release.resolve()
+    await expect(firstChange).rejects.toMatchObject({ code: 'PI_RUNTIME_STALE_GENERATION' })
+    expect(frontend.getSnapshot().sessionState?.sessionId).toBe(currentSessionId)
+    expect(frontend.listControlRuntimes()[0]).toMatchObject({ lifecycle: 'queued', queueCount: 1 })
+    await frontend.dispose()
+  })
+
+  it('counts managed steering and native extension items once in background session rows', async () => {
+    const { frontend, pool } = createHarness()
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/counts.jsonl' })
+    const background = pool.runtime!
+    await frontend.replace({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' })
+    pool.emitEvent(runtimeEvent(background.runtimeId, background.generation, { type: 'queue_update', steering: ['managed', 'extension'], followUp: [] }))
+    const delivery = managedDelivery('queued')
+    delivery.items.push({ id: 'steer', submissionId: 'steer-submission', message: 'managed', mode: 'steer', status: 'delivering' })
+    pool.emitEvent(runtimeEvent(background.runtimeId, background.generation, { type: 'delivery_state', delivery }))
+    expect(frontend.listControlRuntimes().find((item) => item.runtimeId === background.runtimeId)).toMatchObject({ queueCount: 3 })
+    expect(frontend.getSnapshot().sessionStatuses?.find((item) => item.sessionId === background.sessionId))
+      .toMatchObject({ status: 'running', pendingMessageCount: 3 })
+    await frontend.dispose()
+  })
+
+  it('applies a successful clear response even before its delivery event arrives', async () => {
+    const { frontend, pool } = createHarness()
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/clear.jsonl' })
+    const runtime = pool.runtime!
+    const delivery = managedDelivery('frozen', true)
+    delivery.items.push({ id: 'unknown', submissionId: 'uncertain', message: 'Retained', mode: 'follow_up', status: 'unknown' })
+    pool.emitEvent(runtimeEvent(runtime.runtimeId, runtime.generation, { type: 'delivery_state', delivery }))
+    const cleared: LocalPiDeliverySnapshot = {
+      ...delivery, revision: 2, items: [delivery.items[1]!],
+      receipts: [{ submissionId: 'submission', status: 'removed' }],
+    }
+    const command = pool.command.bind(pool)
+    const commandSpy = vi.spyOn(pool, 'command').mockImplementation(async (runtimeId, input, ...args) => input.type === 'clear_delivery'
+      ? { runtime, response: { type: 'response', command: 'clear_delivery', success: true, data: cleared } }
+      : command(runtimeId, input, ...args))
+    await frontend.request({ type: 'clear_delivery', revision: 1, expectedSessionId: runtime.sessionId })
+    expect(commandSpy).toHaveBeenCalledWith(runtime.runtimeId,
+      { type: 'clear_delivery', revision: 1, expectedSessionId: runtime.sessionId }, runtime.generation, undefined)
+    expect(frontend.listControlRuntimes()[0]).toMatchObject({ lifecycle: 'idle', queueCount: 1 })
+    await frontend.dispose()
+  })
+
+  it('retains cancelled background outcomes after the idle Runtime is reclaimed', async () => {
+    const { frontend, pool } = createHarness({
+      maxRetainedIdleRuntimesPerHost: 0,
+      isPersistedSessionFile: () => true,
+    })
+    const selectionToken = `sel_${'c'.repeat(32)}` as const
+    await frontend.start({
+      scope: projectScope, sessionFile: '/sessions/cancelled.jsonl', selectionToken,
+    })
+    const cancelled = pool.runtime!
+    pool.emitEvent(runtimeEvent(cancelled.runtimeId, cancelled.generation, { type: 'agent_start' }))
+    await frontend.replace({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' })
+    pool.emitEvent(runtimeEvent(cancelled.runtimeId, cancelled.generation, {
+      type: 'agent_end', willRetry: false,
+      messages: [{
+        role: 'assistant', content: [], api: 'test', provider: 'fixture', model: 'fixture',
+        usage: {
+          input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: 'aborted', timestamp: 1,
+      }],
+    }))
+    const status = () => frontend.getSnapshot().sessionStatuses?.find((item) =>
+      item.sessionId === cancelled.sessionId)
+    expect(status()?.status).toBe('running')
+    pool.emitEvent(runtimeEvent(cancelled.runtimeId, cancelled.generation, { type: 'agent_settled' }))
+    expect(localPiRuntimeSessionStatusSchema.parse(status())).toEqual({
+      scope: projectScope, sessionId: cancelled.sessionId, selectionToken, status: 'cancelled',
+    })
+    await vi.waitFor(() => {
+      expect(pool.runtimeForSession('/sessions/cancelled.jsonl')).toBeNull()
+    })
+    expect(status()?.status).toBe('cancelled')
     expect(pool.runtimeForSession('/sessions/selected.jsonl')).not.toBeNull()
     await frontend.dispose()
   })

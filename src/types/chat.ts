@@ -96,16 +96,34 @@ export type SubagentOutputPresentation = {
   truncated: boolean
 }
 
+export type SubagentRunPresentation = {
+  /** Identity of one result record, independent of the agent's display name. */
+  id: string
+  agent?: string
+  taskMarkdown?: string
+  taskTruncated?: boolean
+  /** Task slot from Pi's ordered parallel results or explicit chain step. */
+  taskId?: string
+  step?: number
+  summary?: SubagentOutputPresentation
+  /** Only populated from explicit process state, never from output prose. */
+  status?: ToolCall['status']
+  /** Pi initializes a live child with exitCode 0; partial zero is not completion. */
+  awaitingCompletion?: boolean
+}
+
 export type SubagentTimelineEvent = {
   /** Stable renderer identity derived from the cumulative Pi result snapshot. */
   id: string
   sequence: number
   kind: 'progress' | 'tool' | 'result' | 'error'
-  state: 'active' | 'complete' | 'failed'
+  state: 'active' | 'complete' | 'failed' | 'cancelled' | 'unknown'
   markdown: string
   truncated: boolean
   agent?: string
   toolName?: string
+  runId?: string
+  source?: 'assistant' | 'tool' | 'summary'
 }
 
 export type SubagentPresentation = {
@@ -118,6 +136,7 @@ export type SubagentPresentation = {
   /** Cumulative observable work reported by pi-subagents, never hidden thinking. */
   timeline?: readonly SubagentTimelineEvent[]
   timelineOmittedCount?: number
+  runs?: readonly SubagentRunPresentation[]
 }
 
 export type ResponseActivity =
@@ -236,6 +255,8 @@ export type ToolCall = {
   title: string
   status: 'queued' | 'running' | 'detached' | 'success' | 'failed' | 'cancelled'
   duration?: string
+  /** Actual process exit code, when supplied by Pi. Never inferred from status. */
+  exitCode?: number
   body: string
   summary?: string
   details?: ToolCallDetails

@@ -8,6 +8,16 @@ async function exists(path: string) {
   try { await access(path); return true } catch { return false }
 }
 
+function projectSession(page: Page, name: string) {
+  return page.locator('[data-session-list="project"]')
+    .getByRole('button', { name, exact: true })
+}
+
+function projectSessionRow(page: Page, name: string) {
+  return page.locator('[data-session-list="project"]').getByRole('listitem')
+    .filter({ has: page.getByRole('button', { name, exact: true }) })
+}
+
 async function addProject(app: ElectronApplication, page: Page, path: string) {
   await app.evaluate(({ dialog }, selectedPath) => {
     Object.defineProperty(dialog, 'showOpenDialog', {
@@ -38,7 +48,7 @@ async function nameSession(page: Page, name: string) {
     type: 'set_session_name', name: title,
   }), name)
   expect(result.success).toBe(true)
-  await expect(page.getByRole('button', { name, exact: true })).toBeVisible()
+  await expect(projectSession(page, name)).toBeVisible()
 }
 
 test('updates a loaded background project catalog while another project remains selected', async ({}, testInfo) => {
@@ -60,7 +70,15 @@ test('updates a loaded background project catalog while another project remains 
   const firstTitle = 'Catalog background A'
   const updatedTitle = 'Catalog background A updated'
   const selectedTitle = 'Catalog selected B'
-  const fixture = await startPiSdkFixture({ agentDir })
+  const cancelledPrompt = 'Stop project A before completion'
+  let releaseCancelledPrompt!: () => void
+  const cancelledPromptGate = new Promise<void>((resolveGate) => {
+    releaseCancelledPrompt = resolveGate
+  })
+  const fixture = await startPiSdkFixture({
+    agentDir,
+    promptGates: { [cancelledPrompt]: cancelledPromptGate },
+  })
   let app: ElectronApplication | undefined
 
   try {
@@ -101,12 +119,15 @@ export default function backgroundCatalogGate(pi) {
     await send(page, 'Seed project A catalog')
     await nameSession(page, firstTitle)
     const runtimeA = await page.evaluate(() => window.pipilot!.localPi.runtime.status())
-    const rowA = page.getByRole('button', { name: firstTitle, exact: true })
+    const rowA = projectSession(page, firstTitle)
     await expect(rowA).toHaveAttribute('aria-current', 'page')
+    await expect(projectSessionRow(page, firstTitle).getByRole('status')).toHaveCount(0)
 
     await send(page, backgroundPrompt)
     await expect.poll(() => exists(join(gateDir, 'started'))).toBe(true)
     await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible()
+    await expect(projectSessionRow(page, firstTitle).locator('[data-session-indicator]'))
+      .toHaveAttribute('data-session-indicator', 'running')
 
     await addProject(app, page, canonicalB)
     await send(page, 'Seed project B catalog')
@@ -116,16 +137,27 @@ export default function backgroundCatalogGate(pi) {
     expect(runtimeB.sessionState?.sessionId).not.toBe(runtimeA.sessionState?.sessionId)
     await expect(rowA).toBeVisible()
     await expect(rowA).not.toHaveAttribute('aria-current', 'page')
-    await expect(page.getByRole('button', { name: selectedTitle, exact: true })).toHaveAttribute('aria-current', 'page')
+    const rowB = projectSession(page, selectedTitle)
+    await expect(rowB).toHaveAttribute('aria-current', 'page')
+    await expect(projectSessionRow(page, selectedTitle).getByRole('status')).toHaveCount(0)
+    await expect(projectSessionRow(page, firstTitle).locator('[data-session-indicator]'))
+      .toHaveAttribute('data-session-indicator', 'running')
 
     // A is already loaded but no longer selected. Do not refresh or reopen it.
     await writeFile(join(gateDir, 'release'), 'release')
     await expect.poll(() => exists(join(gateDir, 'finished'))).toBe(true)
-    const updatedRow = page.getByRole('button', { name: updatedTitle, exact: true })
+    const updatedRow = projectSession(page, updatedTitle)
+    const updatedSession = projectSessionRow(page, updatedTitle)
     await expect(updatedRow).toBeVisible({ timeout: 15_000 })
     await expect(rowA).toHaveCount(0)
     await expect(updatedRow).not.toHaveAttribute('aria-current', 'page')
-    await expect(page.getByRole('button', { name: selectedTitle, exact: true })).toHaveAttribute('aria-current', 'page')
+    await expect(rowB).toHaveAttribute('aria-current', 'page')
+    await expect(updatedSession.locator('[data-session-indicator]'))
+      .toHaveAttribute('data-session-indicator', 'unread')
+    await expect(updatedSession.getByRole('status')).toHaveCount(1)
+    await expect(updatedSession.getByRole('status', { name: 'New result', exact: true }))
+      .toBeVisible()
+    await expect(projectSessionRow(page, selectedTitle).getByRole('status')).toHaveCount(0)
     await expect(page.evaluate(() => window.pipilot!.conversation.get())).resolves.toEqual(navigationB)
     await expect(page.evaluate(() => window.pipilot!.localPi.runtime.status())).resolves.toMatchObject({
       state: 'ready', generation: runtimeB.generation, cwd: canonicalB,
@@ -136,12 +168,51 @@ export default function backgroundCatalogGate(pi) {
     await expect(transcript.getByText('Fixture response: Seed project B catalog', { exact: true })).toBeVisible()
     await send(page, 'Project B remains usable after the background update')
     await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0)
+    await expect(projectSessionRow(page, selectedTitle).getByRole('status')).toHaveCount(0)
+    await page.screenshot({ path: testInfo.outputPath('background-catalog-updated.png') })
+
+    // Reading the real background result clears its only indicator.
+    await updatedRow.click()
+    await expect(transcript.getByText(`Fixture response: ${backgroundPrompt}`, { exact: true }))
+      .toBeVisible({ timeout: 20_000 })
+    await expect(updatedRow).toHaveAttribute('aria-current', 'page')
+    await expect(updatedSession.locator('[data-session-indicator]')).toHaveCount(0)
+    await expect(updatedSession.getByRole('status')).toHaveCount(0)
+    await expect(projectSessionRow(page, selectedTitle).getByRole('status')).toHaveCount(0)
+
+    // Stop an actual SDK request, then leave it in the background. Cancellation
+    // must remain quiet instead of becoming a successful or unread result.
+    await page.getByRole('textbox', { name: 'Message input', exact: true }).fill(cancelledPrompt)
+    await page.getByRole('button', { name: 'Send', exact: true }).click()
+    await expect.poll(() => fixture.prompts.includes(cancelledPrompt)).toBe(true)
+    await expect(updatedSession.locator('[data-session-indicator]'))
+      .toHaveAttribute('data-session-indicator', 'running')
+    await page.getByRole('button', { name: 'Stop', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0)
+    await expect.poll(async () => {
+      const runtime = await page.evaluate(() => window.pipilot!.localPi.runtime.status())
+      return runtime.sessionStatuses?.find((session) =>
+        session.sessionId === runtimeA.sessionState!.sessionId)?.status
+    }).toBe('cancelled')
+    releaseCancelledPrompt()
+    await expect(updatedSession.locator('[data-session-indicator]')).toHaveCount(0)
+    await expect(updatedSession.getByRole('status')).toHaveCount(0)
+    await rowB.click()
+    await expect(transcript.getByText(
+      'Fixture response: Project B remains usable after the background update', { exact: true },
+    )).toBeVisible({ timeout: 20_000 })
+    await expect(rowB).toHaveAttribute('aria-current', 'page')
+    await expect(updatedRow).not.toHaveAttribute('aria-current', 'page')
+    await expect(updatedSession.locator('[data-session-indicator]')).toHaveCount(0)
+    await expect(updatedSession.getByRole('status')).toHaveCount(0)
+    await expect(projectSessionRow(page, selectedTitle).getByRole('status')).toHaveCount(0)
     expect(fixture.prompts).toEqual([
       'Seed project A catalog', backgroundPrompt, 'Seed project B catalog',
-      'Project B remains usable after the background update',
+      'Project B remains usable after the background update', cancelledPrompt,
     ])
-    await page.screenshot({ path: testInfo.outputPath('background-catalog-updated.png') })
+    await page.screenshot({ path: testInfo.outputPath('navigation-completed-and-cancelled-quiet.png') })
   } finally {
+    releaseCancelledPrompt()
     await writeFile(join(gateDir, 'release'), 'release')
     await app?.close()
     await fixture.close()

@@ -13,6 +13,11 @@ import {
   settingsChangedEventSchema,
   settingsUpdateContract,
   terminalCreateContract,
+  terminalListContract,
+  terminalAttachContract,
+  terminalRenameContract,
+  terminalCloseContract,
+  terminalClearContract,
   terminalEventSchema,
   terminalInputContract,
   terminalResizeContract,
@@ -635,6 +640,18 @@ describe('workspace IPC schemas', () => {
       workspaceId,
       path: 'src/main.ts',
     }).success).toBe(true)
+    expect(workspaceDiffReadContract.requestSchema.parse({
+      context: { requestId },
+      workspaceId,
+      path: 'src/main.ts',
+      stage: 'staged',
+    }).stage).toBe('staged')
+    expect(workspaceDiffReadContract.requestSchema.safeParse({
+      context: { requestId },
+      workspaceId,
+      path: 'src/main.ts',
+      stage: 'committed',
+    }).success).toBe(false)
     expect(workspaceDiffReadContract.requestSchema.safeParse({
       context: { requestId },
       workspaceId,
@@ -664,6 +681,9 @@ describe('workspace IPC schemas', () => {
       branch: 'main',
       truncated: false,
       files: [{
+        id: 'unstaged:src/main.ts',
+        stage: 'unstaged',
+        revision: 'c'.repeat(64),
         path: 'src/main.ts',
         status: 'modified',
         added: 1,
@@ -673,6 +693,9 @@ describe('workspace IPC schemas', () => {
     }).success).toBe(true)
     expect(workspaceDiffReadContract.responseSchema.safeParse({
       workspaceId,
+      id: 'staged:src/main.ts',
+      stage: 'staged',
+      revision: 'c'.repeat(64),
       path: 'src/main.ts',
       status: 'modified',
       added: 1,
@@ -683,6 +706,9 @@ describe('workspace IPC schemas', () => {
     }).success).toBe(true)
     expect(workspaceDiffReadContract.responseSchema.safeParse({
       workspaceId,
+      id: 'unstaged:src/main.ts',
+      stage: 'unstaged',
+      revision: 'c'.repeat(64),
       path: 'src/main.ts',
       status: 'modified',
       added: 1,
@@ -720,6 +746,19 @@ describe('terminal IPC schemas', () => {
   const workspaceId = '00000000-0000-4000-8000-000000000001'
   const terminalId = '00000000-0000-4000-8000-000000000002'
   const scope = { kind: 'project' as const, workspaceId }
+
+  it('validates attach identity, trimmed titles, and scoped record operations', () => {
+    const request = { context: { requestId }, scope, terminalId }
+    expect(terminalAttachContract.requestSchema.safeParse({ ...request, cols: 80, rows: 24 }).success).toBe(true)
+    expect(terminalAttachContract.requestSchema.safeParse({ ...request, terminalId: 'shell', cols: 80, rows: 24 }).success).toBe(false)
+    expect(terminalRenameContract.requestSchema.parse({ ...request, title: '  Build server  ' }).title).toBe('Build server')
+    expect(terminalRenameContract.requestSchema.safeParse({ ...request, title: '   ' }).success).toBe(false)
+    expect(terminalRenameContract.requestSchema.safeParse({ ...request, title: 'x'.repeat(129) }).success).toBe(false)
+    expect(terminalListContract.requestSchema.safeParse({ context: { requestId }, scope }).success).toBe(true)
+    expect(terminalListContract.requestSchema.safeParse({ context: { requestId }, scope, cwd: '/tmp' }).success).toBe(false)
+    expect(terminalCloseContract.requestSchema.safeParse(request).success).toBe(true)
+    expect(terminalClearContract.requestSchema.safeParse(request).success).toBe(true)
+  })
 
   it('accepts only a typed scope, bounded dimensions, and input', () => {
     const create = {
@@ -763,6 +802,8 @@ describe('terminal IPC schemas', () => {
       scope,
       terminalId,
       shell: 'zsh',
+      title: 'zsh',
+      status: 'running',
       cols: 80,
       rows: 24,
       replay: '',

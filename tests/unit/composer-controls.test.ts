@@ -48,10 +48,10 @@ describe('Composer submit controls', () => {
       .toMatchObject({ canSubmit: false, canStop: false })
   })
 
-  it('permits idle image-only drafts but preserves text requirements for queued images', () => {
+  it('permits image-only messages both idle and while running', () => {
     const imageOnly = { ...readyDraft, hasContent: false, imageCount: 1 }
     expect(deriveComposerActionState(imageOnly).canSubmit).toBe(true)
-    expect(deriveComposerActionState({ ...imageOnly, isStreaming: true }).canSubmit).toBe(false)
+    expect(deriveComposerActionState({ ...imageOnly, isStreaming: true }).canSubmit).toBe(true)
     expect(deriveComposerActionState({ ...imageOnly, isStreaming: true, hasExtensionCommand: true }))
       .toMatchObject({ submit: { action: 'prompt', kind: 'run-now' }, canSubmit: true })
   })
@@ -109,8 +109,8 @@ describe('Composer submit controls', () => {
     expect(normalizeRunningSubmitPreference('invalid')).toBe('queue')
     expect(normalizeRunningSubmitPreference('steer')).toBe('steer')
     expect(deriveComposerSubmitMode(true, false, 'steer')).toEqual({
-      action: 'steer',
-      kind: 'steer',
+      action: 'follow_up',
+      kind: 'queue',
     })
   })
 

@@ -1,6 +1,7 @@
 import * as React from 'react'
 import type {
   LocalPiCommandArgumentCompletion,
+  LocalPiDeliverySnapshot,
   LocalPiExtensionUiRequest,
   LocalPiExtensionUiResponse,
   LocalPiImageContent,
@@ -61,18 +62,21 @@ import {
   refreshPiSnapshot,
 } from '@/renderer/pi-rpc/snapshot-refresh'
 import {
-  PI_QUEUE_MUTATION_SETTLE_MS,
-  canPromotePiFollowUp,
-  hasCompletePiQueuePayloads,
-  piQueueItemsMatchSnapshot,
-  promotePiFollowUpSnapshot,
-  queueTexts,
   reconcilePiQueuedMessages,
-  removePiQueuedMessageSnapshot,
-  type PendingPiQueuedMessage,
-  type PiQueueTextSnapshot,
   type PiQueuedMessage,
 } from '@/renderer/pi-rpc/queue-payloads'
+import {
+  PiSubmissionError,
+  createPiSubmissionCommand,
+  newerPiDeliverySnapshot,
+  piSubmissionStatus,
+  projectPiDeliveryQueue,
+  requirePiSubmissionAccepted,
+  resolvePiSubmission,
+  samePiDeliveryOwner,
+  type PiSubmissionStatus,
+  type PiDeliveryOwner,
+} from '@/renderer/pi-rpc/delivery-state'
 import type {
   AgentStatus,
   ResponseActivity,
@@ -90,6 +94,8 @@ export type PiRpcModel = LocalPiModel
 export type PiSessionStats = LocalPiSessionStats
 
 export interface PiQueueSnapshot {
+  revision?: number
+  paused?: boolean
   pendingCount: number
   detailsKnown: boolean
   steering: readonly string[]
@@ -98,13 +104,6 @@ export interface PiQueueSnapshot {
   followUpItems: readonly PiQueuedMessage[]
   steeringMode: QueueMode
   followUpMode: QueueMode
-}
-
-interface PiQueueConversion {
-  steering: readonly PiQueuedMessage[]
-  followUp: readonly PiQueuedMessage[]
-  latestOfficial: PiQueueTextSnapshot | null
-  settleTimer: number | null
 }
 
 export type PiConversationPresentation =
@@ -286,7 +285,12 @@ interface PiRpcActions {
     text: string,
     action: 'prompt' | 'follow_up' | 'steer',
     images?: readonly LocalPiImageContent[],
+    submissionId?: string,
   ): Promise<void>
+  checkSubmission(submissionId: string): Promise<PiSubmissionStatus>
+  editQueuedMessage(itemId: string, text: string, images?: readonly LocalPiImageContent[], expectedRevision?: number): Promise<void>
+  resumeQueue(): Promise<void>
+  clearQueue(): Promise<void>
   promoteFollowUp(itemId: string): Promise<void>
   removeQueuedMessage(itemId: string): Promise<void>
   setAutoCompaction(enabled: boolean): Promise<void>
@@ -665,6 +669,8 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
   const workspace = useWorkspaceStore()
   const integrations = usePiIntegrations()
   const activeScopeKey = conversationScopeKey(workspace.activeScope)
+  const selectedConversation = React.useRef({ scopeKey: activeScopeKey, sessionId: workspace.activeSessionId })
+  selectedConversation.current = { scopeKey: activeScopeKey, sessionId: workspace.activeSessionId }
   const [runtime, setRuntime] = React.useState<LocalPiRuntimeSnapshot | null>(null)
   const [session, setSession] = React.useState<LocalPiSessionState | null>(null)
   const [models, setModels] = React.useState<PiRpcModel[]>([])
@@ -735,19 +741,9 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
   const forkInFlight = React.useRef<Promise<void> | null>(null)
   const projectionScopeKey = React.useRef(activeScopeKey)
   const queueRef = React.useRef<PiQueueSnapshot>(EMPTY_QUEUE)
+  const deliveryRef = React.useRef<LocalPiDeliverySnapshot | null>(null)
+  const officialPendingCount = React.useRef(0)
   const queueItemSequence = React.useRef(0)
-  const pendingQueuedMessages = React.useRef<PendingPiQueuedMessage[]>([])
-  const queueConversion = React.useRef<PiQueueConversion | null>(null)
-
-  const clearQueueConversion = React.useCallback((expected?: PiQueueConversion) => {
-    const current = queueConversion.current
-    if (!current || (expected && current !== expected)) return false
-    if (current.settleTimer !== null) window.clearTimeout(current.settleTimer)
-    current.settleTimer = null
-    queueConversion.current = null
-    return true
-  }, [])
-
   const nextQueueItemId = React.useCallback(() =>
     `queue-${++queueItemSequence.current}`, [])
 
@@ -758,6 +754,19 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
     queueRef.current = value
     setQueue(value)
   }, [])
+
+  const commitDelivery = React.useCallback((delivery: LocalPiDeliverySnapshot) => {
+    const current = newerPiDeliverySnapshot(deliveryRef.current, delivery)
+    deliveryRef.current = current
+    commitQueue(projectPiDeliveryQueue(current, officialPendingCount.current, queueRef.current))
+  }, [commitQueue])
+
+  const currentDeliveryOwner = React.useCallback((): PiDeliveryOwner => ({
+    scopeKey: selectedConversation.current.scopeKey,
+    generation: runtimeRef.current?.generation ?? null,
+    sessionId: selectedConversation.current.sessionId || null,
+    revision: commandOwnerRevision.current,
+  }), [])
 
   const expectedIntegrationScope = workspace.activeScope.kind === 'project'
     ? { kind: 'project' as const, workspaceId: workspace.activeScope.workspaceId }
@@ -1084,8 +1093,11 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
   const commitSession = React.useCallback((next: LocalPiSessionState | null) => {
     sessionRef.current = next
     setSession(next)
+    officialPendingCount.current = next?.pendingMessageCount ?? 0
     commitQueue((previous) => next
-      ? reconcileQueueFromSession(previous, next)
+      ? deliveryRef.current
+        ? projectPiDeliveryQueue(deliveryRef.current, officialPendingCount.current, next)
+        : reconcileQueueFromSession(previous, next)
       : EMPTY_QUEUE)
   }, [commitQueue])
 
@@ -1119,8 +1131,8 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
     setCommands([])
     setStats(null)
     queueRef.current = EMPTY_QUEUE
-    pendingQueuedMessages.current = []
-    clearQueueConversion()
+    deliveryRef.current = null
+    officialPendingCount.current = 0
     commitQueue(EMPTY_QUEUE)
     setTranscriptLoading(
       snapshot.state === 'ready' ||
@@ -1158,7 +1170,7 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
       error: canHydrate ? null : runtimeFailureMessage(snapshot),
     })
     commitSession(activeSession)
-  }, [activeScopeKey, clearQueueConversion, commitHydration, commitProjection, commitQueue, commitResponseActivities, commitSession])
+  }, [activeScopeKey, commitHydration, commitProjection, commitQueue, commitResponseActivities, commitSession])
 
   const runCommand = React.useCallback(async <TCommand extends LocalPiRendererRpcCommand,>(
     command: TCommand,
@@ -1194,7 +1206,7 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
       // Sending is acknowledged by the Runtime that received the command.
       // Navigating away cannot turn that successful acceptance into a failure.
       // The send caller separately gates all projection effects by visit.
-      if (command.type === 'prompt' || command.type === 'steer' || command.type === 'follow_up') {
+      if (command.type === 'submit_message' || command.type === 'prompt' || command.type === 'steer' || command.type === 'follow_up') {
         return responseData<TCommand['type']>(response, command.type)
       }
       if (projectionScopeKey.current !== expectedScopeKey) {
@@ -1357,8 +1369,9 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
           api.localPi.runtime.command({ type: 'get_session_stats' }),
           fetchEntryPage(expectedGeneration, expectedSessionId, false),
           capabilities,
+          api.localPi.runtime.command({ type: 'get_delivery_state', expectedSessionId }),
         ]),
-        apply: ([stateResponse, messagesResponse, statsResponse, entryPage, [modelsResponse, levelsResponse, commandsResponse]], startedAt) => {
+        apply: ([stateResponse, messagesResponse, statsResponse, entryPage, [modelsResponse, levelsResponse, commandsResponse], deliveryResponse], startedAt) => {
           const nextSession = reconcilePiSessionSnapshot(
             responseData(stateResponse, 'get_state'),
             sessionRef.current,
@@ -1379,6 +1392,7 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
           if (expectedSessionId && nextSession.sessionId !== expectedSessionId) return
 
           commitSession(nextSession)
+          commitDelivery(responseData(deliveryResponse, 'get_delivery_state'))
           setModels(modelData.models)
           setThinkingLevels(levelData.levels)
           setCommands(commandData.commands)
@@ -1433,7 +1447,7 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
     } finally {
       if (isCurrent()) setLoading(false)
     }
-  }, [activeScopeKey, api, commitHydration, commitProjection, commitSession, fetchEntryPage, restoreActiveResponseProvenance])
+  }, [activeScopeKey, api, commitDelivery, commitHydration, commitProjection, commitSession, fetchEntryPage, restoreActiveResponseProvenance])
 
   const refreshConversation = React.useCallback(async () => {
     const expected = runtimeRef.current
@@ -1458,8 +1472,9 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
           api.localPi.runtime.command({ type: 'get_messages' }),
           api.localPi.runtime.command({ type: 'get_session_stats' }),
           fetchEntryPage(expectedGeneration, expectedSessionId, true),
+          api.localPi.runtime.command({ type: 'get_delivery_state', expectedSessionId }),
         ]),
-        apply: ([stateResponse, messagesResponse, statsResponse, entryPage], startedAt) => {
+        apply: ([stateResponse, messagesResponse, statsResponse, entryPage, deliveryResponse], startedAt) => {
           const nextSession = reconcilePiSessionSnapshot(
             responseData(stateResponse, 'get_state'),
             sessionRef.current,
@@ -1470,6 +1485,7 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
           const nextStats = responseData(statsResponse, 'get_session_stats')
           if (expectedSessionId && nextSession.sessionId !== expectedSessionId) return
           commitSession(nextSession)
+          commitDelivery(responseData(deliveryResponse, 'get_delivery_state'))
           setStats(nextStats)
           setTranscriptLoading(false)
           const nextProjection = reconcilePiProjectorSnapshot(projectionRef.current, {
@@ -1501,7 +1517,7 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
         setError(errorMessage(caught))
       }
     }
-  }, [activeScopeKey, api, commitProjection, commitSession, fetchEntryPage, restoreActiveResponseProvenance])
+  }, [activeScopeKey, api, commitDelivery, commitProjection, commitSession, fetchEntryPage, restoreActiveResponseProvenance])
 
   const prepareResponseActivityProvenance = React.useCallback(async () => {
     const expected = projectionRef.current
@@ -1687,6 +1703,9 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
       }
     }
     switch (event.type) {
+      case 'delivery_state':
+        commitDelivery(event.delivery)
+        break
       case 'agent_start':
         if (sessionRef.current) {
           acceptPendingPromptForScope({
@@ -1718,71 +1737,23 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
         }
         break
       case 'queue_update': {
-        const official = {
-          steering: nextProjection.queue.steering,
-          followUp: nextProjection.queue.followUp,
-        }
+        officialPendingCount.current = event.steering.length + event.followUp.length
         if (sessionRef.current) {
-          const nextSession = {
-            ...sessionRef.current,
-            pendingMessageCount: nextProjection.queue.pendingCount,
-          }
-          sessionRef.current = nextSession
-          setSession(nextSession)
+          sessionRef.current = { ...sessionRef.current, pendingMessageCount: officialPendingCount.current }
+          setSession(sessionRef.current)
         }
-        const converting = queueConversion.current
-        if (converting) {
-          converting.latestOfficial = official
-          const reachedTarget = piQueueItemsMatchSnapshot(
-            official,
-            converting.steering,
-            converting.followUp,
-          )
-          if (reachedTarget) {
-            clearQueueConversion(converting)
-            commitQueue((previous) => ({
-              ...previous,
-              ...nextProjection.queue,
-              steeringItems: converting.steering,
-              followUpItems: converting.followUp,
-            }))
-          }
-          break
+        if (deliveryRef.current) {
+          commitQueue(projectPiDeliveryQueue(deliveryRef.current, officialPendingCount.current, queueRef.current))
+        } else {
+          // Legacy/extension queues have no durable item identity or complete payload.
+          const previous = queueRef.current
+          commitQueue({
+            ...previous,
+            ...nextProjection.queue,
+            steeringItems: reconcilePiQueuedMessages(event.steering, previous.steeringItems, null, nextQueueItemId),
+            followUpItems: reconcilePiQueuedMessages(event.followUp, previous.followUpItems, null, nextQueueItemId),
+          })
         }
-
-        const previous = queueRef.current
-        const steeringPending = pendingQueuedMessages.current.find(
-          (item) => item.kind === 'steering',
-        ) ?? null
-        const followUpPending = pendingQueuedMessages.current.find(
-          (item) => item.kind === 'followUp',
-        ) ?? null
-        const steeringItems = reconcilePiQueuedMessages(
-          official.steering,
-          previous.steeringItems,
-          steeringPending,
-          nextQueueItemId,
-        )
-        const followUpItems = reconcilePiQueuedMessages(
-          official.followUp,
-          previous.followUpItems,
-          followUpPending,
-          nextQueueItemId,
-        )
-        const consumedIds = new Set(
-          [...steeringItems, ...followUpItems]
-            .filter((item) => item.locallyOwned)
-            .map((item) => item.id),
-        )
-        pendingQueuedMessages.current = pendingQueuedMessages.current.filter(
-          (item) => !consumedIds.has(item.id),
-        )
-        commitQueue({
-          ...previous,
-          ...nextProjection.queue,
-          steeringItems,
-          followUpItems,
-        })
         break
       }
       case 'compaction_start':
@@ -1892,9 +1863,11 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
   }, [
     acceptPendingPromptForScope,
     captureResponseActivity,
-    clearQueueConversion,
+    commitDelivery,
+    commitQueue,
     commitProjection,
     commitSession,
+    nextQueueItemId,
     flushPendingPromptActivities,
     refreshConversation,
     refreshResponseActivityProvenance,
@@ -2139,12 +2112,11 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
     return () => {
       disposed = true
       visitLifecycle.invalidate()
-      clearQueueConversion()
       detachRuntime()
       detachEvents()
       detachExtension()
     }
-  }, [api, applyEvent, applyExtensionRequest, applyRuntime, clearQueueConversion, commitHydration])
+  }, [api, applyEvent, applyExtensionRequest, applyRuntime, commitHydration])
 
   React.useEffect(() => {
     document.title = extensionTitle || 'PiPilot'
@@ -2153,85 +2125,19 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
     }
   }, [extensionTitle])
 
-  const mutateQueue = React.useCallback(async (
-    current: PiQueueSnapshot,
-    next: {
-      steering: readonly PiQueuedMessage[]
-      followUp: readonly PiQueuedMessage[]
-    },
-    command: Extract<LocalPiRendererRpcCommand,
-      { type: 'promote_follow_up' | 'remove_queued_message' }>,
+  const mutateDelivery = React.useCallback(async (
+    owner: PiDeliveryOwner,
+    mutation: Omit<Extract<LocalPiRendererRpcCommand, { type: 'mutate_delivery' }>, 'type' | 'revision'>,
+    expectedRevision?: number,
   ) => {
-    if (queueConversion.current) {
-      throw new Error('Another pending-message update is still settling.')
+    if (!samePiDeliveryOwner(owner, currentDeliveryOwner())) {
+      throw new Error('The source conversation changed before the pending message was updated.')
     }
-    const conversion: PiQueueConversion = {
-      steering: next.steering,
-      followUp: next.followUp,
-      latestOfficial: null,
-      settleTimer: null,
-    }
-    queueConversion.current = conversion
-    try {
-      await runCommand(command)
-      if (queueConversion.current === conversion) {
-        // Queue events and command responses are separate IPC streams. Keep
-        // the guard alive until Pi publishes the target queue so locally
-        // retained image payloads survive intermediate clear/rebuild events.
-        commitQueue({
-          ...current,
-          pendingCount: next.steering.length + next.followUp.length,
-          steering: queueTexts(next.steering),
-          followUp: queueTexts(next.followUp),
-          steeringItems: next.steering,
-          followUpItems: next.followUp,
-        })
-        if (sessionRef.current) {
-          const nextSession = {
-            ...sessionRef.current,
-            pendingMessageCount: next.steering.length + next.followUp.length,
-          }
-          sessionRef.current = nextSession
-          setSession(nextSession)
-        }
-        conversion.settleTimer = window.setTimeout(() => {
-          // Main verified the target queue before resolving the command. This
-          // bounded grace period lets its independent queue-event stream catch
-          // up without leaving all future mutations permanently blocked.
-          clearQueueConversion(conversion)
-        }, PI_QUEUE_MUTATION_SETTLE_MS)
-      }
-    } catch (caught) {
-      if (queueConversion.current === conversion) {
-        clearQueueConversion(conversion)
-        const latest = conversion.latestOfficial
-        if (latest) {
-          const steeringItems = reconcilePiQueuedMessages(
-            latest.steering,
-            current.steeringItems,
-            null,
-            nextQueueItemId,
-          )
-          const followUpItems = reconcilePiQueuedMessages(
-            latest.followUp,
-            current.followUpItems,
-            null,
-            nextQueueItemId,
-          )
-          commitQueue({
-            ...current,
-            pendingCount: latest.steering.length + latest.followUp.length,
-            detailsKnown: true,
-            steering: latest.steering,
-            followUp: latest.followUp,
-            steeringItems,
-            followUpItems,
-          })
-        }
-      }
-      throw caught
-    }
-  }, [clearQueueConversion, commitQueue, nextQueueItemId, runCommand])
+    const delivery = deliveryRef.current
+    if (!delivery) throw new Error('Pending messages are still loading.')
+    const next = await runCommand({ type: 'mutate_delivery', revision: expectedRevision ?? delivery.revision, expectedSessionId: owner.sessionId ?? undefined, ...mutation })
+    if (samePiDeliveryOwner(owner, currentDeliveryOwner())) commitDelivery(next)
+  }, [commitDelivery, currentDeliveryOwner, runCommand])
 
   const refreshModelCapabilities = React.useCallback(async (ownerRevision: number) => {
     if (!api || commandOwnerRevision.current !== ownerRevision) return
@@ -2247,6 +2153,9 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
     setThinkingLevels(nextLevels.levels)
   }, [api, commitSession])
 
+  const deliveryOwner = React.useMemo(() => currentDeliveryOwner(), [
+    activeScopeKey, workspace.activeSessionId, runtime?.generation, session?.sessionId, hydration, currentDeliveryOwner,
+  ])
   const actions = React.useMemo<PiRpcActions>(() => ({
     async abort() {
       const acceptance = promptAcceptanceRef.current
@@ -2342,32 +2251,25 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
       if (ownerRevision !== commandOwnerRevision.current) return
       await refreshModelCapabilities(ownerRevision)
     },
-    async send(text, action, images = []) {
+    async send(text, action, images = [], submissionId = crypto.randomUUID()) {
+      if (!samePiDeliveryOwner(deliveryOwner, currentDeliveryOwner())) {
+        throw new PiSubmissionError(submissionId, 'rejected', 'The source conversation changed before this message was submitted.')
+      }
+      if (!api || runtimeRef.current?.state !== 'ready' || sessionRef.current?.sessionId !== deliveryOwner.sessionId) {
+        throw new PiSubmissionError(submissionId, 'rejected', 'The source conversation is not connected. This message has not been submitted.')
+      }
       const ownerRevision = commandOwnerRevision.current
-      if (
-        action !== 'prompt' &&
-        runtimeRef.current?.state === 'ready' &&
-        !sessionRef.current?.isStreaming
-      ) {
-        const settledError = new Error(
-          'Pi finished before the queued message was accepted.',
-        )
-        throw settledError
-      }
-      if (action !== 'prompt' && !text.trim()) {
-        throw new Error('Queued image messages require text.')
-      }
-      const imagePayload = images.length > 0 ? { images: [...images] } : {}
-      const command = action === 'prompt'
-        ? { type: 'prompt' as const, message: text, ...imagePayload }
-        : action === 'steer'
-          ? { type: 'steer' as const, message: text, ...imagePayload }
-          : { type: 'follow_up' as const, message: text, ...imagePayload }
-      const isExtensionCommand = action === 'prompt' &&
-        isRegisteredPiExtensionCommandPrompt(text, commands)
+      const isExtensionCommand = isRegisteredPiExtensionCommandPrompt(text, commands)
+      const command = createPiSubmissionCommand({
+        submissionId,
+        sessionId: deliveryOwner.sessionId!,
+        text,
+        images,
+        action,
+        isExtensionCommand,
+      })
       let pendingOperationId: number | null = null
-      let pendingQueueItem: PendingPiQueuedMessage | null = null
-      if (action === 'prompt') {
+      if (!sessionRef.current?.isStreaming && !queueRef.current.paused && !promptAcceptanceRef.current) {
         const currentRuntime = runtimeRef.current
         const currentSessionId = sessionRef.current?.sessionId
         const currentProjection = projectionRef.current
@@ -2393,10 +2295,6 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
           if (promptAcceptanceRef.current && !previousAcceptance) {
             promptAcceptanceRef.current = null
           }
-          if (previousAcceptance) {
-            const message = 'Pi is still accepting the previous prompt.'
-            throw new Error(message)
-          }
           if (previousPending) promotePendingPromptActivities(previousPending)
           pendingPromptRef.current = null
           pendingOperationId = ++promptOperationSequence.current
@@ -2411,25 +2309,28 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
           })
           activeResponseRef.current = null
         }
-      } else {
-        const kind = action === 'steer' ? 'steering' as const : 'followUp' as const
-        const currentQueue = queueRef.current
-        pendingQueueItem = {
-          id: nextQueueItemId(),
-          kind,
-          text,
-          images: [...images],
-          locallyOwned: true,
-          before: kind === 'steering'
-            ? [...currentQueue.steering]
-            : [...currentQueue.followUp],
-        }
-        pendingQueuedMessages.current.push(pendingQueueItem)
       }
       try {
-        await runCommand(command)
+        const result = await resolvePiSubmission({
+          submissionId,
+          submit: () => runCommand(command),
+          query: () => runCommand({ type: 'get_delivery_state', submissionId, expectedSessionId: deliveryOwner.sessionId ?? undefined }),
+          isOwnerCurrent: () => samePiDeliveryOwner(deliveryOwner, currentDeliveryOwner()),
+        })
+        if (samePiDeliveryOwner(deliveryOwner, currentDeliveryOwner())) commitDelivery(result.delivery)
+        requirePiSubmissionAccepted(result.receipt)
         if (commandOwnerRevision.current !== ownerRevision) return
         if (pendingOperationId !== null) {
+          if (result.receipt.acceptedMode === 'follow_up' || result.receipt.acceptedMode === 'steer') {
+            const provisional = pendingPromptRef.current
+            if (provisional?.operationId === pendingOperationId) {
+              promotePendingPromptActivities(provisional)
+              pendingPromptRef.current = clearPiPendingPrompt(provisional, pendingOperationId)
+            }
+            restoreActiveResponseProvenance(projectionRef.current, projectionScopeKey.current,
+              Boolean(sessionRef.current?.isStreaming || projectionRef.current.isTurnActive))
+            return
+          }
           pendingPromptRef.current = acceptPiPendingPrompt(
             pendingPromptRef.current,
             pendingOperationId,
@@ -2452,11 +2353,6 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
           }
         }
       } catch (caught) {
-        if (pendingQueueItem) {
-          pendingQueuedMessages.current = pendingQueuedMessages.current.filter(
-            (item) => item.id !== pendingQueueItem?.id,
-          )
-        }
         if (pendingOperationId !== null) {
           const failedPending = pendingPromptRef.current
           const nextPending = clearPiPendingPrompt(failedPending, pendingOperationId)
@@ -2475,82 +2371,41 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
         }
       }
     },
+    async checkSubmission(submissionId) {
+      if (!samePiDeliveryOwner(deliveryOwner, currentDeliveryOwner())) {
+        throw new Error('The source conversation changed before submission status could be checked.')
+      }
+      const delivery = await runCommand({ type: 'get_delivery_state', submissionId, expectedSessionId: deliveryOwner.sessionId ?? undefined })
+      commitDelivery(delivery)
+      return piSubmissionStatus(delivery.receipts.find((receipt) => receipt.submissionId === submissionId))
+    },
     async promoteFollowUp(itemId) {
-      const current = queueRef.current
-      if (
-        !current.detailsKnown ||
-        !hasCompletePiQueuePayloads(
-          current.pendingCount,
-          current.steeringItems,
-          current.followUpItems,
-        ) ||
-        !canPromotePiFollowUp(current.steeringItems, current.followUpItems)
-      ) {
-        throw new Error('This Follow-up cannot be promoted because its full payload is unavailable.')
-      }
-      if (!sessionRef.current?.isStreaming) {
-        throw new Error('Pi finished before the Follow-up could be promoted.')
-      }
-      const promoted = promotePiFollowUpSnapshot(
-        current.steeringItems,
-        current.followUpItems,
-        itemId,
-      )
-      if (!promoted) throw new Error('The queued Follow-up no longer exists.')
-
-      const payload = (items: readonly PiQueuedMessage[]) => items.map((item) => ({
-        message: item.text,
-        ...(item.images.length > 0 ? { images: [...item.images] } : {}),
-      }))
-      await mutateQueue(
-        current,
-        promoted,
-        {
-          type: 'promote_follow_up',
-          followUpIndex: promoted.followUpIndex,
-          steering: payload(current.steeringItems),
-          followUp: payload(current.followUpItems),
-        },
-      )
+      await mutateDelivery(deliveryOwner, { itemId, action: 'promote' })
     },
     async removeQueuedMessage(itemId) {
-      const current = queueRef.current
-      if (
-        !current.detailsKnown ||
-        !hasCompletePiQueuePayloads(
-          current.pendingCount,
-          current.steeringItems,
-          current.followUpItems,
-        )
-      ) {
-        throw new Error('This message cannot be removed because its full payload is unavailable.')
+      await mutateDelivery(deliveryOwner, { itemId, action: 'remove' })
+    },
+    async editQueuedMessage(itemId, text, images, expectedRevision) {
+      await mutateDelivery(deliveryOwner, {
+        itemId, action: 'edit', message: text,
+        ...(images === undefined ? {} : { images: [...images] }),
+      }, expectedRevision)
+    },
+    async resumeQueue() {
+      if (!samePiDeliveryOwner(deliveryOwner, currentDeliveryOwner())) {
+        throw new Error('The source conversation changed before pending messages could resume.')
       }
-      if (!sessionRef.current?.isStreaming) {
-        throw new Error('Pi finished before the queued message could be removed.')
+      const next = await runCommand({ type: 'resume_delivery', revision: deliveryRef.current?.revision, expectedSessionId: deliveryOwner.sessionId ?? undefined })
+      if (samePiDeliveryOwner(deliveryOwner, currentDeliveryOwner())) commitDelivery(next)
+    },
+    async clearQueue() {
+      if (!samePiDeliveryOwner(deliveryOwner, currentDeliveryOwner())) {
+        throw new Error('The source conversation changed before pending messages could be cleared.')
       }
-      const removed = removePiQueuedMessageSnapshot(
-        current.steeringItems,
-        current.followUpItems,
-        itemId,
-      )
-      if (!removed) {
-        throw new Error('The queued message is unavailable or no longer exists.')
-      }
-      const payload = (items: readonly PiQueuedMessage[]) => items.map((item) => ({
-        message: item.text,
-        ...(item.images.length > 0 ? { images: [...item.images] } : {}),
-      }))
-      await mutateQueue(
-        current,
-        removed,
-        {
-          type: 'remove_queued_message',
-          kind: removed.kind,
-          itemIndex: removed.itemIndex,
-          steering: payload(current.steeringItems),
-          followUp: payload(current.followUpItems),
-        },
-      )
+      const delivery = deliveryRef.current
+      if (!delivery) throw new Error('Pending messages are still loading.')
+      const next = await runCommand({ type: 'clear_delivery', revision: delivery.revision, expectedSessionId: deliveryOwner.sessionId ?? undefined })
+      if (samePiDeliveryOwner(deliveryOwner, currentDeliveryOwner())) commitDelivery(next)
     },
     async setAutoCompaction(enabled) {
       await runCommand({ type: 'set_auto_compaction', enabled })
@@ -2608,8 +2463,10 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
     commitSession,
     commands,
     dialogs,
-    nextQueueItemId,
-    mutateQueue,
+    deliveryOwner,
+    currentDeliveryOwner,
+    commitDelivery,
+    mutateDelivery,
     promotePendingPromptActivities,
     refresh,
     refreshConversation,

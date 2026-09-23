@@ -4,6 +4,8 @@ export type PiQueueKind = 'steering' | 'followUp'
 
 export interface PiQueuedMessage {
   id: string
+  submissionId?: string
+  status?: 'queued' | 'frozen' | 'delivering' | 'unknown'
   text: string
   images: readonly LocalPiImageContent[]
   locallyOwned: boolean

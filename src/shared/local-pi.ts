@@ -29,7 +29,8 @@ export const localPiRuntimeSessionStatusSchema = z
     scope: conversationScopeSchema,
     sessionId: z.string().min(1).max(256),
     selectionToken: sessionCatalogSelectionTokenSchema.optional(),
-    status: z.enum(['running', 'completed', 'failed']),
+    status: z.enum(['running', 'completed', 'failed', 'cancelled']),
+    needsUserInput: z.boolean().optional(),
     pendingMessageCount: z.number()
       .int()
       .nonnegative()
@@ -455,7 +456,41 @@ export const localPiCommandArgumentCompletionsResponseDataSchema = z
   })
   .strict()
 
+export const localPiDeliveryReceiptSchema = z.object({
+  submissionId: z.string().min(1).max(256),
+  status: z.enum(['accepting', 'accepted', 'rejected', 'unknown', 'consumed', 'removed']),
+  acceptedMode: z.enum(['prompt', 'steer', 'follow_up', 'command']).optional(),
+  itemId: z.string().optional(),
+  error: z.string().optional(),
+}).strict()
+
+export const localPiDeliveryItemSchema = z.object({
+  id: z.string().min(1),
+  submissionId: z.string().min(1).max(256),
+  message: z.string(),
+  images: z.array(localPiImageContentSchema).optional(),
+  mode: z.enum(['steer', 'follow_up']),
+  status: z.enum(['queued', 'frozen', 'delivering', 'unknown']),
+}).strict()
+
+export const localPiDeliverySnapshotSchema = z.object({
+  revision: z.number().int().nonnegative(),
+  paused: z.boolean(),
+  items: z.array(localPiDeliveryItemSchema),
+  receipts: z.array(localPiDeliveryReceiptSchema),
+}).strict()
+
+export type LocalPiDeliveryReceipt = z.infer<typeof localPiDeliveryReceiptSchema>
+export type LocalPiDeliveryItem = z.infer<typeof localPiDeliveryItemSchema>
+export type LocalPiDeliverySnapshot = z.infer<typeof localPiDeliverySnapshotSchema>
+export type LocalPiDeliveryState = LocalPiDeliverySnapshot
+
 export const localPiRpcCommandSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('submit_message'), submissionId: z.string().min(1).max(256), message: z.string(), images: z.array(localPiImageContentSchema).optional(), mode: z.enum(['auto', 'command', 'steer', 'follow_up']), expectedSessionId: z.string().min(1).optional() }).strict(),
+  z.object({ type: z.literal('get_delivery_state'), submissionId: z.string().min(1).max(256).optional(), expectedSessionId: z.string().min(1).optional() }).strict(),
+  z.object({ type: z.literal('mutate_delivery'), itemId: z.string().min(1), revision: z.number().int().nonnegative(), action: z.enum(['edit', 'promote', 'remove']), message: z.string().optional(), images: z.array(localPiImageContentSchema).optional(), expectedSessionId: z.string().min(1).optional() }).strict(),
+  z.object({ type: z.literal('clear_delivery'), revision: z.number().int().nonnegative(), expectedSessionId: z.string().min(1).optional() }).strict(),
+  z.object({ type: z.literal('resume_delivery'), revision: z.number().int().nonnegative().optional(), expectedSessionId: z.string().min(1).optional() }).strict(),
   z.object({ type: z.literal('prompt'), message: z.string(), images: z.array(localPiImageContentSchema).optional(), streamingBehavior: z.enum(['steer', 'followUp']).optional() }).strict(),
   z.object({ type: z.literal('steer'), message: z.string(), images: z.array(localPiImageContentSchema).optional() }).strict(),
   z.object({ type: z.literal('follow_up'), message: z.string(), images: z.array(localPiImageContentSchema).optional() }).strict(),
@@ -753,6 +788,11 @@ function localPiNoDataSuccessSchema<TCommand extends LocalPiRpcCommandType>(
 }
 
 export const localPiRpcSuccessResponseSchema = z.discriminatedUnion('command', [
+  z.object({ ...localPiSuccessResponseBase, command: z.literal('submit_message'), data: z.object({ receipt: localPiDeliveryReceiptSchema, delivery: localPiDeliverySnapshotSchema }).strict() }).strict(),
+  z.object({ ...localPiSuccessResponseBase, command: z.literal('get_delivery_state'), data: localPiDeliverySnapshotSchema }).strict(),
+  z.object({ ...localPiSuccessResponseBase, command: z.literal('mutate_delivery'), data: localPiDeliverySnapshotSchema }).strict(),
+  z.object({ ...localPiSuccessResponseBase, command: z.literal('clear_delivery'), data: localPiDeliverySnapshotSchema }).strict(),
+  z.object({ ...localPiSuccessResponseBase, command: z.literal('resume_delivery'), data: localPiDeliverySnapshotSchema }).strict(),
   localPiNoDataSuccessSchema('prompt'),
   localPiNoDataSuccessSchema('steer'),
   localPiNoDataSuccessSchema('follow_up'),
@@ -882,6 +922,7 @@ export type LocalPiRendererRpcResponseDataFor<
 > = LocalPiResponseData<LocalPiRendererRpcSuccessResponseFor<TCommand>>
 
 export const LOCAL_PI_EVENT_TYPES = [
+  'delivery_state',
   'agent_start',
   'agent_end',
   'agent_settled',
@@ -926,6 +967,7 @@ export type LocalPiAssistantMessageEvent = z.infer<
 >
 
 export const localPiRpcEventSchema = z.union([
+  z.object({ type: z.literal('delivery_state'), delivery: localPiDeliverySnapshotSchema }).strict(),
   z.object({ type: z.literal('agent_start') }).strict(),
   z.object({ type: z.literal('agent_end'), messages: z.array(localPiAgentMessageSchema), willRetry: z.boolean() }).strict(),
   z.object({ type: z.literal('agent_settled') }).strict(),

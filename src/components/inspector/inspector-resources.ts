@@ -5,7 +5,7 @@ import {
 
 export const INSPECTOR_MAX_OPEN_FILES = 8
 
-/** Files belong to a workspace; sessionKey records the request's origin. */
+/** Files belong to a workspace; sessionKey is optional request provenance only. */
 export interface InspectorPreviewState {
   sessionKey: string
   workspaceId: string
@@ -33,10 +33,12 @@ function getErrorCode(error: unknown) {
 /** Workspace-scoped previews with independent request ownership and a bounded working set. */
 export class InspectorResourcesController {
   private sessionKey: string | null = null
+  private disposed = false
   private epoch = 0
   private requestSequence = 0
   private selectionSequence = 0
   private pending = new Map<string, number>()
+  private reads = new Map<string, Promise<void>>()
   private selectedAt = new Map<string, number>()
   private listeners = new Set<() => void>()
   private snapshot: InspectorResourcesSnapshot = { files: [], activePath: null, atCapacity: false }
@@ -62,21 +64,13 @@ export class InspectorResourcesController {
     return () => this.listeners.delete(listener)
   }
 
-  /** Blocking a conversation invalidates every in-flight read before a new session can resume. */
+  /** Session selection never blocks or invalidates project-owned reads. */
   setSession(sessionKey: string | null) {
-    if (sessionKey === this.sessionKey) return
     this.sessionKey = sessionKey
-    this.epoch += 1
-    this.pending.clear()
-    if (sessionKey) {
-      for (const file of this.snapshot.files) {
-        if (file.phase === 'loading') this.read(file.path)
-      }
-    }
   }
 
   readonly open = (path: string, reload = false): boolean => {
-    if (!this.sessionKey || path === '.' || !workspaceRelativePathSchema.safeParse(path).success) return false
+    if (this.disposed || path === '.' || !workspaceRelativePathSchema.safeParse(path).success) return false
     const existing = this.snapshot.files.find((file) => file.path === path)
     let files = [...this.snapshot.files]
     if (!existing && files.length >= INSPECTOR_MAX_OPEN_FILES) {
@@ -94,7 +88,7 @@ export class InspectorResourcesController {
     }
     this.selectedAt.set(path, ++this.selectionSequence)
     if (!existing) {
-      files.push({ workspaceId: this.workspaceId, sessionKey: this.sessionKey, path, phase: 'loading' })
+      files.push({ workspaceId: this.workspaceId, sessionKey: this.sessionKey ?? this.workspaceId, path, phase: 'loading' })
     }
     this.publish({ files, activePath: path, atCapacity: false })
     if (!existing || reload || (existing.phase === 'loading' && !this.pending.has(path))) this.read(path)
@@ -109,6 +103,7 @@ export class InspectorResourcesController {
     const index = this.snapshot.files.findIndex((file) => file.path === path)
     if (index < 0) return
     this.pending.delete(path)
+    this.reads.delete(path)
     this.selectedAt.delete(path)
     const files = this.snapshot.files.filter((file) => file.path !== path)
     const activePath = this.snapshot.activePath === path
@@ -119,19 +114,28 @@ export class InspectorResourcesController {
   }
 
   dispose() {
-    this.setSession(null)
+    this.disposed = true
+    this.epoch += 1
+    this.pending.clear()
+    this.reads.clear()
+  }
+
+  /** Background refresh never changes selection or duplicates an in-flight read. */
+  readonly refreshActive = (): Promise<void> => {
+    const path = this.snapshot.activePath
+    if (this.disposed || !path) return Promise.resolve()
+    return this.reads.get(path) ?? this.read(path)
   }
 
   private read(path: string) {
-    const sessionKey = this.sessionKey
-    if (!sessionKey) return
+    const sessionKey = this.sessionKey ?? this.workspaceId
     const epoch = this.epoch
     const request = ++this.requestSequence
     const previousPreview = this.snapshot.files.find((file) => file.path === path)?.preview
     this.pending.set(path, request)
     this.replace(path, { workspaceId: this.workspaceId, sessionKey, path, preview: previousPreview, phase: 'loading' })
-    const current = () => this.epoch === epoch && this.sessionKey === sessionKey && this.pending.get(path) === request
-    void Promise.resolve().then(() => {
+    const current = () => !this.disposed && this.epoch === epoch && this.pending.get(path) === request
+    const operation = Promise.resolve().then(() => {
       if (!current()) return undefined
       return this.readPreview(path)
     }).then((preview) => {
@@ -140,12 +144,17 @@ export class InspectorResourcesController {
         throw { code: 'WORKSPACE_CONTENT_STALE_WORKSPACE' }
       }
       this.pending.delete(path)
-      this.replace(path, { workspaceId: this.workspaceId, sessionKey, path, preview, phase: 'ready' })
+      const unchanged = previousPreview && JSON.stringify(previousPreview) === JSON.stringify(preview)
+      this.replace(path, { workspaceId: this.workspaceId, sessionKey, path, preview: unchanged ? previousPreview : preview, phase: 'ready' })
     }).catch((error: unknown) => {
       if (!current()) return
       this.pending.delete(path)
       this.replace(path, { workspaceId: this.workspaceId, sessionKey, path, preview: previousPreview, phase: 'error', errorCode: getErrorCode(error) })
+    }).finally(() => {
+      if (this.reads.get(path) === operation) this.reads.delete(path)
     })
+    this.reads.set(path, operation)
+    return operation
   }
 
   private replace(path: string, next: InspectorPreviewState) {

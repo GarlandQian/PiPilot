@@ -40,9 +40,11 @@ interface FileTreeProps {
   workingTreeLabel?: string
   modifiedCount?: number
   onExpand?: (path: string) => Promise<void>
+  onExpansionChange?: (path: string, open: boolean) => void
   onRefresh?: () => void
   onSelect?: (path: string) => void
   onAddToComposer?: (entry: WorkspacePathSearchEntry) => void
+  onShowChanges?: (path: string) => void
   loading?: boolean
   errorMessage?: string
   onRetry?: () => void
@@ -57,15 +59,19 @@ function TreeNode({
   depth,
   currentPath,
   onExpand,
+  onExpansionChange,
   onSelect,
   onAddToComposer,
+  onShowChanges,
 }: {
   node: FileNode
   depth: number
   currentPath?: string
   onExpand?: (path: string) => Promise<void>
+  onExpansionChange?: (path: string, open: boolean) => void
   onSelect?: (path: string) => void
   onAddToComposer?: (entry: WorkspacePathSearchEntry) => void
+  onShowChanges?: (path: string) => void
 }) {
   const t = useT()
   const [open, setOpen] = React.useState(depth < 2 && node.children !== undefined)
@@ -74,6 +80,12 @@ function TreeNode({
   const loadPending = React.useRef(false)
   const isDir = node.type === 'dir'
   const current = !isDir && currentPath === node.path
+
+  React.useEffect(() => {
+    if (!isDir) return
+    onExpansionChange?.(node.path, open)
+    return () => onExpansionChange?.(node.path, false)
+  }, [isDir, node.path, onExpansionChange, open])
 
   const loadChildren = React.useCallback(async () => {
     if (!onExpand || loadPending.current) return false
@@ -193,6 +205,7 @@ function TreeNode({
       <WorkspacePathContextMenu
         entry={{ name: node.name, path: node.path, type: node.type }}
         onAddToComposer={onAddToComposer}
+        onShowChanges={onShowChanges}
       >
         {row}
       </WorkspacePathContextMenu>
@@ -214,8 +227,10 @@ function TreeNode({
               depth={depth + 1}
               currentPath={currentPath}
               onExpand={onExpand}
+              onExpansionChange={onExpansionChange}
               onSelect={onSelect}
               onAddToComposer={onAddToComposer}
+              onShowChanges={onShowChanges}
             />
           ))}
           {node.truncated && (
@@ -236,9 +251,11 @@ export function FileTree({
   workingTreeLabel,
   modifiedCount,
   onExpand,
+  onExpansionChange,
   onRefresh,
   onSelect,
   onAddToComposer,
+  onShowChanges,
   loading = false,
   errorMessage,
   onRetry,
@@ -364,7 +381,7 @@ export function FileTree({
             )
             return (
               <li key={entry.path}>
-                <WorkspacePathContextMenu entry={entry} onAddToComposer={onAddToComposer}>
+                <WorkspacePathContextMenu entry={entry} onAddToComposer={onAddToComposer} onShowChanges={onShowChanges}>
                   {row}
                 </WorkspacePathContextMenu>
               </li>
@@ -382,7 +399,7 @@ export function FileTree({
 
   return (
     <div className="flex h-full min-w-0 flex-col" data-workspace-tree>
-      <InspectorSectionToolbar title={workspaceName} description={<>{workingTreeLabel ?? t('inspector.files.workingTree')} · {t('inspector.files.modifiedSummary', { count: modifiedCount ?? modified })}</>}>
+      <InspectorSectionToolbar title={workingTreeLabel ?? workspaceName} description={t('inspector.files.modifiedSummary', { count: modifiedCount ?? modified })}>
         {onRefresh ? (
           <Button
             variant="ghost"
@@ -467,8 +484,10 @@ export function FileTree({
                 depth={0}
                 currentPath={currentPath}
                 onExpand={onExpand}
+                onExpansionChange={onExpansionChange}
                 onSelect={onSelect}
                 onAddToComposer={onAddToComposer}
+                onShowChanges={onShowChanges}
               />
             ))}
             {root.truncated && (

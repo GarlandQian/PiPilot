@@ -234,11 +234,25 @@ test('uses one keyboard-safe Composer picker and middle-column extension surface
     await composer.press('Escape')
     await expect(composer).toHaveAttribute('aria-expanded', 'false')
 
+    // A first before_agent_start interaction can precede Pi persisting its
+    // session file. Establish an actual catalog row before testing its badge.
+    await composer.fill('Seed a task before requesting input')
+    await page.getByRole('button', { name: 'Send', exact: true }).click()
+    await expect(page.getByRole('log', { name: 'Conversation' }).getByText(
+      'Fixture response: Seed a task before requesting input', { exact: true },
+    )).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0)
+    await expect(page.locator('[data-session-list="project"] button[aria-current="page"]')).toHaveCount(1)
     await composer.fill('ui')
     await page.getByRole('button', { name: 'Send', exact: true }).click()
     const dialog = page.getByRole('dialog')
     await expect(dialog.getByRole('heading', { name: 'Continue?' })).toBeVisible()
+    const projectIndicators = page.locator('[data-session-list="project"] [data-session-indicator]')
+    await expect(projectIndicators).toHaveCount(1)
+    await expect(projectIndicators).toHaveAttribute('data-session-indicator', 'attention')
+    await expect(projectIndicators.locator('svg')).toHaveClass(/text-warning/u)
     await dialog.getByRole('button', { name: 'Yes', exact: true }).click()
+    await expect(page.locator('[data-session-list="project"] [data-session-indicator="attention"]')).toHaveCount(0)
     const transcript = page.getByRole('log', { name: 'Conversation' })
     const notification = transcript.getByText('Fixture notification', { exact: true })
     await expect(notification).toBeVisible()

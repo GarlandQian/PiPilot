@@ -3,6 +3,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -10,7 +11,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   WorkspaceContentError,
   WorkspaceContentService,
@@ -216,6 +217,243 @@ describe('WorkspaceContentService paths and bounded reads', () => {
   })
 })
 describe('WorkspaceContentService Git changes', () => {
+  it('keeps each status column independent, including a staged rename edited again', () => {
+    const entries = workspaceContentInternals.parsePorcelain(
+      'RM new.ts\0old.ts\0AD added.txt\0D  removed.txt\0?? removed.txt\0',
+    )
+    expect([...entries.values()]).toEqual([
+      { path: 'new.ts', previousPath: 'old.ts', stage: 'staged', status: 'modified', untracked: false },
+      { path: 'new.ts', stage: 'unstaged', status: 'modified', untracked: false },
+      { path: 'added.txt', stage: 'staged', status: 'added', untracked: false },
+      { path: 'added.txt', stage: 'unstaged', status: 'deleted', untracked: false },
+      { path: 'removed.txt', stage: 'staged', status: 'deleted', untracked: false },
+      { path: 'removed.txt', stage: 'unstaged', status: 'added', untracked: true },
+    ])
+  })
+
+  it('lists and reads staged, unstaged, and untracked changes with separate identities', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pipilot-content-stages-'))
+    try {
+      await initializeIndex(root, { 'main.txt': 'base\n', 'dist/tracked.txt': 'old\n' })
+      await writeFile(join(root, 'main.txt'), 'staged\nsecond\n', 'utf8')
+      await git(root, ['add', '--', 'main.txt'])
+      await writeFile(join(root, 'main.txt'), 'working\nsecond\n', 'utf8')
+      await writeFile(join(root, 'dist/tracked.txt'), 'new\n', 'utf8')
+      await writeFile(join(root, 'new.txt'), 'untracked\n', 'utf8')
+      const indexBefore = await readFile(join(root, '.git/index'))
+      const service = serviceFor(root)
+      const changes = await service.listChanges(workspaceId)
+      expect(changes.files).toMatchObject([
+        { id: 'staged:main.txt', path: 'main.txt', stage: 'staged', added: 2, deleted: 1 },
+        { id: 'unstaged:dist/tracked.txt', path: 'dist/tracked.txt', stage: 'unstaged' },
+        { id: 'unstaged:main.txt', path: 'main.txt', stage: 'unstaged', added: 1, deleted: 1 },
+        { id: 'unstaged:new.txt', path: 'new.txt', stage: 'unstaged', status: 'added' },
+      ])
+      const staged = await service.readDiff(workspaceId, 'main.txt', 'staged')
+      expect(staged.patch).toContain('-base\n+staged\n+second')
+      expect(staged.patch).not.toContain('+working')
+      const unstaged = await service.readDiff(workspaceId, 'main.txt', 'unstaged')
+      expect(unstaged.patch).toContain('-staged\n+working')
+      expect(unstaged.patch).not.toContain('-base')
+      expect((await service.listDirectory(workspaceId, '.')).modifiedCount).toBe(3)
+      await expect(readFile(join(root, '.git/index'))).resolves.toEqual(indexBefore)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 15_000)
+
+  it('reads staged additions before the first commit and when the worktree file is deleted', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pipilot-content-unborn-'))
+    try {
+      await git(root, ['init', '-q'])
+      await writeFile(join(root, 'first.txt'), 'first commit content\n', 'utf8')
+      await git(root, ['add', '--', 'first.txt'])
+      await rm(join(root, 'first.txt'))
+      const service = serviceFor(root)
+      expect((await service.listChanges(workspaceId)).files).toMatchObject([
+        { path: 'first.txt', stage: 'staged', status: 'added', added: 1, deleted: 0 },
+        { path: 'first.txt', stage: 'unstaged', status: 'deleted', added: 0, deleted: 1 },
+      ])
+      await expect(service.readDiff(workspaceId, 'first.txt', 'staged')).resolves.toMatchObject({
+        patch: expect.stringContaining('+first commit content'),
+      })
+      await expect(service.readDiff(workspaceId, 'first.txt')).resolves.toMatchObject({
+        patch: expect.stringContaining('-first commit content'),
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 15_000)
+
+  it('preserves both rename paths in the staged patch and reads later edits separately', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pipilot-content-renames-'))
+    try {
+      await initializeIndex(root, { 'old name.txt': 'keep\nkeep also\nbefore\n' })
+      await rename(join(root, 'old name.txt'), join(root, 'new name.txt'))
+      await git(root, ['add', '-A', '--', '.'])
+      await writeFile(join(root, 'new name.txt'), 'keep\nkeep also\nafter\n', 'utf8')
+      const service = serviceFor(root)
+      const changes = await service.listChanges(workspaceId)
+      expect(changes.files).toMatchObject([
+        { path: 'new name.txt', stage: 'staged', previousPath: 'old name.txt', added: 0, deleted: 0 },
+        { path: 'new name.txt', stage: 'unstaged', added: 1, deleted: 1 },
+      ])
+      expect(changes.files[1]).not.toHaveProperty('previousPath')
+      const renamed = await service.readDiff(workspaceId, 'new name.txt', 'staged')
+      expect(renamed.patch).toContain('rename from old name.txt')
+      expect(renamed.patch).toContain('rename to new name.txt')
+      expect(renamed.patch).not.toContain('new file mode')
+      await expect(service.readDiff(workspaceId, 'new name.txt')).resolves.toMatchObject({
+        patch: expect.stringContaining('-before\n+after'),
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 15_000)
+
+  it('reports staged deletion and binary changes without reading the current file as staged content', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pipilot-content-binary-'))
+    try {
+      await initializeIndex(root, { 'gone.txt': 'removed\n', 'data.bin': 'plain\n' })
+      await rm(join(root, 'gone.txt'))
+      await writeFile(join(root, 'data.bin'), Buffer.from([0, 1, 2]))
+      await git(root, ['add', '-A', '--', '.'])
+      await writeFile(join(root, 'new.bin'), Buffer.from([0, 3, 4]))
+      const service = serviceFor(root)
+      expect((await service.listChanges(workspaceId)).files).toMatchObject([
+        { path: 'data.bin', stage: 'staged', binary: true },
+        { path: 'gone.txt', stage: 'staged', status: 'deleted', added: 0, deleted: 1 },
+        { path: 'new.bin', stage: 'unstaged', binary: true },
+      ])
+      await expect(service.readDiff(workspaceId, 'data.bin', 'staged')).resolves.toMatchObject({
+        binary: true, patch: '', truncated: false,
+      })
+      await expect(service.readDiff(workspaceId, 'new.bin')).resolves.toMatchObject({
+        binary: true, patch: '', truncated: false,
+      })
+      await expect(service.readDiff(workspaceId, 'gone.txt', 'staged')).resolves.toMatchObject({
+        patch: expect.stringContaining('-removed'),
+      })
+      await expect(service.readDiff(workspaceId, 'gone.txt')).rejects.toMatchObject({
+        code: 'WORKSPACE_CHANGE_NOT_FOUND',
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 15_000)
+
+  it('uses literal file paths instead of interpreting Git pathspec patterns', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pipilot-content-literal-'))
+    try {
+      await initializeIndex(root, { 'file[1].txt': 'base\n', 'file1.txt': 'other\n' })
+      await writeFile(join(root, 'file[1].txt'), 'selected\n', 'utf8')
+      await writeFile(join(root, 'file1.txt'), 'unrelated\n', 'utf8')
+      const diff = await serviceFor(root).readDiff(workspaceId, 'file[1].txt')
+      expect(diff.patch).toContain('+selected')
+      expect(diff.patch).not.toContain('unrelated')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 15_000)
+
+  it('invalidates revisions for equal-sized external edits while keeping staged revisions stable', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pipilot-content-revision-'))
+    try {
+      await initializeIndex(root, { 'main.txt': 'base\n' })
+      await writeFile(join(root, 'main.txt'), 'index\n', 'utf8')
+      await git(root, ['add', '--', 'main.txt'])
+      await writeFile(join(root, 'main.txt'), 'first\n', 'utf8')
+      const service = serviceFor(root)
+      const first = await service.listChanges(workspaceId)
+      const same = await service.listChanges(workspaceId)
+      expect(same.files.map((file) => file.revision)).toEqual(first.files.map((file) => file.revision))
+      await writeFile(join(root, 'main.txt'), 'later\n', 'utf8')
+      const next = await service.listChanges(workspaceId)
+      expect(next.files[0].revision).toBe(first.files[0].revision)
+      expect(next.files[1].revision).not.toBe(first.files[1].revision)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 15_000)
+
+  it('refreshes stage membership before reading and rejects a stage that disappeared', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pipilot-content-refresh-'))
+    try {
+      await initializeIndex(root, { 'main.txt': 'base\n' })
+      await writeFile(join(root, 'main.txt'), 'changed\n', 'utf8')
+      const service = serviceFor(root)
+      expect((await service.listChanges(workspaceId)).files[0].stage).toBe('unstaged')
+      await git(root, ['add', '--', 'main.txt'])
+      await expect(service.readDiff(workspaceId, 'main.txt', 'unstaged')).rejects.toMatchObject({
+        code: 'WORKSPACE_CHANGE_NOT_FOUND',
+      })
+      await expect(service.readDiff(workspaceId, 'main.txt', 'staged')).resolves.toMatchObject({
+        stage: 'staged', patch: expect.stringContaining('+changed'),
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 15_000)
+
+  it('omits untracked symlink escapes and rejects a workspace switch during a diff read', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pipilot-content-safe-diff-'))
+    const outside = await mkdtemp(join(tmpdir(), 'pipilot-content-private-'))
+    let location = { id: workspaceId, path: root }
+    try {
+      await initializeIndex(root, { 'main.txt': 'base\n' })
+      await writeFile(join(root, 'main.txt'), 'changed\n', 'utf8')
+      await writeFile(join(outside, 'secret.txt'), 'outside\n', 'utf8')
+      await symlink(join(outside, 'secret.txt'), join(root, 'escape.txt'))
+      const service = new WorkspaceContentService(() => location)
+      expect((await service.listChanges(workspaceId)).files.map((file) => file.path)).toEqual(['main.txt'])
+      await expect(service.readDiff(workspaceId, 'escape.txt')).rejects.toMatchObject({
+        code: 'WORKSPACE_PATH_OUTSIDE',
+      })
+      const patchReader = service as unknown as {
+        runGitBoundedPatch(root: string, args: string[], allowDifferenceExit?: boolean): Promise<{ patch: string; truncated: boolean }>
+      }
+      const original = patchReader.runGitBoundedPatch.bind(service)
+      vi.spyOn(patchReader, 'runGitBoundedPatch').mockImplementationOnce(async (...args) => {
+        const result = await original(...args)
+        location = { id: '00000000-0000-4000-8000-000000000702', path: outside }
+        return result
+      })
+      await expect(service.readDiff(workspaceId, 'main.txt')).rejects.toMatchObject({
+        code: 'WORKSPACE_CONTENT_STALE_WORKSPACE',
+      })
+    } finally {
+      await Promise.all([
+        rm(root, { recursive: true, force: true }),
+        rm(outside, { recursive: true, force: true }),
+      ])
+    }
+  }, 15_000)
+
+  it.each(['staged', 'unstaged'] as const)('rejects %s state changes during a diff read', async (stage) => {
+    const root = await mkdtemp(join(tmpdir(), 'pipilot-content-race-'))
+    try {
+      await initializeIndex(root, { 'main.txt': 'base\n' })
+      await writeFile(join(root, 'main.txt'), 'changed\n', 'utf8')
+      if (stage === 'staged') await git(root, ['add', '--', 'main.txt'])
+      const service = serviceFor(root)
+      const patchReader = service as unknown as {
+        runGitBoundedPatch(root: string, args: string[], allowDifferenceExit?: boolean): Promise<{ patch: string; truncated: boolean }>
+      }
+      const original = patchReader.runGitBoundedPatch.bind(service)
+      vi.spyOn(patchReader, 'runGitBoundedPatch').mockImplementationOnce(async (...args) => {
+        const result = await original(...args)
+        await writeFile(join(root, 'main.txt'), 'outside\n', 'utf8')
+        if (stage === 'staged') await git(root, ['add', '--', 'main.txt'])
+        return result
+      })
+      await expect(service.readDiff(workspaceId, 'main.txt', stage)).rejects.toMatchObject({
+        code: 'WORKSPACE_CHANGE_CONFLICT',
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 15_000)
+
   it('shows an actual unified edit without writing files or the index', async () => {
     const root = await mkdtemp(join(tmpdir(), 'pipilot-content-git-'))
     try {

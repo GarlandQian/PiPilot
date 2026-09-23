@@ -199,11 +199,14 @@ test('updates the live terminal with resolved native system theme without replac
     await electronApp.evaluate(({ nativeTheme }) => { nativeTheme.themeSource = 'light' })
     await expect(page.locator('html')).not.toHaveClass(/dark/)
     await selectInspectorView(page, 'Terminal')
-    const panel = page.locator('[data-terminal-status]')
+    const panel = page.locator('[data-terminal-id][data-terminal-status]:visible')
     await expect(panel).toHaveAttribute('data-terminal-status', 'running')
     const activeTerminal = await page.evaluate(async () => {
       const navigation = await window.pipilot!.conversation.get()
-      return window.pipilot!.terminal.create(navigation.activeScope, 80, 24)
+      const terminals = await window.pipilot!.terminal.list(navigation.activeScope)
+      const terminal = terminals[0]
+      if (!terminal || terminals.length !== 1) throw new Error('Expected one active terminal')
+      return window.pipilot!.terminal.attach(navigation.activeScope, terminal.terminalId, terminal.cols, terminal.rows)
     })
     expect(activeTerminal.reused).toBe(true)
     const xterm = await panel.locator('.xterm').elementHandle()
@@ -218,18 +221,21 @@ test('updates the live terminal with resolved native system theme without replac
       }
     })
     const light = await colors()
-    expect(light.background).toBe('rgb(240, 239, 235)')
-    expect(light.foreground).toBe('rgb(41, 40, 36)')
+    expect(light.background).toBe('rgb(241, 243, 246)')
+    expect(light.foreground).toBe('rgb(39, 48, 61)')
     for (const theme of ['dark', 'light'] as const) {
       await electronApp.evaluate(({ nativeTheme }, nextTheme) => { nativeTheme.themeSource = nextTheme }, theme)
       await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains('dark')))
         .toBe(theme === 'dark')
       await expect.poll(colors).toEqual(theme === 'dark'
-        ? { background: 'rgb(22, 23, 25)', foreground: 'rgb(233, 229, 223)' }
+        ? { background: 'rgb(19, 22, 28)', foreground: 'rgb(228, 233, 241)' }
         : light)
       expect(await xterm.evaluate((element) => element.isConnected && element === document.querySelector('[data-terminal-status] .xterm'))).toBe(true)
       const current = await page.evaluate(async ({ scope, terminalId }) => {
-        const session = await window.pipilot!.terminal.create(scope, 80, 24)
+        const terminals = await window.pipilot!.terminal.list(scope)
+        const terminal = terminals.find((candidate) => candidate.terminalId === terminalId)
+        if (!terminal || terminals.length !== 1) throw new Error('Theme changed terminal ownership')
+        const session = await window.pipilot!.terminal.attach(scope, terminalId, terminal.cols, terminal.rows)
         const settings = await window.pipilot!.settings.get()
         return { sameId: session.terminalId === terminalId, reused: session.reused, theme: settings.settings.appearance.theme }
       }, { scope: activeTerminal.scope, terminalId: activeTerminal.terminalId })

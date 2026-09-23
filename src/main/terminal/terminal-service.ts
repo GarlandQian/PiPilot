@@ -8,15 +8,17 @@ import {
 } from 'node:path'
 import type { IPty, IPtyForkOptions, IWindowsPtyForkOptions } from 'node-pty'
 import {
-  TERMINAL_MAX_COUNT,
   TERMINAL_OUTPUT_EVENT_LIMIT,
   TERMINAL_REPLAY_LIMIT,
   terminalActionResultSchema,
   terminalEventSchema,
   terminalResizeResultSchema,
   terminalSessionSchema,
+  terminalSummarySchema,
+  terminalTitleSchema,
   type TerminalEvent,
   type TerminalSession,
+  type TerminalSummary,
 } from '../../shared/terminal'
 import {
   conversationScopeSchema,
@@ -70,6 +72,10 @@ interface TerminalRecord {
   root: string
   cwd: string
   shell: string
+  title: string
+  status: 'running' | 'exited'
+  exitCode?: number
+  signal?: number
   cols: number
   rows: number
   process: TerminalProcess
@@ -88,7 +94,6 @@ interface TerminalRecord {
 
 export interface TerminalServiceOptions {
   environment?: NodeJS.ProcessEnv
-  maxTerminals?: number
   platform?: NodeJS.Platform
   resolveShell?: () => Promise<ShellLaunch> | ShellLaunch
   spawnPty?: SpawnPty
@@ -129,11 +134,12 @@ function wait(milliseconds: number) {
 export class TerminalService {
   private readonly environment: NodeJS.ProcessEnv
   private readonly listeners = new Set<TerminalListener>()
-  private readonly maxTerminals: number
   private readonly pendingCreates = new Map<string, Promise<TerminalSession>>()
   private readonly platform: NodeJS.Platform
   private readonly records = new Map<string, TerminalRecord>()
-  private readonly scopeTerminals = new Map<string, string>()
+  private readonly scopeOrdinals = new Map<string, number>()
+  private readonly disposingScopes = new Set<string>()
+  private readonly scopeVersions = new Map<string, number>()
   private disposing = false
   private spawnPty?: SpawnPty
 
@@ -145,10 +151,6 @@ export class TerminalService {
     private readonly options: TerminalServiceOptions = {},
   ) {
     this.environment = options.environment ?? process.env
-    this.maxTerminals = Math.max(
-      1,
-      Math.min(TERMINAL_MAX_COUNT, options.maxTerminals ?? TERMINAL_MAX_COUNT),
-    )
     this.platform = options.platform ?? process.platform
     this.spawnPty = options.spawnPty
   }
@@ -159,7 +161,48 @@ export class TerminalService {
   }
 
   hasActiveTerminals() {
-    return this.records.size > 0
+    return [...this.records.values()].some((record) => record.status === 'running')
+  }
+
+  async list(rawScope: ConversationScope): Promise<TerminalSummary[]> {
+    const scope = conversationScopeSchema.parse(rawScope)
+    const context = await this.context(scope)
+    const key = conversationScopeKey(scope)
+    return [...this.records.values()]
+      .filter((record) => record.scopeKey === key && record.root === context.root)
+      .map((record) => this.summary(record))
+  }
+
+  async attach(scope: ConversationScope, terminalId: string, cols: number, rows: number) {
+    const record = await this.activeRecord(scope, terminalId)
+    if (record.status === 'running' && !record.closing) this.resizeRecord(record, cols, rows)
+    this.flushAll(record)
+    return this.session(record, true)
+  }
+
+  async rename(scope: ConversationScope, terminalId: string, title: string) {
+    const record = await this.activeRecord(scope, terminalId)
+    record.title = terminalTitleSchema.parse(title)
+    return this.summary(record)
+  }
+
+  async close(scope: ConversationScope, terminalId: string) {
+    const record = await this.activeRecord(scope, terminalId)
+    if (record.status !== 'exited') {
+      throw new TerminalServiceError(
+        'TERMINAL_STILL_RUNNING',
+        'Stop the terminal process before closing its tab.',
+      )
+    }
+    this.records.delete(terminalId)
+    return terminalActionResultSchema.parse({ scope, terminalId })
+  }
+
+  async clear(scope: ConversationScope, terminalId: string) {
+    const record = await this.activeRecord(scope, terminalId)
+    this.flushAll(record)
+    record.replay = ''
+    return terminalActionResultSchema.parse({ scope, terminalId })
   }
 
   async create(
@@ -175,12 +218,13 @@ export class TerminalService {
     }
     const scope = conversationScopeSchema.parse(rawScope)
     const key = conversationScopeKey(scope)
+    const version = this.scopeVersions.get(key)
     let pending = this.pendingCreates.get(key)
     while (pending) {
       await pending.catch(() => undefined)
       pending = this.pendingCreates.get(key)
     }
-    if (this.disposing) {
+    if (this.disposing || this.disposingScopes.has(key) || this.scopeVersions.get(key) !== version) {
       throw new TerminalServiceError(
         'TERMINAL_UNAVAILABLE',
         'The terminal runtime is unavailable.',
@@ -204,33 +248,10 @@ export class TerminalService {
   ): Promise<TerminalSession> {
     const context = await this.context(scope)
     const key = conversationScopeKey(scope)
-    const existingId = this.scopeTerminals.get(key)
-    const existing = existingId ? this.records.get(existingId) : undefined
-    if (existing) {
-      await this.assertActiveScope(scope, context.root)
-      this.resizeRecord(existing, cols, rows)
-      this.flushAll(existing)
-      return terminalSessionSchema.parse({
-        scope,
-        terminalId: existing.terminalId,
-        shell: existing.shell,
-        cols: existing.cols,
-        rows: existing.rows,
-        replay: existing.replay,
-        sequence: existing.sequence,
-        reused: true,
-      })
-    }
-    if (this.records.size >= this.maxTerminals) {
-      throw new TerminalServiceError(
-        'TERMINAL_LIMIT_REACHED',
-        'The maximum number of terminals is already running.',
-      )
-    }
-
     const shell = await this.resolveShell()
     const spawnPty = await this.loadSpawnPty()
     await this.assertActiveScope(scope, context.root)
+    const { title, ordinal } = this.nextTitle(key, shell.label)
 
     let processHandle: TerminalProcess
     try {
@@ -254,13 +275,15 @@ export class TerminalService {
     const exitPromise = new Promise<void>((resolvePromise) => {
       resolveExit = resolvePromise
     })
-    const record = {
+    const record: TerminalRecord = {
       scope,
       scopeKey: key,
       terminalId,
       root: context.root,
       cwd: context.cwd,
       shell: shell.label,
+      title,
+      status: 'running',
       cols,
       rows,
       process: processHandle,
@@ -274,36 +297,34 @@ export class TerminalService {
       exitDisposable: { dispose() {} },
       exitPromise,
       resolveExit,
-    } satisfies TerminalRecord
+    }
 
     this.records.set(terminalId, record)
-    this.scopeTerminals.set(key, terminalId)
     record.dataDisposable = processHandle.onData((data) => {
       this.enqueueOutput(record, data)
     })
     record.exitDisposable = processHandle.onExit((event) => {
       this.finalizeExit(record, event.exitCode, event.signal)
     })
+    // Some adapters report an already-exited process while registering onExit.
+    if (record.status === 'exited') {
+      record.dataDisposable.dispose()
+      record.exitDisposable.dispose()
+    }
 
     await this.assertActiveScope(scope, context.root).catch(async (error) => {
       await this.terminateRecord(record)
+      this.records.delete(terminalId)
       throw error
     })
     this.flushAll(record)
-    return terminalSessionSchema.parse({
-      scope,
-      terminalId,
-      shell: shell.label,
-      cols,
-      rows,
-      replay: record.replay,
-      sequence: record.sequence,
-      reused: false,
-    })
+    const session = this.session(record, false)
+    this.scopeOrdinals.set(key, ordinal)
+    return session
   }
 
   async input(scope: ConversationScope, terminalId: string, data: string) {
-    const record = await this.activeRecord(scope, terminalId)
+    const record = await this.activeRecord(scope, terminalId, true)
     try {
       record.process.write(data)
     } catch {
@@ -321,7 +342,7 @@ export class TerminalService {
     cols: number,
     rows: number,
   ) {
-    const record = await this.activeRecord(scope, terminalId)
+    const record = await this.activeRecord(scope, terminalId, true)
     this.resizeRecord(record, cols, rows)
     return terminalResizeResultSchema.parse({ scope, terminalId, cols, rows })
   }
@@ -335,11 +356,19 @@ export class TerminalService {
   async disposeScope(rawScope: ConversationScope) {
     const scope = conversationScopeSchema.parse(rawScope)
     const key = conversationScopeKey(scope)
-    await this.pendingCreates.get(key)?.catch(() => undefined)
-    const records = [...this.records.values()].filter(
-      (record) => record.scopeKey === key,
-    )
-    await Promise.allSettled(records.map((record) => this.terminateRecord(record)))
+    this.scopeVersions.set(key, (this.scopeVersions.get(key) ?? 0) + 1)
+    this.disposingScopes.add(key)
+    try {
+      await this.pendingCreates.get(key)?.catch(() => undefined)
+      const records = [...this.records.values()].filter(
+        (record) => record.scopeKey === key,
+      )
+      await Promise.allSettled(records.map((record) => this.terminateRecord(record)))
+      for (const record of records) this.records.delete(record.terminalId)
+      this.scopeOrdinals.delete(key)
+    } finally {
+      this.disposingScopes.delete(key)
+    }
   }
 
   async dispose() {
@@ -348,7 +377,9 @@ export class TerminalService {
     const records = [...this.records.values()]
     await Promise.allSettled(records.map((record) => this.terminateRecord(record)))
     this.records.clear()
-    this.scopeTerminals.clear()
+    this.scopeOrdinals.clear()
+    this.disposingScopes.clear()
+    this.scopeVersions.clear()
     this.listeners.clear()
   }
 
@@ -452,6 +483,9 @@ export class TerminalService {
   }
 
   private async assertActiveScope(scope: ConversationScope, root?: string) {
+    if (this.disposing || this.disposingScopes.has(conversationScopeKey(scope))) {
+      throw new TerminalServiceError('TERMINAL_UNAVAILABLE', 'The terminal runtime is unavailable.')
+    }
     const activeScope = conversationScopeSchema.parse(this.getActiveScope())
     if (conversationScopeKey(activeScope) !== conversationScopeKey(scope)) {
       throw new TerminalServiceError(
@@ -470,25 +504,69 @@ export class TerminalService {
           'The terminal request belongs to a stale conversation.',
         )
       }
+      // Resolving a path yields; selection and ownership may change meanwhile.
+      await this.assertActiveScope(scope)
     }
   }
 
-  private async activeRecord(scope: ConversationScope, terminalId: string) {
+  private async activeRecord(scope: ConversationScope, terminalId: string, requireRunning = false) {
     const parsedScope = conversationScopeSchema.parse(scope)
     await this.assertActiveScope(parsedScope)
     const record = this.records.get(terminalId)
     if (
       !record ||
-      record.scopeKey !== conversationScopeKey(parsedScope) ||
-      record.closing
+      record.scopeKey !== conversationScopeKey(parsedScope)
     ) {
       throw new TerminalServiceError(
         'TERMINAL_NOT_FOUND',
-        'The requested terminal is no longer running.',
+        'The requested terminal is no longer available.',
       )
     }
     await this.assertActiveScope(parsedScope, record.root)
+    if (this.records.get(terminalId) !== record) {
+      throw new TerminalServiceError('TERMINAL_NOT_FOUND', 'The requested terminal is no longer available.')
+    }
+    if (requireRunning && (record.status !== 'running' || record.closing)) {
+      throw new TerminalServiceError('TERMINAL_EXITED', 'The terminal process has exited.')
+    }
     return record
+  }
+
+  private summary(record: TerminalRecord): TerminalSummary {
+    return terminalSummarySchema.parse({
+      scope: record.scope,
+      terminalId: record.terminalId,
+      title: record.title,
+      shell: record.shell,
+      cols: record.cols,
+      rows: record.rows,
+      status: record.status,
+      ...(record.exitCode === undefined ? {} : { exitCode: record.exitCode }),
+      ...(record.signal === undefined ? {} : { signal: record.signal }),
+    })
+  }
+
+  private nextTitle(scopeKey: string, shell: string) {
+    const titles = new Set([...this.records.values()]
+      .filter((record) => record.scopeKey === scopeKey)
+      .map((record) => record.title))
+    let ordinal = this.scopeOrdinals.get(scopeKey) ?? 0
+    let title: string
+    do {
+      ordinal += 1
+      const suffix = ` ${ordinal}`
+      title = `${(shell.trim() || 'Terminal').slice(0, 128 - suffix.length)}${suffix}`
+    } while (titles.has(title))
+    return { title, ordinal }
+  }
+
+  private session(record: TerminalRecord, reused: boolean): TerminalSession {
+    return terminalSessionSchema.parse({
+      ...this.summary(record),
+      replay: record.replay,
+      sequence: record.sequence,
+      reused,
+    })
   }
 
   private resizeRecord(record: TerminalRecord, cols: number, rows: number) {
@@ -506,7 +584,7 @@ export class TerminalService {
   }
 
   private enqueueOutput(record: TerminalRecord, data: string) {
-    if (!data || this.records.get(record.terminalId) !== record) return
+    if (!data || record.status !== 'running' || this.records.get(record.terminalId) !== record) return
     record.pendingOutput += data
     if (record.pendingOutput.length > OUTPUT_PENDING_LIMIT) {
       record.pendingOutput = boundedTail(record.pendingOutput, OUTPUT_PENDING_LIMIT)
@@ -565,9 +643,7 @@ export class TerminalService {
 
   private emitData(record: TerminalRecord, data: string, truncated: boolean) {
     if (!data) return
-    if (
-      conversationScopeKey(this.getActiveScope()) !== record.scopeKey
-    ) return
+    // Hidden terminal surfaces retain their ANSI state while projects change.
     record.replay = boundedTail(record.replay + data, TERMINAL_REPLAY_LIMIT)
     record.sequence += 1
     this.emit(terminalEventSchema.parse({
@@ -583,12 +659,11 @@ export class TerminalService {
   }
 
   private finalizeExit(record: TerminalRecord, exitCode: number, signal?: number) {
-    if (this.records.get(record.terminalId) !== record) return
+    if (record.status === 'exited' || this.records.get(record.terminalId) !== record) return
     this.flushAll(record)
-    this.records.delete(record.terminalId)
-    if (this.scopeTerminals.get(record.scopeKey) === record.terminalId) {
-      this.scopeTerminals.delete(record.scopeKey)
-    }
+    record.status = 'exited'
+    record.exitCode = Number.isInteger(exitCode) ? Math.min(2 ** 31 - 1, Math.max(-1, exitCode)) : -1
+    record.signal = Number.isInteger(signal) && signal! >= 0 && signal! <= 255 ? signal : undefined
     record.dataDisposable.dispose()
     record.exitDisposable.dispose()
     record.resolveExit()
@@ -599,13 +674,13 @@ export class TerminalService {
       scope: record.scope,
       terminalId: record.terminalId,
       sequence: record.sequence,
-      exitCode: Number.isInteger(exitCode) ? Math.max(-1, exitCode) : -1,
-      ...(typeof signal === 'number' ? { signal } : {}),
+      exitCode: record.exitCode,
+      ...(record.signal === undefined ? {} : { signal: record.signal }),
     }))
   }
 
   private async terminateRecord(record: TerminalRecord) {
-    if (this.records.get(record.terminalId) !== record) return
+    if (record.status === 'exited' || this.records.get(record.terminalId) !== record) return
     if (!record.closing) {
       record.closing = true
       try {

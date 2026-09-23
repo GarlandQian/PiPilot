@@ -594,6 +594,9 @@ export function applyLocalPiProjectorEvent(
         extensionErrors: appendExtensionError(state.extensionErrors, event),
         revision,
       }
+    case 'delivery_state':
+      // Delivery identity and payloads are projected by the dedicated queue store.
+      return { ...state, revision }
     case 'runtime_diagnostic':
       return {
         ...state,

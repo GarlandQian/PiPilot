@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
 import {
+  lstat,
   open,
   opendir,
   readFile,
@@ -20,12 +21,15 @@ import {
   WORKSPACE_DIRECTORY_ENTRY_LIMIT,
   WORKSPACE_PATH_SEARCH_RESULT_LIMIT,
   WORKSPACE_PREVIEW_BYTE_LIMIT,
+  workspaceChangeId,
+  workspaceChangeStageSchema,
   workspaceDiffFileSchema,
   workspaceDiffSnapshotSchema,
   workspaceDirectorySnapshotSchema,
   workspaceFilePreviewSchema,
   workspacePathSearchResultSchema,
   workspaceRelativePathSchema,
+  type WorkspaceChangeStage,
   type WorkspaceChangeSummary,
   type WorkspaceDiffFile,
   type WorkspaceDiffSnapshot,
@@ -106,7 +110,7 @@ interface GitEntry {
   path: string
   previousPath?: string
   status: WorkspaceFileStatus
-  unstaged: boolean
+  stage: WorkspaceChangeStage
   untracked: boolean
 }
 
@@ -120,7 +124,9 @@ interface GitSnapshot {
   available: boolean
   branch: string
   entries: Map<string, GitEntry>
-  numStats: Map<string, GitNumStat>
+  numStats: Record<WorkspaceChangeStage, Map<string, GitNumStat>>
+  indexPath: string
+  revision: string
 }
 
 interface GitResult<TOutput extends string | Buffer> {
@@ -216,21 +222,22 @@ function parsePorcelain(output: string) {
       previousPath = records[index + 1]
       index += 1
     }
-    if (!workspaceRelativePathSchema.safeParse(path).success || ignoredPath(path)) continue
-    const status: WorkspaceFileStatus = x === '?' || x === 'A' || y === 'A'
-      ? 'added'
-      : x === 'D' || y === 'D'
-        ? 'deleted'
-        : 'modified'
-    entries.set(path, {
-      path,
-      ...(previousPath && workspaceRelativePathSchema.safeParse(previousPath).success
-        ? { previousPath }
-        : {}),
-      status,
-      unstaged: x === '?' || y !== ' ',
-      untracked: x === '?',
-    })
+    if (!workspaceRelativePathSchema.safeParse(path).success) continue
+    for (const stage of ['staged', 'unstaged'] as const) {
+      const code = stage === 'staged' ? x : y
+      if (code === ' ' || code === '!' || (stage === 'staged' && code === '?')) continue
+      const renamed = code === 'R' || code === 'C'
+      if (renamed && !workspaceRelativePathSchema.safeParse(previousPath).success) continue
+      entries.set(workspaceChangeId(path, stage), {
+        path,
+        ...(renamed ? { previousPath } : {}),
+        status: code === '?' || code === 'A'
+          ? 'added'
+          : code === 'D' ? 'deleted' : 'modified',
+        stage,
+        untracked: x === '?',
+      })
+    }
   }
   return entries
 }
@@ -246,7 +253,7 @@ function parseNumStats(output: string) {
     const [addedText, deletedText, inlinePath] = fields
     const path = inlinePath || records[index + 2]
     if (!inlinePath && records[index + 1] && records[index + 2]) index += 2
-    if (!workspaceRelativePathSchema.safeParse(path).success || ignoredPath(path)) continue
+    if (!workspaceRelativePathSchema.safeParse(path).success) continue
     const binary = addedText === '-' || deletedText === '-'
     stats.set(path, {
       added: binary ? 0 : Number.parseInt(addedText, 10) || 0,
@@ -355,7 +362,7 @@ export class WorkspaceContentService {
       path: requestedPath,
       entries,
       truncated,
-      modifiedCount: statusEntries.size,
+      modifiedCount: new Set([...statusEntries.values()].map((entry) => entry.path)).size,
       gitAvailable: git.available,
     })
   }
@@ -560,8 +567,8 @@ export class WorkspaceContentService {
     }
 
     const candidates = [...git.entries.values()]
-      .filter((entry) => entry.unstaged)
-      .sort((left, right) => left.path.localeCompare(right.path, 'en'))
+      .sort((left, right) =>
+        left.stage.localeCompare(right.stage, 'en') || left.path.localeCompare(right.path, 'en'))
     let truncated = false
     const files: WorkspaceChangeSummary[] = []
     for (const entry of candidates) {
@@ -595,18 +602,23 @@ export class WorkspaceContentService {
     })
   }
 
-  async readDiff(workspaceId: string, path: string): Promise<WorkspaceDiffFile> {
+  async readDiff(
+    workspaceId: string,
+    path: string,
+    stage: WorkspaceChangeStage = 'unstaged',
+  ): Promise<WorkspaceDiffFile> {
     const { root } = await this.context(workspaceId)
     const requestedPath = this.parsePath(path)
-    const git = await this.gitSnapshot(root)
+    const requestedStage = workspaceChangeStageSchema.parse(stage)
+    const git = await this.gitSnapshot(root, true)
     if (!git.available) {
       throw new WorkspaceContentError(
         'WORKSPACE_GIT_UNAVAILABLE',
         'Git integration is unavailable for this workspace.',
       )
     }
-    const entry = git.entries.get(requestedPath)
-    if (!entry?.unstaged) {
+    const entry = git.entries.get(workspaceChangeId(requestedPath, requestedStage))
+    if (!entry) {
       throw new WorkspaceContentError(
         'WORKSPACE_CHANGE_NOT_FOUND',
         'The requested workspace change no longer exists.',
@@ -614,6 +626,7 @@ export class WorkspaceContentService {
     }
     const summary = await this.changeSummary(root, git, entry)
     if (summary.binary) {
+      await this.assertChangeRevision(root, git, entry, summary.revision)
       await this.assertActiveWorkspace(workspaceId, root)
       return workspaceDiffFileSchema.parse({
         workspaceId,
@@ -637,15 +650,18 @@ export class WorkspaceContentService {
         ], true)
       : await this.runGitBoundedPatch(root, [
         'diff',
+        ...(entry.stage === 'staged' ? ['--cached'] : []),
         '--no-ext-diff',
         '--no-textconv',
         '--no-color',
         '--find-renames',
         '--unified=3',
         '--',
+        ...(entry.previousPath ? [entry.previousPath] : []),
         requestedPath,
       ])
     const binary = /^Binary files .+ differ$/mu.test(result.patch)
+    await this.assertChangeRevision(root, git, entry, summary.revision)
     await this.assertActiveWorkspace(workspaceId, root)
     return workspaceDiffFileSchema.parse({
       workspaceId,
@@ -754,7 +770,8 @@ export class WorkspaceContentService {
     path: string,
     directory: boolean,
   ) {
-    const exact = entries.get(path)?.status
+    const exact = entries.get(workspaceChangeId(path, 'unstaged'))?.status ??
+      entries.get(workspaceChangeId(path, 'staged'))?.status
     if (exact || !directory) return exact
     const prefix = `${path}/`
     for (const entry of entries.values()) {
@@ -763,9 +780,11 @@ export class WorkspaceContentService {
     return undefined
   }
 
-  private async gitSnapshot(root: string): Promise<GitSnapshot> {
+  private async gitSnapshot(root: string, refresh = false): Promise<GitSnapshot> {
     const cached = this.gitSnapshots.get(root)
-    if (cached && cached.expiresAt > Date.now()) return cached.value
+    if (cached && (
+      cached.expiresAt === Number.POSITIVE_INFINITY || (!refresh && cached.expiresAt > Date.now())
+    )) return cached.value
     const value = this.loadGitSnapshot(root)
     const entry = {
       expiresAt: Number.POSITIVE_INFINITY,
@@ -793,11 +812,15 @@ export class WorkspaceContentService {
       const topLevel = await this.runGitText(root, ['rev-parse', '--show-toplevel'])
       const canonicalTopLevel = await realpath(topLevel.stdout.trim())
       if (canonicalTopLevel !== root) throw new Error('nested workspace')
-      const [statusResult, numStatResult, branchResult] = await Promise.all([
+      const indexResult = await this.runGitText(root, ['rev-parse', '--git-path', 'index'])
+      const indexPath = resolve(root, indexResult.stdout.trim())
+      const revision = await this.gitRevision(root, indexPath)
+      const [statusResult, unstagedNumStats, stagedNumStats, branchResult] = await Promise.all([
         this.runGitText(root, [
           'status',
           '--porcelain=v1',
           '-z',
+          '--renames',
           '--untracked-files=all',
           '--ignored=no',
           '--',
@@ -807,6 +830,18 @@ export class WorkspaceContentService {
           'diff',
           '--no-ext-diff',
           '--no-textconv',
+          '--find-renames',
+          '--numstat',
+          '-z',
+          '--',
+          '.',
+        ]),
+        this.runGitText(root, [
+          'diff',
+          '--cached',
+          '--no-ext-diff',
+          '--no-textconv',
+          '--find-renames',
           '--numstat',
           '-z',
           '--',
@@ -814,15 +849,83 @@ export class WorkspaceContentService {
         ]),
         this.runGitText(root, ['branch', '--show-current']).catch(() => ({ stdout: '', stderr: '' })),
       ])
+      if (revision !== await this.gitRevision(root, indexPath)) this.changeConflict()
       return {
         available: true,
         branch: branchResult.stdout.trim().slice(0, 512),
         entries: parsePorcelain(statusResult.stdout),
-        numStats: parseNumStats(numStatResult.stdout),
+        numStats: {
+          staged: parseNumStats(stagedNumStats.stdout),
+          unstaged: parseNumStats(unstagedNumStats.stdout),
+        },
+        indexPath,
+        revision,
       }
-    } catch {
-      return { available: false, branch: '', entries: new Map(), numStats: new Map() }
+    } catch (error) {
+      if (error instanceof WorkspaceContentError) throw error
+      return {
+        available: false,
+        branch: '',
+        entries: new Map(),
+        numStats: { staged: new Map(), unstaged: new Map() },
+        indexPath: '',
+        revision: '',
+      }
     }
+  }
+
+  private changeConflict(): never {
+    throw new WorkspaceContentError(
+      'WORKSPACE_CHANGE_CONFLICT',
+      'The workspace change was updated outside PiPilot. Refresh before trying again.',
+    )
+  }
+
+  private async fileRevision(path: string) {
+    try {
+      const details = await lstat(path, { bigint: true })
+      return `${details.ino}:${details.mode}:${details.size}:${details.mtimeNs}:${details.ctimeNs}`
+    } catch (error) {
+      if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) {
+        return 'missing'
+      }
+      throw error
+    }
+  }
+
+  private async gitRevision(root: string, indexPath: string) {
+    const [head, index] = await Promise.all([
+      this.runGitText(root, ['rev-parse', '--verify', 'HEAD'])
+        .then((result) => result.stdout.trim())
+        .catch(() => ''),
+      this.fileRevision(indexPath),
+    ])
+    return hash(`${head}\0${index}`)
+  }
+
+  private async changeRevision(root: string, git: GitSnapshot, entry: GitEntry) {
+    const file = entry.stage === 'unstaged'
+      ? await this.fileRevision(this.lexicalTarget(root, entry.path))
+      : ''
+    return hash(JSON.stringify([
+      git.revision,
+      entry,
+      git.numStats[entry.stage].get(entry.path),
+      file,
+    ]))
+  }
+
+  private async assertChangeRevision(
+    root: string,
+    git: GitSnapshot,
+    entry: GitEntry,
+    revision: string,
+  ) {
+    const [gitRevision, currentRevision] = await Promise.all([
+      this.gitRevision(root, git.indexPath),
+      this.changeRevision(root, git, entry),
+    ])
+    if (gitRevision !== git.revision || currentRevision !== revision) this.changeConflict()
   }
 
   private async changeSummary(
@@ -830,7 +933,8 @@ export class WorkspaceContentService {
     git: GitSnapshot,
     entry: GitEntry,
   ): Promise<WorkspaceChangeSummary> {
-    let stats = git.numStats.get(entry.path) ?? { added: 0, deleted: 0, binary: false }
+    const revision = await this.changeRevision(root, git, entry)
+    let stats = git.numStats[entry.stage].get(entry.path) ?? { added: 0, deleted: 0, binary: false }
     if (entry.untracked) {
       const target = await this.resolveExisting(root, entry.path)
       const details = await stat(target)
@@ -842,8 +946,12 @@ export class WorkspaceContentService {
           ? { added: 0, deleted: 0, binary: true }
           : { added: lineCount(content.toString('utf8')), deleted: 0, binary: false }
       }
+      if (revision !== await this.changeRevision(root, git, entry)) this.changeConflict()
     }
     return {
+      id: workspaceChangeId(entry.path, entry.stage),
+      stage: entry.stage,
+      revision,
       path: entry.path,
       ...(entry.previousPath ? { previousPath: entry.previousPath } : {}),
       status: entry.status,
@@ -865,7 +973,7 @@ export class WorkspaceContentService {
     return new Promise<{ patch: string; truncated: boolean }>((resolvePromise, rejectPromise) => {
       execFile(
         this.gitBinary,
-        args,
+        ['--no-optional-locks', '--literal-pathspecs', ...args],
         {
           cwd: root,
           encoding: 'utf8',
@@ -897,7 +1005,7 @@ export class WorkspaceContentService {
     return new Promise((resolvePromise, rejectPromise) => {
       execFile(
         this.gitBinary,
-        args,
+        ['--no-optional-locks', '--literal-pathspecs', ...args],
         {
           cwd: root,
           encoding: encoding as BufferEncoding,

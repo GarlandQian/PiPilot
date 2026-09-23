@@ -30,8 +30,8 @@ export const UserMessage = React.memo(function UserMessage({ turn }: { turn: Ext
     : new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' })
         .format(turn.timestamp)
   return (
-    <div className="group/question ml-auto w-fit min-w-0 max-w-[88%]" data-conversation-question>
-      <div className="min-w-0 rounded-lg bg-muted/75 px-4 py-3.5">
+    <div className="group/question ml-auto w-fit min-w-0 max-w-[90%]" data-conversation-question>
+      <div className="min-w-0 rounded-2xl rounded-tr-md border border-border/40 bg-surface-inset px-4 py-3">
         <div id={questionId} className={cn('conversation-question-content min-w-0 text-foreground', longQuestion && !expanded && '[&_[data-prompt-message]]:max-h-40 [&_[data-prompt-message]]:overflow-hidden')}>
           <UserMessageContent text={turn.text} />
         </div>
@@ -279,13 +279,13 @@ export const ThinkingMessage = React.memo(function ThinkingMessage({
             aria-hidden
           />
           <TbBrain className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-          <span className={cn('font-medium italic', streaming ? 'text-shimmer' : 'text-muted-foreground')}>
+          <span className={cn('font-medium', streaming ? 'text-shimmer' : 'text-muted-foreground')}>
             {label}
           </span>
         </button>
       </CollapsibleTrigger>
       <CollapsibleContent id={contentId}>
-        <div className="mb-2 mt-2 text-caption leading-relaxed text-muted-foreground">
+        <div className="mb-2 ml-2 mt-2 border-l-2 border-border/70 py-1 pl-4 text-caption leading-relaxed text-muted-foreground">
           <MarkdownContent markdown={turn.text} streaming={streaming} />
         </div>
       </CollapsibleContent>

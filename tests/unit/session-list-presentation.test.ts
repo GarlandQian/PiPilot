@@ -1,7 +1,11 @@
+import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { resolveSidebarSessionIndicatorState } from '../../src/components/layout/SessionList'
 import {
   isSidebarSessionRunning,
+  isNewBackgroundResult,
+  preferredProjectSession,
+  presentPrioritySessions,
   presentSidebarSessions,
   sortSidebarProjects,
 } from '../../src/components/layout/session-navigation'
@@ -20,7 +24,7 @@ describe('sidebar session indicator presentation', () => {
     })).toBe('loading')
   })
 
-  it('renders every authoritative lifecycle state in the stable trailing slot', () => {
+  it('keeps running and queued work visible without claiming queued messages need user input', () => {
     expect(resolveSidebarSessionIndicatorState({
       status: 'running',
       activityState: 'running',
@@ -28,25 +32,42 @@ describe('sidebar session indicator presentation', () => {
     expect(resolveSidebarSessionIndicatorState({
       status: 'running',
       activityState: 'waiting',
-    })).toBe('waiting')
+    })).toBe('running')
     expect(resolveSidebarSessionIndicatorState({
       status: 'idle',
       activityState: 'completed',
-    })).toBe('completed')
+    })).toBe('none')
     expect(resolveSidebarSessionIndicatorState({
       status: 'failed',
       activityState: 'failed',
     })).toBe('failed')
     expect(resolveSidebarSessionIndicatorState({
       activityState: 'released',
-    })).toBe('released')
+    })).toBe('none')
   })
 
   it('uses runtime status as a safe fallback for legacy callers', () => {
     expect(resolveSidebarSessionIndicatorState({ status: 'planning' })).toBe('running')
-    expect(resolveSidebarSessionIndicatorState({ status: 'cancelled' })).toBe('completed')
+    expect(resolveSidebarSessionIndicatorState({ status: 'cancelled' })).toBe('none')
     expect(resolveSidebarSessionIndicatorState({ status: 'failed' })).toBe('failed')
-    expect(resolveSidebarSessionIndicatorState({})).toBe('released')
+    expect(resolveSidebarSessionIndicatorState({})).toBe('none')
+  })
+
+  it('keeps idle, read and stopped rows quiet while retaining an unread result after host release', () => {
+    for (const status of ['idle', 'completed', 'cancelled'] as const) {
+      expect(resolveSidebarSessionIndicatorState({ status, activityState: 'completed' })).toBe('none')
+    }
+    expect(resolveSidebarSessionIndicatorState({ status: 'completed', unread: true })).toBe('unread')
+    expect(resolveSidebarSessionIndicatorState({ activityState: 'released', unread: true })).toBe('unread')
+    expect(resolveSidebarSessionIndicatorState({ status: 'cancelled', unread: true })).toBe('none')
+    expect(resolveSidebarSessionIndicatorState({ status: 'cancelled', activityState: 'waiting', unread: true })).toBe('none')
+    expect(resolveSidebarSessionIndicatorState({ status: 'running', unread: true })).toBe('running')
+  })
+
+  it('shows failed runs in red even if they also need attention, and reserves yellow for user input', () => {
+    expect(resolveSidebarSessionIndicatorState({ status: 'failed', needsAttention: true, unread: true })).toBe('failed')
+    expect(resolveSidebarSessionIndicatorState({ status: 'running', needsAttention: true })).toBe('attention')
+    expect(resolveSidebarSessionIndicatorState({ status: 'running', activityState: 'waiting', needsAttention: false })).toBe('running')
   })
 })
 
@@ -62,6 +83,7 @@ function conversation(
       preview: '',
       scope: { kind: 'projectless' },
       selectionToken: `sel_${name}`,
+      catalogId: `cat_${createHash('sha256').update(name).digest('hex')}`,
       createdAt: modifiedAt,
       modifiedAt,
     },
@@ -70,6 +92,52 @@ function conversation(
 }
 
 describe('sidebar navigation views', () => {
+  it('restores the selected or remembered project task, then the latest, and never invents an empty task', () => {
+    const older = { ...conversation('Older', 'completed', '2026-09-01T00:00:00.000Z'), organizationKey: 'older' }
+    const recent = { ...conversation('Recent', 'completed'), organizationKey: 'recent' }
+    const archived = { ...conversation('Archived', 'completed', '2026-09-10T00:00:00.000Z'), archived: true, organizationKey: 'archived' }
+    expect(preferredProjectSession([older, recent, archived], 'older')).toBe(older)
+    expect(preferredProjectSession([older, recent, archived], 'missing')).toBe(recent)
+    expect(preferredProjectSession([older, recent, archived], 'archived')).toBe(recent)
+    expect(preferredProjectSession([older, { ...recent, selected: true }], 'older')?.summary.name).toBe('Recent')
+    expect(preferredProjectSession([archived])).toBeUndefined()
+    expect(preferredProjectSession([])).toBeUndefined()
+  })
+
+  it('keeps archived tasks retrievable without hiding active or unread work', () => {
+    const archived = { ...conversation('Archived title', 'completed'), archived: true }
+    const unread = { ...conversation('Finished elsewhere', 'completed'), archived: true, unread: true }
+    const running = { ...conversation('Still working', 'running'), archived: true }
+    const preview = { ...conversation('Renamed', 'completed'), archived: true }
+    preview.summary.preview = 'Original request with a needle'
+    const items = [archived, unread, running, preview]
+    expect(presentSidebarSessions(items, { query: '', filter: 'all', sort: 'name' }).items).toEqual([unread, running])
+    expect(presentSidebarSessions(items, { query: '', filter: 'archived', sort: 'name' }).items).toHaveLength(4)
+    expect(presentSidebarSessions(items, { query: 'needle', filter: 'all', sort: 'name' }).items).toEqual([preview])
+    expect(presentSidebarSessions(items, { query: '', filter: 'attention', sort: 'name' }).items).toEqual([unread])
+  })
+
+  it('puts attention and running work across projects ahead of selected and pinned idle tasks', () => {
+    const pinned = { ...conversation('Pinned', 'completed'), pinned: true }
+    const selected = { ...conversation('Selected', 'completed'), selected: true }
+    const running = conversation('Running', 'running')
+    const failed = conversation('Failed', 'failed')
+    const quiet = conversation('Quiet', 'completed')
+    expect(presentPrioritySessions([pinned, quiet, selected, running, failed])).toEqual([failed, running, selected, pinned])
+    expect(presentSidebarSessions([quiet, pinned], { query: '', filter: 'all', sort: 'name' }).items[0]).toBe(pinned)
+  })
+
+  it('marks only observed background completions as new results', () => {
+    const result = { ...conversation('Result', 'completed'), status: 'completed' as const }
+    expect(isNewBackgroundResult(result, 'running')).toBe(true)
+    expect(isNewBackgroundResult({ ...result, status: 'failed' }, 'planning')).toBe(false)
+    expect(isNewBackgroundResult({ ...result, status: 'idle' }, 'running')).toBe(false)
+    expect(isNewBackgroundResult({ ...result, selected: true }, 'running')).toBe(false)
+    expect(isNewBackgroundResult(result, 'completed')).toBe(false)
+    expect(isNewBackgroundResult(result)).toBe(false)
+    expect(isNewBackgroundResult({ ...result, status: 'cancelled' }, 'running')).toBe(false)
+  })
+
   it('keeps historical and completed sessions in All, and limits Running to active work', () => {
     const items = [
       conversation('Historic', 'released'),

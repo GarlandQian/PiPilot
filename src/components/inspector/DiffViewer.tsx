@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { TbAlertCircle, TbLoader2, TbRefresh } from 'react-icons/tb'
+import { TbAlertCircle, TbFileText, TbLoader2, TbRefresh } from 'react-icons/tb'
 import { Button } from '@/components/ui/button'
 import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
@@ -19,6 +19,9 @@ interface DiffViewerProps {
   onRefresh?: () => void
   onRequestFile?: (paths: string | readonly string[]) => void
   onRetryFile?: (path: string) => void
+  onOpenFile?: (path: string) => void
+  visible?: boolean
+  focusRequest?: { path: string; sequence: number } | null
 }
 
 const ReadOnlyPatchDiff = React.lazy(() =>
@@ -70,7 +73,7 @@ function hasRenderableHunk(patch: string) {
   return /^@@\s/mu.test(patch)
 }
 
-function DiffFileHeader({ file }: { file: DiffViewerFile }) {
+function DiffFileHeader({ file, onOpenFile }: { file: DiffViewerFile; onOpenFile?: (path: string) => void }) {
   const t = useT()
   return (
     <header className="sticky top-0 z-20 flex min-h-12 items-center gap-2 border-y border-border bg-sidebar px-2.5 py-1.5">
@@ -79,6 +82,7 @@ function DiffFileHeader({ file }: { file: DiffViewerFile }) {
           {file.previousPath ? `${file.previousPath} → ${file.path}` : file.path}
         </p>
         <p className="mt-0.5 flex items-center gap-2 text-micro tabular-nums">
+          <span className="text-muted-foreground">{t(file.stage === 'staged' ? 'inspector.diff.staged' : 'inspector.diff.unstaged')}</span>
           <span className={cn('font-medium', statusTone[file.status])}>
             {t(`inspector.files.${file.status}`)}
           </span>
@@ -86,6 +90,7 @@ function DiffFileHeader({ file }: { file: DiffViewerFile }) {
           <span className="text-destructive">−{file.deleted}</span>
         </p>
       </div>
+      {onOpenFile && file.status !== 'deleted' ? <Button variant="ghost" size="icon-xs" onClick={() => onOpenFile(file.path)} aria-label={t('inspector.diff.openFile')} title={t('inspector.diff.openFile')}><TbFileText aria-hidden /></Button> : null}
     </header>
   )
 }
@@ -127,15 +132,17 @@ function DiffFileSection({
   file,
   sectionRef,
   onRetry,
+  onOpenFile,
 }: {
   file: DiffViewerFile
   sectionRef: (node: HTMLElement | null) => void
   onRetry: (path: string) => void
+  onOpenFile?: (path: string) => void
 }) {
   const t = useT()
   const [renderAttempt, setRenderAttempt] = React.useState(0)
   const loading = file.phase === 'queued' || file.phase === 'loading'
-  const patch = file.phase === 'ready' ? file.patch : ''
+  const patch = file.patch ?? ''
   const truncatedWithoutHunk = file.phase === 'ready' && file.truncated && !hasRenderableHunk(patch)
   const showPatch = file.phase === 'ready'
     && !file.binary
@@ -151,7 +158,7 @@ function DiffFileSection({
     body = <DiffInlineState loading>{t('inspector.diff.loadingFile')}</DiffInlineState>
   } else if (file.phase === 'error') {
     body = (
-      <DiffInlineState onRetry={() => onRetry(file.path)}>
+      <DiffInlineState onRetry={() => onRetry(file.id)}>
         {t('inspector.diff.readError')}
       </DiffInlineState>
     )
@@ -182,12 +189,14 @@ function DiffFileSection({
     <section
       ref={sectionRef}
       data-diff-path={file.path}
+      data-diff-id={file.id}
       aria-label={file.path}
       aria-busy={loading || undefined}
       className="min-w-0"
     >
-      <DiffFileHeader file={file} />
+      <DiffFileHeader file={file} onOpenFile={onOpenFile} />
       {body}
+      {file.errorCode && file.patch !== undefined ? <div role="alert" className="flex items-center gap-2 border-t border-border px-3 py-2 text-caption text-destructive"><span className="flex-1">{t('inspector.diff.readError')}</span><Button variant="ghost" size="xs" onClick={() => onRetry(file.id)}>{t('common.retry')}</Button></div> : null}
       {file.phase === 'ready' && file.truncated && showPatch ? (
         <p className="border-t border-border px-3 py-2 text-micro text-muted-foreground">
           {t('inspector.diff.truncated')}
@@ -224,9 +233,10 @@ function DiffSummarySurface({
     <div ref={registerScrollRoot} className="scroll-slim min-h-0 flex-1 overflow-auto pb-2">
       {files.map((file) => (
         <section
-          key={file.path}
-          ref={(node) => registerSection(file.path, node)}
+          key={file.id}
+          ref={(node) => registerSection(file.id, node)}
           data-diff-path={file.path}
+          data-diff-id={file.id}
           aria-label={file.path}
           className="min-w-0"
         >
@@ -252,14 +262,20 @@ export function DiffViewer({
   onRefresh,
   onRequestFile,
   onRetryFile,
+  onOpenFile,
+  visible = true,
+  focusRequest,
 }: DiffViewerProps) {
   const t = useT()
   const [scrollRoot, setScrollRoot] = React.useState<HTMLElement | null>(null)
   const observerRef = React.useRef<IntersectionObserver | null>(null)
   const sectionNodes = React.useRef(new Map<string, HTMLElement>())
+  const readingAnchor = React.useRef<{ id: string; offset: number } | null>(null)
+  const handledFocus = React.useRef<number | null>(null)
   const requestFile = onRequestFile ?? NOOP_REQUEST
   const retryFile = onRetryFile ?? NOOP_REQUEST
-  const resetKey = files.map((file) => file.path).join('\u0000')
+  const orderedFiles = React.useMemo(() => [...files].sort((a, b) => Number(a.stage === 'unstaged') - Number(b.stage === 'unstaged')), [files])
+  const resetKey = orderedFiles.map((file) => file.id).join('\u0000')
 
   const registerSection = React.useCallback((path: string, node: HTMLElement | null) => {
     const previous = sectionNodes.current.get(path)
@@ -273,20 +289,54 @@ export function DiffViewer({
     observerRef.current?.observe(node)
   }, [])
 
+  React.useLayoutEffect(() => {
+    if (!scrollRoot || !visible) return
+    const capture = () => {
+      const top = scrollRoot.getBoundingClientRect().top
+      for (const file of orderedFiles) {
+        const section = sectionNodes.current.get(file.id)
+        if (!section || section.getBoundingClientRect().bottom <= top) continue
+        readingAnchor.current = { id: file.id, offset: section.getBoundingClientRect().top - top }
+        break
+      }
+    }
+    scrollRoot.addEventListener('scroll', capture, { passive: true })
+    return () => scrollRoot.removeEventListener('scroll', capture)
+  }, [orderedFiles, scrollRoot, visible])
+
+  React.useLayoutEffect(() => {
+    if (!scrollRoot || !visible) return
+    if (focusRequest && handledFocus.current !== focusRequest.sequence) {
+      const target = files.find((file) => file.path === focusRequest.path && file.stage === 'unstaged') ?? files.find((file) => file.path === focusRequest.path)
+      const section = target ? sectionNodes.current.get(target.id) : undefined
+      if (!section) return
+      handledFocus.current = focusRequest.sequence
+      readingAnchor.current = null
+      requestFile(target!.id)
+      scrollRoot.scrollTop += section.getBoundingClientRect().top - scrollRoot.getBoundingClientRect().top
+      section.setAttribute('tabindex', '-1')
+      section.focus({ preventScroll: true })
+      return
+    }
+    const anchor = readingAnchor.current
+    const section = anchor ? sectionNodes.current.get(anchor.id) : undefined
+    if (section && anchor) scrollRoot.scrollTop += section.getBoundingClientRect().top - scrollRoot.getBoundingClientRect().top - anchor.offset
+  }, [files, focusRequest, requestFile, scrollRoot, visible])
+
   React.useEffect(() => {
     observerRef.current?.disconnect()
     observerRef.current = null
-    if (!scrollRoot) return
+    if (!scrollRoot || !visible) return
 
     if (typeof IntersectionObserver === 'undefined') {
-      requestFile(files.slice(0, 3).map((file) => file.path))
+      requestFile(files.slice(0, 3).map((file) => file.id))
       return
     }
 
     const observer = new IntersectionObserver((entries) => {
       const paths = entries.flatMap((entry) => {
         if (!entry.isIntersecting) return []
-        const path = (entry.target as HTMLElement).dataset.diffPath
+        const path = (entry.target as HTMLElement).dataset.diffId
         return path ? [path] : []
       })
       if (paths.length > 0) requestFile(paths)
@@ -301,14 +351,15 @@ export function DiffViewer({
       observer.disconnect()
       if (observerRef.current === observer) observerRef.current = null
     }
-  }, [requestFile, resetKey, scrollRoot])
+  }, [requestFile, resetKey, scrollRoot, visible])
 
   const empty = emptyMessage ?? t('inspector.diff.clean')
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <InspectorSectionToolbar title={t('inspector.diff.uncommitted')} description={t('inspector.diff.summary', { count: files.length })}>
-        <DiffFileNavigator files={files} onSelect={(path) => {
+      <InspectorSectionToolbar title={t('inspector.diff.projectChanges')} description={t('inspector.diff.summary', { count: new Set(files.map((file) => file.path)).size })}>
+        <DiffFileNavigator files={orderedFiles} onSelect={(path) => {
+          readingAnchor.current = null
           requestFile(path)
           const section = sectionNodes.current.get(path)
           section?.scrollIntoView({ block: 'start', behavior: 'instant' })
@@ -326,6 +377,7 @@ export function DiffViewer({
           {listLoading ? <TbLoader2 className="animate-spin motion-reduce:animate-none" aria-hidden /> : <TbRefresh aria-hidden />}
         </Button>
       </InspectorSectionToolbar>
+      {focusRequest && !listLoading && !files.some((file) => file.path === focusRequest.path) ? <p role="status" className="shrink-0 border-b border-border px-3 py-2 text-caption text-muted-foreground">{focusRequest.path} · {t('inspector.diff.noFileChanges')}</p> : null}
       {listErrorMessage && files.length > 0 ? <div role="alert" className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2 text-caption text-destructive">
         <span className="min-w-0 flex-1">{listErrorMessage}</span>
         {onRefresh ? <Button variant="ghost" size="xs" onClick={onRefresh} disabled={listLoading}>{t('common.retry')}</Button> : null}
@@ -348,7 +400,7 @@ export function DiffViewer({
           resetKey={resetKey}
           fallback={(
             <DiffSummarySurface
-              files={files}
+              files={orderedFiles}
               listTruncated={listTruncated}
               message={t('inspector.diff.rendererUnavailable')}
               registerScrollRoot={setScrollRoot}
@@ -359,7 +411,7 @@ export function DiffViewer({
           <React.Suspense
             fallback={(
               <DiffSummarySurface
-                files={files}
+                files={orderedFiles}
                 listTruncated={listTruncated}
                 message={t('inspector.diff.loadingRenderer')}
                 registerScrollRoot={setScrollRoot}
@@ -368,12 +420,13 @@ export function DiffViewer({
             )}
           >
             <ReadOnlyDiffVirtualizer onScrollRoot={setScrollRoot}>
-              {files.map((file) => (
+              {orderedFiles.map((file) => (
                 <DiffFileSection
-                  key={file.path}
+                  key={file.id}
                   file={file}
-                  sectionRef={(node) => registerSection(file.path, node)}
+                  sectionRef={(node) => registerSection(file.id, node)}
                   onRetry={retryFile}
+                  onOpenFile={onOpenFile}
                 />
               ))}
               {listTruncated ? <ListTruncatedNotice /> : null}

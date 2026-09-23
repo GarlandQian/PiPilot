@@ -12,7 +12,7 @@ PiPilot does not embed a parallel Agent Runtime or migrate Pi data into a
 PiPilot-specific format. Pi remains the owner of sessions, configuration, and
 resources; PiPilot owns the desktop experience.
 
-> **Project status:** `v0.0.5` is the current stable release; `v0.0.4` was the
+> **Project status:** `v0.0.6` is the current stable release; `v0.0.5` was the
 > previous stable release. The source repository and GitHub Releases are public.
 > Unsigned installers are distributed for manual download after native build
 > and packaged-smoke verification.
@@ -20,8 +20,8 @@ resources; PiPilot owns the desktop experience.
 [![CI](https://github.com/GarlandQian/PiPilot/actions/workflows/ci.yml/badge.svg)](https://github.com/GarlandQian/PiPilot/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2f3437.svg)](LICENSE)
 
-The current source workbench is being redesigned around conversation-first
-navigation; the installed release may still show the earlier interface.
+The current source workbench uses a continuous conversation timeline, task
+navigation, and a resource panel; the installed release may still show the earlier interface.
 
 ## Highlights
 
@@ -33,34 +33,70 @@ navigation; the installed release may still show the earlier interface.
   home directory as a project.
 - **Real Pi sessions** — browse sessions for each project and use connected Pi
   capabilities such as create, open, rename, duplicate, fork, and delete.
-  Project headings open their workspace directly; adjacent actions create scoped
-  sessions. Search, All/Running filters and Recent/Name sorting organize loaded sessions.
+  Project headings resume an existing task, preferring the current or last selected
+  session; explicit New Task actions create sessions. Search, task/running/attention
+  filters, and Recent/Name sorting organize loaded sessions. Pinning, archiving,
+  restoring, and unread markers persist locally. Archiving changes navigation
+  organization and preserves the Pi session files. Running work has an animated indicator,
+  requests for input are yellow, failures are red, and unread results use a dot.
+  Idle, read, and stopped tasks have no status icon. Active work and unread results
+  remain discoverable even when their project is collapsed.
   Catalog scans continue beyond 200 sessions in bounded batches and reuse unchanged
   file metadata on refresh. Opening or deleting still revalidates the actual session file.
-- **Full conversation workflow** — questions on the right and replies on the left,
-  per-response work logs, rendered Markdown in messages, reasoning, notifications,
-  queued messages and tool/subagent narratives; code and configuration remain verbatim.
-  Code blocks, tool calls, Queue,
-  Follow-up, Steer, models, and Thinking controls. Running messages queue by
-  default; sending and stopping remain separate actions, and pending images
-  and long messages stay inspectable.
+- **Continuous conversation** — questions on the right and replies on the left;
+  assistant text stays visible in timeline order alongside tools. Only adjacent
+  file reads and searches share a group; Bash commands, writes/edits, and subagents
+  keep separate entries. Messages, reasoning, notifications, queued messages,
+  and tool/subagent narratives render Markdown; code and configuration remain verbatim.
+  Supports code blocks, tool calls, Queue, Follow-up, Steer, model selection,
+  and Thinking controls. Sending saves the complete message locally before freeing
+  the input. Each submission has its own confirmation or retry state, without
+  overwriting a newer draft. While running, new messages queue automatically;
+  waiting messages support in-place editing, removal, and Adjust direction.
+  Stop pauses the remaining queue, including images, until Resume queue is selected.
+  Queue clearing is a separate action. Once handed to Pi, a message cannot be edited.
+  Unconfirmed deliveries require a receipt check before retrying, and are never
+  automatically replayed after a restart.
   Unsent text, image attachments, and context references stay with their conversation
   when switching sessions. These drafts are held in memory until the application quits.
-  Historical work starts collapsed; live work stays open after completion unless
-  you close it. Reasoning has its own visible disclosure, separate from tool logs.
+  Submitted outbox messages survive restarts in the application's IndexedDB;
+  pending deliveries and deduplication receipts live under the active Pi agent
+  directory's `pipilot-delivery/` folder, separately from official session JSONL files.
+  Reasoning, grouped reads, and individual tool details have their own disclosures;
+  assistant replies stay outside those disclosures.
   History reloads preserve newer streaming output and use persisted final tool results
   to recover from missed completion events.
   New failures reveal the affected work; notifications and action
   cards remain visible. Long questions expand on demand without hiding attachments.
 - **Commands, Skills, and context** — type `/` to search Commands and Skills;
   type `@` to reference project files or Skills, with keyboard navigation.
-- **Developer work panel** — switch between files, continuous Changes/Diff,
-  and the terminal from the view menu. Open file tabs retain
-  their reading state; refresh a preview after external edits or close individual tabs.
+- **Command output and subagents** — command output supports search, match navigation,
+  line wrapping, copying, and following new output. Reading earlier output or searching
+  pauses following until you resume it. Markdown reports have formatted and raw views;
+  commands and terminal records retain their literal presentation.
+  Subagents open a read-only view of task instructions, reported progress, tool activity,
+  errors, and results. Parallel tasks can be selected separately; instructions and
+  summaries render as Markdown. Missing child messages are identified explicitly when
+  Pi reports only a summary, and execution states follow the available evidence.
+- **Resource panel** — Files and Changes belong to the selected project, independently
+  of conversation loading. Open command output or subagent execution as a detail page,
+  then return to the previous resource and reading position. File previews link to
+  their changes and back; continuous diffs distinguish staged and unstaged changes.
+  Visible resources refresh in the background while retaining reading state.
+  Expand a resource for more space, then return to the conversation.
   Search and jump between conversation turns from the chat header without replacing
   the file being inspected.
   Tree refresh preserves expansion and selection; search jumps to a file in the continuous diff.
-  Terminal status, copy, clear-display and reconnect-after-exit controls retain the live PTY.
+  The bottom terminal drawer starts collapsed, supports a remembered height and
+  maximization, and provides named terminal tabs for each project. Type directly
+  into the terminal; search, copy, paste and clear are available without a second
+  command input. Hiding or switching projects preserves processes and reading
+  positions; new output never pulls you away from scrollback. Exited terminals
+  retain their output and exit code until you close them. Restart creates a new
+  terminal while preserving the old output. There is no fixed terminal-count cap;
+  output buffers remain bounded, and terminals are never ended to make room for
+  another. History is retained for the current
+  app run, not across a full application quit.
 - **Pi integrations** — inspect and manage Packages, Resources, Extensions,
   Skills, Prompts, and Themes with guarded Runtime reload. Protected background
   work defers application; reload failure never silently restarts its Host.
@@ -235,7 +271,7 @@ edit Codex, Claude Code, Pi, shell profile, or project MCP files.
 
 The public release flow is:
 
-1. A stable tag such as `v0.0.5` starts a release-owned full verification job.
+1. A stable tag such as `v0.0.6` starts a release-owned full verification job.
 2. After source, unit, build, integration, and Electron checks pass, macOS,
    Windows, and Linux package, inspect their artifacts, and run packaged
    smoke tests independently.

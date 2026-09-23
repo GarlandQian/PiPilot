@@ -517,8 +517,6 @@ if (!hasSingleInstanceLock) {
         deletionService: officialPiSessionDeletion,
         navigationRepository: conversationNavigationRepository,
         scopeResolver: conversationScopeResolver,
-        disposeScope: (scope) => terminalService.disposeScope(scope),
-        onScopeDisposalError: () => diagnostics.record('error', 'CONVERSATION_TERMINAL_CLEANUP_FAILED'),
       })
           const piManagementHost = new LocalPiManagementHost({
             helperEntryPath: join(mainOutputDirectory, 'pi-management-helper.js'),
@@ -717,6 +715,7 @@ if (!hasSingleInstanceLock) {
         repository: workspaceRepository,
         contentService: workspaceContentService,
         contextService: conversationContextService,
+        terminalService,
       })
       const updateProvider = await createProductionApplicationUpdateProvider({
         packaged: app.isPackaged,

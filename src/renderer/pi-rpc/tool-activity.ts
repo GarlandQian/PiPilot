@@ -75,7 +75,9 @@ function projectActivityRun(toolTurns: readonly Extract<Turn, { kind: 'tool' }>[
 
   for (const item of items) {
     const previous = sections[sections.length - 1]
-    if (!previous || previous.category !== item.category) {
+    // Only repeated context gathering shares a disclosure. Commands, edits,
+    // and delegated work each keep their own position and visible status.
+    if (!previous || previous.category !== 'files' || item.category !== 'files') {
       sections.push({
         id: `tool-activity-section:${item.category}:${item.id}`,
         category: item.category,

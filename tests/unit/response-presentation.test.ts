@@ -40,7 +40,7 @@ function flattenedSourceIds(presentation: ResponsePresentation): string[] {
 }
 
 describe('response presentation', () => {
-  it('separates the prompt, ordered work, and final answer while retaining copy and fork provenance', () => {
+  it('retains chronological prose and tools with copy and fork provenance', () => {
     const prompt = user()
     const actions: Turn = {
       kind: 'response-actions',
@@ -66,13 +66,13 @@ describe('response presentation', () => {
     expect(result.isActive).toBe(false)
     expect(result.segments.map((segment) => [segment.id, segment.region])).toEqual([
       ['thinking', 'persistent'],
-      ['commentary', 'work'],
+      ['commentary', 'answer'],
       ['tool-activity-run:read', 'work'],
       ['answer', 'answer'],
       ['actions', 'persistent'],
     ])
     expect(result.work).toEqual({
-      count: 3,
+      count: 2,
       toolCount: 2,
       thinkingCount: 1,
       activeToolCount: 0,
@@ -86,7 +86,7 @@ describe('response presentation', () => {
     expect(flattenedSourceIds(result)).toEqual(turns.map((turn) => turn.id))
   })
 
-  it('keeps a streaming text segment identity stable when a later tool makes it commentary', () => {
+  it('keeps streaming text visible with a stable region when later tools arrive', () => {
     const text = agent('stream:text:0', 'Looking at the files.', 'streaming')
     const before = projectResponsePresentation(group([user(), text]), running)
     const during = projectResponsePresentation(group([user(), text, tool('inspect', 'running')]), running)
@@ -101,8 +101,8 @@ describe('response presentation', () => {
     expect(during.answerId).toBeNull()
     expect(after.answerId).toBe('stream:text:1')
     expect(before.segments[0]).toMatchObject({ id: text.id, kind: 'turn', region: 'answer', turn: text })
-    expect(during.segments[0]).toMatchObject({ id: text.id, kind: 'turn', region: 'work', turn: text })
-    expect(after.segments[0]).toMatchObject({ id: text.id, kind: 'turn', region: 'work', turn: text })
+    expect(during.segments[0]).toMatchObject({ id: text.id, kind: 'turn', region: 'answer', turn: text })
+    expect(after.segments[0]).toMatchObject({ id: text.id, kind: 'turn', region: 'answer', turn: text })
     expect(during.work).toMatchObject({ activeToolCount: 1, hasActiveWork: true })
     expect(during.status).toBe('running')
     expect(after.isActive).toBe(true)
@@ -177,7 +177,7 @@ describe('response presentation', () => {
     const result = projectResponsePresentation(group(turns), settled)
 
     expect(result.status).toBe('completed')
-    expect(result.segments.slice(0, 3).every((segment) => segment.region === 'persistent')).toBe(true)
+    expect(result.segments.slice(0, 3).map((segment) => segment.region)).toEqual(['answer', 'persistent', 'persistent'])
     expect(flattenedSourceIds(result)).toEqual(turns.map((turn) => turn.id))
   })
 
@@ -224,7 +224,7 @@ describe('response presentation', () => {
     const result = projectResponsePresentation(group(turns), settled)
 
     expect(result.answerId).toBe('answer')
-    expect(result.segments[result.segments.length - 1]).toMatchObject({ id: 'empty', region: 'work' })
+    expect(result.segments[result.segments.length - 1]).toMatchObject({ id: 'empty', region: 'answer' })
     expect(flattenedSourceIds(result)).toEqual(turns.map((turn) => turn.id))
   })
 

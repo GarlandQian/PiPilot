@@ -38,11 +38,7 @@ export function GeneralSettings({ restartBusy, restartMessage, restartAvailable,
         </RadioGroup>
       </SettingRow>
       <SettingRow label={t('settings.general.runningSubmit')} desc={t('settings.general.runningSubmitDesc')}>
-        <RadioGroup value={composer.runningSubmit} aria-label={t('settings.general.runningSubmit')} onValueChange={(value) => {
-          if (value === 'queue' || value === 'steer') update({ composer: { runningSubmit: value } })
-        }} className="flex flex-wrap gap-2">
-          {(['queue', 'steer'] as const).map((value) => <label key={value} className={choiceClass}><RadioGroupItem value={value} aria-label={t(`settings.general.runningSubmit.${value}`)} /><span>{t(`settings.general.runningSubmit.${value}`)}</span></label>)}
-        </RadioGroup>
+        <span className="text-caption text-muted-foreground">{t('composer.defaultQueueHint')}</span>
       </SettingRow>
     </SettingSection>
     <SettingSection title={t('settings.general.localPi')} desc={t('settings.general.localPiDesc')}>

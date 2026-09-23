@@ -5,6 +5,7 @@ import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { projectShellEvidence } from '@/renderer/pi-rpc/tool-activity'
 import { MarkdownContent } from './markdown/MarkdownContent'
+import { ShellLogViewer } from './ShellLogViewer'
 
 interface ShellEvidenceProps {
   label: string
@@ -12,6 +13,8 @@ interface ShellEvidenceProps {
   sourceTruncated?: boolean
   tone?: 'default' | 'error'
   format?: 'auto' | 'markdown' | 'verbatim'
+  live?: boolean
+  followOutput?: boolean
 }
 
 /** Preserve terminal records while allowing ordinary prose through the Markdown renderer. */
@@ -38,7 +41,18 @@ export function isVerbatimToolEvidence(source: string): boolean {
   return logLines.length >= 2 && logLines.length >= Math.ceil(lines.length / 2)
 }
 
-export function ShellEvidence({
+export function ShellEvidence(props: ShellEvidenceProps) {
+  if (props.followOutput) {
+    const format = props.format ?? 'auto'
+    const markdownSummary = /^ {0,3}(?:#{1,6}\s|[-*+]\s|\d+[.)]\s|>\s|`{3,}|~{3,})/mu.test(props.source) ||
+      /(?:\*\*[^*\n]+\*\*|__[^_\n]+__|`[^`\n]+`|\[[^\]\n]+\]\([^\n)]+\))/u.test(props.source) ||
+      /^\s*\|?.+\|.+\r?\n\s*\|?\s*:?-{3,}:?\s*\|/mu.test(props.source)
+    return <ShellLogViewer {...props} allowMarkdown={format === 'markdown' || (format === 'auto' && markdownSummary && !isVerbatimToolEvidence(props.source))} />
+  }
+  return <StandardEvidence {...props} />
+}
+
+function StandardEvidence({
   label,
   source,
   sourceTruncated = false,

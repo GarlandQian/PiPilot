@@ -7,6 +7,7 @@ import {
   TbMessagePlus,
   TbFileDiff,
   TbLoader2,
+  TbTerminal2,
 } from 'react-icons/tb'
 import { ConversationNavigation } from './ConversationNavigation'
 import type { AgentStatus, ConversationOutlineItem } from '@/types/chat'
@@ -43,6 +44,8 @@ export interface ChatHeaderProps {
   onNavigate?: (entryId: string) => void
   onNewConversation?: () => void
   onShowChanges?: () => void
+  terminalOpen?: boolean
+  onToggleTerminal?: () => void
 }
 
 export function ChatHeader({
@@ -61,6 +64,8 @@ export function ChatHeader({
   onNavigate,
   onNewConversation,
   onShowChanges,
+  terminalOpen,
+  onToggleTerminal,
 }: ChatHeaderProps) {
   const t = useT()
   const locale = useLocale()
@@ -91,6 +96,7 @@ export function ChatHeader({
       <div className="flex shrink-0 items-center gap-0.5">
         {onNavigate ? <ConversationNavigation ownerKey={ownerKey} items={outline} onNavigate={onNavigate} /> : null}
         {onShowChanges ? <Button variant="ghost" size="icon-sm" onClick={onShowChanges} aria-label={t('header.showChanges')} title={t('header.showChanges')}><TbFileDiff aria-hidden /></Button> : null}
+        {onToggleTerminal ? <Button variant={terminalOpen ? 'secondary' : 'ghost'} size="icon-sm" onClick={onToggleTerminal} aria-label={t('terminal.drawer.title')} title={t('terminal.drawer.title')} aria-expanded={terminalOpen} aria-controls="workspace-terminal-drawer"><TbTerminal2 aria-hidden /></Button> : null}
         {sessionVisible && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

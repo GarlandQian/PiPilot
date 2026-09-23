@@ -374,7 +374,7 @@ describe('tool presenter registry', () => {
     })
   })
 
-  it('keeps shell commands concise and omits the argument projection', () => {
+  it('keeps shell commands concise and retains arguments for source disclosure', () => {
     const call = presentToolCall({
       id: 'shell-no-args',
       name: 'bash',
@@ -391,7 +391,7 @@ describe('tool presenter registry', () => {
         result: expect.objectContaining({ copyText: 'All tests passed.' }),
       },
     })
-    expect(call.details?.arguments).toBeUndefined()
+    expect(call.details?.arguments?.copyText).toContain('"cwd": "/workspace"')
     expect(toolCallCopyText(call)).toContain('pnpm test')
     expect(toolCallCopyText(call)).not.toContain('30_000')
   })

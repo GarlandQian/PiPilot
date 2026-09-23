@@ -42,7 +42,7 @@ describe('tool activity presentation', () => {
   it('aggregates long adjacent runs with linear status work and preserves call identity', () => {
     let statusReads = 0
     const calls = Array.from({ length: 2_000 }, (_, index) => ({
-      ...call(`bash-${index}`, 'shell'),
+      ...call(`read-${index}`, 'read'),
       get status(): ToolCall['status'] {
         statusReads += 1
         return index === 1_999 ? 'failed' : 'success'
@@ -79,14 +79,16 @@ describe('tool activity presentation', () => {
     if (firstRun?.kind !== 'activity-run') return
     expect(firstRun.run.sections.map((section) => section.category)).toEqual([
       'commands',
+      'commands',
       'files',
     ])
     expect(firstRun.run.sections[0]).toMatchObject({
       id: 'tool-activity-section:commands:bash-1',
-      status: 'failed',
-      failedCount: 1,
+      status: 'success',
+      failedCount: 0,
     })
-    expect(firstRun.run.sections[0]?.items.map((item) => item.id)).toEqual(['bash-1', 'bash-2'])
+    expect(firstRun.run.sections[0]?.items.map((item) => item.id)).toEqual(['bash-1'])
+    expect(firstRun.run.sections[1]).toMatchObject({ status: 'failed', failedCount: 1 })
   })
 
   it('uses exact subagent presentation rather than a generic title heuristic', () => {
@@ -159,7 +161,7 @@ describe('tool activity presentation', () => {
     expect(() => encodeURIComponent(evidence.source)).not.toThrow()
   })
 
-  it('renders repeated commands as one compact category disclosure', () => {
+  it('keeps repeated commands individually visible without a category disclosure', () => {
     const sequence = projectToolActivitySequence([
       tool(call('bash-one', 'shell')),
       tool(call('bash-two', 'shell')),
@@ -176,8 +178,10 @@ describe('tool activity presentation', () => {
         sessionKey: 'session:1',
       }),
     ))
-    expect(markup).toContain('data-tool-activity-category="commands"')
-    expect(markup).toContain('tool.activity.commands')
+    expect(markup).not.toContain('data-tool-activity-category="commands"')
+    expect(markup).not.toContain('tool.activity.commands')
+    expect(markup).toContain('data-tool-id="bash-one"')
+    expect(markup).toContain('data-tool-id="bash-two"')
     expect(markup).toContain('aria-expanded="false"')
   })
 
@@ -213,7 +217,7 @@ describe('tool activity presentation', () => {
     expect(markup).not.toContain('<h2>Review</h2>')
   })
 
-  it('exposes individual command rows while a grouped run is active', () => {
+  it('exposes individual command statuses while a run is active', () => {
     const sequence = projectToolActivitySequence([
       tool(call('bash-finished', 'shell')),
       tool(call('bash-active', 'shell', 'running')),
@@ -228,6 +232,30 @@ describe('tool activity presentation', () => {
 
     expect(markup).toContain('data-tool-id="bash-finished"')
     expect(markup).toContain('data-tool-id="bash-active"')
-    expect(markup).toContain('aria-expanded="true"')
+    expect(markup).toContain('tool.status.running')
+    expect(markup).not.toContain('data-tool-activity-category="commands"')
+  })
+
+  it('groups consecutive reads but leaves edits and delegates in separate rows', () => {
+    const delegate = { ...call('delegate', 'generic'), subagent: {
+      mode: 'single' as const, tasks: [], omittedTaskCount: 0, malformed: false,
+    } }
+    const sequence = projectToolActivitySequence([
+      tool(call('read-a', 'read')), tool(call('search-b', 'read')),
+      tool(call('edit-a', 'edit')), tool(call('edit-b', 'edit')),
+      tool(delegate), tool({ ...delegate, id: 'delegate-b' }),
+      tool(call('read-c', 'read')),
+    ])
+    const item = sequence[0]
+    if (item?.kind !== 'activity-run') throw new Error('Expected activity')
+    expect(item.run.sections.map((section) => section.items.map(({ id }) => id))).toEqual([
+      ['read-a', 'search-b'], ['edit-a'], ['edit-b'], ['delegate'], ['delegate-b'], ['read-c'],
+    ])
+    const markup = renderToStaticMarkup(createElement(TooltipProvider, null,
+      createElement(ToolActivityRegion, { run: item.run, sessionKey: 'session:1' })))
+    expect(markup).toContain('data-tool-activity-category="files"')
+    expect(markup).toContain('tool.redesign.context')
+    expect(markup).not.toContain('data-tool-activity-category="edits"')
+    expect(markup).not.toContain('data-tool-activity-category="subagents"')
   })
 })

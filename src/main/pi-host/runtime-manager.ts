@@ -1,5 +1,5 @@
 import { realpathSync } from 'node:fs'
-import { isAbsolute, resolve } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
 import {
   type AgentSessionEvent,
   type AgentSessionRuntime,
@@ -26,6 +26,7 @@ import {
 } from './runtime-command-dispatcher'
 import { projectRuntimeEvent } from './runtime-event-projector'
 import { RuntimeExtensionUiBridge } from './runtime-extension-ui-bridge'
+import { RuntimeDelivery } from './runtime-delivery'
 import {
   PIPILOT_RUNTIME_MESSAGE_SANITIZER_EXTENSION,
   PIPILOT_RUNTIME_MESSAGE_SANITIZER_EXTENSION_PATH,
@@ -117,6 +118,7 @@ interface RuntimeEntry {
   sequence: number
   unsubscribeSession: (() => void) | null
   uiBridge: RuntimeExtensionUiBridge
+  delivery: RuntimeDelivery
   missingConfiguredModel?: string
   configurationReload?: { interactionRequired: boolean }
 }
@@ -451,6 +453,27 @@ export class RuntimeManager {
       disposing: false,
       sequence: 0,
       unsubscribeSession: null,
+      delivery: new RuntimeDelivery(
+        runtime,
+        join(this.agentDir, 'pipilot', 'outbox'),
+        this.cwd,
+        (delivery) => this.emitRuntimeEvent(target.runtimeId, entry, { type: 'delivery_state', delivery }),
+        () => {
+          const operation = this.enqueue(entry, async () => {
+            if (!entry.disposing && !this.disposed) await entry.delivery.pump()
+          })
+          void withTimeout(operation, this.operationTimeoutMs, `Delivering queued work for ${target.runtimeId}`).catch((error) => {
+            if (error instanceof RuntimeManagerError && error.code === 'RUNTIME_OPERATION_TIMEOUT') {
+              // Background delivery has no waiting IPC request whose timeout
+              // would reclaim a hung extension/preflight. Use the same Host
+              // failure boundary as foreground Runtime operations.
+              for (const listener of this.fatalErrorListeners) {
+                try { listener(error) } catch { /* isolate utility consumers */ }
+              }
+            }
+          })
+        },
+      ),
       uiBridge: new RuntimeExtensionUiBridge(
         (request) => {
           if (entry.configurationReload && ['select', 'confirm', 'input', 'editor'].includes(request.method)) {
@@ -540,6 +563,17 @@ export class RuntimeManager {
     this.assertActive()
     const effectiveTimeoutMs = requireTimeout(timeoutMs)
     const entry = this.requireEntry(runtimeId)
+    // Reserve delivery identity before waiting behind another Runtime command.
+    // Read-only receipt queries can then distinguish queued acceptance from a
+    // message that never reached this Host.
+    if (command.type === 'submit_message') {
+      if (entry.disposing || !entry.extensionsBound ||
+        (expectedGeneration !== undefined && entry.generation !== expectedGeneration) ||
+        (command.expectedSessionId !== undefined && command.expectedSessionId !== entry.runtime.session.sessionId)) {
+        throw new RuntimeManagerError('RUNTIME_STALE_GENERATION', 'The conversation changed before this message could be reserved.')
+      }
+      entry.delivery.reserve(command)
+    }
     const execute = async (): Promise<RuntimeCommandResult> => {
       if (entry.disposing) {
         throw new RuntimeManagerError(
@@ -562,12 +596,20 @@ export class RuntimeManager {
           `Runtime extensions are not bound: ${runtimeId}`,
         )
       }
+      if ('expectedSessionId' in command && command.expectedSessionId !== undefined &&
+        command.expectedSessionId !== entry.runtime.session.sessionId) {
+        throw new RuntimeManagerError(
+          'RUNTIME_STALE_GENERATION',
+          'The conversation changed before this delivery operation could be accepted.',
+        )
+      }
       if (command.type === 'switch_session') {
         this.assertSessionCwd(command.sessionPath)
       }
       const generationBefore = entry.generation
       const result = await dispatchRuntimeCommand(entry.runtime, command, {
         emitEvent: (event) => this.emitRuntimeEvent(runtimeId, entry, event),
+        delivery: entry.delivery,
       })
       if (result.replaced && entry.generation === generationBefore) {
         this.cancelUiRequests(entry)
@@ -586,7 +628,7 @@ export class RuntimeManager {
     // Abort must be able to preempt an accepted prompt or a tool/extension that
     // never returns. Keeping it behind operationTail makes the only recovery
     // command wait on the operation it is supposed to cancel.
-    const operation = command.type === 'abort' && entry.runtime.session.isStreaming
+    const operation = command.type === 'abort' || command.type === 'get_delivery_state'
       ? execute()
       : this.enqueue(entry, execute)
     return withTimeout(
@@ -674,9 +716,13 @@ export class RuntimeManager {
 
         const assertIdle = () => {
           const session = entry.runtime.session
+          const delivery = entry.delivery.snapshot()
+          const protectedDelivery = delivery.items.some((item) => item.status === 'delivering' ||
+            (!delivery.paused && item.status === 'queued')) ||
+            delivery.receipts.some((receipt) => receipt.status === 'accepting')
           if (session.isStreaming || session.isCompacting || session.isRetrying ||
               session.isBashRunning || session.pendingMessageCount > 0 ||
-              entry.uiBridge.pendingCount > 0) {
+              entry.uiBridge.pendingCount > 0 || protectedDelivery) {
             throw new RuntimeManagerError(
               'RUNTIME_CONFIGURATION_BUSY',
               'Pi configuration application is deferred while this runtime has protected work.',
@@ -868,7 +914,17 @@ export class RuntimeManager {
           reload: () => entry.runtime.session.reload(),
         },
         abortHandler: () => {
-          void entry.runtime.session.abort()
+          // ExtensionContext.abort() is synchronous, so no SDK caller awaits
+          // this Promise. Report storage/abort failures without letting one
+          // Runtime's rejected cancellation crash the shared utility Host.
+          void entry.delivery.pauseAndAbort().catch((error: unknown) => {
+            this.emitRuntimeEvent(runtimeId, entry, {
+              type: 'extension_error',
+              extensionPath: '<pipilot:delivery>',
+              event: 'abort',
+              error: error instanceof Error ? error.message : String(error),
+            })
+          })
         },
         shutdownHandler: () => {
           const error = new RuntimeManagerError(
@@ -905,6 +961,7 @@ export class RuntimeManager {
     entry.unsubscribeSession = entry.runtime.session.subscribe(
       (event: AgentSessionEvent) => {
         try {
+          entry.delivery.observe(event)
           this.emitRuntimeEvent(
             runtimeId,
             entry,

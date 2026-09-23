@@ -31,11 +31,12 @@ export function DiffFileNavigator({ files, onSelect }: {
         <CommandInput placeholder={t('workbenchReview.diff.searchFiles')} aria-label={t('workbenchReview.diff.searchFiles')} />
         <CommandList>
           <CommandEmpty>{t('inspector.files.noSearchResults')}</CommandEmpty>
-          {files.map((file) => <CommandItem key={file.path} value={file.path} keywords={file.previousPath ? [file.previousPath] : undefined} onSelect={() => {
-            pendingPath.current = file.path
+          {files.map((file) => <CommandItem key={file.id} value={file.id} keywords={[file.path, file.previousPath ?? '', t(file.stage === 'staged' ? 'inspector.diff.staged' : 'inspector.diff.unstaged')]} onSelect={() => {
+            pendingPath.current = file.id
             setOpen(false)
           }}>
             <span className="min-w-0 flex-1 truncate font-mono text-caption" title={file.path}>{file.path}</span>
+            <span className="shrink-0 text-micro text-muted-foreground">{t(file.stage === 'staged' ? 'inspector.diff.staged' : 'inspector.diff.unstaged')}</span>
             <span className="shrink-0 text-micro tabular-nums"><span className="text-sage">+{file.added}</span> <span className="text-destructive">−{file.deleted}</span></span>
           </CommandItem>)}
         </CommandList>
