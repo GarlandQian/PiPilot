@@ -919,6 +919,13 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
         sessionFile: canonicalSelectedSessionFile,
         sessionState: { isStreaming: false },
       })
+    const resumeQueue = page.getByRole('button', {
+      name: 'Resume queue',
+      exact: true,
+    })
+    await expect(resumeQueue).toBeVisible()
+    await resumeQueue.click()
+
     const recoveredAbortPrompt = 'Packaged prompt after recovered abort'
     await composer.fill(recoveredAbortPrompt)
     await page.getByRole('button', { name: 'Send', exact: true }).click()
