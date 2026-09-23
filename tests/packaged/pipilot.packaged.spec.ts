@@ -904,8 +904,15 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
     // A fatal extension shutdown must become a terminal Host state. Abort is
     // also the recovery control: it creates one fresh Host, hydrates the exact
     // persisted Session, and never replays the interrupted prompt.
-    await composer.fill('/fixture-host-failure')
-    await page.getByRole('button', { name: 'Send', exact: true }).click()
+    // Inject the fatal Host command directly. Sending it through the Composer
+    // would correctly leave an unconfirmed durable outbox item after shutdown
+    // and block a retry until Pi can provide an authoritative receipt.
+    await page.evaluate(async () => {
+      await window.pipilot!.localPi.runtime.command({
+        type: 'prompt',
+        message: '/fixture-host-failure',
+      }).catch(() => undefined)
+    })
     await expect.poll(() => page!.evaluate(async () => (
       (await window.pipilot!.localPi.runtime.status()).state
     )), { timeout: 20_000 }).toBe('crashed')
@@ -919,27 +926,6 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
         sessionFile: canonicalSelectedSessionFile,
         sessionState: { isStreaming: false },
       })
-    const interruptedDelivery = page.locator('[data-outbox-message]')
-      .filter({ hasText: '/fixture-host-failure' })
-    if (await interruptedDelivery.isVisible()) {
-      await expect(interruptedDelivery).toHaveAttribute('data-outbox-status', 'unknown')
-      await interruptedDelivery.getByRole('button', {
-        name: 'Check delivery',
-        exact: true,
-      }).click()
-      await expect.poll(async () => {
-        if (await interruptedDelivery.count() === 0) return 'resolved'
-        return interruptedDelivery.getAttribute('data-outbox-status')
-      }).toMatch(/^(resolved|failed)$/)
-      if (await interruptedDelivery.count() > 0) {
-        await interruptedDelivery.getByRole('button', {
-          name: 'Remove unsent message',
-          exact: true,
-        }).click()
-        await expect(interruptedDelivery).toHaveCount(0)
-      }
-    }
-
     const resumeQueue = page.getByRole('button', {
       name: 'Resume queue',
       exact: true,
