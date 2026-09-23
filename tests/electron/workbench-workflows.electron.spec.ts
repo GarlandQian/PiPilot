@@ -46,7 +46,7 @@ test('connects project actions, conversation navigation and resource views witho
     await expect(projectTasks.getByRole('button', { name: 'Workspace review', exact: true })).toBeVisible()
     await selectInspectorView(page, 'Files')
     await page.getByRole('button', { name: 'README.md', exact: true }).click()
-    const readmeResource = page.getByRole('region', { name: 'README.md', exact: true })
+    const readmeResource = page.locator('[data-workspace-file-viewer]')
     await expect(readmeResource).toBeVisible()
     await page.getByRole('button', { name: 'Navigate conversation', exact: true }).click()
     await page.getByRole('combobox', { name: 'Find a turn…', exact: true }).fill('First project')
