@@ -570,12 +570,11 @@ test('releases prompt acceptance after authoritative progress without allowing a
     await composer.fill('/fixture-command')
     await page.getByRole('button', { name: 'Send', exact: true }).click()
     await expect(composer).toHaveText('')
-    await expect(page.getByText('Fixture command ran', { exact: true }))
+    const commandNotice = page.locator('[data-conversation-notices]')
+    await expect(commandNotice.getByText('Fixture command ran', { exact: true }))
       .toBeVisible({ timeout: 20_000 })
-    await page.keyboard.press('Escape')
-    await expect(page.getByText('Fixture command ran', { exact: true })).toBeHidden()
-    await page.waitForTimeout(150)
-    await expect(page.getByText('Fixture command ran', { exact: true })).toBeHidden()
+    await commandNotice.getByRole('button', { name: 'Dismiss notification', exact: true }).click()
+    await expect(commandNotice.getByText('Fixture command ran', { exact: true })).toBeHidden()
 
     await composer.fill(doubleSubmitPrompt)
     await expect(sendButton).toBeEnabled({ timeout: 20_000 })
@@ -3805,6 +3804,7 @@ test('launches a sandboxed shell with a narrow validated bridge', { tag: '@integ
         'localPi',
         'mcpConfig',
         'modelsConfig',
+        'notifications',
         'piIntegrations',
         'sessionCatalog',
         'settings',

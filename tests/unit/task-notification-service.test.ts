@@ -364,7 +364,10 @@ describe('task notifications', () => {
     first.service.markRead()
     first.runtime.emit([runtimeSummary({ lifecycle: 'running', activity: 'interaction', outcome: undefined })])
     await first.service.dispose()
-    expect((await stat(first.filePath)).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') {
+      // Windows does not expose the POSIX mode bits passed to Node's writeFile.
+      expect((await stat(first.filePath)).mode & 0o777).toBe(0o600)
+    }
     const persisted = JSON.parse(await readFile(first.filePath, 'utf8'))
     expect(persisted.records[0].sessionFile).toBe(sessionFile)
     const restored = await setup({ filePath: first.filePath })
