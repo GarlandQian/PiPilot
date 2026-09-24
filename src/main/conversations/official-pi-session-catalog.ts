@@ -62,6 +62,12 @@ export type CurrentOfficialPiSessionHeader = z.infer<
   typeof currentOfficialPiSessionHeaderSchema
 >
 
+export function catalogIdentityForSession(scope: ConversationScope, canonicalFile: string, sessionId: string, createdAt: string) {
+  return `cat_${createHash('sha256').update(JSON.stringify([
+    conversationScopeKey(scope), canonicalFile, sessionId, createdAt,
+  ])).digest('hex')}`
+}
+
 const SESSION_CATALOG_MAX_HEADER_BYTES = 64 * 1_024
 export const SESSION_CATALOG_REFRESH_FOREGROUND_MAX_SCANS = 4
 export const SESSION_CATALOG_REFRESH_FOREGROUND_MAX_MS = 250
@@ -1293,10 +1299,7 @@ export class OfficialPiSessionCatalog {
           createdAt: candidate.createdAt,
           modifiedAt: candidate.modifiedAt,
           selectionToken,
-          catalogId: `cat_${createHash('sha256').update(JSON.stringify([
-            conversationScopeKey(scope), candidate.candidate.canonicalFile,
-            candidate.sessionId, candidate.createdAt,
-          ])).digest('hex')}`,
+          catalogId: catalogIdentityForSession(scope, candidate.candidate.canonicalFile, candidate.sessionId, candidate.createdAt),
         })
         const row = {
           candidate: candidate.candidate,

@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { applicationShutdownDecisionSchema } from '../application-shutdown'
+import { taskNotificationPresentationSchema, taskNotificationSnapshotSchema } from '../task-notifications'
 import {
   appSettingsPatchSchema,
   appSettingsSchema,
@@ -48,6 +49,8 @@ import {
   terminalResizeResultSchema,
   terminalRowsSchema,
   terminalSessionSchema,
+  terminalShellProfileIdSchema,
+  terminalShellProfileSchema,
   terminalSummarySchema,
   terminalTitleSchema,
 } from '../terminal'
@@ -65,6 +68,7 @@ import {
   conversationNavigationChangedEventSchema,
   conversationNavigationSnapshotSchema,
   conversationScopeSchema,
+  officialPiSessionSummarySchema,
   sessionCatalogDeleteResultSchema,
   sessionCatalogCursorSchema,
   sessionCatalogListResultSchema,
@@ -90,6 +94,12 @@ import {
 } from '../external-control'
 
 export const ipcChannels = {
+  notificationsGet: 'pipilot:notifications:get',
+  notificationsPresentation: 'pipilot:notifications:presentation',
+  notificationsRead: 'pipilot:notifications:read',
+  notificationsClear: 'pipilot:notifications:clear',
+  notificationsResolve: 'pipilot:notifications:resolve',
+  notificationsChanged: 'pipilot:notifications:changed',
   appGetInfo: 'pipilot:app:get-info',
   appShutdownRequested: 'pipilot:app:shutdown-requested',
   appShutdownRespond: 'pipilot:app:shutdown-respond',
@@ -143,7 +153,9 @@ export const ipcChannels = {
   settingsUpdate: 'pipilot:settings:update',
   shellOpenExternal: 'pipilot:shell:open-external',
   terminalCreate: 'pipilot:terminal:create',
+  terminalRestart: 'pipilot:terminal:restart',
   terminalList: 'pipilot:terminal:list',
+  terminalListShellProfiles: 'pipilot:terminal:list-shell-profiles',
   terminalAttach: 'pipilot:terminal:attach',
   terminalRename: 'pipilot:terminal:rename',
   terminalClose: 'pipilot:terminal:close',
@@ -230,6 +242,24 @@ function defineIpcContract<
 }
 
 const requestFields = { context: requestContextSchema }
+
+export const notificationsGetContract = defineIpcContract(
+  ipcChannels.notificationsGet, z.object(requestFields).strict(), taskNotificationSnapshotSchema,
+)
+export const notificationsPresentationContract = defineIpcContract(
+  ipcChannels.notificationsPresentation,
+  z.object({ ...requestFields, presentation: taskNotificationPresentationSchema }).strict(),
+  taskNotificationSnapshotSchema,
+)
+export const notificationsReadContract = defineIpcContract(
+  ipcChannels.notificationsRead, z.object({ ...requestFields, id: z.uuid().optional() }).strict(), taskNotificationSnapshotSchema,
+)
+export const notificationsClearContract = defineIpcContract(
+  ipcChannels.notificationsClear, z.object({ ...requestFields, id: z.uuid().optional() }).strict(), taskNotificationSnapshotSchema,
+)
+export const notificationsResolveContract = defineIpcContract(
+  ipcChannels.notificationsResolve, z.object({ ...requestFields, id: z.uuid() }).strict(), officialPiSessionSummarySchema,
+)
 
 export const appInfoSchema = z.object({
   name: z.literal('PiPilot'),
@@ -515,12 +545,14 @@ export const workspaceDiffListContract = defineIpcContract(ipcChannels.workspace
 export const workspaceDiffReadContract = defineIpcContract(ipcChannels.workspaceDiffRead, z.object({ ...workspaceContentRequestFields, path: workspaceRelativePathSchema, stage: workspaceChangeStageSchema.default('unstaged') }).strict(), workspaceDiffFileSchema)
 
 const terminalRequestFields = { ...requestFields, scope: conversationScopeSchema, terminalId: terminalIdSchema }
+export const terminalListShellProfilesContract = defineIpcContract(ipcChannels.terminalListShellProfiles, z.object(requestFields).strict(), z.array(terminalShellProfileSchema))
 export const terminalListContract = defineIpcContract(ipcChannels.terminalList, z.object({ ...requestFields, scope: conversationScopeSchema }).strict(), z.array(terminalSummarySchema))
 export const terminalAttachContract = defineIpcContract(ipcChannels.terminalAttach, z.object({ ...terminalRequestFields, cols: terminalColumnsSchema, rows: terminalRowsSchema }).strict(), terminalSessionSchema)
 export const terminalRenameContract = defineIpcContract(ipcChannels.terminalRename, z.object({ ...terminalRequestFields, title: terminalTitleSchema }).strict(), terminalSummarySchema)
 export const terminalCloseContract = defineIpcContract(ipcChannels.terminalClose, z.object(terminalRequestFields).strict(), terminalActionResultSchema)
 export const terminalClearContract = defineIpcContract(ipcChannels.terminalClear, z.object(terminalRequestFields).strict(), terminalActionResultSchema)
-export const terminalCreateContract = defineIpcContract(ipcChannels.terminalCreate, z.object({ ...requestFields, scope: conversationScopeSchema, cols: terminalColumnsSchema, rows: terminalRowsSchema }).strict(), terminalSessionSchema)
+export const terminalCreateContract = defineIpcContract(ipcChannels.terminalCreate, z.object({ ...requestFields, scope: conversationScopeSchema, cols: terminalColumnsSchema, rows: terminalRowsSchema, shellProfileId: terminalShellProfileIdSchema.optional() }).strict(), terminalSessionSchema)
+export const terminalRestartContract = defineIpcContract(ipcChannels.terminalRestart, z.object({ ...terminalRequestFields, cols: terminalColumnsSchema, rows: terminalRowsSchema }).strict(), terminalSessionSchema)
 export const terminalInputContract = defineIpcContract(ipcChannels.terminalInput, z.object({ ...terminalRequestFields, data: z.string().min(1).max(TERMINAL_INPUT_LIMIT) }).strict(), terminalActionResultSchema)
 export const terminalResizeContract = defineIpcContract(ipcChannels.terminalResize, z.object({ ...terminalRequestFields, cols: terminalColumnsSchema, rows: terminalRowsSchema }).strict(), terminalResizeResultSchema)
 export const terminalKillContract = defineIpcContract(ipcChannels.terminalKill, z.object(terminalRequestFields).strict(), terminalActionResultSchema)

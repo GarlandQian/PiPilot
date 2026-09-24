@@ -111,6 +111,11 @@ export interface ComposerMentionInsertionRequest {
   sequence: number
 }
 
+export interface ComposerFocusRequest {
+  scopeKey: string
+  sequence: number
+}
+
 export interface ComposerProps {
   connected: boolean
   /** False while navigation has not yet bound input to a definite conversation. */
@@ -128,6 +133,7 @@ export interface ComposerProps {
   thinkingLevels: readonly LocalPiThinkingLevel[]
   draftReplacement?: { revision: number; text: string } | null
   mentionInsertionRequest?: ComposerMentionInsertionRequest | null
+  focusRequest?: ComposerFocusRequest | null
   scopeKey: string
   /** Stable conversation identity, independent of a restarted Runtime. */
   draftKey?: string
@@ -473,10 +479,12 @@ function initialEditorChange(): ComposerEditorChange {
 export function Composer(props: ComposerProps) {
   const [drafts] = React.useState(() => new SessionComposerDrafts())
   const consumedMentionInsertionSequence = React.useRef(0)
+  const consumedFocusSequence = React.useRef(0)
   React.useEffect(() => () => drafts.dispose(), [drafts])
   const draftKey = props.draftKey ?? props.scopeKey
   return <SessionComposer key={draftKey} {...props} drafts={drafts} draftKey={draftKey}
-    consumedMentionInsertionSequence={consumedMentionInsertionSequence} />
+    consumedMentionInsertionSequence={consumedMentionInsertionSequence}
+    consumedFocusSequence={consumedFocusSequence} />
 }
 
 function SessionComposer({
@@ -495,10 +503,12 @@ function SessionComposer({
   thinkingLevels,
   draftReplacement,
   mentionInsertionRequest,
+  focusRequest,
   scopeKey,
   draftKey,
   drafts,
   consumedMentionInsertionSequence,
+  consumedFocusSequence,
   operationOwnerKey = scopeKey,
   sendShortcut,
   runningSubmitPreference,
@@ -519,6 +529,7 @@ function SessionComposer({
   drafts: SessionComposerDrafts
   draftKey: string
   consumedMentionInsertionSequence: React.RefObject<number>
+  consumedFocusSequence: React.RefObject<number>
 }) {
   const t = useT()
   const hasContextSource = onSearchContext !== undefined
@@ -896,6 +907,18 @@ function SessionComposer({
   const focusEditor = React.useCallback((position: 'current' | 'end' = 'end') => {
     editorRef.current?.focus(position)
   }, [])
+
+  React.useEffect(() => {
+    if (!focusRequest || focusRequest.sequence <= consumedFocusSequence.current) return
+    if (focusRequest.scopeKey !== scopeKey) {
+      // A request from an abandoned conversation must never replay on return.
+      consumedFocusSequence.current = focusRequest.sequence
+      return
+    }
+    if (!connected || !draftEditable || !editorRef.current) return
+    consumedFocusSequence.current = focusRequest.sequence
+    focusEditor('current')
+  }, [connected, consumedFocusSequence, draftEditable, focusEditor, focusRequest, scopeKey])
 
   React.useEffect(() => {
     const request = mentionInsertionRequest

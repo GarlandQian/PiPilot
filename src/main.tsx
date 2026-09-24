@@ -4,6 +4,7 @@ import { WorkspaceProvider } from '@/store/workspace'
 import { PiRpcProvider } from '@/store/pi-rpc'
 import { PiIntegrationsProvider } from '@/store/pi-integrations'
 import { ApplicationUpdateProvider } from '@/store/application-update'
+import { TaskNotificationsProvider } from '@/store/task-notifications'
 import { ExternalControlProvider } from '@/store/external-control'
 import { ConfigurationDocumentsProvider } from '@/store/configuration-documents'
 import { RendererErrorBoundary } from '@/components/frame/RendererErrorBoundary'
@@ -21,7 +22,9 @@ root.render(window.pipilot ? (
             <ApplicationUpdateProvider>
               <PiRpcProvider>
                 <ConfigurationDocumentsProvider>
-                  <App />
+                  <TaskNotificationsProvider>
+                    <App />
+                  </TaskNotificationsProvider>
                 </ConfigurationDocumentsProvider>
               </PiRpcProvider>
             </ApplicationUpdateProvider>

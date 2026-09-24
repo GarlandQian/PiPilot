@@ -1,3 +1,9 @@
+import {
+  terminalCustomProfilesSchema,
+  terminalShellProfileIdSchema,
+  type TerminalCustomProfile,
+} from './terminal-profiles'
+
 export const SETTINGS_SCHEMA_VERSION = 1 as const
 
 export type ThemeMode = 'system' | 'light' | 'dark'
@@ -27,6 +33,8 @@ export interface AppearanceSettings {
 export interface TerminalSettings {
   fontFamily: string
   fontSize: number
+  defaultProfileId: string | null
+  profiles: TerminalCustomProfile[]
 }
 
 export interface ComposerSettings {
@@ -39,6 +47,7 @@ export interface AppSettings {
   appearance: AppearanceSettings
   composer: ComposerSettings
   terminal: TerminalSettings
+  notifications: { desktop: boolean }
 }
 
 export interface AppSettingsPatch {
@@ -46,6 +55,7 @@ export interface AppSettingsPatch {
   appearance?: Partial<AppearanceSettings>
   composer?: Partial<ComposerSettings>
   terminal?: Partial<TerminalSettings>
+  notifications?: Partial<AppSettings['notifications']>
 }
 
 export interface PersistedSettingsDocument {
@@ -54,6 +64,7 @@ export interface PersistedSettingsDocument {
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
+  notifications: { desktop: true },
   locale: 'system',
   appearance: {
     theme: 'system',
@@ -75,6 +86,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   terminal: {
     fontFamily: '',
     fontSize: 13,
+    defaultProfileId: null,
+    profiles: [],
   },
 }
 
@@ -83,7 +96,8 @@ const THEMES: readonly ThemeMode[] = ['system', 'light', 'dark']
 const DENSITIES: readonly Density[] = ['compact', 'comfortable']
 const COMPOSER_SEND_SHORTCUTS: readonly ComposerSendShortcut[] = ['enter', 'mod-enter']
 const RUNNING_SUBMIT_PREFERENCES: readonly RunningSubmitPreference[] = ['queue', 'steer']
-const APP_KEYS = ['locale', 'appearance', 'composer', 'terminal'] as const
+const LEGACY_APP_KEYS = ['locale', 'appearance', 'composer', 'terminal'] as const
+const APP_KEYS = [...LEGACY_APP_KEYS, 'notifications'] as const
 const APPEARANCE_KEYS = [
   'theme',
   'uiFontFamily',
@@ -97,7 +111,8 @@ const APPEARANCE_KEYS = [
   'showLineNumbers',
   'compactToolCards',
 ] as const
-const TERMINAL_KEYS = ['fontFamily', 'fontSize'] as const
+const TERMINAL_KEYS = ['fontFamily', 'fontSize', 'defaultProfileId', 'profiles'] as const
+const LEGACY_TERMINAL_KEYS = ['fontFamily', 'fontSize'] as const
 const COMPOSER_KEYS = ['sendShortcut', 'runningSubmit'] as const
 const LEGACY_COMPOSER_KEYS = ['sendShortcut'] as const
 
@@ -170,6 +185,12 @@ function isExactAppearance(value: unknown): value is AppearanceSettings {
 
 function isExactTerminal(value: unknown): value is TerminalSettings {
   if (!isRecord(value) || !hasExactKeys(value, TERMINAL_KEYS)) return false
+  return isTerminalTypography(value) &&
+    terminalShellProfileIdSchema.nullable().safeParse(value.defaultProfileId).success &&
+    terminalCustomProfilesSchema.safeParse(value.profiles).success
+}
+
+function isTerminalTypography(value: Record<string, unknown>) {
   return (
     typeof value.fontFamily === 'string' &&
     value.fontFamily.length <= TERMINAL_FONT_FAMILY_LIMIT &&
@@ -197,17 +218,26 @@ function isLegacyComposer(value: unknown) {
 
 function isMigratableSettings(value: unknown) {
   return isRecord(value) &&
-    hasExactKeys(value, APP_KEYS) &&
+    (hasExactKeys(value, LEGACY_APP_KEYS) || (hasExactKeys(value, APP_KEYS) && isExactNotifications(value.notifications))) &&
     LOCALES.includes(value.locale as Locale) &&
     isExactAppearance(value.appearance) &&
-    isLegacyComposer(value.composer) &&
-    isExactTerminal(value.terminal)
+    (isLegacyComposer(value.composer) || isExactComposer(value.composer)) &&
+    (isExactTerminal(value.terminal) || (
+      isRecord(value.terminal) &&
+      hasExactKeys(value.terminal, LEGACY_TERMINAL_KEYS) &&
+      isTerminalTypography(value.terminal)
+    ))
+}
+
+function isExactNotifications(value: unknown): value is AppSettings['notifications'] {
+  return isRecord(value) && hasExactKeys(value, ['desktop']) && typeof value.desktop === 'boolean'
 }
 
 function isExactSettings(value: unknown): value is AppSettings {
   return (
     isRecord(value) &&
     hasExactKeys(value, APP_KEYS) &&
+    isExactNotifications(value.notifications) &&
     LOCALES.includes(value.locale as Locale) &&
     isExactAppearance(value.appearance) &&
     isExactComposer(value.composer) &&
@@ -228,9 +258,13 @@ export function sanitizeSettings(
   const appearance = isRecord(source.appearance) ? source.appearance : {}
   const composer = isRecord(source.composer) ? source.composer : {}
   const terminal = isRecord(source.terminal) ? source.terminal : {}
+  const notifications = isRecord(source.notifications) ? source.notifications : {}
+  const defaultProfile = terminalShellProfileIdSchema.nullable().safeParse(terminal.defaultProfileId)
+  const profiles = terminalCustomProfilesSchema.safeParse(terminal.profiles)
 
   return {
     locale: oneOf(source.locale, LOCALES, fallback.locale),
+    notifications: { desktop: booleanOr(notifications.desktop, fallback.notifications.desktop) },
     appearance: {
       theme: oneOf(appearance.theme, THEMES, fallback.appearance.theme),
       uiFontFamily: fontNameOr(appearance.uiFontFamily, fallback.appearance.uiFontFamily),
@@ -284,6 +318,8 @@ export function sanitizeSettings(
         fallback.terminal.fontFamily,
       ),
       fontSize: terminalFontSizeOr(terminal.fontSize, fallback.terminal.fontSize),
+      defaultProfileId: defaultProfile.success ? defaultProfile.data : fallback.terminal.defaultProfileId,
+      profiles: profiles.success ? profiles.data : structuredClone(fallback.terminal.profiles),
     },
   }
 }
@@ -293,6 +329,7 @@ export function mergeSettings(base: AppSettings, patch: AppSettingsPatch): AppSe
     {
       ...base,
       ...patch,
+      notifications: { ...base.notifications, ...patch.notifications },
       appearance: {
         ...base.appearance,
         ...patch.appearance,

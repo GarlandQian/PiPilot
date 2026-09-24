@@ -163,6 +163,7 @@ test('waits for renderer subscriptions before starting configured Pi', async ({}
       settings: {
         ...DEFAULT_SETTINGS,
         locale: 'en-US',
+        notifications: { desktop: false },
       },
     }, null, 2)}\n`,
   )
@@ -192,12 +193,20 @@ test('waits for renderer subscriptions before starting configured Pi', async ({}
     const notificationButton = page.getByRole('button', {
       name: /^Notifications/,
     })
-    await notificationButton.click()
-    await expect(page.getByText('Startup fixture notification', { exact: true }))
+    const conversationNotices = page.locator('[data-conversation-notices]')
+    await expect(conversationNotices.getByText('Startup fixture notification', { exact: true }))
       .toBeVisible()
+    await expect(notificationButton).toHaveAttribute('aria-expanded', 'false')
+    const notifications = page.getByRole('dialog', { name: 'Notifications', exact: true })
+    await expect(notifications).toHaveCount(0)
     await expect(page.getByText(/Startup fixture widget/)).toBeVisible()
     await expect(page.getByText(/startup: ready/)).toBeVisible()
     await notificationButton.click()
+    await expect(notifications).toBeVisible()
+    await expect(notifications.getByText('Startup fixture notification', { exact: true })).toHaveCount(0)
+    await expect(notifications.getByText(/Startup fixture widget/)).toHaveCount(0)
+    await notificationButton.click()
+    await expect(conversationNotices.getByText('Startup fixture notification', { exact: true })).toBeVisible()
     await expect(page).toHaveTitle('Startup fixture title')
     await expect(page.getByRole('textbox', { name: 'Message input' }))
       .toHaveText('startup extension draft')
@@ -2253,6 +2262,7 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
       settings: {
         ...DEFAULT_SETTINGS,
         locale: 'en-US',
+        notifications: { desktop: false },
       },
     }, null, 2)}\n`,
     'utf8',
@@ -2686,11 +2696,13 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
     const fixtureWidget = uiResponse.getByText('Fixture widget', { exact: true })
     await expect(fixtureWidget).toBeVisible()
     const notificationButton = page.getByRole('button', {
-      name: 'Notifications',
-      exact: true,
+      name: /^Notifications/,
     })
     await notificationButton.click()
-    await expect(page.getByText('No notifications', { exact: true })).toBeVisible()
+    const notifications = page.getByRole('dialog', { name: 'Notifications', exact: true })
+    await expect(notifications).toBeVisible()
+    await expect(notifications.getByText('Fixture notification', { exact: true })).toHaveCount(0)
+    await expect(notifications.getByText('Fixture widget', { exact: true })).toHaveCount(0)
     await notificationButton.click()
     await expect(page).toHaveTitle('PiPilot')
     await expect(transcriptLog.getByText('Fixture response: ui', { exact: true })).toBeVisible()
@@ -2714,7 +2726,9 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
       .toMatchObject({ activeScope: { kind: 'project' } })
     await expect(page.getByText('Fixture response: ui', { exact: true })).toHaveCount(0)
     await notificationButton.click()
-    await expect(page.getByText('No notifications', { exact: true })).toBeVisible()
+    await expect(notifications).toBeVisible()
+    await expect(notifications.getByText('Fixture notification', { exact: true })).toHaveCount(0)
+    await expect(notifications.getByText('Fixture widget', { exact: true })).toHaveCount(0)
     await notificationButton.click()
     await expect(page.getByText('Fixture widget', { exact: true })).toHaveCount(0)
     await expect(page.getByText('fixture: ready', { exact: true })).toHaveCount(0)

@@ -79,6 +79,9 @@ import enUS from '../i18n/locales/en-US.json'
 import zhCN from '../i18n/locales/zh-CN.json'
 import { registerApplicationUpdateIpc } from './ipc/register-application-update-ipc'
 import { registerExternalControlIpc } from './ipc/register-external-control-ipc'
+import { registerNotificationsIpc } from './ipc/register-notifications-ipc'
+import { TaskNotificationService } from './notifications/task-notification-service'
+import { createNativeTaskNotifications } from './notifications/native-task-notifications'
 import {
   resolveExternalControlLauncherSource,
   resolveExternalControlMcpConfiguration,
@@ -246,15 +249,16 @@ const e2eTerminalShell = !app.isPackaged
 const terminalService = new TerminalService(
   () => conversationNavigationRepository.get().activeScope,
   (scope) => conversationScopeResolver.prepare(scope),
-  e2eTerminalShell
-    ? {
+  {
+    getTerminalSettings: () => settingsRepository.get().settings.terminal,
+    ...(e2eTerminalShell ? {
         resolveShell: () => ({
           file: resolve(e2eTerminalShell),
           args: [],
           label: basename(e2eTerminalShell).slice(0, 128),
         }),
-      }
-    : {},
+      } : {}),
+  },
 )
 
 let mainWindow: BrowserWindow | null = null
@@ -275,6 +279,8 @@ let applicationUpdateIpcController: ReturnType<typeof registerApplicationUpdateI
 let externalControlService: ExternalControlLifecycleService | null = null
 let externalControlIpcController: ReturnType<typeof registerExternalControlIpc> | null = null
 let shutdownCoordinator: ApplicationShutdownCoordinator | null = null
+let taskNotificationService: TaskNotificationService | null = null
+let notificationIpcController: ReturnType<typeof registerNotificationsIpc> | null = null
 
 function activeApplicationWork() {
   const primaryPi = Boolean(
@@ -320,6 +326,10 @@ async function disposeApplicationResources() {
   applicationUpdateIpcController = null
   applicationUpdateService?.dispose()
   applicationUpdateService = null
+  notificationIpcController?.dispose()
+  notificationIpcController = null
+  await taskNotificationService?.dispose()
+  taskNotificationService = null
   externalControlIpcController?.dispose()
   externalControlIpcController = null
   localPiIpcController?.dispose()
@@ -366,6 +376,9 @@ function revealMainWindow() {
   if (mainWindow.isMinimized()) mainWindow.restore()
   mainWindow.show()
   mainWindow.focus()
+  // Restoring a tray window can keep the renderer's focus/visibility unchanged.
+  // Recheck its last ready presentation after the native window is shown.
+  taskNotificationService?.refreshPresentation()
 }
 
 function requestApplicationQuit() {
@@ -433,8 +446,21 @@ async function openMainWindow() {
     },
     onWindowCreated(window) {
       mainWindow = window
+      const clearNotificationPresentation = () => {
+        taskNotificationService?.setPresentation({ scope: null, sessionId: null })
+      }
+      window.webContents.on('did-start-navigation', (details) => {
+        if (details.isMainFrame && !details.isSameDocument) clearNotificationPresentation()
+      })
+      window.webContents.on('render-process-gone', clearNotificationPresentation)
+      const refreshNotificationPresentation = () => taskNotificationService?.refreshPresentation()
+      window.on('focus', refreshNotificationPresentation)
+      window.on('show', refreshNotificationPresentation)
       window.once('closed', () => {
-        if (mainWindow === window) mainWindow = null
+        if (mainWindow === window) {
+          clearNotificationPresentation()
+          mainWindow = null
+        }
       })
     },
     shouldHideOnClose: () => !(shutdownCoordinator?.isFinalizing ?? false),
@@ -451,12 +477,7 @@ const hasSingleInstanceLock = app.requestSingleInstanceLock()
 if (!hasSingleInstanceLock) {
   app.quit()
 } else {
-  app.on('second-instance', () => {
-    if (!mainWindow) return
-    if (mainWindow.isMinimized()) mainWindow.restore()
-    mainWindow.show()
-    mainWindow.focus()
-  })
+  app.on('second-instance', revealMainWindow)
 
   app.whenReady()
     .then(async () => {
@@ -481,6 +502,22 @@ if (!hasSingleInstanceLock) {
             conversationScopeResolver,
           )
           const runtimeHost = piRuntimeFrontend
+      taskNotificationService = new TaskNotificationService({
+        filePath: join(app.getPath('userData'), 'task-notifications.json'),
+        runtime: runtimeHost,
+        catalog: officialPiSessionCatalog,
+        desktopEnabled: () => settingsRepository.get().settings.notifications.desktop,
+        isWindowForeground: () => Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && mainWindow.isFocused()),
+        revealWindow: revealMainWindow,
+        projectName: (scope) => scope.kind === 'project' ? workspaceRepository.getLocation(scope.workspaceId)?.name : undefined,
+        native: createNativeTaskNotifications(() => {
+          const locale = settingsRepository.get().settings.locale
+          return locale === 'system' ? app.getLocale() : locale
+        }),
+        onDiagnostic: () => diagnostics.record('warn', 'TASK_NOTIFICATION_OPERATION_FAILED'),
+      })
+      await taskNotificationService.initialize()
+      notificationIpcController = registerNotificationsIpc({ getMainWindow: () => mainWindow, policy, service: taskNotificationService })
       const synchronizeAffectedPiRuntimes = async (
         scope: { kind: 'global' } | { kind: 'project' },
         cwd: string,

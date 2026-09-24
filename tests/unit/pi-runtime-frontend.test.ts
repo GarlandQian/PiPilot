@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   PI_RUNTIME_ABORT_GRACE_TIMEOUT_MS,
+  PI_RUNTIME_PENDING_UI_REQUEST_MAX,
   PiRuntimeFrontend,
   projectRuntimeSessionStatuses,
   type PiRuntimeFrontendOptions,
@@ -19,6 +20,7 @@ import { RuntimeMaintenanceGate, type RuntimeMaintenancePermit } from '../../src
 import type { ConversationScope } from '../../src/shared/conversation-scope'
 import type {
   LocalPiDeliverySnapshot,
+  LocalPiExtensionUiRequest,
   LocalPiExtensionUiResponse,
   LocalPiRpcEvent,
   LocalPiRpcCommand,
@@ -1708,6 +1710,50 @@ describe('PiRuntimeFrontend', () => {
         status: 'completed',
       }),
     ])
+    expect(publishedStatuses.flatMap((statuses) => statuses ?? []).some((status) => status.needsUserInput)).toBe(false)
+    await frontend.dispose()
+  })
+
+  it('keeps background UI private and protects its runtime while Main decides to cancel it', async () => {
+    const { frontend, pool } = createHarness({
+      maxRetainedIdleRuntimesPerHost: 0,
+      isPersistedSessionFile: () => true,
+    })
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' })
+    const selected = pool.runtime!
+    const background = await frontend.acquireControlRuntime({
+      scope: projectScope, sessionFile: '/sessions/externally-controlled.jsonl',
+    })
+    const gate = deferred()
+    const publishedStatuses: Array<LocalPiRuntimeSnapshot['sessionStatuses']> = []
+    const publishedInteractions: string[] = []
+    frontend.subscribe((snapshot) => publishedStatuses.push(snapshot.sessionStatuses))
+    frontend.subscribeControlRuntimes((summaries) => {
+      publishedInteractions.push(...summaries.filter((summary) => summary.activity === 'interaction')
+        .map((summary) => summary.runtimeId))
+    })
+    const ui = vi.fn()
+    frontend.subscribeUiRequests(ui)
+    frontend.subscribeAllUiRequests(async (event, handle) => {
+      await gate.promise
+      await frontend.respondToControlExtensionUi(handle, {
+        type: 'extension_ui_response', id: event.request.id, cancelled: true,
+      })
+    })
+
+    pool.emitUiRequest(uiRequest(background.runtimeId, background.generation, 'external-only', 'confirm'))
+    frontend.releaseControlRuntime(background)
+    // An unrelated runtime publication must not reveal the unreviewed dialog.
+    pool.emitEvent(runtimeEvent(selected.runtimeId, selected.generation, { type: 'agent_start' }))
+    expect(frontend.listControlRuntimes().find((runtime) => runtime.runtimeId === background.runtimeId)
+      ?.activity).not.toBe('interaction')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(pool.runtimeForSession('/sessions/externally-controlled.jsonl')).not.toBeNull()
+    gate.resolve()
+    await vi.waitFor(() => expect(pool.acknowledgedEvents.filter((event) => event.kind === 'ui_request')).toHaveLength(1))
+    expect(publishedInteractions).toEqual([])
+    expect(publishedStatuses.flatMap((statuses) => statuses ?? []).some((status) => status.needsUserInput)).toBe(false)
+    expect(ui).not.toHaveBeenCalled()
     await frontend.dispose()
   })
 
@@ -2726,6 +2772,268 @@ describe('PiRuntimeFrontend', () => {
       state: 'error',
       diagnostics: [{ code: 'PI_RUNTIME_HOST_RECOVERY_FAILED' }],
     })
+    await frontend.dispose()
+  })
+})
+
+describe('pending extension UI selection replay', () => {
+  const questionRequests = [
+    { type: 'extension_ui_request', id: 'background-question', method: 'confirm', title: 'Review build?', message: 'Use the generated output?' },
+    { type: 'extension_ui_request', id: 'background-question', method: 'select', title: 'Choose target', options: ['Preview', 'Production'] },
+    { type: 'extension_ui_request', id: 'background-question', method: 'input', title: 'Name target', placeholder: 'Preview name' },
+    { type: 'extension_ui_request', id: 'background-question', method: 'editor', title: 'Review instructions', prefill: 'Keep the original instructions.' },
+  ] satisfies LocalPiExtensionUiRequest[]
+
+  it.each(questionRequests)('replays the original $method question once after cached session hydration', async (request) => {
+    const { frontend, pool } = createHarness()
+    const selectedTarget = { scope: projectScope, sessionFile: '/sessions/selected.jsonl' }
+    const backgroundTarget = { scope: projectScope, sessionFile: '/sessions/background-question.jsonl' }
+    await frontend.start(selectedTarget)
+    const background = await frontend.acquireControlRuntime(backgroundTarget)
+    const ui: PiHostUiRequestEventEnvelope[] = []
+    const order: string[] = []
+    const observedByMain = vi.fn()
+    frontend.subscribeAllUiRequests(observedByMain)
+    frontend.subscribe((snapshot) => {
+      if (snapshot.state === 'ready' && snapshot.sessionState?.sessionId === background.sessionId) order.push('hydrated')
+    })
+    frontend.subscribeUiRequests((envelope) => {
+      ui.push(envelope)
+      order.push('question')
+    })
+    const original = { ...uiRequest(background.runtimeId, background.generation, request.id), request }
+    pool.emitUiRequest(original)
+    await vi.waitFor(() => expect(pool.acknowledgedEvents).toHaveLength(1))
+    expect(ui).toEqual([])
+    await frontend.replace(backgroundTarget)
+    expect(ui).toEqual([original])
+    expect(order.indexOf('hydrated')).toBeLessThan(order.indexOf('question'))
+    await frontend.replayPendingSelectedUiRequests()
+    await frontend.replace(backgroundTarget)
+    expect(ui).toEqual([original])
+    expect(observedByMain).toHaveBeenCalledOnce()
+    expect(pool.acknowledgedEvents).toHaveLength(1)
+
+    // Returning from another task needs the outstanding question again, while
+    // repeated hydration of the already-selected task must not duplicate it.
+    await frontend.replace(selectedTarget)
+    await frontend.replace(backgroundTarget)
+    expect(ui).toEqual([original, original])
+    await frontend.respondToExtensionUi({ type: 'extension_ui_response', id: request.id, cancelled: true }, background.generation)
+    await frontend.replayPendingSelectedUiRequests({ force: true })
+    expect(ui).toHaveLength(2)
+    await frontend.dispose()
+  })
+
+  it.each(['answered', 'expired', 'aborted', 'replaced'] as const)('does not replay a background question that was %s', async (settlement) => {
+    const { frontend, pool } = createHarness()
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' })
+    const target = { scope: projectScope, sessionFile: '/sessions/settled-question.jsonl' }
+    const background = await frontend.acquireControlRuntime(target)
+    const selectedUi = vi.fn()
+    frontend.subscribeUiRequests(selectedUi)
+    const envelope = uiRequest(background.runtimeId, background.generation, 'settled-question', 'confirm')
+    pool.emitUiRequest(envelope)
+    if (settlement === 'answered') {
+      await frontend.respondToControlExtensionUi(background, {
+        type: 'extension_ui_response', id: envelope.request.id, confirmed: true,
+      })
+    } else {
+      pool.emitUiRequest({ ...envelope, sequence: 2, request: {
+        type: 'extension_ui_request', id: envelope.request.id, method: 'dismiss', reason: settlement,
+      } })
+    }
+    await frontend.replace(target)
+    await frontend.replayPendingSelectedUiRequests({ force: true })
+    expect(selectedUi).not.toHaveBeenCalled()
+    expect(frontend.getSnapshot().sessionStatuses?.find(({ sessionId }) => sessionId === background.sessionId)
+      ?.needsUserInput).toBeUndefined()
+    await frontend.dispose()
+  })
+
+  it('drops a question that expires while its cached session is hydrating', async () => {
+    const { frontend, pool } = createHarness()
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' })
+    const target = { scope: projectScope, sessionFile: '/sessions/expiring-question.jsonl' }
+    const background = await frontend.acquireControlRuntime(target)
+    const ui = vi.fn()
+    frontend.subscribeUiRequests(ui)
+    const envelope = uiRequest(background.runtimeId, background.generation, 'expires-during-hydration', 'confirm')
+    pool.emitUiRequest(envelope)
+    const sampled = deferred()
+    const release = deferred()
+    pool.nextStateReadGate = { sampled: sampled.resolve, release: release.promise }
+    const activation = frontend.replace(target)
+    await sampled.promise
+    await frontend.replayPendingSelectedUiRequests({ force: true })
+    expect(ui).not.toHaveBeenCalled()
+    pool.emitUiRequest({ ...envelope, sequence: 2, request: {
+      type: 'extension_ui_request', id: envelope.request.id, method: 'dismiss', reason: 'expired',
+    } })
+    release.resolve()
+    await activation
+    expect(ui).not.toHaveBeenCalled()
+    await frontend.dispose()
+  })
+
+  it('delivers after Main consumption when the formerly background runtime becomes selected', async () => {
+    const { frontend, pool } = createHarness()
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' })
+    const target = { scope: projectScope, sessionFile: '/sessions/delayed-question.jsonl' }
+    const background = await frontend.acquireControlRuntime(target)
+    const mainGate = deferred()
+    frontend.subscribeAllUiRequests(() => mainGate.promise)
+    const ui = vi.fn()
+    frontend.subscribeUiRequests(ui)
+    const envelope = uiRequest(background.runtimeId, background.generation, 'delayed-question', 'confirm')
+    pool.emitUiRequest(envelope)
+    await frontend.replace(target)
+    expect(ui).not.toHaveBeenCalled()
+    expect(frontend.getSnapshot().sessionStatuses?.some((status) => status.needsUserInput)).toBe(false)
+    mainGate.resolve()
+    await vi.waitFor(() => expect(ui).toHaveBeenCalledExactlyOnceWith(envelope))
+    expect(frontend.getSnapshot().sessionStatuses?.find((status) => status.sessionId === background.sessionId)
+      ?.needsUserInput).toBe(true)
+    await frontend.replayPendingSelectedUiRequests()
+    expect(ui).toHaveBeenCalledOnce()
+    await frontend.dispose()
+  })
+
+  it('does not retain a question answered by Main while its newly selected runtime is hydrating', async () => {
+    const { frontend, pool } = createHarness()
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' })
+    const target = { scope: projectScope, sessionFile: '/sessions/main-answered.jsonl' }
+    const background = await frontend.acquireControlRuntime(target)
+    const mainGate = deferred()
+    frontend.subscribeAllUiRequests(async (envelope, handle) => {
+      await mainGate.promise
+      await frontend.respondToControlExtensionUi(handle, {
+        type: 'extension_ui_response', id: envelope.request.id, cancelled: true,
+      })
+    })
+    const ui = vi.fn()
+    frontend.subscribeUiRequests(ui)
+    pool.emitUiRequest(uiRequest(background.runtimeId, background.generation, 'main-answered', 'confirm'))
+    await frontend.replace(target)
+    mainGate.resolve()
+    await vi.waitFor(() => expect(pool.acknowledgedEvents).toHaveLength(1))
+    await frontend.replayPendingSelectedUiRequests({ force: true })
+    expect(ui).not.toHaveBeenCalled()
+    await frontend.dispose()
+  })
+
+  it('does not forward an old selected runtime question after selection changes during Main consumption', async () => {
+    const { frontend, pool } = createHarness()
+    const originalTarget = { scope: projectScope, sessionFile: '/sessions/original-question.jsonl' }
+    await frontend.start(originalTarget)
+    const originalRuntime = pool.runtime!
+    const mainGate = deferred()
+    frontend.subscribeAllUiRequests(() => mainGate.promise)
+    const ui = vi.fn()
+    frontend.subscribeUiRequests(ui)
+    const original = uiRequest(originalRuntime.runtimeId, originalRuntime.generation, 'old-selection-question', 'confirm')
+    pool.emitUiRequest(original)
+    await frontend.replace({ scope: projectScope, sessionFile: '/sessions/new-selection.jsonl' })
+    mainGate.resolve()
+    await vi.waitFor(() => expect(pool.acknowledgedEvents).toHaveLength(1))
+    expect(ui).not.toHaveBeenCalled()
+    await frontend.replace(originalTarget)
+    expect(ui).toHaveBeenCalledExactlyOnceWith(original)
+    await frontend.dispose()
+  })
+
+  it('clears old session generations and ignores their late requests', async () => {
+    const { frontend, pool } = createHarness()
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' })
+    const background = await frontend.acquireControlRuntime({
+      scope: projectScope, sessionFile: '/sessions/old-question.jsonl',
+    })
+    const old = uiRequest(background.runtimeId, background.generation, 'old-question', 'confirm')
+    pool.emitUiRequest(old)
+    pool.rebindRuntime(background.runtimeId, '/sessions/rebound-question.jsonl')
+    expect(frontend.listControlRuntimes().find(({ runtimeId }) => runtimeId === background.runtimeId)
+      ?.activity).not.toBe('interaction')
+    pool.emitUiRequest({ ...old, sequence: 2 })
+    const current = uiRequest(background.runtimeId, background.generation + 1, 'current-question', 'confirm')
+    pool.emitUiRequest(current)
+    const ui = vi.fn()
+    frontend.subscribeUiRequests(ui)
+    await frontend.replace({ scope: projectScope, sessionFile: '/sessions/rebound-question.jsonl' })
+    expect(ui).toHaveBeenCalledExactlyOnceWith(current)
+    await frontend.replayPendingSelectedUiRequests()
+    expect(ui).toHaveBeenCalledOnce()
+    await frontend.dispose()
+  })
+
+  it('resyncs only still-pending dialogs after Renderer listeners are replaced, never one-shot UI', async () => {
+    const { frontend, pool } = createHarness()
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' })
+    const runtime = pool.runtime!
+    const firstUi = vi.fn()
+    const unsubscribe = frontend.subscribeUiRequests(firstUi)
+    const question = uiRequest(runtime.runtimeId, runtime.generation, 'still-pending', 'confirm')
+    pool.emitUiRequest(question)
+    pool.emitUiRequest(uiRequest(runtime.runtimeId, runtime.generation, 'one-shot-notification'))
+    expect(firstUi).toHaveBeenCalledTimes(2)
+    unsubscribe()
+    const resyncOrder: string[] = []
+    frontend.subscribe((snapshot) => {
+      if (snapshot.state === 'ready') resyncOrder.push('snapshot')
+    })
+    const remountedUi = vi.fn()
+    frontend.subscribeUiRequests((envelope) => {
+      resyncOrder.push('question')
+      remountedUi(envelope)
+    })
+    await frontend.replayPendingSelectedUiRequests({ force: true })
+    expect(resyncOrder).toEqual(['snapshot', 'question'])
+    await frontend.replayPendingSelectedUiRequests()
+    expect(remountedUi).toHaveBeenCalledExactlyOnceWith(question)
+    await frontend.respondToExtensionUi({ type: 'extension_ui_response', id: question.request.id, confirmed: true }, runtime.generation)
+    await frontend.replayPendingSelectedUiRequests({ force: true })
+    expect(remountedUi).toHaveBeenCalledOnce()
+    await frontend.stop()
+    await frontend.replayPendingSelectedUiRequests({ force: true })
+    expect(remountedUi).toHaveBeenCalledOnce()
+    await frontend.dispose()
+  })
+
+  it('bounds retained payloads per runtime and never releases Host credit twice during replay', async () => {
+    const { frontend, pool } = createHarness()
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' })
+    const target = { scope: projectScope, sessionFile: '/sessions/bounded-questions.jsonl' }
+    const background = await frontend.acquireControlRuntime(target)
+    for (let index = 0; index < PI_RUNTIME_PENDING_UI_REQUEST_MAX + 1; index += 1) {
+      pool.emitUiRequest(uiRequest(background.runtimeId, background.generation, `bounded-${index}`, 'confirm'))
+    }
+    expect(pool.acknowledgedEvents).toHaveLength(PI_RUNTIME_PENDING_UI_REQUEST_MAX + 1)
+    const ui = vi.fn()
+    frontend.subscribeUiRequests(ui)
+    await frontend.replace(target)
+    expect(ui).toHaveBeenCalledTimes(PI_RUNTIME_PENDING_UI_REQUEST_MAX)
+    await frontend.replayPendingSelectedUiRequests()
+    expect(ui).toHaveBeenCalledTimes(PI_RUNTIME_PENDING_UI_REQUEST_MAX)
+    expect(pool.acknowledgedEvents).toHaveLength(PI_RUNTIME_PENDING_UI_REQUEST_MAX + 1)
+    await frontend.dispose()
+  })
+
+  it('forgets an unanswered question when its runtime is dropped, even if that file is reopened', async () => {
+    const { frontend, pool } = createHarness()
+    const target = { scope: projectScope, sessionFile: '/sessions/dropped-question.jsonl' }
+    await frontend.start(target)
+    const oldRuntime = pool.runtime!
+    const question = uiRequest(oldRuntime.runtimeId, oldRuntime.generation, 'dropped-question', 'confirm')
+    const ui = vi.fn()
+    frontend.subscribeUiRequests(ui)
+    pool.emitUiRequest(question)
+    expect(ui).toHaveBeenCalledOnce()
+    await frontend.stop()
+    await frontend.replayPendingSelectedUiRequests({ force: true })
+    await frontend.start(target)
+    expect(pool.runtime!.runtimeId).not.toBe(oldRuntime.runtimeId)
+    pool.emitUiRequest(question)
+    await frontend.replayPendingSelectedUiRequests({ force: true })
+    expect(ui).toHaveBeenCalledOnce()
     await frontend.dispose()
   })
 })

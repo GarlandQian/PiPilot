@@ -54,6 +54,8 @@ import {
 } from './runtime-activity'
 
 export const PI_RUNTIME_ABORT_GRACE_TIMEOUT_MS = 5_000
+/** Matches the Host bridge's maximum number of simultaneously pending dialogs. */
+export const PI_RUNTIME_PENDING_UI_REQUEST_MAX = 256
 
 export type PiRuntimeFrontendErrorCode =
   | 'PI_RUNTIME_DISPOSED'
@@ -324,6 +326,12 @@ export class PiRuntimeFrontend {
   private readonly snapshotListeners = new Set<SnapshotListener>()
   private readonly eventListeners = new Set<EventListener>()
   private readonly uiListeners = new Set<UiListener>()
+  private readonly pendingUiEnvelopes = new Map<string, Map<string, {
+    envelope: PiHostUiRequestEventEnvelope
+    sessionId: string
+  }>>()
+  private selectedUiIdentity: string | null = null
+  private readonly deliveredSelectedUiRequests = new Set<string>()
   private readonly allEventListeners = new Set<AllEventListener>()
   private readonly allUiListeners = new Set<AllUiListener>()
   private readonly controlRuntimeListeners = new Set<ControlRuntimeListener>()
@@ -451,6 +459,68 @@ export class PiRuntimeFrontend {
     return () => this.uiListeners.delete(listener)
   }
 
+  /** Resync a remounted Renderer explicitly; ordinary selection delivers each pending ID once. */
+  async replayPendingSelectedUiRequests({ force = false }: { force?: boolean } = {}): Promise<void> {
+    const active = this.active
+    if (this.disposed || !active || active.snapshot.state !== 'ready' ||
+      this.publishedSnapshot.state !== 'ready' ||
+      this.publishedSnapshot.generation !== active.descriptor.generation ||
+      this.publishedSnapshot.sessionState?.sessionId !== active.descriptor.sessionId) return
+    let handle: PiRuntimeControlHandle
+    try { handle = this.controlHandleFor(active) } catch { return }
+    this.syncSelectedUiIdentity(handle)
+    if (force) {
+      this.deliveredSelectedUiRequests.clear()
+      // rendererReady precedes the Renderer status read on a remount. Restore
+      // its selected generation before replaying any generation-scoped UI.
+      this.publish(active.snapshot)
+    }
+    const pending: Promise<void>[] = []
+    for (const { envelope, sessionId } of this.pendingUiEnvelopes.get(active.runtimeId)?.values() ?? []) {
+      if (sessionId !== handle.sessionId || envelope.hostEpoch !== handle.hostEpoch ||
+        envelope.runtimeGeneration !== handle.generation ||
+        !active.activity.pendingUiRequests.has(envelope.request.id)) continue
+      pending.push(...this.deliverSelectedUiRequest(active, handle, envelope))
+    }
+    await Promise.allSettled(pending)
+  }
+
+  private syncSelectedUiIdentity(handle: PiRuntimeControlHandle): void {
+    const identity = JSON.stringify([handle.runtimeId, handle.hostEpoch, handle.generation, handle.sessionId])
+    if (identity === this.selectedUiIdentity) return
+    this.selectedUiIdentity = identity
+    this.deliveredSelectedUiRequests.clear()
+  }
+
+  private setSelectedRuntime(runtime: ActiveRuntime | null): void {
+    if (this.active !== runtime) {
+      this.selectedUiIdentity = null
+      this.deliveredSelectedUiRequests.clear()
+    }
+    this.active = runtime
+  }
+
+  private deliverSelectedUiRequest(
+    runtime: ActiveRuntime,
+    handle: PiRuntimeControlHandle,
+    envelope: PiHostUiRequestEventEnvelope,
+  ): Promise<void>[] {
+    if (this.runtimes.get(runtime.runtimeId) !== runtime || this.active !== runtime ||
+      runtime.descriptor.generation !== handle.generation ||
+      runtime.descriptor.sessionId !== handle.sessionId ||
+      envelope.runtimeGeneration !== handle.generation || envelope.hostEpoch !== handle.hostEpoch) return []
+    this.syncSelectedUiIdentity(handle)
+    const blocking = BLOCKING_EXTENSION_UI_METHODS.has(envelope.request.method)
+    if (blocking && (!runtime.activity.pendingUiRequests.has(envelope.request.id) ||
+      this.deliveredSelectedUiRequests.has(envelope.request.id))) return []
+    if (blocking && this.uiListeners.size > 0) this.deliveredSelectedUiRequests.add(envelope.request.id)
+    const pending: Promise<void>[] = []
+    for (const listener of this.uiListeners) {
+      try { pending.push(Promise.resolve(listener(structuredClone(envelope)))) } catch { /* Isolate UI consumers. */ }
+    }
+    return pending
+  }
+
   /** Main-only observation of every retained Runtime before Host credit. */
   subscribeAllEvents(listener: AllEventListener) {
     this.allEventListeners.add(listener)
@@ -477,10 +547,18 @@ export class PiRuntimeFrontend {
     const summaries: PiRuntimeControlSummary[] = []
     for (const runtime of this.runtimes.values()) {
       try {
+        // Keep unreviewed dialogs in internal activity for reclaim protection,
+        // but expose interaction only after every Main consumer has declined
+        // to answer it. Other events can publish while those consumers await.
+        const retained = this.pendingUiEnvelopes.get(runtime.runtimeId)
+        const activity = runtime.activity.pendingUiRequests.size === 0 ? runtime.activity : {
+          ...runtime.activity,
+          pendingUiRequests: new Set([...runtime.activity.pendingUiRequests].filter((id) => retained?.has(id))),
+        }
         summaries.push({
           ...this.controlHandleFor(runtime),
           selected: runtime.runtimeId === this.active?.runtimeId,
-          ...summarizeRuntimeActivity(runtime.activity),
+          ...summarizeRuntimeActivity(activity),
         })
       } catch {
         // A Host snapshot can replace a Runtime between observation and this
@@ -742,11 +820,12 @@ export class PiRuntimeFrontend {
         ? this.runtimes.get(transaction.previousRuntimeId) ?? null
         : null
       if (previous && previous.runtimeId !== active.runtimeId) {
-        this.active = previous
+        this.setSelectedRuntime(previous)
         this.touchActivity(previous)
         this.publish(previous.snapshot)
+        void this.replayPendingSelectedUiRequests()
       } else if (!previous) {
-        this.active = null
+        this.setSelectedRuntime(null)
         this.publish(stoppedSnapshot(active.descriptor.generation))
       }
       this.previousSelection = null
@@ -1184,8 +1263,11 @@ export class PiRuntimeFrontend {
     this.disposed = true
     await this.enqueue(async () => {
       const runtimes = [...this.runtimes.values()]
-      this.active = null
+      this.setSelectedRuntime(null)
       this.runtimes.clear()
+      this.pendingUiEnvelopes.clear()
+      this.deliveredSelectedUiRequests.clear()
+      this.selectedUiIdentity = null
       this.pendingIdleReclaims.clear()
       this.inFlightRuntimeCommands.clear()
       this.controlLeases.clear()
@@ -1307,7 +1389,7 @@ export class PiRuntimeFrontend {
     let createdRuntime = false
     try {
       if (options.restartHost) {
-        if (previousActive && sameHostScope(previousActive.hostScope, prepared.scope)) this.active = null
+        if (previousActive && sameHostScope(previousActive.hostScope, prepared.scope)) this.setSelectedRuntime(null)
         this.dropCachedHost(prepared.scope)
         await this.pool.restart(prepared.scope)
       }
@@ -1342,7 +1424,7 @@ export class PiRuntimeFrontend {
           lastUsedAt: this.now(),
           activity: createRuntimeActivity(startingSnapshot.sessionState),
         }
-        this.active = selected
+        this.setSelectedRuntime(selected)
         this.runtimes.set(descriptor.runtimeId, selected)
         this.publish(startingSnapshot)
         descriptor = await this.pool.bindRuntime(
@@ -1352,14 +1434,14 @@ export class PiRuntimeFrontend {
         this.setRuntimeDescriptor(selected, descriptor)
       }
       const snapshot = await this.hydrate(descriptor, prepared)
-      this.active = selected
-      this.active.scope = target.scope
-      if (target.selectionToken) this.active.selectionToken = target.selectionToken
-      this.setRuntimeDescriptor(this.active, descriptor)
-      this.active.snapshot = snapshot
-      this.active.lastCredibleSessionFile = snapshot.sessionFile
-      this.active.lastUsedAt = this.now()
-      this.runtimes.set(descriptor.runtimeId, this.active)
+      this.setSelectedRuntime(selected)
+      selected.scope = target.scope
+      if (target.selectionToken) selected.selectionToken = target.selectionToken
+      this.setRuntimeDescriptor(selected, descriptor)
+      selected.snapshot = snapshot
+      selected.lastCredibleSessionFile = snapshot.sessionFile
+      selected.lastUsedAt = this.now()
+      this.runtimes.set(descriptor.runtimeId, selected)
       const activatedSessionId = snapshot.sessionState?.sessionId || descriptor.sessionId
       if (activatedSessionId) {
         this.terminalSessionStatuses.delete(
@@ -1372,13 +1454,16 @@ export class PiRuntimeFrontend {
       this.publish(snapshot)
       this.selectionRevision += 1
       this.previousSelection = {
-        selectedRuntimeId: this.active.runtimeId,
+        selectedRuntimeId: selected.runtimeId,
         previousRuntimeId: previousActive?.runtimeId ?? null,
         selectionRevision: this.selectionRevision,
       }
-      if (previousActive && previousActive.runtimeId !== this.active.runtimeId) {
+      if (previousActive && previousActive.runtimeId !== selected.runtimeId) {
         this.scheduleIdleReclaim(previousActive.hostScope)
       }
+      // Cached dialogs are emitted only after the selected session's hydrated
+      // snapshot. Startup dialogs retain their existing immediate delivery.
+      void this.replayPendingSelectedUiRequests()
       return this.getSnapshot()
     } catch (error) {
       const failure = this.toFrontendError(error)
@@ -1405,10 +1490,11 @@ export class PiRuntimeFrontend {
         this.runtimes.get(previousActive.runtimeId) === previousActive,
       )
       if (canRestorePrevious && previousActive) {
-        this.active = previousActive
+        this.setSelectedRuntime(previousActive)
         this.publish(previousActive.snapshot)
+        void this.replayPendingSelectedUiRequests()
       } else {
-        this.active = null
+        this.setSelectedRuntime(null)
         this.publish({
           state: 'error',
           generation: descriptor?.generation ?? previous.generation,
@@ -1474,11 +1560,13 @@ export class PiRuntimeFrontend {
         }
       }
       let controlChanged = false
+      const blocking = BLOCKING_EXTENSION_UI_METHODS.has(envelope.request.method)
+      if (trackedHandle && trackedHandle.hostEpoch !== envelope.hostEpoch) return
       if (tracked && tracked.descriptor.generation === envelope.runtimeGeneration &&
         (trackedHandle || activeAccepted)) {
         controlChanged = this.applyUiActivity(tracked, envelope)
       }
-      if (controlChanged) this.publishControlRuntimes()
+      if (controlChanged && !blocking) this.publishControlRuntimes()
 
       const pendingMainConsumers: Promise<void>[] = []
       if (tracked && trackedHandle) {
@@ -1494,22 +1582,29 @@ export class PiRuntimeFrontend {
         await Promise.allSettled(pendingMainConsumers)
       }
 
-      const consumedByMain = Boolean(
-        tracked &&
-        trackedHandle &&
-        BLOCKING_EXTENSION_UI_METHODS.has(envelope.request.method) &&
-        !tracked.activity.pendingUiRequests.has(envelope.request.id),
-      )
-      const pendingSelectedConsumers: Promise<void>[] = []
-      if (activeAccepted && trackedHandle && !consumedByMain) {
-        for (const listener of this.uiListeners) {
-          try {
-            pendingSelectedConsumers.push(Promise.resolve(listener(envelope)))
-          } catch {
-            // Isolate Main consumers while still returning bounded Host credit.
-          }
+      // Main may answer the question, expire it, or replace its runtime while
+      // consumers await. Retain only the still-pending original identity.
+      const stillCurrent = tracked && trackedHandle &&
+        this.runtimes.get(tracked.runtimeId) === tracked &&
+        tracked.descriptor.generation === trackedHandle.generation &&
+        tracked.descriptor.sessionId === trackedHandle.sessionId &&
+        trackedHandle.hostEpoch === envelope.hostEpoch
+      if (!stillCurrent || !tracked || !trackedHandle) return
+      try {
+        if (this.controlHandleFor(tracked, true).hostEpoch !== trackedHandle.hostEpoch) return
+      } catch { return }
+      if (blocking) {
+        if (!tracked.activity.pendingUiRequests.has(envelope.request.id)) return
+        const retained = this.pendingUiEnvelopes.get(tracked.runtimeId) ?? new Map()
+        if (!retained.has(envelope.request.id) && retained.size < PI_RUNTIME_PENDING_UI_REQUEST_MAX) {
+          retained.set(envelope.request.id, { envelope: structuredClone(envelope), sessionId: trackedHandle.sessionId })
+          this.pendingUiEnvelopes.set(tracked.runtimeId, retained)
         }
+        if (controlChanged) this.publishControlRuntimes()
       }
+      // Selection may have changed during Main consumption. The current
+      // identity, rather than the pre-await active flag, owns UI delivery.
+      const pendingSelectedConsumers = this.deliverSelectedUiRequest(tracked, trackedHandle, envelope)
       if (pendingSelectedConsumers.length > 0) {
         await Promise.allSettled(pendingSelectedConsumers)
       }
@@ -1617,6 +1712,14 @@ export class PiRuntimeFrontend {
   }
 
   private updateActivity(runtime: ActiveRuntime, action: RuntimeActivityAction): boolean {
+    const settledId = action.type === 'ui_responded' ? action.id
+      : action.type === 'ui_request' && action.request.method === 'dismiss' ? action.request.id : null
+    if (settledId !== null) {
+      const retained = this.pendingUiEnvelopes.get(runtime.runtimeId)
+      retained?.delete(settledId)
+      if (retained?.size === 0) this.pendingUiEnvelopes.delete(runtime.runtimeId)
+      if (runtime === this.active) this.deliveredSelectedUiRequests.delete(settledId)
+    }
     const activity = reduceRuntimeActivity(runtime.activity, action)
     if (activity === runtime.activity) return false
     runtime.activity = activity
@@ -1647,7 +1750,11 @@ export class PiRuntimeFrontend {
     if (generationChanged) {
       this.clearControlLeases(runtime)
     }
-    if (generationChanged || sessionChanged) this.updateActivity(runtime, { type: 'delivery_reset' })
+    if (generationChanged || sessionChanged) {
+      for (const id of runtime.activity.pendingUiRequests) this.updateActivity(runtime, { type: 'ui_responded', id })
+      this.pendingUiEnvelopes.delete(runtime.runtimeId)
+      this.updateActivity(runtime, { type: 'delivery_reset' })
+    }
     runtime.descriptor = descriptor
     if (!generationChanged) return
 
@@ -2078,7 +2185,7 @@ export class PiRuntimeFrontend {
 
   private async disposeActive() {
     const active = this.active
-    this.active = null
+    this.setSelectedRuntime(null)
     if (!active) return
     this.dropCachedRuntime(active.runtimeId)
     try {
@@ -2273,6 +2380,11 @@ export class PiRuntimeFrontend {
   }
 
   private dropCachedRuntime(runtimeId: string): void {
+    this.pendingUiEnvelopes.delete(runtimeId)
+    if (this.active?.runtimeId === runtimeId) {
+      this.selectedUiIdentity = null
+      this.deliveredSelectedUiRequests.clear()
+    }
     const runtime = this.runtimes.get(runtimeId)
     if (runtime) {
       const sessionId = runtime.descriptor.sessionId ||

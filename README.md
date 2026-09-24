@@ -2,237 +2,159 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-PiPilot is an Electron desktop client powered by the official
-[Pi coding agent](https://github.com/earendil-works/pi) SDK. It embeds the pinned
-SDK in project-scoped utility processes and presents sessions, tool calls, file
-changes, terminals, models, extensions, Skills, and MCP configuration in a
-compact GUI.
+PiPilot is an Electron desktop client for the official [Pi coding
+agent](https://github.com/earendil-works/pi). It runs the pinned Pi SDK (0.85.1) in isolated
+Electron utility processes and adds a desktop workspace for conversations, projects, files,
+terminals, models, and Pi extensions.
 
-PiPilot does not embed a parallel Agent Runtime or migrate Pi data into a
-PiPilot-specific format. Pi remains the owner of sessions, configuration, and
-resources; PiPilot owns the desktop experience.
+Pi continues to own its sessions, configuration, and resources. PiPilot provides the desktop
+experience and does not create a parallel agent runtime or migrate Pi data into a private format.
 
-> **Project status:** `v0.0.6` is the current stable release; `v0.0.5` was the
-> previous stable release. The source repository and GitHub Releases are public.
-> Unsigned installers are distributed for manual download after native build
-> and packaged-smoke verification.
+**Source version:** 0.0.7 · [Download releases](https://github.com/GarlandQian/PiPilot/releases)
 
 [![CI](https://github.com/GarlandQian/PiPilot/actions/workflows/ci.yml/badge.svg)](https://github.com/GarlandQian/PiPilot/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2f3437.svg)](LICENSE)
 
-The current source workbench uses a continuous conversation timeline, task
-navigation, and a resource panel; the installed release may still show the earlier interface.
+## Features
 
-## Highlights
+- **Projects and conversations** — choose project folders explicitly or start a projectless chat;
+  browse, search, organize, and manage Pi sessions.
+- **Conversation workspace** — follow messages and tool activity in one timeline; queue, edit, or
+  steer follow-up messages; use Commands, Skills, file references, model selection, and Thinking
+  controls.
+- **Project tools** — inspect files and diffs, search command output, review subagent activity, and
+  use per-project terminal tabs.
+- **Pi configuration** — manage models and providers, Packages, Resources, Extensions, Skills,
+  Prompts, Themes, and global or project MCP settings.
+- **Desktop preferences** — use light or dark appearance, English or Simplified Chinese, keyboard
+  navigation, and configurable terminal typography.
+- **External Control** — optionally expose a local MCP interface for conversation status and prompt
+  control. It is disabled by default; see [External Control](#external-control).
 
-- **Official embedded Pi Runtime** — runs the pinned official Pi SDK `0.85.1`
-  in isolated Electron utility processes while preserving Pi-owned session and
-  configuration files.
-- **Projects and quick chats** — project directories are explicitly selected
-  by the user; projectless conversations are supported without treating the
-  home directory as a project.
-- **Real Pi sessions** — browse sessions for each project and use connected Pi
-  capabilities such as create, open, rename, duplicate, fork, and delete.
-  Project headings resume an existing task, preferring the current or last selected
-  session; explicit New Task actions create sessions. Search, task/running/attention
-  filters, and Recent/Name sorting organize loaded sessions. Pinning, archiving,
-  restoring, and unread markers persist locally. Archiving changes navigation
-  organization and preserves the Pi session files. Running work has an animated indicator,
-  requests for input are yellow, failures are red, and unread results use a dot.
-  Idle, read, and stopped tasks have no status icon. Active work and unread results
-  remain discoverable even when their project is collapsed.
-  Catalog scans continue beyond 200 sessions in bounded batches and reuse unchanged
-  file metadata on refresh. Opening or deleting still revalidates the actual session file.
-- **Continuous conversation** — questions on the right and replies on the left;
-  assistant text stays visible in timeline order alongside tools. Only adjacent
-  file reads and searches share a group; Bash commands, writes/edits, and subagents
-  keep separate entries. Messages, reasoning, notifications, queued messages,
-  and tool/subagent narratives render Markdown; code and configuration remain verbatim.
-  Supports code blocks, tool calls, Queue, Follow-up, Steer, model selection,
-  and Thinking controls. Sending saves the complete message locally before freeing
-  the input. Each submission has its own confirmation or retry state, without
-  overwriting a newer draft. While running, new messages queue automatically;
-  waiting messages support in-place editing, removal, and Adjust direction.
-  Stop pauses the remaining queue, including images, until Resume queue is selected.
-  Queue clearing is a separate action. Once handed to Pi, a message cannot be edited.
-  Unconfirmed deliveries require a receipt check before retrying, and are never
-  automatically replayed after a restart.
-  Unsent text, image attachments, and context references stay with their conversation
-  when switching sessions. These drafts are held in memory until the application quits.
-  Submitted outbox messages survive restarts in the application's IndexedDB;
-  pending deliveries and deduplication receipts live under the active Pi agent
-  directory's `pipilot-delivery/` folder, separately from official session JSONL files.
-  Reasoning, grouped reads, and individual tool details have their own disclosures;
-  assistant replies stay outside those disclosures.
-  History reloads preserve newer streaming output and use persisted final tool results
-  to recover from missed completion events.
-  New failures reveal the affected work; notifications and action
-  cards remain visible. Long questions expand on demand without hiding attachments.
-- **Commands, Skills, and context** — type `/` to search Commands and Skills;
-  type `@` to reference project files or Skills, with keyboard navigation.
-- **Command output and subagents** — command output supports search, match navigation,
-  line wrapping, copying, and following new output. Reading earlier output or searching
-  pauses following until you resume it. Markdown reports have formatted and raw views;
-  commands and terminal records retain their literal presentation.
-  Subagents open a read-only view of task instructions, reported progress, tool activity,
-  errors, and results. Parallel tasks can be selected separately; instructions and
-  summaries render as Markdown. Missing child messages are identified explicitly when
-  Pi reports only a summary, and execution states follow the available evidence.
-- **Resource panel** — Files and Changes belong to the selected project, independently
-  of conversation loading. Open command output or subagent execution as a detail page,
-  then return to the previous resource and reading position. File previews link to
-  their changes and back; continuous diffs distinguish staged and unstaged changes.
-  Visible resources refresh in the background while retaining reading state.
-  Expand a resource for more space, then return to the conversation.
-  Search and jump between conversation turns from the chat header without replacing
-  the file being inspected.
-  Tree refresh preserves expansion and selection; search jumps to a file in the continuous diff.
-  The bottom terminal drawer starts collapsed, supports a remembered height and
-  maximization, and provides named terminal tabs for each project. Type directly
-  into the terminal; search, copy, paste and clear are available without a second
-  command input. Hiding or switching projects preserves processes and reading
-  positions; new output never pulls you away from scrollback. Exited terminals
-  retain their output and exit code until you close them. Restart creates a new
-  terminal while preserving the old output. There is no fixed terminal-count cap;
-  output buffers remain bounded, and terminals are never ended to make room for
-  another. History is retained for the current
-  app run, not across a full application quit.
-- **Pi integrations** — inspect and manage Packages, Resources, Extensions,
-  Skills, Prompts, and Themes with guarded Runtime reload. Protected background
-  work defers application; reload failure never silently restarts its Host.
-- **MCP management** — edit global `~/.pi/agent/mcp.json` and the active
-  project's `.mcp.json` through structured forms or raw JSONC while preserving
-  comments and unknown fields. Models/MCP drafts survive Settings navigation
-  in bounded memory; save and Runtime application have separate outcomes.
-- **Inbound conversation MCP** — explicitly enable the local-only External
-  Control integration in Settings to inspect bounded conversation metadata and
-  send exact prompts through a packaged stdio MCP command. It is disabled by
-  default, uses an authenticated current-user Unix socket or named pipe, and
-  never exposes transcript history, tokens, or filesystem session paths.
-- **Model management** — manage Pi `models.json`, custom providers and models,
-  defaults, and advanced JSON fields. Searchable provider details share one form/JSON
-  draft; editing configuration invalidates previous connection-test results.
-- **Preferences** — searchable navigation, live appearance previews and custom fonts.
-  Batched settings report success only after disk persistence and restore saved values
-  on failure. Quit waits for in-flight configuration saves and includes unsubmitted
-  provider, model, and MCP form edits in its Save/Discard/Cancel confirmation.
-- **Desktop-native workflow** — light and dark themes, English and Simplified
-  Chinese locales, configurable terminal typography, keyboard access, and a
-  supported minimum window size of `1100×680`.
+PiPilot is an Electron desktop application; it does not provide a web version.
 
-PiPilot is an Electron-only desktop application. A web version is not
-supported.
+## Download and installation
 
-## Principles
+Download a build from [GitHub Releases](https://github.com/GarlandQian/PiPilot/releases).
 
-1. **Pi owns the data; PiPilot owns the experience.** Sessions, models,
-   extensions, and configuration continue to use Pi's official files and
-   directories.
-2. **Use official capabilities first.** When Pi RPC provides a feature,
-   PiPilot connects to that protocol instead of maintaining a parallel Agent
-   implementation.
-3. **Official Pi SDK first.** PiPilot uses the pinned public Pi SDK and loads
-   global and project-level plugins, Skills, and resources from the standard Pi
-   environment.
-4. **Truthful state.** Empty, loading, ready, and error states are distinct.
-   Data from a previous session is never presented as belonging to a newly
-   selected session.
-5. **A compact desktop tool.** PiPilot keeps a quiet, restrained,
-   information-dense developer-tool interface across light, dark, and minimum
-   window layouts.
+| Platform | Architecture | Formats |
+| --- | --- | --- |
+| macOS | arm64, x64 | DMG, ZIP |
+| Windows | x64 | NSIS |
+| Linux | x64 | AppImage, DEB |
 
-## Development requirements
-
-- macOS, Windows, or Linux
-- Node.js `24.18.0` (the version used in project CI)
-- pnpm `12.3.4` (the version used in project CI)
-
-Packaged users do not need Node.js, pnpm, or a separate Pi executable.
-Development uses the exact Pi SDK version pinned in `package.json` and
-`pnpm-lock.yaml`.
+Installers are currently unsigned. macOS builds are not notarized, so macOS may ask you to approve
+the app before opening it. Windows may show a SmartScreen or unknown-publisher warning. PiPilot does
+not silently download or install updates; macOS uses manual downloads, and native Windows/Linux
+updates remain disabled while their update path is being validated.
 
 ## Development
 
-```bash
+### Requirements
+
+- macOS, Windows, or Linux
+- Node.js 24.18.0
+- pnpm 12.3.4 (declared in `package.json`)
+
+Packaged users do not need Node.js, pnpm, or a separate Pi executable. Development uses the Pi SDK
+version pinned in `package.json` and `pnpm-lock.yaml`.
+
+### Run locally
+
+~~~sh
 git clone https://github.com/GarlandQian/PiPilot.git
 cd PiPilot
 pnpm install --frozen-lockfile
 pnpm dev
-```
+~~~
 
-Common checks:
+### Common commands
 
-```bash
+~~~sh
 pnpm typecheck
 pnpm test:unit
-pnpm build
+pnpm test:integration
 pnpm test:electron
-```
+pnpm build
+~~~
 
-CI and release builds share `.github/workflows/verify.yml`: unit contracts run
-on macOS, Windows, and Linux, and the complete Electron suite runs on macOS.
-Integration cases are part of that Electron suite. Provider contracts run the
-installed Pi SDK against isolated local HTTP/SSE fixtures for OpenAI Chat
-Completions, OpenAI Responses, Anthropic Messages, and Google Generative AI.
-They verify streaming, a real file-writing tool, its returned result, and the
-next prompt without using a real provider account or the developer's Pi data.
+The Electron suite runs through Playwright. CI runs unit contracts on macOS, Windows, and Linux and
+the complete Electron suite on macOS. Provider contract cases use the installed Pi SDK with local
+HTTP/SSE fixtures; they cover OpenAI Chat Completions, OpenAI Responses, Anthropic Messages, and
+Google Generative AI without real provider accounts or personal Pi data.
 
-The application is split into Electron Main, a sandboxed preload, and a React
-renderer. The renderer does not access Node.js, the filesystem, or Pi directly.
-Cross-process data moves through shared Zod contracts and allowlisted IPC.
+### Package locally
 
-## Local packaging
-
-```bash
-# Unpacked application for the current platform and packaged smoke test
+~~~sh
+# Build an unpacked app for this platform
 pnpm package:dir
 pnpm test:packaged
 
-# Native installers
+# Build native installers
 pnpm package:mac
 pnpm package:win
 pnpm package:linux
-```
+~~~
 
-Packaged smoke tests default to the current Node architecture. After building
-both macOS targets, run each explicitly:
+macOS packaging produces arm64 and x64 builds. To run packaged smoke checks for each architecture
+explicitly:
 
-```bash
+~~~sh
 PIPILOT_PACKAGED_ARCH=arm64 pnpm test:packaged
 PIPILOT_PACKAGED_ARCH=x64 pnpm test:packaged
-```
+~~~
 
-The tests check the Mach-O architecture and fail if the requested bundle is
-missing; they never substitute the other architecture. Intel execution on
-Apple Silicon requires Rosetta. Release CI runs both macOS targets separately.
-These smoke tests exercise the unpacked application; they do not claim to test
-the complete DMG, NSIS, or DEB installation flow.
+The smoke checks verify the selected app architecture and fail if that build is missing; they do not
+substitute the other architecture. Intel builds on Apple Silicon require Rosetta. Packaged smoke
+checks exercise the unpacked app, not the complete DMG, NSIS, or DEB installation flow.
 
-Current targets and distribution policy:
+## Architecture
 
-| Platform | Architecture | Artifacts | Trust and update policy |
-| --- | --- | --- | --- |
-| macOS | arm64, x64 | DMG, ZIP | No Developer ID or notarization; manual download and installation |
-| Windows | x64 | NSIS | Unsigned; Windows may show SmartScreen or unknown-publisher warnings |
-| Linux | x64 | AppImage, DEB | AppImage update support is being validated; DEB is installed manually |
+The app is split into Electron Main, a sandboxed preload, and a React renderer. The renderer has no
+direct access to Node.js, the filesystem, or Pi. Cross-process data passes through shared Zod
+contracts and allowlisted IPC.
 
-The current macOS release is not signed with an Apple Developer ID and is not
-notarized. After downloading it, users may need to right-click the app and
-choose **Open**, or explicitly allow it in System Settings. The Windows release
-has no publisher signature and may show a SmartScreen warning. Release notes
-and the application describe these states honestly.
+| Path | Contents |
+| --- | --- |
+| `src/main/` | Pi runtime, filesystem, terminal, configuration, and Electron Main services |
+| `src/preload/` | Sandboxed preload and IPC facade |
+| `src/shared/` | Cross-process contracts and domain types |
+| `src/renderer/` | Renderer adapters and pure logic |
+| `src/components/`, `src/store/` | React UI and state owners |
+| `tests/` | Unit, Electron, integration, and packaged smoke tests |
 
-Build targets and package boundaries are defined in `electron-builder.yml`;
-packaged smoke checks live in `tests/packaged/`.
+## Pi configuration and data
+
+PiPilot does not scan the disk for projects or treat the home directory as a project. A project is
+selected with the native folder picker. Projectless chats use an application-private working
+directory while sessions remain in Pi's official session storage.
+
+The default Pi Agent directory is `~/.pi/agent`. Set `PI_CODING_AGENT_DIR` to use another directory;
+the Pi runtime, package manager, model editor, and global MCP editor use that same location.
+
+| Path | Purpose |
+| --- | --- |
+| `~/.pi/agent/settings.json` | Pi global settings and default model |
+| `~/.pi/agent/models.json` | Custom providers and models |
+| `~/.pi/agent/auth.json` | Pi SDK authentication |
+| `~/.pi/agent/mcp.json` | Global MCP configuration |
+| `~/.pi/agent/sessions/` | Official Pi sessions |
+| `<project>/.pi/settings.json` | Project Pi settings |
+| `<project>/.mcp.json` | Project MCP configuration |
+
+MCP configuration follows PiPilot's extension convention; Pi core does not define an MCP
+configuration format. Appearance, navigation, and window preferences are stored separately in
+Electron's application data directory. Do not commit API keys, tokens, or real session content.
 
 ## External Control
 
-External Control is a separate inbound MCP surface from Pi's outbound MCP
-configuration. It is disabled by default and is enabled from the existing
-Settings > Integrations tab. PiPilot can explicitly install or repair one
-stable `pipilot-mcp` launcher and shows one portable configuration:
+External Control is an optional inbound MCP interface, separate from Pi's outbound MCP settings.
+Enable it in **Settings > Integrations**. It is off by default.
 
-```json
+When enabled, PiPilot can install or repair the `pipilot-mcp` launcher and show this client
+configuration:
+
+~~~json
 {
   "mcpServers": {
     "pipilot": {
@@ -241,105 +163,26 @@ stable `pipilot-mcp` launcher and shows one portable configuration:
     }
   }
 }
-```
+~~~
 
-The capability token, packaged executable, and descriptor path remain private
-to Main and are never placed in copied configuration.
+The MCP client starts a stdio process that connects to the running app over an authenticated,
+current-user-only Unix socket (macOS/Linux) or named pipe (Windows). PiPilot does not open a network
+listener. The interface supports bounded conversation listing and status, prompt and abort
+operations, operation receipts, and waits. It does not expose transcript history, credentials, or
+filesystem session paths.
 
-The stdio process does not open the GUI or a network listener. It connects to
-the running Main process through a current-user-only local Unix-domain socket
-on macOS/Linux or named pipe on Windows. The tool-only MVP provides bounded
-conversation listing/status, idempotent prompt and abort receipts, operation
-status, and bounded waits. Final responses are limited to the operation that
-produced them. Disable closes clients, removes the endpoint, and rotates the
-credential; a stopped or disabled app returns a bounded unavailable error. On
-macOS, PiPilot places the wrapper in its private application-data directory
-and prepends that directory to the current user's launchd PATH, so Finder-launched
-clients can resolve the same command after they restart. PiPilot restores this
-registration on a later launch only when its private receipt and exact wrapper
-still match. Linux uses a secure stable user directory already present in
-`PATH`. Windows registers the packaged `pipilot-mcp.exe` directory in the
-current user's PATH without re-encoding Unicode or rebuilding unrelated entries.
-Sign out and back in after the first Windows registration so newly launched
-clients inherit the updated environment. A launcher proven to be managed by
-PiPilot can also be removed after confirmation. Removal leaves External Control
-enabled, keeps the packaged Windows executable, and changes only PiPilot's
-owned wrapper, receipt, and current-user PATH registration. PiPilot does not
-edit Codex, Claude Code, Pi, shell profile, or project MCP files.
+Launcher management is explicit. PiPilot changes only its own launcher files and the current user's
+PATH registration; it does not edit Codex, Claude Code, Pi, shell profiles, or project MCP files.
 
-## Releases and updates
+## Releases and contributing
 
-The public release flow is:
+A stable release tag starts the release verification workflow. Platform builds are checked and
+packaged smoke tests run before the GitHub Release is published. Build targets are defined in
+`electron-builder.yml`; packaged checks are in `tests/packaged/`.
 
-1. A stable tag such as `v0.0.6` starts a release-owned full verification job.
-2. After source, unit, build, integration, and Electron checks pass, macOS,
-   Windows, and Linux package, inspect their artifacts, and run packaged
-   smoke tests independently.
-3. One assembly job rejects duplicate filenames and verifies names, versions,
-   SHA-256 checksums, and update metadata package sizes/SHA-512.
-4. Actions stages a draft GitHub Release and verifies its complete asset set.
-5. The Release becomes public only after all verification, native, packaged
-   smoke, final assembly, and staged-asset checks have succeeded. The initial
-   repository reset may replace only `v0.0.1`, whose tag must point to the
-   repository's single root commit; subsequent releases require a higher version.
-
-PiPilot never silently downloads or installs updates. macOS remains a
-manual-download path; native Windows/Linux update actions are enabled only
-after the official updater path passes isolated platform tests.
-
-## Pi configuration and data
-
-PiPilot does not scan disks for projects and does not automatically treat the
-home directory as a project. A project working directory comes only from the
-native folder picker. Projectless chats use an application-private working
-directory, while sessions remain under Pi's official session storage.
-
-The default Agent directory is `~/.pi/agent`. When `PI_CODING_AGENT_DIR` is set,
-the runtime, package manager, model editor, and global MCP editor all use that
-same directory. PiPilot does not import these files into a private database.
-
-Common files at the default location:
-
-- `~/.pi/agent/mcp.json` — global MCP configuration
-- `<project>/.mcp.json` — active-project MCP configuration
-- `~/.pi/agent/models.json` — custom providers and models
-- `~/.pi/agent/settings.json` — Pi global settings and default model
-- `~/.pi/agent/auth.json` — Pi authentication, owned by the Pi SDK
-- `<project>/.pi/settings.json` — Pi project settings
-- `~/.pi/agent/sessions/` — official Pi sessions
-
-MCP files follow PiPilot's extension convention; Pi core does not define an
-MCP configuration format. Appearance, navigation and window preferences remain
-in Electron's application data directory, separate from Pi configuration.
-
-Do not commit personal configuration containing API keys, tokens, or real
-session content.
-
-## Repository layout
-
-```text
-src/main/       Electron Main, Pi Runtime, filesystem, terminal, and config services
-src/preload/    sandboxed preload and strict IPC facade
-src/shared/     cross-process Zod contracts and domain types
-src/renderer/   renderer adapters, projectors, and pure logic
-src/components/ React UI
-src/store/      renderer providers and state owners
-tests/          unit, Electron, integration, and packaged smoke tests
-```
-
-## Current development focus
-
-- Validate the first public packages on macOS, Windows, and Linux hardware.
-- Continue improving concurrent Pi Session Runtime management and External
-  Control operation attribution.
-- Continue validating Models, Integrations, inbound/outbound MCP, and
-  extension UI against the bundled official Pi SDK.
-
-## Contributing
-
-Read the relevant implementation and tests before changing the project.
-PiPilot uses pnpm with a frozen lockfile. Do not commit user sessions, credentials,
-build output, or generated test reports.
+Use pnpm with the frozen lockfile when contributing. Read the relevant implementation and tests
+before making changes, and do not commit personal configuration, credentials, build output, or
+generated test reports.
 
 ## License
 

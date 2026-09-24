@@ -13,7 +13,9 @@ import {
   settingsChangedEventSchema,
   settingsUpdateContract,
   terminalCreateContract,
+  terminalRestartContract,
   terminalListContract,
+  terminalListShellProfilesContract,
   terminalAttachContract,
   terminalRenameContract,
   terminalCloseContract,
@@ -750,6 +752,8 @@ describe('terminal IPC schemas', () => {
   it('validates attach identity, trimmed titles, and scoped record operations', () => {
     const request = { context: { requestId }, scope, terminalId }
     expect(terminalAttachContract.requestSchema.safeParse({ ...request, cols: 80, rows: 24 }).success).toBe(true)
+    expect(terminalRestartContract.requestSchema.safeParse({ ...request, cols: 80, rows: 24 }).success).toBe(true)
+    expect(terminalRestartContract.requestSchema.safeParse({ ...request, cols: 80, rows: 24, executable: '/bin/sh' }).success).toBe(false)
     expect(terminalAttachContract.requestSchema.safeParse({ ...request, terminalId: 'shell', cols: 80, rows: 24 }).success).toBe(false)
     expect(terminalRenameContract.requestSchema.parse({ ...request, title: '  Build server  ' }).title).toBe('Build server')
     expect(terminalRenameContract.requestSchema.safeParse({ ...request, title: '   ' }).success).toBe(false)
@@ -768,6 +772,13 @@ describe('terminal IPC schemas', () => {
       rows: 24,
     }
     expect(terminalCreateContract.requestSchema.safeParse(create).success).toBe(true)
+    expect(terminalCreateContract.requestSchema.safeParse({ ...create, shellProfileId: 'powershell' }).success).toBe(true)
+    expect(terminalCreateContract.requestSchema.safeParse({ ...create, shellProfileId: '/bin/custom-shell' }).success).toBe(false)
+    expect(terminalCreateContract.requestSchema.safeParse({ ...create, shell: 'cmd.exe', args: ['/c', 'echo custom'] }).success).toBe(false)
+    expect(terminalListShellProfilesContract.requestSchema.safeParse({ context: { requestId } }).success).toBe(true)
+    const profile = { id: 'detected:cmd', label: 'CMD', isDefault: true, source: 'detected', executable: 'C:\\Windows\\System32\\cmd.exe', args: [], available: true }
+    expect(terminalListShellProfilesContract.responseSchema.safeParse([profile]).success).toBe(true)
+    expect(terminalListShellProfilesContract.responseSchema.safeParse([{ ...profile, env: { SECRET: 'must-not-leak' } }]).success).toBe(false)
     expect(terminalCreateContract.requestSchema.safeParse({
       ...create,
       cwd: '/Users/private',
@@ -839,6 +850,7 @@ describe('terminal IPC schemas', () => {
 
 function darkSettingsForEvent() {
   return {
+    notifications: { desktop: true },
     locale: 'en-US',
     appearance: {
       theme: 'dark',
@@ -860,6 +872,8 @@ function darkSettingsForEvent() {
     terminal: {
       fontFamily: '',
       fontSize: 13,
+      defaultProfileId: null,
+      profiles: [],
     },
   }
 }

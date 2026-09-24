@@ -2,176 +2,129 @@
 
 [English](README.md) | **简体中文**
 
-PiPilot 是基于官方 [Pi coding agent](https://github.com/earendil-works/pi) SDK 的
-Electron 桌面客户端。它在项目级 utility process 中运行锁定版本的官方 SDK，展示会话、
-工具调用、文件变更、终端、模型、扩展、Skills 和 MCP 配置，不维护另一套 Agent
-Runtime，也不把 Pi 的数据迁移成 PiPilot 私有格式。
+PiPilot 是基于官方 [Pi coding agent](https://github.com/earendil-works/pi) 的 Electron 桌面客户端。它在隔离的 Electron utility process 中运行锁定版本的 Pi SDK 0.85.1，为对话、项目、文件、终端、模型和 Pi 扩展提供桌面工作区。
 
-Pi 继续拥有 Session、配置和资源，PiPilot 负责桌面使用体验。
+Pi 继续管理自己的 Session、配置和资源。PiPilot 负责桌面体验，不维护另一套 Agent Runtime，也不把 Pi 数据迁移到私有格式中。
 
-> **项目状态：**`v0.0.6` 是当前稳定版，`v0.0.5` 是上一稳定版。源码仓库和
-> GitHub Release 均公开；未签名安装包只有在原生构建和 packaged smoke 验证通过后
-> 才用于手动下载。
+**源码版本：**0.0.7 · [下载发布版本](https://github.com/GarlandQian/PiPilot/releases)
 
 [![CI](https://github.com/GarlandQian/PiPilot/actions/workflows/ci.yml/badge.svg)](https://github.com/GarlandQian/PiPilot/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2f3437.svg)](LICENSE)
 
-当前源码采用连续对话时间线、任务导航和资源面板。已安装的发布版可能仍显示之前的界面。
+## 主要功能
 
-## 主要能力
+- **项目与对话**：由用户明确选择项目目录，也可发起无项目聊天；浏览、搜索、整理和管理 Pi Session。
+- **对话工作区**：在同一时间线查看消息与工具活动；排队、编辑或调整后续消息；使用 Commands、Skills、文件引用、模型选择和 Thinking 控制。
+- **项目工具**：查看文件和 diff、搜索命令输出、检查子代理活动，并使用按项目组织的终端标签页。
+- **Pi 配置**：管理模型与 Provider、Packages、Resources、Extensions、Skills、Prompts、Themes，以及全局或项目级 MCP 设置。
+- **桌面偏好**：支持浅色和深色主题、英文和简体中文、键盘操作及可配置的终端字体。
+- **External Control**：可选的本地 MCP 接口，用于查看对话状态和控制 Prompt。默认关闭，详见 [External Control](#external-control)。
 
-- **官方内置 Pi Runtime**：在隔离的 Electron utility process 中运行锁定的官方 Pi
-  SDK `0.85.1`，同时保留 Pi 自己的 Session 和配置文件。
-- **项目与日常聊天**：项目目录只能由用户明确选择；也支持不绑定项目的聊天，不会把主目录
-  自动当作项目。
-- **真实 Pi Session**：按项目浏览 Session，并使用已经接入的创建、打开、命名、复制、
-  Fork 和删除等 Pi 能力。
-  点击项目名恢复已有任务，优先回到当前或上次选中的会话；通过明确的“新任务”操作创建会话。
-  支持搜索、任务/运行中/需关注筛选及最近/名称排序。置顶、归档、恢复和未读标记在本地保留；
-  归档只调整本地导航组织，保留 Pi 会话文件。运行中显示动态标识，需要操作时显示黄色提示，失败显示红色，未读结果显示圆点；空闲、已读和主动停止不显示状态图标。
-  项目收起后，运行中的任务和未读结果仍可从优先区域找到。
-  目录以有界批次继续扫描超过 200 个会话，刷新时复用未变文件的元数据；打开和删除仍重新验证实际会话文件。
-- **连续对话体验**：提问居右、回复居左；助手正文与工具活动按时间顺序连续呈现。
-  只有相邻的读文件和搜索操作会聚合，Bash 命令、写入/编辑和子代理各自独立显示。
-  消息、思考、提醒、排队内容和工具/子代理说明统一渲染 Markdown，代码与配置保留原文。
-  支持代码块、工具调用、Queue、Follow-up、Steer、模型与
-  Thinking 控制。点击发送后先完整保存消息，再释放输入框；每条消息独立显示发送确认或失败状态，不覆盖新草稿。
-  运行中默认排队；待发消息可原位编辑、删除或“调整方向”。停止会暂停剩余队列并保留图片，点击“继续队列”才恢复，清空队列是单独操作。
-  已交给 Pi 的消息不再允许修改。未确认的发送必须先核对接收记录，重启后不会自动重发。
-  未发送的文字、图片与上下文引用按会话分别保留，切换后可以恢复；草稿只保存在内存中，退出应用后不保留。
-  已提交的发件箱消息通过应用的 IndexedDB 跨重启保留；待发内容与去重记录保存在当前 Pi agent 目录的 `pipilot-delivery/` 中，与官方 Session JSONL 分开存放。
-  思考、读取分组和单项工具详情各自展开收起；助手正文始终留在时间线中，不放进整轮工作折叠。
-  重载历史时保留新到的流式输出；工具完成事件缺失时，以已保存的最终结果恢复状态。
-  新错误会展开提示，通知和操作卡始终可见。
-  长提问按需展开，附件始终单独显示。
-- **Commands、Skills 与上下文**：输入 `/` 搜索 Commands 和 Skills；输入 `@` 引用
-  项目文件或 Skill，并支持键盘导航。
-- **命令输出与子代理**：命令输出支持搜索、匹配跳转、换行、复制和跟随新增输出；向上阅读或搜索时暂停跟随，
-  可手动回到最新内容。Markdown 报告提供格式化与原文视图，命令和终端记录保持字面呈现。
-  子代理详情只读展示任务说明、已报告的进度、工具活动、错误与结果，并支持分别选择并行任务；任务与摘要渲染 Markdown。
-  Pi 只返回摘要时会明确提示缺少子对话消息，执行状态以实际收到的数据为准。
-- **资源面板**：文件与变更属于当前选中的项目，不依赖会话加载。命令输出与子代理作为详情页打开，
-  返回后恢复原来的资源与阅读位置。文件和 Diff 双向跳转，连续变更区分已暂存、未暂存；
-  可见资源在后台刷新并保留阅读状态，支持放大资源后返回对话。
-  对话标题栏可搜索并跳转轮次，不打断右侧文件查看。
-  文件树刷新保留展开与选中位置；连续变更支持搜索定位。
-  底部终端默认收起，支持记住拖拽高度、最大化，以及每个项目的多个命名标签。
-  直接在终端中输入，支持查找、复制、粘贴与清屏，不再提供重复的命令输入框。
-  隐藏、切会话和切项目均保留进程与阅读位置，新输出不会打断历史日志阅读。
-  退出后保留输出与退出码，主动关闭标签才移除；重新启动会新建终端并保留旧输出。
-  不设固定终端数量上限，保留输出缓冲限制，也不会为了新建终端而结束已有进程。历史保留于本次应用运行期间，
-  完整退出应用后不恢复。
-- **Pi 集成管理**：查看和管理 Packages、Resources、Extensions、Skills、Prompts 和
-  Themes，并安全重载 Runtime。存在受保护的后台任务时延后应用；重载失败不会自动重启 Host。
-- **MCP 管理**：编辑全局 `~/.pi/agent/mcp.json` 和当前项目 `.mcp.json`；提供结构化
-  表单与 Raw JSONC 编辑，并保留注释和未知字段。Models/MCP 草稿在设置导航中保留于
-  有界内存；文件保存与 Runtime 应用分别报告结果。
-- **入站对话 MCP**：在设置页现有 Integrations 标签中明确启用仅本机的 External
-  Control，即可通过打包后的 stdio MCP 命令查看有界对话元数据，并向精确对话发送
-  Prompt。它默认关闭，使用仅当前用户可访问的 Unix socket 或命名管道，不暴露历史
-  Transcript、Token 或 Session 文件路径。
-- **模型管理**：管理 Pi `models.json`、自定义 Provider/Model、默认模型和高级 JSON
-  字段。可搜索的供应商列表与详情共用同一份表单/JSON 草稿，配置修改后旧测试结果失效。
-- **偏好设置**：可搜索的分类导航、即时外观预览与自定义字体。普通设置合并写入磁盘后才报告保存成功，失败时恢复已保存值；退出时等待进行中的配置保存，并将尚未提交的供应商、模型和 MCP 表单纳入保存/放弃/取消确认。
-- **桌面体验**：浅色/深色主题、中英文界面、可配置终端字体、键盘操作，以及
-  `1100×680` 最小窗口布局。
+PiPilot 是 Electron 桌面应用，不提供 Web 版本。
 
-PiPilot 目前只支持 Electron 桌面应用，不提供 Web 版本。
+## 下载与安装
 
-## 设计原则
+从 [GitHub Releases](https://github.com/GarlandQian/PiPilot/releases) 下载安装包。
 
-1. **Pi 拥有数据，PiPilot 提供体验**：Session、模型、扩展和配置继续使用 Pi 的官方
-   文件与目录。
-2. **优先使用官方能力**：Pi RPC 已提供的功能直接接入官方协议；PiPilot 不维护平行的
-   Agent 实现。
-3. **官方 Pi SDK 优先**：PiPilot 使用锁定的公开 Pi SDK，并从标准 Pi 环境加载全局和
-   项目级插件、Skills 与资源。
-4. **状态真实**：未选择、加载中、可用和错误状态分开呈现；切换 Session 时不展示上一
-   Session 的数据。
-5. **紧凑桌面工具**：保持安静、克制、高信息密度的开发工具界面，覆盖浅色、深色和最小
-   窗口布局。
+| 平台 | 架构 | 格式 |
+| --- | --- | --- |
+| macOS | arm64、x64 | DMG、ZIP |
+| Windows | x64 | NSIS |
+| Linux | x64 | AppImage、DEB |
 
-## 开发环境要求
+当前安装包未签名，macOS 版本也未公证。macOS 可能要求用户先批准再打开应用；Windows 可能显示 SmartScreen 或未知发布者警告。PiPilot 不会静默下载或安装更新：macOS 采用手动下载；Windows/Linux 的原生更新仍在验证中，尚未启用。
+
+## 开发
+
+### 环境要求
 
 - macOS、Windows 或 Linux
-- Node.js `24.18.0`（项目 CI 使用版本）
-- pnpm `12.3.4`（项目 CI 使用版本）
+- Node.js 24.18.0
+- pnpm 12.3.4（由 `package.json` 声明）
 
-安装包用户不需要 Node.js、pnpm，也不需要另行安装 Pi 可执行文件。开发环境使用
-`package.json` 和 `pnpm-lock.yaml` 中精确锁定的 Pi SDK 版本。
+使用安装包时无需另行安装 Node.js、pnpm 或 Pi 可执行文件。开发环境使用 `package.json` 和 `pnpm-lock.yaml` 锁定的 Pi SDK 版本。
 
-## 本地开发
+### 本地运行
 
-```bash
+~~~sh
 git clone https://github.com/GarlandQian/PiPilot.git
 cd PiPilot
 pnpm install --frozen-lockfile
 pnpm dev
-```
+~~~
 
-常用检查：
+### 常用命令
 
-```bash
+~~~sh
 pnpm typecheck
 pnpm test:unit
-pnpm build
+pnpm test:integration
 pnpm test:electron
-```
+pnpm build
+~~~
 
-CI 与发布复用 `.github/workflows/verify.yml`：单测在 macOS、Windows、Linux
-三端运行，完整 Electron 回归在 macOS 运行，integration 是该 Electron 套件的子集。
-模型协议契约使用真实已安装的 Pi SDK，连接隔离的本机 HTTP/SSE fixture，覆盖 OpenAI
-Chat Completions、OpenAI Responses、Anthropic Messages 和 Google Generative AI。
-验证流式输出、真实文件写入工具、工具结果回传与下一次发送，不使用真实模型账户或开发者的 Pi 数据。
+Electron 回归测试通过 Playwright 运行。CI 会在 macOS、Windows、Linux 上运行单元契约测试，并在 macOS 上运行完整 Electron 测试。Provider 契约测试使用 Pi SDK 连接本机 HTTP/SSE fixture，覆盖 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages 和 Google Generative AI；不需要真实 Provider 账户，也不使用个人 Pi 数据。
 
-应用由 Electron Main、sandbox preload 和 React renderer 组成。Renderer 不直接访问
-Node.js、文件系统或 Pi，跨进程数据通过共享 Zod 契约和白名单 IPC 传递。
+### 本地打包
 
-## 本地打包
-
-```bash
-# 当前平台的未打包目录和 packaged smoke
+~~~sh
+# 构建当前平台的未打包应用
 pnpm package:dir
 pnpm test:packaged
 
-# 原生安装包
+# 构建原生安装包
 pnpm package:mac
 pnpm package:win
 pnpm package:linux
-```
+~~~
 
-打包冒烟默认选择当前 Node 架构。构建 macOS 两种架构后，可分别明确验证：
+macOS 打包会生成 arm64 和 x64 版本。可以分别指定架构运行打包冒烟检查：
 
-```bash
+~~~sh
 PIPILOT_PACKAGED_ARCH=arm64 pnpm test:packaged
 PIPILOT_PACKAGED_ARCH=x64 pnpm test:packaged
-```
+~~~
 
-测试会检查 Mach-O 架构；目标包缺失会失败，不会改测另一种架构。Apple Silicon 上执行
-Intel 包需要 Rosetta。发布 CI 分别执行两种 macOS 架构的测试。这些冒烟检查运行已解包的
-应用，不代表已经验证完整的 DMG、NSIS 或 DEB 安装流程。
+检查会验证指定应用的架构；缺少对应构建时会失败，不会改测另一个架构。Apple Silicon 运行 Intel 版本需要 Rosetta。打包冒烟测试检查的是未解包的应用目录，不代表完整 DMG、NSIS 或 DEB 安装流程已验证。
 
-当前目标和分发策略：
+## 架构
 
-| 平台 | 架构 | 产物 | 信任与更新策略 |
-| --- | --- | --- | --- |
-| macOS | arm64、x64 | DMG、ZIP | 无 Developer ID、未公证；手动下载和安装 |
-| Windows | x64 | NSIS | 未签名；可能出现 SmartScreen 或未知发布者提示 |
-| Linux | x64 | AppImage、DEB | 正在验证 AppImage 更新；DEB 手动安装 |
+应用由 Electron Main、sandbox preload 和 React renderer 组成。Renderer 不能直接访问 Node.js、文件系统或 Pi。跨进程数据通过共享的 Zod 契约和白名单 IPC 传递。
 
-当前 macOS 版本没有 Apple Developer ID 签名，也没有 notarization。下载后可能需要在
-Finder 中右键选择“打开”，或在系统设置中明确允许。Windows 版本没有发布者签名，系统可能显示
-SmartScreen 警告。Release 说明和应用会如实展示这些状态。
+| 路径 | 内容 |
+| --- | --- |
+| `src/main/` | Pi Runtime、文件、终端、配置及 Electron Main 服务 |
+| `src/preload/` | Sandbox preload 和 IPC facade |
+| `src/shared/` | 跨进程契约与领域类型 |
+| `src/renderer/` | Renderer adapters 与纯逻辑 |
+| `src/components/`、`src/store/` | React 界面与状态管理 |
+| `tests/` | Unit、Electron、integration 和 packaged smoke 测试 |
 
-构建目标和打包边界见 `electron-builder.yml`，打包回归测试位于 `tests/packaged/`。
+## Pi 配置与数据
+
+PiPilot 不会扫描磁盘寻找项目，也不会自动把主目录当作项目。项目目录只能通过系统文件夹选择器选取。无项目聊天使用应用私有工作目录，Session 仍保存在 Pi 的官方 Session 目录中。
+
+默认 Pi Agent 目录是 `~/.pi/agent`。设置环境变量 `PI_CODING_AGENT_DIR` 可指定其他目录；Pi Runtime、包管理、模型编辑器和全局 MCP 编辑器都会使用该目录。
+
+| 路径 | 用途 |
+| --- | --- |
+| `~/.pi/agent/settings.json` | Pi 全局设置与默认模型 |
+| `~/.pi/agent/models.json` | 自定义 Provider 与模型 |
+| `~/.pi/agent/auth.json` | Pi SDK 管理的认证 |
+| `~/.pi/agent/mcp.json` | 全局 MCP 配置 |
+| `~/.pi/agent/sessions/` | Pi 官方 Session |
+| `<project>/.pi/settings.json` | 项目级 Pi 设置 |
+| `<project>/.mcp.json` | 项目级 MCP 配置 |
+
+MCP 配置遵循 PiPilot 的扩展约定；Pi 核心本身没有定义 MCP 配置格式。外观、导航和窗口偏好单独保存在 Electron 应用数据目录。请勿提交包含 API Key、Token 或真实 Session 内容的文件。
 
 ## External Control
 
-External Control 是独立于 Pi 出站 MCP 配置的入站 MCP 边界，默认关闭，可在“设置 >
-Integrations”现有标签中启用。PiPilot 可以由用户明确安装或修复稳定的
-`pipilot-mcp` 启动器，并显示一份可复制的通用配置：
+External Control 是区别于 Pi 出站 MCP 设置的可选入站 MCP 接口，可在 **设置 > Integrations** 中启用，默认关闭。
 
-```json
+启用后，PiPilot 可以安装或修复 `pipilot-mcp` 启动器，并显示以下客户端配置：
+
+~~~json
 {
   "mcpServers": {
     "pipilot": {
@@ -180,87 +133,17 @@ Integrations”现有标签中启用。PiPilot 可以由用户明确安装或修
     }
   }
 }
-```
+~~~
 
-能力 Token、打包可执行文件和 descriptor 路径始终只由 Main 持有，不会进入复制的
-配置。
+MCP 客户端会启动 stdio 进程，通过仅限当前用户使用的认证 Unix socket（macOS/Linux）或命名管道（Windows）连接正在运行的应用。PiPilot 不会开放网络监听端口。该接口支持有界的对话列表和状态查询、Prompt 与 Abort 操作、操作回执及等待；不会提供对话历史、凭据或 Session 文件路径。
 
-stdio 进程不会打开 GUI，也不会监听网络端口，而是通过 macOS/Linux 的当前用户私有
-Unix-domain socket，或 Windows 的命名管道连接运行中的 Main。工具型 MVP 提供有界的
-对话列表/状态、幂等 Prompt 与 Abort receipt、操作状态以及有界等待；最终响应只会返回
-给产生它的那个操作。关闭功能会断开客户端、移除端点并轮换凭据；应用停止或功能关闭时
-stdio 会返回有界的 unavailable 错误。macOS 会把 wrapper 放在应用私有数据目录，并将
-该目录前置注册到当前用户的 launchd PATH；重启从 Finder 启动的客户端后即可解析同一
-命令。只有私有收据和 wrapper 仍精确匹配时，PiPilot 才会在后续启动时恢复这项注册。
-Linux 仍只安装到已在 `PATH` 中的安全稳定用户目录；Windows 会把打包的
-`pipilot-mcp.exe` 所在目录加入当前用户 PATH，并原样保留 Unicode 与其他 PATH 条目。
-Windows 首次注册后请注销并重新登录，使之后启动的客户端继承新环境。经 PiPilot 证明
-为受管的启动器也可在确认后卸载；卸载不会关闭 External Control，不会删除 Windows
-打包可执行文件，只会移除 PiPilot 自己的 wrapper、收据和当前用户 PATH 注册。PiPilot
-不会修改 Codex、Claude Code、Pi、shell profile 或项目 MCP 配置文件。
+启动器由用户显式管理。PiPilot 只会更改自己的启动器文件和当前用户的 PATH 注册，不会编辑 Codex、Claude Code、Pi、shell profile 或项目 MCP 文件。
 
-## Release 与更新
+## 发布与贡献
 
-公开发布流程：
+稳定版标签会启动完整发布验证。各平台安装包经过检查并通过 packaged smoke 后，GitHub Release 才会公开。构建目标定义在 `electron-builder.yml`，打包检查位于 `tests/packaged/`。
 
-1. 稳定标签（例如 `v0.0.6`）先触发发布专属的完整验证任务。
-2. 源码、单元测试、构建、集成和 Electron 检查通过后，macOS、Windows、Linux
-   分别完成打包、产物检查和 packaged smoke。
-3. 最终装配任务拒绝同名文件覆盖，并校验文件名、版本、SHA-256，以及更新元数据
-   引用的安装包大小和 SHA-512。
-4. Actions 创建 GitHub Release 草稿，并校验草稿中的完整资产集。
-5. 只有完整验证、所有原生构建、packaged smoke、最终装配与草稿资产校验均成功后，
-   Release 才会公开。首次仓库重置只允许替换 `v0.0.1`，且标签必须指向仓库唯一的根
-   提交；后续发布必须提高版本号。
-
-PiPilot 不会静默下载或安装更新。macOS 保持手动下载；Windows/Linux 的原生应用内更新
-只有在官方 updater 的隔离平台测试通过后才会启用。
-
-## Pi 配置与数据
-
-PiPilot 不扫描磁盘寻找项目，也不会自动把主目录当作项目。项目工作目录只来自系统文件夹
-选择器；无项目聊天使用应用私有工作目录，Session 仍由 Pi 存放在官方目录中。
-
-默认 Agent 目录为 `~/.pi/agent`。设置 `PI_CODING_AGENT_DIR` 后，运行时、包管理、
-模型编辑器和全局 MCP 编辑器都使用同一个目录，不会导入另一套私有数据库。
-
-默认目录下的常见文件：
-
-- `~/.pi/agent/mcp.json`：全局 MCP 配置
-- `<项目>/.mcp.json`：当前项目 MCP 配置
-- `~/.pi/agent/models.json`：自定义 Provider 与 Model
-- `~/.pi/agent/settings.json`：Pi 全局设置与默认模型
-- `~/.pi/agent/auth.json`：由 Pi SDK 管理的认证
-- `<项目>/.pi/settings.json`：Pi 项目设置
-- `~/.pi/agent/sessions/`：Pi 官方 Session
-
-MCP 文件遵循 PiPilot 的扩展约定，Pi 核心本身没有定义 MCP 配置格式。
-外观、导航和窗口偏好仍保存在 Electron 应用数据目录，与 Pi 配置分开。
-
-请不要把包含 API Key、Token 或真实 Session 内容的个人配置提交到仓库。
-
-## 项目结构
-
-```text
-src/main/       Electron Main、Pi Runtime、文件、终端和配置服务
-src/preload/    sandbox preload 与严格 IPC facade
-src/shared/     跨进程 Zod 契约和领域类型
-src/renderer/   Renderer adapters、projectors 与纯逻辑
-src/components/ React UI
-src/store/      Renderer providers 与状态所有者
-tests/          Unit、Electron、integration 与 packaged smoke
-```
-
-## 当前开发重点
-
-- 在 macOS、Windows 和 Linux 实机验证首个公开安装包。
-- 继续完善多 Pi Session Runtime 管理和 External Control 操作归属。
-- 继续使用内置官方 Pi SDK 验证 Models、Integrations、入站/出站 MCP 和扩展 UI。
-
-## 贡献
-
-修改项目前请阅读对应实现和测试。项目使用 pnpm
-和冻结的 lockfile；不要提交用户 Session、密钥、构建输出或测试报告。
+贡献时请使用 pnpm 和冻结的 lockfile。修改前阅读相关实现与测试；不要提交个人配置、凭据、构建输出或生成的测试报告。
 
 ## 许可证
 

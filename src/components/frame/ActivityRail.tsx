@@ -24,6 +24,7 @@ export interface ActivityRailProps {
   onToggleContextPanel: () => void
   onOpenPalette: () => void
   onOpenAbout: () => void
+  onOpenNotification: (id: string) => Promise<void>
   width?: number
   children?: React.ReactNode
 }
@@ -78,6 +79,7 @@ export function ActivityRail({
   onToggleContextPanel,
   onOpenPalette,
   onOpenAbout,
+  onOpenNotification,
   width,
   children,
 }: ActivityRailProps) {
@@ -162,7 +164,7 @@ export function ActivityRail({
             <TbSettings className="size-4.5" aria-hidden />
           </RailButton>
         </div>
-        <GlobalNotifications onOpenAbout={onOpenAbout} />
+        <GlobalNotifications onOpenAbout={onOpenAbout} onOpenNotification={onOpenNotification} />
         <div className={expanded ? 'ml-auto' : undefined}>
           <RailButton
             label={t('rail.palette')}

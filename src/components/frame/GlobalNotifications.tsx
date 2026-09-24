@@ -5,7 +5,7 @@ import {
   TbCheck,
   TbDownload,
   TbExternalLink,
-  TbInfoCircle,
+  TbMessageCircleQuestion,
   TbLoader2,
   TbRefresh,
   TbX,
@@ -24,13 +24,13 @@ import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Progress } from '@/components/ui/progress'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { useT } from '@/i18n'
+import { useLocale, useT } from '@/i18n'
 import { cn } from '@/lib/utils'
 import type { ApplicationUpdateSnapshot } from '@/shared/application-update'
 import { useApplicationUpdate } from '@/store/application-update'
-import { usePiExtensionUi, usePiRpcActions } from '@/store/pi-rpc'
+import { useTaskNotifications } from '@/store/task-notifications'
+import type { TaskNotification } from '@/shared/task-notifications'
 import { MarkdownContent } from '@/components/chat/markdown/MarkdownContent'
-import { filterWorkbenchNotifications, type NotificationFilter } from './notification-presentation'
 
 function manualDescriptionKey(packageName: string) {
   if (packageName === 'macos') return 'applicationUpdate.manualDescription.macos' as const
@@ -206,34 +206,87 @@ function UpdateNotification({
   )
 }
 
-export function GlobalNotifications({ onOpenAbout }: { onOpenAbout(): void }) {
+function NotificationTime({ createdAt, now }: { createdAt: number; now: number }) {
+  const locale = useLocale()
+  const minutes = Math.round((createdAt - now) / 60_000)
+  const hours = Math.round(minutes / 60)
+  const relative = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' })
+  const date = new Date(createdAt)
+  const text = Math.abs(minutes) < 60 ? relative.format(Math.min(0, minutes), 'minute')
+    : Math.abs(hours) < 24 ? relative.format(hours, 'hour')
+      : new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric' }).format(date)
+  return <time dateTime={date.toISOString()} title={date.toLocaleString(locale)} className="shrink-0 text-micro tabular-nums text-muted-foreground">{text}</time>
+}
+
+function TaskNotificationRow({ notification, now, busy, onOpen }: {
+  notification: TaskNotification
+  now: number
+  busy: boolean
+  onOpen(): void
+}) {
   const t = useT()
-  const extension = usePiExtensionUi()
-  const actions = usePiRpcActions()
+  const name = notification.sessionName ?? t('sidebar.session.untitled')
+  const source = notification.scope.kind === 'projectless' ? t('conversation.projectless') : notification.projectName ?? t('notifications.project')
+  const kind = t(notification.kind === 'completed' ? 'notifications.kind.completed' : notification.kind === 'failed' ? 'notifications.kind.failed' : 'notifications.kind.inputRequired')
+  return <li data-task-notification-id={notification.id} className="border-b border-border/60 last:border-b-0">
+    <button type="button" disabled={busy} onClick={onOpen} aria-label={t('notifications.openTask', { kind, name, source })} className={cn('flex w-full min-w-0 items-start gap-2 px-3 py-3 text-left outline-none transition-colors hover:bg-accent focus-visible:focus-ring disabled:opacity-60', !notification.read && 'bg-sage/5')}>
+      {notification.kind === 'completed' ? <TbCheck className="mt-0.5 size-4 shrink-0 text-success" aria-hidden /> : notification.kind === 'failed' ? <TbAlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden /> : <TbMessageCircleQuestion className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />}
+      <span className="min-w-0 flex-1">
+        <span className="flex min-w-0 items-baseline justify-between gap-2"><span className="min-w-0 text-caption font-medium text-foreground">{kind}</span><NotificationTime createdAt={notification.createdAt} now={now} /></span>
+        <span className="mt-0.5 block truncate text-caption text-foreground" title={name}>{name}</span>
+        <span className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-micro text-muted-foreground"><span className="min-w-0 truncate" title={source}>{source}</span>{notification.kind === 'input-required' && notification.resolved ? <span>{t('notifications.resolved')}</span> : null}<span className={cn('ml-auto inline-flex shrink-0 items-center gap-1', !notification.read && 'text-foreground')}>{!notification.read ? <span aria-hidden className="size-1.5 rounded-full bg-sage" /> : null}{t(notification.read ? 'notifications.read' : 'notifications.unread')}</span></span>
+      </span>
+    </button>
+  </li>
+}
+
+export function GlobalNotifications({ onOpenAbout, onOpenNotification }: {
+  onOpenAbout(): void
+  onOpenNotification(id: string): Promise<void>
+}) {
+  const t = useT()
+  const notifications = useTaskNotifications()
   const update = useApplicationUpdate()
   const [open, setOpen] = React.useState(false)
-  const [filter, setFilter] = React.useState<NotificationFilter>('all')
-  const visibleNotifications = filterWorkbenchNotifications(extension.notifications, filter)
+  const [busy, setBusy] = React.useState(false)
+  const [openingId, setOpeningId] = React.useState<string | null>(null)
+  const [openFailed, setOpenFailed] = React.useState<string | null>(null)
+  const [now, setNow] = React.useState(Date.now)
+  const busyRef = React.useRef(false)
+  const visibleNotifications = [...notifications.snapshot.items].sort((left, right) => right.createdAt - left.createdAt)
+  const unread = visibleNotifications.filter((item) => !item.read)
   const updateSnapshot = visibleUpdateSnapshot(update.snapshot, update.dismissedVersion)
-  const shownUpdate = filter === 'all' || updateSnapshot?.state === 'error' || updateSnapshot?.state === 'downloaded'
-    ? updateSnapshot
-    : null
-  const count = extension.notifications.length + (updateSnapshot ? 1 : 0)
-  const pendingReveal = extension.notifications.slice().reverse().find((notification) =>
-    notification.autoReveal)
-  const severity = updateSnapshot?.state === 'error' ||
-    extension.notifications.some((item) => item.type === 'error')
-    ? 'error'
-    : extension.notifications.some((item) => item.type === 'warning')
-      ? 'warning'
-      : 'info'
+  const count = unread.length
 
   React.useEffect(() => {
-    if (!pendingReveal) return
-    setFilter('all')
-    setOpen(true)
-    actions.markNotificationRevealed(pendingReveal.id)
-  }, [actions, pendingReveal])
+    if (!open) return
+    setNow(Date.now())
+    const timer = window.setInterval(() => setNow(Date.now()), 60_000)
+    return () => window.clearInterval(timer)
+  }, [open])
+
+  const run = async (operation: () => Promise<boolean>) => {
+    if (busyRef.current) return
+    busyRef.current = true
+    setBusy(true)
+    try { await operation() } finally { busyRef.current = false; setBusy(false) }
+  }
+  const openNotification = async (id: string) => {
+    if (busyRef.current) return
+    busyRef.current = true
+    setOpeningId(id)
+    setOpenFailed(null)
+    try {
+      await onOpenNotification(id)
+      setOpen(false)
+    } catch {
+      setOpenFailed(id)
+    } finally {
+      busyRef.current = false
+      setOpeningId(null)
+    }
+  }
+  const disabled = busy || openingId !== null
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -244,7 +297,7 @@ export function GlobalNotifications({ onOpenAbout }: { onOpenAbout(): void }) {
               variant="ghost"
               size="icon-sm"
               aria-label={count > 0
-                ? t('rail.notifications.count', { count })
+                ? t('notifications.unreadCount', { count })
                 : t('rail.notifications')}
               className="relative text-muted-foreground hover:text-foreground"
             >
@@ -252,16 +305,10 @@ export function GlobalNotifications({ onOpenAbout }: { onOpenAbout(): void }) {
               {count > 0 ? (
                 <span
                   aria-hidden
-                  className={cn(
-                    'absolute right-1 top-1 size-1.5 rounded-full ring-2 ring-sidebar',
-                    severity === 'error'
-                      ? 'bg-destructive'
-                      : severity === 'warning'
-                        ? 'bg-warning'
-                        : 'bg-sage',
-                  )}
-                />
+                  className={cn('absolute -right-0.5 -top-0.5 flex min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-semibold leading-4 text-white ring-2 ring-sidebar', unread.some((item) => item.kind === 'failed') ? 'bg-destructive' : 'bg-sage')}
+                >{count > 99 ? '99+' : count}</span>
               ) : null}
+              {updateSnapshot ? <span aria-hidden className={cn('absolute bottom-1 right-1 size-1.5 rounded-full ring-2 ring-sidebar', updateSnapshot.state === 'error' ? 'bg-destructive' : 'bg-sage')} /> : null}
             </Button>
           </PopoverTrigger>
         </TooltipTrigger>
@@ -278,68 +325,21 @@ export function GlobalNotifications({ onOpenAbout }: { onOpenAbout(): void }) {
           <h2 className="text-caption font-medium text-foreground">
             {t('rail.notifications')}
           </h2>
-          <span className="text-micro tabular-nums text-muted-foreground">{count}</span>
-          {extension.notifications.length > 0 ? <Button variant="ghost" size="xs" className="ml-auto" onClick={() => {
-            for (const notification of extension.notifications) actions.dismissNotification(notification.id)
-          }}>{t('workbenchReview.notifications.clear')}</Button> : null}
+          <span className="text-micro tabular-nums text-muted-foreground">{t('notifications.unreadTotal', { count })}</span>
         </div>
-        {extension.notifications.length > 0 ? <div className="flex shrink-0 gap-1 border-b border-border px-2 py-1.5" role="group" aria-label={t('rail.notifications')}>
-          {(['all', 'attention'] as const).map((value) => <Button key={value} variant="ghost" size="xs" aria-pressed={filter === value} className={cn(filter === value && 'bg-selected')} onClick={() => setFilter(value)}>{t(value === 'all' ? 'workbenchReview.notifications.all' : 'workbenchReview.notifications.attention')}</Button>)}
-        </div> : null}
-        {count === 0 ? (
-          <p className="px-3 py-4 text-caption text-muted-foreground">
-            {t('rail.notifications.empty')}
-          </p>
-        ) : (
-          <ul className="scroll-slim min-h-0 max-h-80 overflow-y-auto">
-            {shownUpdate ? (
-              <UpdateNotification
-                snapshot={shownUpdate}
-                onOpenAbout={() => {
-                  setOpen(false)
-                  onOpenAbout()
-                }}
-              />
-            ) : null}
-            {filter === 'attention' && visibleNotifications.length === 0 && !shownUpdate ? <li role="status" className="px-3 py-4 text-caption text-muted-foreground">{t('workbenchReview.notifications.noAttention')}</li> : null}
-            {visibleNotifications.map((notification) => (
-              <li
-                key={notification.id}
-                className="flex items-start gap-2 border-b border-border/60 px-3 py-2.5 last:border-b-0"
-              >
-                {notification.type === 'info' ? (
-                  <TbInfoCircle
-                    className="mt-0.5 size-3.5 shrink-0 text-muted-foreground"
-                    aria-hidden
-                  />
-                ) : (
-                  <TbAlertTriangle
-                    className={cn(
-                      'mt-0.5 size-3.5 shrink-0',
-                      notification.type === 'error' ? 'text-destructive' : 'text-warning',
-                    )}
-                    aria-hidden
-                  />
-                )}
-                <div
-                  role={notification.type === 'error' ? 'alert' : 'status'}
-                  className="min-w-0 flex-1 break-words text-caption text-foreground"
-                >
-                  <MarkdownContent markdown={notification.message} />
-                </div>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label={t('extension.notification.dismiss')}
-                  onClick={() => actions.dismissNotification(notification.id)}
-                  className="-mr-1"
-                >
-                  <TbX aria-hidden />
-                </Button>
-              </li>
-            ))}
-          </ul>
-        )}
+        <div className="scroll-slim min-h-0 max-h-[min(32rem,75vh)] overflow-y-auto">
+          {updateSnapshot ? <section className="border-b border-border" aria-label={t('notifications.applicationUpdate')}><h3 className="px-3 pt-2 text-micro font-medium text-muted-foreground">{t('notifications.applicationUpdate')}</h3><ul><UpdateNotification snapshot={updateSnapshot} onOpenAbout={() => { setOpen(false); onOpenAbout() }} /></ul></section> : null}
+          <section aria-label={t('notifications.taskActivity')}>
+            <div className="flex flex-wrap items-center gap-1 border-b border-border px-2 py-1.5">
+              <h3 className="mr-auto px-1 text-micro font-medium text-muted-foreground">{t('notifications.taskActivity')}</h3>
+              <Button variant="ghost" size="xs" disabled={disabled || count === 0} onClick={() => void run(() => notifications.markRead())}>{t('notifications.markAllRead')}</Button>
+              <Button variant="ghost" size="xs" disabled={disabled || visibleNotifications.length === 0} onClick={() => void run(() => notifications.clear())}>{t('notifications.clearHistory')}</Button>
+            </div>
+            {notifications.errorMessage ? <div role="alert" className="space-y-2 border-b border-border px-3 py-2"><p className="text-caption text-destructive">{notifications.errorMessage}</p><Button variant="outline" size="xs" disabled={disabled || notifications.loading} onClick={() => void run(notifications.reload)}><TbRefresh aria-hidden />{t('notifications.retry')}</Button></div> : null}
+            {openFailed ? <div role="alert" className="space-y-2 border-b border-border px-3 py-2"><p className="text-caption text-destructive">{t('notifications.openFailed')}</p><div className="flex flex-wrap gap-1"><Button variant="outline" size="xs" disabled={disabled} onClick={() => void openNotification(openFailed)}>{t('notifications.retry')}</Button><Button variant="ghost" size="xs" disabled={disabled} onClick={() => void run(async () => { const cleared = await notifications.clear(openFailed); if (cleared) setOpenFailed(null); return cleared })}>{t('notifications.localDismiss')}</Button></div></div> : null}
+            {notifications.loading && visibleNotifications.length === 0 ? <p role="status" className="flex items-center gap-2 px-3 py-4 text-caption text-muted-foreground"><TbLoader2 aria-hidden className="size-3.5 animate-spin motion-reduce:animate-none" />{t('notifications.loading')}</p> : visibleNotifications.length === 0 ? <p className="px-3 py-4 text-caption text-muted-foreground">{t('rail.notifications.empty')}</p> : <ul>{visibleNotifications.map((notification) => <TaskNotificationRow key={notification.id} notification={notification} now={now} busy={disabled} onOpen={() => void openNotification(notification.id)} />)}</ul>}
+          </section>
+        </div>
       </PopoverContent>
     </Popover>
   )

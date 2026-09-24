@@ -20,6 +20,7 @@ function renderNavigation(open: boolean, rail: 'sessions' | 'settings' = 'sessio
     onToggleContextPanel: () => undefined,
     onOpenPalette: () => undefined,
     onOpenAbout: () => undefined,
+    onOpenNotification: async () => undefined,
   }, createElement(ContextPanel, {
     rail,
     hidden: !open,

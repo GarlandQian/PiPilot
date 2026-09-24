@@ -69,6 +69,7 @@ export interface WorkspaceActions {
     selectionToken: SessionCatalogSelectionToken,
   ): Promise<void>
   loadSessionCatalog(scope: ConversationScope, refresh?: boolean): Promise<void>
+  ensureInputSession(signal: AbortSignal): Promise<ConversationActivationResult | null>
   newSession(scope: ConversationScope): Promise<void>
   openSession(
     scope: ConversationScope,
@@ -770,6 +771,40 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     })
   }, [adapter, applyActivation, refreshConversation, runElectron])
 
+  const ensureInputSession = React.useCallback(async (signal: AbortSignal) => {
+    if (!adapter) throw new Error('Session activation is unavailable.')
+    try {
+      // Join Main's one-time startup. Starting another conversation here while
+      // the application is booting would create a second, unwanted session.
+      // A failed startup is cached by that gate. An explicit click can retry
+      // against the current state after the user fixes the original problem.
+      await adapter.localPi.runtime.rendererReady().catch(() => undefined)
+      if (signal.aborted) return null
+      const runtime = await adapter.localPi.runtime.status()
+      if (signal.aborted) return null
+      if (runtime.state === 'ready' && runtime.sessionState?.sessionId) {
+        applyRuntimeSnapshot(runtime, true)
+        clearError()
+        return {
+          scope: stateRef.current.activeScope,
+          generation: runtime.generation,
+          sessionId: runtime.sessionState.sessionId,
+        }
+      }
+      const activation = await adapter.conversation.new(stateRef.current.activeScope)
+      if (signal.aborted) return null
+      applyActivation(activation)
+      void refreshConversation(activation.scope).catch(() => undefined)
+      clearError()
+      return activation
+    } catch (error) {
+      // A newer navigation owns feedback once this input request is abandoned.
+      if (signal.aborted) return null
+      fail(error)
+      throw error
+    }
+  }, [adapter, applyActivation, applyRuntimeSnapshot, clearError, fail, refreshConversation])
+
   const openSession = React.useCallback(async (
     scope: ConversationScope,
     selectionToken: SessionCatalogSelectionToken,
@@ -971,6 +1006,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     deleteSession,
     duplicateSession,
     loadSessionCatalog,
+    ensureInputSession,
     newSession,
     openSession,
     openWorkspace,
@@ -986,6 +1022,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     deleteSession,
     duplicateSession,
     loadSessionCatalog,
+    ensureInputSession,
     newSession,
     openSession,
     openWorkspace,

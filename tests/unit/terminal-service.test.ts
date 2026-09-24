@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TerminalService } from '../../src/main/terminal/terminal-service'
 import { PIPILOT_VERSION } from '../../src/shared/build-info'
 import type { ConversationScope } from '../../src/shared/conversation-scope'
+import { DEFAULT_SETTINGS, type TerminalSettings } from '../../src/shared/settings'
 
 const firstWorkspaceId = '00000000-0000-4000-8000-000000000101'
 const secondWorkspaceId = '00000000-0000-4000-8000-000000000102'
@@ -130,6 +131,7 @@ describe('TerminalService', () => {
     expect(processes[0].kills).toEqual([])
     for (const operation of [
       () => service.create(firstScope, 80, 24),
+      () => service.restart(firstScope, first.terminalId, 80, 24),
       () => service.list(firstScope),
       () => service.attach(firstScope, first.terminalId, 80, 24),
       () => service.rename(firstScope, first.terminalId, 'Renamed'),
@@ -233,7 +235,6 @@ describe('TerminalService', () => {
       reused: true,
     })
     await service.input(firstScope, created.terminalId, 'printf ok\r')
-    await expect(service.close(firstScope, created.terminalId)).rejects.toMatchObject({ code: 'TERMINAL_STILL_RUNNING' })
     expect(await service.rename(firstScope, created.terminalId, '  Build server  '))
       .toMatchObject({ terminalId: created.terminalId, title: 'Build server' })
     await service.resize(firstScope, created.terminalId, 100, 30)
@@ -272,6 +273,43 @@ describe('TerminalService', () => {
     expect(session.scope).toEqual(projectlessScope)
     expect(JSON.stringify(session)).not.toContain(projectlessRoot)
     expect(launchedCwd).toBe(await realpath(projectlessRoot))
+    await service.dispose()
+  })
+
+  it('closes a running terminal by stopping only its process and removes exited tabs without another kill', async () => {
+    const root = await temporaryDirectory('terminal-close')
+    const processes: FakePty[] = []
+    const service = new TerminalService(
+      () => firstScope,
+      async (scope) => ({ scope, cwd: root }),
+      {
+        resolveShell: () => ({ file: '/bin/sh', args: [], label: 'sh' }),
+        spawnPty: () => {
+          const process = new FakePty(80, 24)
+          processes.push(process)
+          return process
+        },
+      },
+    )
+    const first = await service.create(firstScope, 80, 24)
+    const second = await service.create(firstScope, 80, 24)
+    const third = await service.create(firstScope, 80, 24)
+    const events: unknown[] = []
+    service.subscribe((event) => events.push(event))
+    await service.close(firstScope, second.terminalId)
+    expect(processes.map((process) => process.kills)).toEqual([[], [undefined], []])
+    expect(events).toEqual([expect.objectContaining({ type: 'exit', terminalId: second.terminalId })])
+    expect((await service.list(firstScope)).map(({ terminalId, status }) => ({ terminalId, status }))).toEqual([
+      { terminalId: first.terminalId, status: 'running' },
+      { terminalId: third.terminalId, status: 'running' },
+    ])
+    await expect(service.attach(firstScope, second.terminalId, 80, 24)).rejects.toMatchObject({ code: 'TERMINAL_NOT_FOUND' })
+    await service.input(firstScope, first.terminalId, 'still running')
+    expect(processes[0].writes).toEqual(['still running'])
+    processes[2].emitExit(3)
+    await service.close(firstScope, third.terminalId)
+    expect(processes[2].kills).toEqual([])
+    expect(await service.list(firstScope)).toEqual([expect.objectContaining({ terminalId: first.terminalId, status: 'running' })])
     await service.dispose()
   })
 
@@ -552,6 +590,7 @@ describe('TerminalService', () => {
       {
         environment: { ComSpec: 'C:\\Windows\\System32\\cmd.exe' },
         platform: 'win32',
+        resolveExecutable: async (candidate) => candidate === 'C:\\Windows\\System32\\cmd.exe' ? candidate : undefined,
         spawnPty: (file, args, options) => {
           const process = new FakePty(options.cols ?? 80, options.rows ?? 24)
           launches.push({ file, args, process })
@@ -584,6 +623,81 @@ describe('TerminalService', () => {
     await service.dispose()
   })
 
+  it('discovers installed Windows CMD, Windows PowerShell and PowerShell profiles and launches the selected executable', async () => {
+    const root = await temporaryDirectory('terminal-windows-profiles')
+    const cmd = 'C:\\Windows\\System32\\cmd.exe'
+    const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
+    const pwsh = 'D:\\Tools\\PowerShell\\pwsh.exe'
+    const installed = new Set([cmd, powershell, pwsh])
+    const launches: Array<{ file: string; args: string[]; process: FakePty }> = []
+    const service = new TerminalService(
+      () => firstScope,
+      async (scope) => ({ scope, cwd: root }),
+      {
+        platform: 'win32',
+        environment: { ComSpec: cmd, Path: 'relative-folder;D:\\Tools\\PowerShell' },
+        resolveExecutable: async (candidate) => installed.has(candidate) ? candidate : undefined,
+        spawnPty: (file, args) => {
+          const process = new FakePty(80, 24)
+          launches.push({ file, args, process })
+          return process
+        },
+      },
+    )
+    const profiles = await service.listShellProfiles()
+    expect(profiles).toEqual([
+      expect.objectContaining({ id: expect.stringMatching(/^detected:/), label: 'Command Prompt (CMD)', isDefault: true, executable: cmd, available: true }),
+      expect.objectContaining({ id: expect.stringMatching(/^detected:/), label: 'Windows PowerShell', isDefault: false, executable: powershell, available: true }),
+      expect.objectContaining({ id: expect.stringMatching(/^detected:/), label: 'PowerShell', isDefault: false, executable: pwsh, available: true }),
+    ])
+    await service.create(firstScope, 80, 24)
+    await service.create(firstScope, 80, 24, profiles[1].id)
+    await service.create(firstScope, 80, 24, profiles[0].id)
+    await service.create(firstScope, 80, 24, profiles[2].id)
+    expect(launches.map(({ file, args }) => ({ file, args }))).toEqual([
+      { file: cmd, args: [] },
+      { file: powershell, args: [] },
+      { file: cmd, args: [] },
+      { file: pwsh, args: [] },
+    ])
+    expect(launches.every(({ process }) => process.kills.length === 0)).toBe(true)
+    installed.delete(powershell)
+    await expect(service.create(firstScope, 80, 24, profiles[1].id)).rejects.toMatchObject({ code: 'TERMINAL_SHELL_UNAVAILABLE' })
+    expect((await service.listShellProfiles()).map(({ id }) => id)).toEqual([profiles[0].id, profiles[2].id])
+    await expect(service.create(firstScope, 80, 24, 'bash')).rejects.toMatchObject({ code: 'TERMINAL_SHELL_UNAVAILABLE' })
+    expect(launches).toHaveLength(4)
+    await service.dispose()
+  })
+
+  it('does not advertise missing Unix shells and revalidates a selected shell before creating', async () => {
+    const root = await temporaryDirectory('terminal-unix-profiles')
+    const configuredShell = join(root, 'test-shell')
+    await writeFile(configuredShell, '#!/bin/sh\n', { mode: 0o755 })
+    let shInstalled = true
+    const spawnPty = vi.fn(() => new FakePty(80, 24))
+    const service = new TerminalService(
+      () => firstScope,
+      async (scope) => ({ scope, cwd: root }),
+      {
+        platform: 'linux',
+        environment: { SHELL: configuredShell, PATH: '' },
+        resolveExecutable: async (candidate) => candidate === configuredShell || candidate === '/bin/sh' && shInstalled ? candidate : undefined,
+        spawnPty,
+      },
+    )
+    const profiles = await service.listShellProfiles()
+    expect(profiles).toEqual([
+      expect.objectContaining({ id: expect.stringMatching(/^detected:/), label: 'test-shell', isDefault: true }),
+      expect.objectContaining({ id: expect.stringMatching(/^detected:/), label: 'sh', isDefault: false }),
+    ])
+    await service.create(firstScope, 80, 24, profiles[1].id)
+    expect(spawnPty.mock.calls[0]).toEqual(['/bin/sh', ['-l'], expect.objectContaining({ cwd: await realpath(root) })])
+    shInstalled = false
+    await expect(service.create(firstScope, 80, 24, profiles[1].id)).rejects.toMatchObject({ code: 'TERMINAL_SHELL_UNAVAILABLE' })
+    expect(spawnPty).toHaveBeenCalledTimes(1)
+    await service.dispose()
+  })
+
   it.each(['darwin', 'linux'] as const)(
     'uses the configured executable Unix shell on %s',
     async (platform) => {
@@ -611,6 +725,157 @@ describe('TerminalService', () => {
       await service.dispose()
     },
   )
+
+  it('uses the latest global default for new tabs and the original resolved launch when restarting', async () => {
+    const root = await temporaryDirectory('terminal-global-restart')
+    const original = { id: 'custom:work', name: 'Work shell', executable: 'fish', args: ['--interactive', 'literal;argument'], env: { PATH: '/tools', MODE: 'original', REMOVE: null } }
+    let settings: TerminalSettings = { ...DEFAULT_SETTINGS.terminal, defaultProfileId: original.id, profiles: [original] }
+    const environment = { PATH: '/bin', MODE: 'inherited', REMOVE: 'remove-me' }
+    const installed = new Set(['/tools/fish', '/tools/nu'])
+    const launches: Array<{ file: string; args: string[]; env: NodeJS.ProcessEnv; process: FakePty }> = []
+    const service = new TerminalService(() => firstScope, async (scope) => ({ scope, cwd: root }), {
+      platform: 'linux', environment, getTerminalSettings: () => settings, readShellsFile: async () => '',
+      resolveExecutable: async (candidate) => installed.has(candidate) ? candidate : undefined,
+      spawnPty: (file, args, options) => {
+        const process = new FakePty(options.cols ?? 80, options.rows ?? 24)
+        launches.push({ file, args, env: { ...options.env }, process })
+        return process
+      },
+    })
+    const first = await service.create(firstScope, 80, 24)
+    await service.rename(firstScope, first.terminalId, 'Long-running work')
+    await expect(service.restart(firstScope, first.terminalId, 90, 30)).rejects.toMatchObject({ code: 'TERMINAL_STILL_RUNNING' })
+    settings = { ...settings, defaultProfileId: 'custom:new', profiles: [{ id: 'custom:new', name: 'New shell', executable: '/tools/nu', args: ['--login'], env: { MODE: 'new' } }] }
+    environment.MODE = 'changed-parent'
+    const second = await service.create(firstScope, 80, 24)
+    launches[0].process.emitExit(4)
+    const restarted = await service.restart(firstScope, first.terminalId, 100, 35)
+    expect(restarted).toMatchObject({ shell: 'Work shell', title: 'Long-running work', cols: 100, rows: 35, replay: '', sequence: 0, reused: false })
+    expect(restarted.terminalId).not.toBe(first.terminalId)
+    expect(launches.map(({ file }) => file)).toEqual(['/tools/fish', '/tools/nu', '/tools/fish'])
+    expect(launches[2].args).toEqual(['--interactive', 'literal;argument'])
+    expect(launches[2].env).toEqual(launches[0].env)
+    expect(launches[2].env).toMatchObject({ MODE: 'original', PATH: '/tools', PWD: await realpath(root), TERM_PROGRAM: 'PiPilot' })
+    expect(launches[2].env).not.toHaveProperty('REMOVE')
+    expect(launches[1].process.kills).toEqual([])
+    expect((await service.list(firstScope)).map(({ terminalId }) => terminalId)).toEqual([second.terminalId, restarted.terminalId])
+    await service.dispose()
+  })
+
+  it('preserves the exited terminal when restart validation or spawning fails', async () => {
+    const root = await temporaryDirectory('terminal-restart-failure')
+    let installed = true
+    let failSpawn = false
+    const processes: FakePty[] = []
+    const service = new TerminalService(() => firstScope, async (scope) => ({ scope, cwd: root }), {
+      platform: 'linux', environment: { SHELL: '/tools/fish' },
+      resolveExecutable: async (candidate) => installed && candidate === '/tools/fish' ? candidate : undefined,
+      spawnPty: () => {
+        if (failSpawn) throw new Error('Launch failed')
+        const process = new FakePty(80, 24)
+        processes.push(process)
+        return process
+      },
+    })
+    const first = await service.create(firstScope, 80, 24)
+    await service.kill(firstScope, first.terminalId)
+    installed = false
+    await expect(service.restart(firstScope, first.terminalId, 80, 24)).rejects.toMatchObject({ code: 'TERMINAL_SHELL_UNAVAILABLE' })
+    installed = true
+    failSpawn = true
+    await expect(service.restart(firstScope, first.terminalId, 80, 24)).rejects.toMatchObject({ code: 'TERMINAL_START_FAILED' })
+    expect(await service.list(firstScope)).toEqual([expect.objectContaining({ terminalId: first.terminalId, status: 'exited' })])
+    failSpawn = false
+    const replacement = await service.restart(firstScope, first.terminalId, 80, 24)
+    expect(replacement.terminalId).not.toBe(first.terminalId)
+    expect(processes[0].kills).toEqual([undefined])
+    await service.dispose()
+  })
+
+  it('keeps missing explicit defaults visible and never silently falls back', async () => {
+    const root = await temporaryDirectory('terminal-missing-default')
+    let settings: TerminalSettings = { ...DEFAULT_SETTINGS.terminal, defaultProfileId: 'detected:removed', profiles: [] }
+    const spawnPty = vi.fn(() => new FakePty(80, 24))
+    const service = new TerminalService(() => firstScope, async (scope) => ({ scope, cwd: root }), {
+      platform: 'linux', environment: { SHELL: '/bin/sh' }, getTerminalSettings: () => settings,
+      resolveExecutable: async (candidate) => candidate === '/bin/sh' ? candidate : undefined,
+      readShellsFile: async () => '', spawnPty,
+    })
+    expect(await service.listShellProfiles()).toContainEqual(expect.objectContaining({ id: 'detected:removed', isDefault: true, available: false, unavailableReason: 'executable-not-found' }))
+    await expect(service.create(firstScope, 80, 24)).rejects.toMatchObject({ code: 'TERMINAL_SHELL_UNAVAILABLE' })
+    settings = { ...settings, defaultProfileId: 'custom:removed', profiles: [{ id: 'custom:removed', name: 'Missing', executable: '/missing/shell', args: [], env: {} }] }
+    await expect(service.create(firstScope, 80, 24)).rejects.toMatchObject({ code: 'TERMINAL_SHELL_UNAVAILABLE' })
+    expect(spawnPty).not.toHaveBeenCalled()
+    settings = { ...settings, defaultProfileId: null }
+    await service.create(firstScope, 80, 24)
+    expect(spawnPty).toHaveBeenCalledTimes(1)
+    await service.dispose()
+  })
+
+  it.each(['linux', 'win32'] as const)('launches only the selected custom profile without unrelated shell discovery on %s', async (platform) => {
+    const root = await temporaryDirectory('terminal-direct-custom')
+    const executable = platform === 'win32' ? 'D:\\Tools\\shell.exe' : '/tools/shell'
+    const settings: TerminalSettings = {
+      ...DEFAULT_SETTINGS.terminal, defaultProfileId: 'custom:work',
+      profiles: [
+        { id: 'custom:work', name: 'Work', executable, args: ['--login'], env: {} },
+        { id: 'custom:other', name: 'Other', executable: '/unrelated/shell', args: [], env: {} },
+      ],
+    }
+    let available = true
+    const resolveExecutable = vi.fn(async (candidate: string) => available && candidate === executable ? candidate : undefined)
+    const readDirectory = vi.fn(async () => [])
+    const readShellsFile = vi.fn(async () => '')
+    const probeProcess = vi.fn(async () => { throw new Error('Unrelated WSL timeout') })
+    const spawnPty = vi.fn(() => new FakePty(80, 24))
+    const service = new TerminalService(() => firstScope, async (scope) => ({ scope, cwd: root }), {
+      platform, environment: {}, getTerminalSettings: () => settings,
+      resolveExecutable, readDirectory, readShellsFile, probeProcess, spawnPty,
+    })
+    await service.create(firstScope, 80, 24)
+    await service.create(firstScope, 80, 24, 'custom:work')
+    available = false
+    await expect(service.create(firstScope, 80, 24)).rejects.toMatchObject({ code: 'TERMINAL_SHELL_UNAVAILABLE' })
+    await expect(service.create(firstScope, 80, 24, 'custom:removed')).rejects.toMatchObject({ code: 'TERMINAL_SHELL_UNAVAILABLE' })
+    expect(resolveExecutable.mock.calls).toEqual([[executable], [executable], [executable]])
+    expect(spawnPty).toHaveBeenCalledTimes(2)
+    expect(readDirectory).not.toHaveBeenCalled()
+    expect(readShellsFile).not.toHaveBeenCalled()
+    expect(probeProcess).not.toHaveBeenCalled()
+    await service.dispose()
+  })
+
+  it('applies Windows environment overrides case-insensitively and protects terminal identity', async () => {
+    const root = await temporaryDirectory('terminal-windows-env')
+    const settings: TerminalSettings = { ...DEFAULT_SETTINGS.terminal, defaultProfileId: 'custom:cmd', profiles: [{ id: 'custom:cmd', name: 'Custom CMD', executable: 'cmd', args: ['/Q'], env: { PATH: 'D:\\Tools', token: null, pwd: 'fake', term: 'fake', term_program: 'fake' } }] }
+    let launched: NodeJS.ProcessEnv = {}
+    const service = new TerminalService(() => firstScope, async (scope) => ({ scope, cwd: root }), {
+      platform: 'win32', environment: { Path: 'C:\\Tools', TOKEN: 'inherited', PWD: 'old', TERM: 'old', TERM_PROGRAM: 'old' }, getTerminalSettings: () => settings,
+      readDirectory: async () => [], resolveExecutable: async (candidate) => candidate === 'D:\\Tools\\cmd.exe' ? candidate : undefined,
+      spawnPty: (_file, _args, options) => { launched = { ...options.env }; return new FakePty(80, 24) },
+    })
+    await service.create(firstScope, 80, 24)
+    expect(launched).toMatchObject({ PATH: 'D:\\Tools', PWD: await realpath(root), TERM: 'xterm-256color', TERM_PROGRAM: 'PiPilot' })
+    expect(Object.keys(launched).filter((key) => /^(path|pwd|term|term_program)$/i.test(key))).toEqual(['PATH', 'PWD', 'TERM', 'TERM_PROGRAM'])
+    expect(Object.keys(launched).some((key) => key.toLowerCase() === 'token')).toBe(false)
+    await service.dispose()
+  })
+
+  it('rejects an unmappable WSL cwd before launching a terminal', async () => {
+    const root = await temporaryDirectory('terminal-wsl-cwd')
+    let settings: TerminalSettings = { ...DEFAULT_SETTINGS.terminal, defaultProfileId: null, profiles: [] }
+    const spawnPty = vi.fn(() => new FakePty(80, 24))
+    const service = new TerminalService(() => firstScope, async (scope) => ({ scope, cwd: root }), {
+      platform: 'win32', environment: {}, getTerminalSettings: () => settings, readDirectory: async () => [],
+      resolveExecutable: async (candidate) => candidate === 'C:\\Windows\\System32\\wsl.exe' ? candidate : undefined,
+      probeProcess: async () => Buffer.from('Ubuntu\r\n', 'utf16le'), spawnPty,
+    })
+    const profile = (await service.listShellProfiles()).find(({ source }) => source === 'wsl')!
+    settings = { ...settings, defaultProfileId: profile.id }
+    await expect(service.create(firstScope, 80, 24)).rejects.toMatchObject({ code: 'TERMINAL_CWD_UNAVAILABLE' })
+    expect(spawnPty).not.toHaveBeenCalled()
+    await service.dispose()
+  })
 
   it('reports native terminal launch failure without retaining a session', async () => {
     const root = await temporaryDirectory('terminal-unavailable')
