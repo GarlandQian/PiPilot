@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { terminalCustomProfilesSchema, terminalShellProfileIdSchema } from '../terminal-profiles'
 import {
   SETTINGS_SCHEMA_VERSION,
   TERMINAL_FONT_FAMILY_LIMIT,
@@ -31,6 +32,8 @@ export const terminalSettingsSchema = z
   .object({
     fontFamily: z.string().max(TERMINAL_FONT_FAMILY_LIMIT),
     fontSize: z.number().int().min(TERMINAL_FONT_SIZE_MIN).max(TERMINAL_FONT_SIZE_MAX),
+    defaultProfileId: terminalShellProfileIdSchema.nullable(),
+    profiles: terminalCustomProfilesSchema,
   })
   .strict()
 
@@ -47,6 +50,7 @@ export const appSettingsSchema = z
     appearance: appearanceSettingsSchema,
     composer: composerSettingsSchema,
     terminal: terminalSettingsSchema,
+    notifications: z.object({ desktop: z.boolean() }).strict(),
   })
   .strict()
 
@@ -59,6 +63,7 @@ export const appSettingsPatchSchema = z
     appearance: appearanceSettingsPatchSchema.optional(),
     composer: composerSettingsPatchSchema.optional(),
     terminal: terminalSettingsPatchSchema.optional(),
+    notifications: z.object({ desktop: z.boolean().optional() }).strict().optional(),
   })
   .strict()
 

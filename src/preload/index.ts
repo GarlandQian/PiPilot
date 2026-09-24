@@ -56,7 +56,9 @@ import {
   settingsUpdateContract,
   shellOpenExternalContract,
   terminalCreateContract,
+  terminalRestartContract,
   terminalListContract,
+  terminalListShellProfilesContract,
   terminalAttachContract,
   terminalRenameContract,
   terminalCloseContract,
@@ -83,6 +85,8 @@ import type { ConversationScope, SessionCatalogCursor, SessionCatalogSelectionTo
 import type { LocalPiExtensionUiResponse, LocalPiRendererRpcCommand } from '../shared/local-pi'
 import type { ApplicationUpdateSnapshot } from '../shared/application-update'
 import { applicationShutdownEventSchema } from '../shared/application-shutdown'
+import { notificationChangedEventSchema } from '../shared/task-notifications'
+import { notificationsGetContract, notificationsPresentationContract, notificationsReadContract, notificationsClearContract, notificationsResolveContract } from '../shared/ipc/contracts'
 
 function createContext(): RequestContext {
   return { requestId: crypto.randomUUID() }
@@ -219,6 +223,17 @@ const externalControlSubscription = createSubscription(
 )
 
 const api: PiPilotApi = {
+  notifications: {
+    get: () => invoke(notificationsGetContract, { context: createContext() }),
+    setPresentation: (presentation) => invoke(notificationsPresentationContract, { context: createContext(), presentation }),
+    markRead: (id) => invoke(notificationsReadContract, { context: createContext(), id }),
+    clear: (id) => invoke(notificationsClearContract, { context: createContext(), id }),
+    resolveTarget: (id) => invoke(notificationsResolveContract, { context: createContext(), id }),
+    subscribe: createSubscription(ipcChannels.notificationsChanged, (raw) => {
+      const result = notificationChangedEventSchema.safeParse(raw)
+      return result.success ? result.data.snapshot : undefined
+    }).subscribe,
+  },
   externalControl: {
     get: () => invoke(externalControlGetContract, { context: createContext() }),
     getLauncher: () => invoke(externalControlLauncherGetContract, {
@@ -308,12 +323,14 @@ const api: PiPilotApi = {
     read: (workspaceId, path, stage = 'unstaged') => invoke(workspaceDiffReadContract, { context: createContext(), workspaceId, path, stage }),
   },
   terminal: {
+    listShellProfiles: () => invoke(terminalListShellProfilesContract, { context: createContext() }),
     list: (scope) => invoke(terminalListContract, { context: createContext(), scope }),
     attach: (scope, terminalId, cols, rows) => invoke(terminalAttachContract, { context: createContext(), scope, terminalId, cols, rows }),
     rename: (scope, terminalId, title) => invoke(terminalRenameContract, { context: createContext(), scope, terminalId, title }),
     close: (scope, terminalId) => invoke(terminalCloseContract, { context: createContext(), scope, terminalId }),
     clear: (scope, terminalId) => invoke(terminalClearContract, { context: createContext(), scope, terminalId }),
-    create: (scope, cols, rows) => invoke(terminalCreateContract, { context: createContext(), scope, cols, rows }),
+    create: (scope, cols, rows, shellProfileId) => invoke(terminalCreateContract, { context: createContext(), scope, cols, rows, ...(shellProfileId === undefined ? {} : { shellProfileId }) }),
+    restart: (scope, terminalId, cols, rows) => invoke(terminalRestartContract, { context: createContext(), scope, terminalId, cols, rows }),
     input: (scope, terminalId, data) => invoke(terminalInputContract, { context: createContext(), scope, terminalId, data }),
     kill: (scope, terminalId) => invoke(terminalKillContract, { context: createContext(), scope, terminalId }),
     resize: (scope, terminalId, cols, rows) => invoke(terminalResizeContract, { context: createContext(), scope, terminalId, cols, rows }),

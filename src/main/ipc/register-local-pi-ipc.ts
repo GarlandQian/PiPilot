@@ -122,6 +122,8 @@ export function registerLocalPiIpc(options: RegisterLocalPiIpcOptions) {
   const uiUnsubscribe = runtimeHost.subscribeUiRequests((envelope) => {
     const forward = async () => {
       if (disposed) return
+      const active = runtimeHost.getActiveRuntimeIdentity()
+      if (active?.runtimeId !== envelope.runtimeId || active.generation !== envelope.runtimeGeneration) return
       const window = getMainWindow()
       if (!window || window.isDestroyed()) return
       window.webContents.send(
@@ -151,6 +153,7 @@ export function registerLocalPiIpc(options: RegisterLocalPiIpcOptions) {
     async () => {
       try {
         await rendererReadyGate.signal()
+        await runtimeHost.replayPendingSelectedUiRequests({ force: true })
         return { accepted: true as const }
       } catch {
         throw new MainProcessError(

@@ -64,7 +64,7 @@ export function createSettingsStore(
     optimisticSettings: AppSettings,
     operation: () => Promise<SettingsSnapshot>,
   ) => {
-    if (disposed) return
+    if (disposed) return Promise.resolve(false)
     if (pendingOperations === 0) batchFailed = false
     pendingOperations += 1
     settings = optimisticSettings
@@ -73,11 +73,12 @@ export function createSettingsStore(
 
     let result: Promise<SettingsSnapshot>
     try { result = operation() } catch (error) { result = Promise.reject(error) }
-    void result
-      .then(acceptSnapshot)
+    return result
+      .then((snapshot) => { acceptSnapshot(snapshot); return true })
       .catch(async () => {
         batchFailed = true
         await recover()
+        return false
       })
       .finally(() => {
         pendingOperations -= 1
@@ -113,7 +114,7 @@ export function createSettingsStore(
     updateTerminal(patch: Partial<TerminalSettings>) {
       const settingsPatch: AppSettingsPatch = { terminal: patch }
       const next = mergeSettings(settings, settingsPatch)
-      mutate(next, () => adapter.update(settingsPatch))
+      return mutate(next, () => adapter.update(settingsPatch))
     },
     resetAppearance() {
       const next = {
@@ -125,7 +126,11 @@ export function createSettingsStore(
     resetTerminal() {
       const next = {
         ...settings,
-        terminal: cloneSettings(DEFAULT_SETTINGS).terminal,
+        terminal: {
+          ...settings.terminal,
+          fontFamily: DEFAULT_SETTINGS.terminal.fontFamily,
+          fontSize: DEFAULT_SETTINGS.terminal.fontSize,
+        },
       }
       mutate(next, () => adapter.reset('terminal'))
     },

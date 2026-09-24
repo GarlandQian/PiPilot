@@ -145,6 +145,44 @@ async function terminalAction(page: Page, action: string) {
   await page.getByRole('menuitem', { name: action, exact: true }).click()
 }
 
+async function openTerminalSettings(page: Page) {
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  await page.getByRole('region', { name: 'Settings', exact: true })
+    .getByRole('button', { name: 'Terminal', exact: true }).click()
+  const settings = page.getByRole('main', { name: 'Terminal', exact: true })
+  await expect(settings.getByRole('combobox', { name: 'Default profile', exact: true })).toBeVisible()
+  return settings
+}
+
+async function returnToTerminals(page: Page) {
+  await page.getByRole('button', { name: 'Sessions', exact: true }).click()
+  const drawer = page.locator('#workspace-terminal-drawer[data-terminal-drawer]')
+  if (!await drawer.isVisible()) await page.getByRole('button', { name: 'Terminal', exact: true }).click()
+  await expect(drawer).toBeVisible()
+}
+
+async function expectShellProfile(
+  page: Page,
+  terminal: Awaited<ReturnType<typeof activeTerminal>>,
+  phase: string,
+  marker: string,
+  cwd: string,
+  nounset: boolean,
+) {
+  await enterCommand(terminal.panel, `printf 'PIPILOT_%s_MARKER:%s\\n' '${phase}' "\${PIPILOT_TERMINAL_PROFILE_MARKER-unset}"; printf 'PIPILOT_%s_FLAGS:%s\\n' '${phase}' "$-"; printf 'PIPILOT_%s_CWD:%s\\n' '${phase}' "$PWD"`)
+  await expect.poll(async () => (await terminalSnapshot(page, terminal.terminalId)).replay)
+    .toContain(`\r\nPIPILOT_${phase}_CWD:${cwd}\r\n`)
+  const { replay } = await terminalSnapshot(page, terminal.terminalId)
+  expect(replay).toContain(`\r\nPIPILOT_${phase}_MARKER:${marker}\r\n`)
+  const flags = replay.match(new RegExp(`(?:^|\\r?\\n)PIPILOT_${phase}_FLAGS:([^\\r\\n]*)`))?.[1]
+  expect(flags).toContain('i')
+  expect(flags?.includes('u')).toBe(nounset)
+  // Inspect xterm's rendered output as well as Main replay. Long absolute test
+  // paths may wrap, so the renderer assertion uses the distinctive directory.
+  await expect(terminal.panel.locator('.xterm-rows')).toContainText(`PIPILOT_${phase}_MARKER:${marker}`)
+  await expect(terminal.panel.locator('.xterm-rows')).toContainText(basename(cwd))
+}
+
 async function renameTerminal(page: Page, title: string) {
   await terminalAction(page, 'Rename terminal')
   const dialog = page.getByRole('dialog', { name: 'Rename terminal', exact: true })
@@ -304,6 +342,229 @@ test('preserves named terminals and viewport across hiding, tabs and projects, a
     await expect(terminalPanel(page, restarted.terminalId)).toHaveCount(0)
     expect((await listTerminals(page)).some(({ terminalId }) => terminalId === restarted.terminalId)).toBe(false)
     expect((await terminalSnapshot(page, second.terminalId)).status).toBe('running')
+    expect(errors).toEqual([])
+  } finally {
+    await fixture.close()
+  }
+})
+
+test('uses the global profile for new terminals across projects and preserves an exited terminal launch on restart', async ({}, testInfo) => {
+  test.skip(process.platform === 'win32', 'The native shell identity probes use POSIX syntax; Windows profiles have service coverage.')
+  test.setTimeout(120_000)
+  const fixture = await launchTerminalFixture(testInfo)
+  const { app, page, projectA, projectB, errors } = fixture
+  const shellIsAlive = (pid: number) => app.evaluate((_electron, id) => {
+    try { process.kill(id, 0); return true } catch { return false }
+  }, pid)
+  const probePid = async (terminal: Awaited<ReturnType<typeof activeTerminal>>, marker: string) => {
+    await enterCommand(terminal.panel, `printf 'PIPILOT_%s:%s\\n' '${marker}' "$$"`)
+    const output = new RegExp(`(?:^|\\r?\\n)PIPILOT_${marker}:(\\d+)\\r?\\n`)
+    await expect.poll(async () => (await terminalSnapshot(page, terminal.terminalId)).replay).toMatch(output)
+    return Number((await terminalSnapshot(page, terminal.terminalId)).replay.match(output)![1])
+  }
+  try {
+    await addProject(app, page, projectA)
+    const toggle = page.getByRole('button', { name: 'Terminal', exact: true })
+    const drawer = page.locator('#workspace-terminal-drawer[data-terminal-drawer]')
+    await toggle.click()
+    const original = await activeTerminal(page)
+    const originalPid = await probePid(original, 'ORIGINAL_PID')
+    const profiles = await page.evaluate(() => window.pipilot!.terminal.listShellProfiles())
+    const detected = profiles.filter(({ source }) => source === 'detected')
+    expect(detected.length).toBeGreaterThan(0)
+    expect(profiles.filter(({ isDefault }) => isDefault)).toHaveLength(1)
+    for (const profile of detected) {
+      expect(profile).toMatchObject({
+        id: expect.stringMatching(/^detected:[a-f0-9]{32}$/),
+        source: 'detected', executable: expect.stringMatching(/^\//),
+        args: expect.any(Array), available: true,
+      })
+      expect(profile.args.every((argument) => typeof argument === 'string')).toBe(true)
+    }
+    await expect(drawer.getByRole('button', { name: 'New terminal with shell', exact: true })).toHaveCount(0)
+
+    const settings = await openTerminalSettings(page)
+    await settings.getByRole('button', { name: 'Add profile', exact: true }).click()
+    const form = page.getByRole('dialog', { name: 'Add terminal profile', exact: true })
+    await form.getByRole('textbox', { name: 'Profile name', exact: true }).fill('Fixture interactive sh')
+    await form.getByRole('textbox', { name: 'Executable', exact: true }).fill('/bin/sh')
+    await form.getByText('Advanced: arguments and environment', { exact: true }).click()
+    for (const [index, argument] of ['-i', '-u'].entries()) {
+      await form.getByRole('button', { name: 'Add argument', exact: true }).click()
+      await form.getByRole('textbox', { name: `Argument ${index + 1}`, exact: true }).fill(argument)
+    }
+    await form.getByRole('button', { name: 'Add variable', exact: true }).click()
+    await form.getByRole('textbox', { name: 'Variable 1 name', exact: true }).fill('PIPILOT_TERMINAL_PROFILE_MARKER')
+    await form.getByRole('textbox', { name: 'Variable 1 value', exact: true }).fill('original-global-profile')
+    await page.setViewportSize({ width: 1100, height: 680 })
+    await page.evaluate(() => window.pipilot!.settings.update({ appearance: { theme: 'dark' } }))
+    await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains('dark'))).toBe(true)
+    await expect.poll(() => form.evaluate((element) => ({
+      documentFits: document.documentElement.scrollWidth <= innerWidth,
+      dialogFits: element.scrollWidth <= element.clientWidth,
+      fieldsFit: [...element.querySelectorAll('form, fieldset')].every((field) => field.scrollWidth <= field.clientWidth),
+      insideWindow: element.getBoundingClientRect().left >= 0 && element.getBoundingClientRect().right <= innerWidth,
+    }))).toEqual({ documentFits: true, dialogFits: true, fieldsFit: true, insideWindow: true })
+    await expect(form.getByRole('button', { name: 'Save', exact: true })).toBeInViewport({ ratio: 1 })
+    await page.screenshot({ path: testInfo.outputPath('terminal-profile-form-dark-1100x680.png'), animations: 'disabled' })
+    await page.evaluate(() => window.pipilot!.settings.update({ appearance: { theme: 'light' } }))
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains('dark'))).toBe(false)
+    await form.getByRole('button', { name: 'Save', exact: true }).click()
+    await expect(form).toBeHidden()
+    const customProfile = (await page.evaluate(() => window.pipilot!.settings.get()))
+      .settings.terminal.profiles.find(({ name }) => name === 'Fixture interactive sh')
+    expect(customProfile).toMatchObject({
+      id: expect.stringMatching(/^custom:/), name: 'Fixture interactive sh',
+      executable: '/bin/sh', args: ['-i', '-u'],
+      env: { PIPILOT_TERMINAL_PROFILE_MARKER: 'original-global-profile' },
+    })
+    if (!customProfile) throw new Error('The custom profile was not persisted by the form')
+    await settings.getByRole('combobox', { name: 'Default profile', exact: true }).click()
+    await page.getByRole('option', { name: customProfile.name, exact: true }).click()
+    await expect.poll(async () => (await page.evaluate(() => window.pipilot!.settings.get()))
+      .settings.terminal.defaultProfileId).toBe(customProfile.id)
+    await expect.poll(async () => JSON.parse(await readFile(testInfo.outputPath('user-data', 'settings.json'), 'utf8'))
+      .settings.terminal).toMatchObject({ defaultProfileId: customProfile.id, profiles: [customProfile] })
+    await expect.poll(async () => (await page.evaluate(() => window.pipilot!.terminal.listShellProfiles()))
+      .find(({ id }) => id === customProfile.id)).toMatchObject({
+      id: customProfile.id, label: customProfile.name, source: 'custom',
+      executable: '/bin/sh', args: ['-i', '-u'], available: true, isDefault: true,
+    })
+    await page.setViewportSize({ width: 1100, height: 680 })
+    await page.evaluate(() => window.pipilot!.settings.update({ appearance: { theme: 'dark' } }))
+    await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains('dark'))).toBe(true)
+    await expect.poll(() => settings.evaluate((element) =>
+      document.documentElement.scrollWidth <= innerWidth && element.scrollWidth <= element.clientWidth,
+    )).toBe(true)
+    await expect(settings.getByRole('combobox', { name: 'Default profile', exact: true })).toBeInViewport({ ratio: 1 })
+    await page.screenshot({ path: testInfo.outputPath('terminal-global-profile-settings-dark-1100x680.png'), animations: 'disabled' })
+    await page.evaluate(() => window.pipilot!.settings.update({ appearance: { theme: 'light' } }))
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains('dark'))).toBe(false)
+    await page.screenshot({ path: testInfo.outputPath('terminal-global-profile-settings.png') })
+    await returnToTerminals(page)
+    expect(await listTerminals(page)).toHaveLength(1)
+    expect(await probePid(original, 'AFTER_SETTINGS')).toBe(originalPid)
+    await drawer.getByRole('button', { name: 'New terminal', exact: true }).click()
+    await expect(original.panel).toBeHidden()
+    await expect.poll(async () => (await listTerminals(page)).length).toBe(2)
+    const alternate = await activeTerminal(page)
+    expect(alternate.shell).toBe(customProfile.name)
+    const alternatePid = await probePid(alternate, 'ALTERNATE_PID')
+    await expectShellProfile(page, alternate, 'CUSTOM_A', 'original-global-profile', projectA, true)
+    await page.screenshot({ path: testInfo.outputPath('terminal-running-tabs.png') })
+    expect(alternatePid).not.toBe(originalPid)
+    expect(await shellIsAlive(originalPid)).toBe(true)
+
+    // The inactive tab's close control must not close or reselect the active PTY.
+    await drawer.locator(`[data-close-terminal-id="${original.terminalId}"]`).click()
+    await expect(terminalPanel(page, original.terminalId)).toHaveCount(0)
+    await expect(drawer.locator(`[data-tab-terminal-id="${alternate.terminalId}"]`)).toHaveAttribute('aria-selected', 'true')
+    await expect.poll(() => shellIsAlive(originalPid)).toBe(false)
+    expect((await listTerminals(page)).map(({ terminalId }) => terminalId)).toEqual([alternate.terminalId])
+    expect(await probePid(alternate, 'AFTER_OTHER_CLOSE')).toBe(alternatePid)
+
+    await drawer.getByRole('button', { name: 'Hide terminal (keep running)', exact: true }).click()
+    await expect(drawer).toBeHidden()
+    expect(await shellIsAlive(alternatePid)).toBe(true)
+    await toggle.click()
+
+    // The default is global, while every PTY still starts in its owning project.
+    await addProject(app, page, projectB)
+    const otherProject = await activeTerminal(page)
+    expect(otherProject.shell).toBe(customProfile.name)
+    await expectShellProfile(page, otherProject, 'CUSTOM_B', 'original-global-profile', projectB, true)
+    expect(await shellIsAlive(alternatePid)).toBe(true)
+    await page.getByRole('button', { name: `New session in ${basename(projectA)}`, exact: true }).click()
+    await expect.poll(() => page.evaluate(async () => (await window.pipilot!.localPi.runtime.status()).cwd)).toBe(projectA)
+    await expect(alternate.panel).toBeVisible()
+
+    const replacementProfile = {
+      id: 'custom:replacement-global-profile', name: 'Replacement sh', executable: '/bin/sh',
+      args: ['-i'], env: { PIPILOT_TERMINAL_PROFILE_MARKER: 'replacement-global-profile' },
+    }
+    await page.evaluate(({ originalProfile, replacement }) => window.pipilot!.settings.update({ terminal: {
+      profiles: [originalProfile, replacement], defaultProfileId: replacement.id,
+    } }), { originalProfile: customProfile, replacement: replacementProfile })
+    expect(await probePid(alternate, 'AFTER_DEFAULT_CHANGE')).toBe(alternatePid)
+    await expectShellProfile(page, alternate, 'EXISTING', 'original-global-profile', projectA, true)
+    await drawer.getByRole('button', { name: 'New terminal', exact: true }).click()
+    await expect(alternate.panel).toBeHidden()
+    const replacement = await activeTerminal(page)
+    expect(replacement.shell).toBe(replacementProfile.name)
+    const replacementPid = await probePid(replacement, 'REPLACEMENT_PID')
+    await expectShellProfile(page, replacement, 'NEW_DEFAULT', 'replacement-global-profile', projectA, false)
+
+    await drawer.locator(`[data-tab-terminal-id="${alternate.terminalId}"]`).click()
+    await enterCommand(alternate.panel, 'exit 19')
+    await expect(alternate.panel).toHaveAttribute('data-terminal-status', 'exited')
+    expect((await terminalSnapshot(page, alternate.terminalId)).exitCode).toBe(19)
+    await terminalAction(page, 'Restart terminal')
+    const restarted = await activeTerminal(page)
+    expect(restarted.terminalId).not.toBe(alternate.terminalId)
+    expect(restarted.shell).toBe(customProfile.name)
+    const restartedPid = await probePid(restarted, 'RESTARTED_PID')
+    await expectShellProfile(page, restarted, 'RESTARTED', 'original-global-profile', projectA, true)
+    expect(await shellIsAlive(replacementPid)).toBe(true)
+    await page.screenshot({ path: testInfo.outputPath('terminal-original-profile-restarted.png') })
+    await terminalAction(page, 'Close terminal')
+    await expect(terminalPanel(page, restarted.terminalId)).toHaveCount(0)
+    await expect.poll(() => shellIsAlive(restartedPid)).toBe(false)
+    await expect.poll(() => shellIsAlive(alternatePid)).toBe(false)
+    await expect(replacement.panel).toBeVisible()
+    expect(await probePid(replacement, 'AFTER_RESTARTED_CLOSE')).toBe(replacementPid)
+    await terminalAction(page, 'Close terminal')
+    await expect(terminalPanel(page, replacement.terminalId)).toHaveCount(0)
+    await expect.poll(() => shellIsAlive(replacementPid)).toBe(false)
+    expect(await listTerminals(page)).toEqual([])
+    await expect(drawer).toBeVisible()
+    expect(errors).toEqual([])
+  } finally {
+    await fixture.close()
+  }
+})
+
+test('recovers an unavailable global default without replacing existing terminals', async ({}, testInfo) => {
+  test.skip(process.platform === 'win32', 'This real PTY fixture uses a deterministic POSIX shell.')
+  test.setTimeout(90_000)
+  const fixture = await launchTerminalFixture(testInfo)
+  const { app, page, projectA, errors } = fixture
+  try {
+    await addProject(app, page, projectA)
+    await page.getByRole('button', { name: 'Terminal', exact: true }).click()
+    const original = await activeTerminal(page)
+    await page.evaluate(() => window.pipilot!.settings.update({
+      terminal: { defaultProfileId: 'custom:missing-profile' },
+    }))
+    await terminalWorkspace(page).getByRole('button', { name: 'New terminal', exact: true }).click()
+    await expect(terminalWorkspace(page).getByRole('alert')).toContainText('This terminal profile is unavailable.')
+    expect((await listTerminals(page)).map(({ terminalId }) => terminalId)).toEqual([original.terminalId])
+    await expect(original.panel).toHaveAttribute('data-terminal-status', 'running')
+
+    await terminalWorkspace(page).getByRole('button', { name: 'Terminal settings', exact: true }).click()
+    const settings = page.getByRole('main', { name: 'Terminal', exact: true })
+    await expect(settings).toBeVisible()
+    await expect(page.getByRole('region', { name: 'Settings', exact: true })
+      .getByRole('button', { name: 'Terminal', exact: true })).toHaveAttribute('aria-current', 'page')
+    await expect(settings.getByRole('alert')).toContainText('The saved default is unavailable.')
+    await settings.getByRole('button', { name: 'Use Auto', exact: true }).click()
+    await expect.poll(async () => (await page.evaluate(() => window.pipilot!.settings.get()))
+      .settings.terminal.defaultProfileId).toBeNull()
+    await expect(settings.getByRole('combobox', { name: 'Default profile', exact: true }))
+      .toHaveText('Auto (recommended)')
+    await returnToTerminals(page)
+    await terminalWorkspace(page).getByRole('button', { name: 'New terminal', exact: true }).click()
+    await expect(original.panel).toBeHidden()
+    const recovered = await activeTerminal(page)
+    expect(recovered.terminalId).not.toBe(original.terminalId)
+    expect((await listTerminals(page)).map(({ terminalId, status }) => ({ terminalId, status })))
+      .toEqual([
+        { terminalId: original.terminalId, status: 'running' },
+        { terminalId: recovered.terminalId, status: 'running' },
+      ])
+    await enterCommand(recovered.panel, "printf 'PIPILOT_%s\\n' 'AUTO_RECOVERED'")
+    await expect(recovered.panel.locator('.xterm-rows')).toContainText('PIPILOT_AUTO_RECOVERED')
     expect(errors).toEqual([])
   } finally {
     await fixture.close()

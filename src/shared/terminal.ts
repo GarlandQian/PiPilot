@@ -11,6 +11,8 @@ export const TERMINAL_MAX_ROWS = 300
 
 export const terminalIdSchema = z.uuid()
 export const terminalTitleSchema = z.string().trim().min(1).max(128)
+export { terminalShellProfileIdSchema, terminalShellProfileSchema } from './terminal-profiles'
+export type { TerminalShellProfileId, TerminalShellProfile } from './terminal-profiles'
 
 export const terminalColumnsSchema = z
   .number()

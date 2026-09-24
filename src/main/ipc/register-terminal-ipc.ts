@@ -2,7 +2,9 @@ import type { BrowserWindow } from 'electron'
 import {
   ipcChannels,
   terminalCreateContract,
+  terminalRestartContract,
   terminalListContract,
+  terminalListShellProfilesContract,
   terminalAttachContract,
   terminalRenameContract,
   terminalCloseContract,
@@ -46,6 +48,11 @@ export function registerTerminalIpc({
   const isTrustedSender = createTrustedSenderValidator(policy, getMainWindow)
 
   registerValidatedHandler(
+    terminalListShellProfilesContract,
+    isTrustedSender,
+    () => terminalService.listShellProfiles().catch(mapTerminalError),
+  )
+  registerValidatedHandler(
     terminalListContract,
     isTrustedSender,
     ({ scope }) => terminalService.list(scope).catch(mapTerminalError),
@@ -78,14 +85,20 @@ export function registerTerminalIpc({
   registerValidatedHandler(
     terminalCreateContract,
     isTrustedSender,
-    ({ scope, cols, rows }) =>
-      terminalService.create(scope, cols, rows).catch(mapTerminalError),
+    ({ scope, cols, rows, shellProfileId }) =>
+      terminalService.create(scope, cols, rows, shellProfileId).catch(mapTerminalError),
   )
   registerValidatedHandler(
     terminalInputContract,
     isTrustedSender,
     ({ scope, terminalId, data }) =>
       terminalService.input(scope, terminalId, data).catch(mapTerminalError),
+  )
+  registerValidatedHandler(
+    terminalRestartContract,
+    isTrustedSender,
+    ({ scope, terminalId, cols, rows }) =>
+      terminalService.restart(scope, terminalId, cols, rows).catch(mapTerminalError),
   )
   registerValidatedHandler(
     terminalResizeContract,

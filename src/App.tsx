@@ -24,6 +24,9 @@ import { ContextPanel } from '@/components/frame/ContextPanel'
 import { SettingsNavigation } from '@/components/frame/SettingsNavigation'
 import { useWorkbenchNavigation } from '@/components/frame/useWorkbenchNavigation'
 import { useSessionOpening } from '@/components/frame/useSessionOpening'
+import { useStartWriting } from '@/components/frame/useStartWriting'
+import { useTaskNotificationNavigation } from '@/components/frame/useTaskNotificationNavigation'
+import { ConversationNotices } from '@/components/chat/ConversationNotices'
 import { CommandPalette } from '@/components/frame/CommandPalette'
 import { SessionsPanel } from '@/components/frame/SessionsPanel'
 import type { SidebarConversationItem } from '@/components/layout/SessionList'
@@ -96,7 +99,9 @@ import {
 import { projectComposerMentionCandidates } from '@/renderer/composer/composer-mentions'
 import { useConversationOperationFeedback } from '@/renderer/composer/use-operation-feedback'
 import {
+  isOfficialSessionActiveRow,
   isOfficialSessionOpeningRow,
+  runtimeStateForOfficialSession,
   sameConversationScope,
 } from '@/store/workspace-state'
 
@@ -222,6 +227,20 @@ export default function App() {
   const conversationSessionKey = conversationReady
     ? `${conversationScopeKey(workspace.activeScope)}:${conversation.sessionId}:${pi.runtime?.generation ?? 'none'}`
     : null
+  const { startWriting, cancelStartWriting, starting, focusRequest } = useStartWriting({
+    workspace, ready: conversationReady, failed: conversation.status === 'error',
+    generation: pi.runtime?.generation, composerScopeKey, selectionRevision, requestSwitch,
+  })
+  const deletionSiblings = pendingDeletion
+    ? workspace.sessionCatalogs[conversationScopeKey(pendingDeletion.summary.scope)]?.rows ?? []
+    : []
+  const deletionSummary = pendingDeletion
+    ? deletionSiblings.find((row) => row.selectionToken === pendingDeletion.summary.selectionToken) ?? pendingDeletion.summary
+    : null
+  const deletingCurrentSession = Boolean(deletionSummary && isOfficialSessionActiveRow(
+    deletionSummary, deletionSiblings, workspace.activeScope, workspace.activeSessionId,
+    runtimeStateForOfficialSession(deletionSummary, pi.runtime?.sessionStatuses, deletionSiblings)?.selected,
+  ))
   const operationOwnerKey = JSON.stringify([
     composerScopeKey,
     activeRuntimeSelectionToken ?? null,
@@ -389,6 +408,19 @@ export default function App() {
     setRail('sessions')
     requestSessionOpening(item)
   }, [requestSessionOpening, setRail])
+  const openNotificationSession = React.useCallback((summary: SidebarConversationItem['summary']) => {
+    setResourceExpanded(false)
+    setRail('sessions')
+    requestSessionOpening({ summary })
+  }, [requestSessionOpening, setRail])
+  const { openNotification, nativeOpenFailed, dismissNativeError } = useTaskNotificationNavigation({
+    scope: workspace.activeScope,
+    sessionId: conversationReady ? conversation.sessionId : null,
+    visible: conversationWorkspace && conversationReady && !compactInspectorVisible && !(resourceExpanded && panelLayout.inspectorOpen && !compactConversation),
+    selectionRevision,
+    route: rail,
+    openSession: openNotificationSession,
+  })
 
   const newPrimarySession = React.useCallback(() => {
     requestSwitch(() => workspace.newSession(workspace.activeScope))
@@ -519,6 +551,10 @@ export default function App() {
   return (
     <TooltipProvider delayDuration={350}>
       <div className="flex h-screen w-full min-w-0 flex-col overflow-hidden bg-background text-foreground">
+        {nativeOpenFailed ? <div role="alert" className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2 text-caption text-destructive">
+          <span className="flex-1">{t('notifications.openFailed')}</span>
+          <Button variant="ghost" size="xs" onClick={dismissNativeError}>{t('notifications.localDismiss')}</Button>
+        </div> : null}
         <div className="flex min-h-0 flex-1">
           <ActivityRail
             rail={rail}
@@ -530,6 +566,7 @@ export default function App() {
             } : toggleContextPanel}
             onOpenPalette={openPalette}
             onOpenAbout={() => setSettingsSection('about')}
+            onOpenNotification={openNotification}
             width={panelLayout.contextPanelWidth}
           >
             <ContextPanel
@@ -666,6 +703,8 @@ export default function App() {
             <ConversationTranscript
               emptyState={<ConversationWelcome
                 selected={conversationReady}
+                onStartWriting={startWriting}
+                starting={starting}
                 projectName={workspace.activeScope.kind === 'project' ? workspace.workspace?.name : undefined}
                 onOpenProject={() => { requestSwitch(async () => { await workspace.chooseWorkspace() }); setRail('sessions') }}
               />}
@@ -691,6 +730,7 @@ export default function App() {
                 onStopRetry={actions.abortRetry}
               />
             ) : null}
+            {conversationReady ? <ConversationNotices /> : null}
             <Composer
               connected={conversationReady}
               draftEditable={!switching && Boolean(workspace.activeSessionId)}
@@ -710,6 +750,7 @@ export default function App() {
               queue={conversationReady ? pi.queue : EMPTY_COMPOSER_QUEUE}
               draftReplacement={conversationReady ? extension.draftReplacement : null}
               mentionInsertionRequest={composerMentionInsertionRequest}
+              focusRequest={focusRequest}
               scopeKey={composerScopeKey}
               draftKey={`${conversationScopeKey(workspace.activeScope)}:${workspace.activeSessionId ?? 'unselected'}`}
               operationOwnerKey={operationOwnerKey}
@@ -743,6 +784,7 @@ export default function App() {
               scope={workspace.activeScope}
               scopeName={workspace.activeScope.kind === 'project' ? workspace.workspace?.name ?? '' : t('conversation.projectless')}
               projectIds={workspace.recentProjects.map((project) => project.id)}
+              onOpenTerminalSettings={() => setSettingsSection('terminal')}
             />
           </main>
 
@@ -854,10 +896,7 @@ export default function App() {
                     t('sidebar.session.untitled')
                   : t('sidebar.session.untitled'),
               })}
-              {pendingDeletion &&
-                pendingDeletion.summary.sessionId === workspace.activeSessionId &&
-                conversationScopeKey(pendingDeletion.summary.scope) ===
-                  conversationScopeKey(workspace.activeScope) && (
+              {deletingCurrentSession && (
                   <> {t('sidebar.session.deleteActiveDescription')}</>
                 )}
             </AlertDialogDescription>
@@ -882,6 +921,10 @@ export default function App() {
               onClick={() => {
                 if (!pendingDeletion || deletingSelectionToken || deletionError) return
                 const target = pendingDeletion
+                if (deletingCurrentSession || openingSession?.selectionToken === target.summary.selectionToken) {
+                  cancelStartWriting()
+                  abandonSessionOpening()
+                }
                 setDeletingSelectionToken(target.summary.selectionToken)
                 setDeletionError(null)
                 void workspace.deleteSession(
@@ -952,6 +995,9 @@ export default function App() {
               onClick={() => {
                 if (!pendingProjectRemoval || removingProjectId || projectRemovalError) return
                 const target = pendingProjectRemoval
+                if (workspace.activeScope.kind === 'project' && workspace.activeScope.workspaceId === target.id) {
+                  cancelStartWriting()
+                }
                 abandonSessionOpening()
                 setRemovingProjectId(target.id)
                 setProjectRemovalError(null)

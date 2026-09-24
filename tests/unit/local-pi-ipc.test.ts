@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { LocalPiRpcEvent } from '../../src/shared/local-pi'
 
 const mocks = vi.hoisted(() => ({
-  registerValidatedHandler: vi.fn(() => vi.fn(() => true)),
+  registerValidatedHandler: vi.fn((..._args: unknown[]) => vi.fn(() => true)),
 }))
 
 vi.mock('../../src/main/ipc/validated-handler', () => ({
@@ -27,6 +27,44 @@ async function flush() {
 }
 
 describe('Local Pi IPC controller', () => {
+  it('drops queued questions from the previous runtime even when generations match', async () => {
+    type Frontend = import('../../src/main/pi-host/pi-runtime-frontend').PiRuntimeFrontend
+    let listener!: Parameters<Frontend['subscribeUiRequests']>[0]
+    let active = { runtimeId: 'runtime-a', generation: 1 }
+    const send = vi.fn()
+    const replay = vi.fn(async () => undefined)
+    const runtimeHost = {
+      getSnapshot: () => ({ state: 'ready' }),
+      subscribe: () => () => undefined,
+      subscribeEvents: () => () => undefined,
+      subscribeUiRequests: (next: typeof listener) => { listener = next; return () => undefined },
+      getActiveRuntimeIdentity: () => active,
+      replayPendingSelectedUiRequests: replay,
+    }
+    const controller = registerLocalPiIpc({
+      activationService: {} as never,
+      catalogObserver: { subscribe: () => () => undefined, dispose: () => undefined } as never,
+      contextService: { start: vi.fn() } as never,
+      getMainWindow: () => ({ isDestroyed: () => false, webContents: { send } }) as never,
+      policy: {} as never,
+      runtimeHost: runtimeHost as never,
+    })
+    const request = { type: 'extension_ui_request', id: 'question-a', method: 'confirm', title: 'Continue?', message: 'Original task question' }
+    const queued = listener({ runtimeId: 'runtime-a', runtimeGeneration: 1, request } as never)
+    active = { runtimeId: 'runtime-b', generation: 1 }
+    await queued
+    expect(send).not.toHaveBeenCalled()
+    await listener({ runtimeId: 'runtime-b', runtimeGeneration: 1, request: { ...request, id: 'question-b' } } as never)
+    expect(send).toHaveBeenCalledOnce()
+    expect(send.mock.calls[0]?.[1].request.id).toBe('question-b')
+    const readyHandler = [...mocks.registerValidatedHandler.mock.calls].reverse().find((call) =>
+      (call[0] as { channel: string }).channel === 'pipilot:local-pi:renderer-ready')?.[2]
+    expect(readyHandler).toBeDefined()
+    await (readyHandler as unknown as () => Promise<unknown>)()
+    expect(replay).toHaveBeenCalledWith({ force: true })
+    controller.dispose()
+  })
+
   it('does not hold event forwarding on settled-session catalog refresh', async () => {
     let eventListener: (
       event: LocalPiRpcEvent,

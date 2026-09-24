@@ -26,10 +26,11 @@ export interface TerminalDrawerProps {
   scope: ConversationScope
   scopeName: string
   projectIds: readonly string[]
+  onOpenTerminalSettings: () => void
 }
 
 /** Keep each visited terminal's emulator mounted: a live PTY is not a screen snapshot. */
-export function TerminalDrawer({ open, onOpenChange, scope, scopeName, projectIds }: TerminalDrawerProps) {
+export function TerminalDrawer({ open, onOpenChange, scope, scopeName, projectIds, onOpenTerminalSettings }: TerminalDrawerProps) {
   const t = useT()
   const [adapter] = React.useState(createDefaultWorkspaceAdapter)
   const [height, setHeight] = React.useState(savedHeight)
@@ -146,6 +147,7 @@ export function TerminalDrawer({ open, onOpenChange, scope, scopeName, projectId
       maximized={maximized}
       onMaximize={() => setMaximized((current) => !current)}
       onHide={hide}
+      onOpenTerminalSettings={onOpenTerminalSettings}
     />) : <p role="status" className="p-4 text-caption text-muted-foreground">{t('inspector.terminal.error')}</p>}
   </section>
 }

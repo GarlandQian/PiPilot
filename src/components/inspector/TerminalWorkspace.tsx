@@ -23,19 +23,26 @@ interface TerminalWorkspaceProps {
   maximized: boolean
   onMaximize(): void
   onHide(): void
+  onOpenTerminalSettings?(): void
 }
 
 function sameScope(left: ConversationScope, right: ConversationScope) {
   return left.kind === right.kind && (left.kind === 'projectless' || right.kind === 'project' && left.workspaceId === right.workspaceId)
 }
 
-export function TerminalWorkspace({ terminalApi, scope, name, visible, maximized, onMaximize, onHide }: TerminalWorkspaceProps) {
+function operationErrorKey(error: unknown) {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === 'TERMINAL_SHELL_UNAVAILABLE'
+    ? 'terminal.drawer.shellUnavailable'
+    : 'terminal.drawer.operationFailed'
+}
+
+export function TerminalWorkspace({ terminalApi, scope, name, visible, maximized, onMaximize, onHide, onOpenTerminalSettings }: TerminalWorkspaceProps) {
   const t = useT()
   const [sessions, setSessions] = React.useState<TerminalSummary[]>([])
   const [selectedId, setSelectedId] = React.useState<string | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [busy, setBusy] = React.useState(false)
-  const [error, setError] = React.useState<string | null>(null)
+  const [error, setError] = React.useState<ReturnType<typeof operationErrorKey> | null>(null)
   const [renaming, setRenaming] = React.useState<TerminalSummary | null>(null)
   const [title, setTitle] = React.useState('')
   const [renameError, setRenameError] = React.useState<string | null>(null)
@@ -55,12 +62,10 @@ export function TerminalWorkspace({ terminalApi, scope, name, visible, maximized
   const tabsRef = React.useRef<HTMLDivElement>(null)
   const titleInputId = React.useId()
   const idPrefix = React.useId()
-  const translateRef = React.useRef(t)
   const selected = sessions.find((item) => item.terminalId === selectedId)
   visibleRef.current = visible
   selectionRef.current = selectedId
   sessionsRef.current = sessions
-  translateRef.current = t
 
   React.useEffect(() => {
     mounted.current = true
@@ -73,7 +78,6 @@ export function TerminalWorkspace({ terminalApi, scope, name, visible, maximized
         let list = await terminalApi.list(scope)
         if (!mounted.current) return
         if (!initialized.current && list.length === 0 && visibleRef.current) {
-          initialized.current = true
           const created = await terminalApi.create(scope, 80, 24)
           list = [created]
         }
@@ -82,8 +86,8 @@ export function TerminalWorkspace({ terminalApi, scope, name, visible, maximized
         setSessions(list.map((session) => exitLedger.current.apply(session)))
         setSelectedId((current) => list.some((item) => item.terminalId === current) ? current : list[list.length - 1]?.terminalId ?? null)
         setError(null)
-      } catch {
-        if (mounted.current) setError(translateRef.current('terminal.drawer.operationFailed'))
+      } catch (error) {
+        if (mounted.current) setError(operationErrorKey(error))
       } finally {
         if (mounted.current) setLoading(false)
       }
@@ -131,8 +135,8 @@ export function TerminalWorkspace({ terminalApi, scope, name, visible, maximized
       await operationQueue.current.run(async () => {
         if (mounted.current && visibleRef.current) await operation()
       })
-    } catch {
-      if (mounted.current) setError(translateRef.current('terminal.drawer.operationFailed'))
+    } catch (error) {
+      if (mounted.current) setError(operationErrorKey(error))
     } finally {
       busyRef.current = false
       if (mounted.current) setBusy(false)
@@ -157,6 +161,22 @@ export function TerminalWorkspace({ terminalApi, scope, name, visible, maximized
     })
   }
 
+  const restart = () => {
+    if (!selected || selected.status !== 'exited') return
+    const target = selected
+    const revision = selectionRevision.current
+    void run(async () => {
+      const replacement = await terminalApi.restart(scope, target.terminalId, target.cols, target.rows)
+      if (!mounted.current) return
+      exitLedger.current.forget(target.terminalId)
+      setSessions((current) => current.map((item) => item.terminalId === target.terminalId
+        ? exitLedger.current.apply(replacement)
+        : item))
+      if (revision === selectionRevision.current) setAutoFocusTerminal(true)
+      setSelectedId((current) => current === target.terminalId ? replacement.terminalId : current)
+    })
+  }
+
   const end = () => {
     if (!selected) return
     const target = selected.terminalId
@@ -167,9 +187,7 @@ export function TerminalWorkspace({ terminalApi, scope, name, visible, maximized
     })
   }
 
-  const close = () => {
-    if (!selected || selected.status !== 'exited') return
-    const target = selected.terminalId
+  const close = (target: string) => {
     void run(async () => {
       await terminalApi.close(scope, target)
       if (!mounted.current) return
@@ -222,36 +240,45 @@ export function TerminalWorkspace({ terminalApi, scope, name, visible, maximized
 
   return <div hidden={!visible} className="flex h-full min-h-0 min-w-0 flex-col" data-terminal-workspace>
     <div className="flex min-h-10 shrink-0 items-center gap-1 border-b border-border px-2">
-      <span className="max-w-32 shrink truncate px-1 text-caption text-muted-foreground" title={name}>{name}</span>
+      <span className="min-w-0 max-w-32 shrink truncate px-1 text-caption text-muted-foreground" title={name}>{name}</span>
       <div ref={tabsRef} role="tablist" aria-label={t('terminal.drawer.tabs')} className="scroll-slim flex min-w-0 flex-1 self-stretch overflow-x-auto" onKeyDown={(event) => {
+        if (!(event.target instanceof HTMLElement) || event.target.getAttribute('role') !== 'tab') return
         if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key) || !sessions.length) return
         event.preventDefault()
         const current = sessions.findIndex((item) => item.terminalId === selectedId)
         const next = event.key === 'Home' ? 0 : event.key === 'End' ? sessions.length - 1 : (current + (event.key === 'ArrowRight' ? 1 : -1) + sessions.length) % sessions.length
         select(sessions[next].terminalId, true)
       }}>
-        {sessions.map((item) => <button
+        {sessions.map((item) => <div
           key={item.terminalId}
-          id={`${idPrefix}-tab-${item.terminalId}`}
-          type="button"
-          role="tab"
-          aria-label={item.title}
-          aria-selected={selectedId === item.terminalId}
-          aria-controls={`${idPrefix}-panel-${item.terminalId}`}
-          tabIndex={selectedId === item.terminalId ? 0 : -1}
-          data-tab-terminal-id={item.terminalId}
-          title={`${item.title} · ${t(item.status === 'running' ? 'workbenchReview.terminal.running' : 'workbenchReview.terminal.exited')}`}
-          className={cn('flex max-w-48 shrink-0 items-center gap-1.5 border-b-2 px-3 text-caption outline-none focus-visible:focus-ring', selectedId === item.terminalId ? 'border-foreground bg-surface text-foreground' : 'border-transparent text-muted-foreground hover:bg-accent')}
-          onClick={() => select(item.terminalId)}
-          onDoubleClick={() => beginRename(item)}
+          role="presentation"
+          className={cn('flex max-w-48 shrink-0 items-center border-b-2 pr-1 text-caption', selectedId === item.terminalId ? 'border-foreground bg-surface text-foreground' : 'border-transparent text-muted-foreground hover:bg-accent')}
         >
-          <TbTerminal2 aria-hidden className="size-3.5 shrink-0" />
-          <span className="truncate">{item.title}</span>
-          {item.status === 'exited' ? <span className={cn('shrink-0 text-micro tabular-nums', item.exitCode ? 'text-destructive' : 'text-muted-foreground')} aria-label={t('inspector.terminal.exited', { code: item.exitCode ?? 0 })}>{item.exitCode ?? 0}</span> : <span aria-hidden className="size-1 shrink-0 rounded-full bg-sage" />}
-        </button>)}
+          <button
+            id={`${idPrefix}-tab-${item.terminalId}`}
+            type="button"
+            role="tab"
+            aria-label={item.title}
+            aria-selected={selectedId === item.terminalId}
+            aria-controls={`${idPrefix}-panel-${item.terminalId}`}
+            tabIndex={selectedId === item.terminalId ? 0 : -1}
+            data-tab-terminal-id={item.terminalId}
+            title={`${item.title} · ${t(item.status === 'running' ? 'workbenchReview.terminal.running' : 'workbenchReview.terminal.exited')}`}
+            className="flex min-w-0 flex-1 items-center gap-1.5 self-stretch px-2 outline-none focus-visible:focus-ring"
+            onClick={() => select(item.terminalId)}
+            onDoubleClick={() => beginRename(item)}
+          >
+            <TbTerminal2 aria-hidden className="size-3.5 shrink-0" />
+            <span className="truncate">{item.title}</span>
+            {item.status === 'exited' ? <span className={cn('shrink-0 text-micro tabular-nums', item.exitCode ? 'text-destructive' : 'text-muted-foreground')} aria-label={t('inspector.terminal.exited', { code: item.exitCode ?? 0 })}>{item.exitCode ?? 0}</span> : <span aria-hidden className="size-1 shrink-0 rounded-full bg-sage" />}
+          </button>
+          <Button variant="ghost" size="icon-xs" className="shrink-0" disabled={busy} data-close-terminal-id={item.terminalId} aria-label={t('terminal.drawer.closeNamed', { name: item.title })} title={t('terminal.drawer.closeNamed', { name: item.title })} onClick={() => close(item.terminalId)}><TbX aria-hidden /></Button>
+        </div>)}
       </div>
       <div ref={setToolbarContainer} className="flex shrink-0 items-center gap-1" data-terminal-toolbar-controls />
-      <Button variant="ghost" size="icon-xs" disabled={busy || loading} aria-label={t('terminal.drawer.new')} title={t('terminal.drawer.new')} onClick={create}><TbPlus aria-hidden /></Button>
+      <div className="flex shrink-0 items-center">
+        <Button variant="ghost" size="icon-xs" disabled={busy || loading} aria-label={t('terminal.drawer.new')} title={t('terminal.drawer.new')} onClick={() => create()}><TbPlus aria-hidden /></Button>
+      </div>
       <DropdownMenu>
         <DropdownMenuTrigger asChild><Button variant="ghost" size="icon-xs" aria-label={t('terminal.drawer.more')} title={t('terminal.drawer.more')} disabled={!selected || busy}><TbDots aria-hidden /></Button></DropdownMenuTrigger>
         <DropdownMenuContent align="end">
@@ -259,16 +286,16 @@ export function TerminalWorkspace({ terminalApi, scope, name, visible, maximized
           <DropdownMenuSeparator />
           {selected?.status === 'running'
             ? <DropdownMenuItem variant="destructive" onSelect={end}><TbPlayerStop aria-hidden />{t('terminal.drawer.end')}</DropdownMenuItem>
-            : <DropdownMenuItem onSelect={create}><TbRefresh aria-hidden />{t('terminal.drawer.restart')}</DropdownMenuItem>}
-          <DropdownMenuItem disabled={selected?.status !== 'exited'} onSelect={close}><TbX aria-hidden />{t('terminal.drawer.close')}</DropdownMenuItem>
+            : <DropdownMenuItem onSelect={restart}><TbRefresh aria-hidden />{t('terminal.drawer.restart')}</DropdownMenuItem>}
+          <DropdownMenuItem onSelect={() => { if (selected) close(selected.terminalId) }}><TbX aria-hidden />{t('terminal.drawer.close')}</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
       <Button variant="ghost" size="icon-xs" aria-label={t(maximized ? 'terminal.drawer.restore' : 'terminal.drawer.maximize')} title={t(maximized ? 'terminal.drawer.restore' : 'terminal.drawer.maximize')} onClick={onMaximize}>{maximized ? <TbArrowsMinimize aria-hidden /> : <TbArrowsMaximize aria-hidden />}</Button>
       <Button variant="ghost" size="icon-xs" aria-label={t('terminal.drawer.hide')} title={t('terminal.drawer.hide')} onClick={onHide}><TbChevronDown aria-hidden /></Button>
     </div>
-    {error ? <div role="alert" className="flex shrink-0 items-center gap-2 px-3 py-2 text-caption text-destructive"><p className="flex-1">{error}</p><Button variant="ghost" size="sm" disabled={busy} onClick={() => void refresh()}>{t('terminal.surface.retry')}</Button></div> : null}
+    {error ? <div role="alert" className="flex shrink-0 flex-wrap items-center gap-2 px-3 py-2 text-caption text-destructive"><p className="min-w-0 flex-1">{t(error)}</p>{error === 'terminal.drawer.shellUnavailable' && onOpenTerminalSettings ? <Button variant="ghost" size="sm" onClick={onOpenTerminalSettings}>{t('terminal.drawer.openSettings')}</Button> : null}<Button variant="ghost" size="sm" disabled={busy} onClick={() => void refresh()}>{t('terminal.surface.retry')}</Button></div> : null}
     {loading ? <TerminalLoadingFallback /> : null}
-    {!loading && sessions.length === 0 ? <div className="grid min-h-0 flex-1 place-items-center p-4"><div className="text-center"><p className="mb-3 text-caption text-muted-foreground">{t('terminal.drawer.empty')}</p><Button variant="outline" size="sm" disabled={busy} onClick={create}><TbPlus aria-hidden />{t('terminal.drawer.new')}</Button></div></div> : null}
+    {!loading && sessions.length === 0 ? <div className="grid min-h-0 flex-1 place-items-center p-4"><div className="text-center"><p className="mb-3 text-caption text-muted-foreground">{t('terminal.drawer.empty')}</p><Button variant="outline" size="sm" disabled={busy} onClick={() => create()}><TbPlus aria-hidden />{t('terminal.drawer.new')}</Button></div></div> : null}
     {sessions.map((item) => <div
       key={item.terminalId}
       id={`${idPrefix}-panel-${item.terminalId}`}
@@ -291,7 +318,7 @@ export function TerminalWorkspace({ terminalApi, scope, name, visible, maximized
         />
       </React.Suspense>
     </div>)}
-    {selected?.status === 'exited' ? <div role="status" className="flex shrink-0 items-center gap-2 border-t border-border px-3 py-1 text-caption text-muted-foreground"><span className="min-w-0 flex-1 truncate">{t('inspector.terminal.exited', { code: selected.exitCode ?? -1 })}</span><Button variant="ghost" size="xs" disabled={busy} onClick={create}><TbRefresh aria-hidden />{t('terminal.drawer.restart')}</Button></div> : null}
+    {selected?.status === 'exited' ? <div role="status" className="flex shrink-0 items-center gap-2 border-t border-border px-3 py-1 text-caption text-muted-foreground"><span className="min-w-0 flex-1 truncate">{t('inspector.terminal.exited', { code: selected.exitCode ?? -1 })}</span><Button variant="ghost" size="xs" disabled={busy} onClick={restart}><TbRefresh aria-hidden />{t('terminal.drawer.restart')}</Button></div> : null}
     <Dialog open={Boolean(renaming)} onOpenChange={(next) => { if (!next && !busy) setRenaming(null) }}>
       <DialogContent onOpenAutoFocus={(event) => { event.preventDefault(); requestAnimationFrame(() => { const input = document.getElementById(titleInputId) as HTMLInputElement | null; input?.focus(); input?.select() }) }}>
         <form onSubmit={(event) => void rename(event)} className="space-y-4">

@@ -2,12 +2,14 @@ import * as React from 'react'
 import { TbCpu, TbRefresh } from 'react-icons/tb'
 import { Button } from '@/components/ui/button'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { Switch } from '@/components/ui/switch'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { SettingRow, SettingSection } from './common'
 import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { SUPPORTED_PI_VERSION, type LocalPiRuntimeSnapshot } from '@/shared/local-pi'
 import { useSettings, useUpdateSettings } from '@/store/settings'
+import { useTaskNotifications } from '@/store/task-notifications'
 
 interface GeneralSettingsProps {
   restartBusy: boolean
@@ -19,9 +21,11 @@ interface GeneralSettingsProps {
 
 export function GeneralSettings({ restartBusy, restartMessage, restartAvailable, runtimeState, onRestart }: GeneralSettingsProps) {
   const t = useT()
-  const { composer } = useSettings()
+  const { composer, notifications } = useSettings()
+  const taskNotifications = useTaskNotifications()
   const { update } = useUpdateSettings()
   const [confirmRestart, setConfirmRestart] = React.useState(false)
+  const notificationHintId = React.useId()
   const runtimeFailed = runtimeState === 'crashed' || runtimeState === 'error'
   const runtimePending = runtimeState === 'starting' || runtimeState === 'replacing'
   const choiceClass = 'flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-2 text-caption has-[[data-state=checked]]:border-ring/60 has-[[data-state=checked]]:bg-accent/50'
@@ -40,6 +44,12 @@ export function GeneralSettings({ restartBusy, restartMessage, restartAvailable,
       <SettingRow label={t('settings.general.runningSubmit')} desc={t('settings.general.runningSubmitDesc')}>
         <span className="text-caption text-muted-foreground">{t('composer.defaultQueueHint')}</span>
       </SettingRow>
+    </SettingSection>
+    <SettingSection title={t('settings.general.notifications')} desc={t('settings.general.notificationsDesc')}>
+      <SettingRow label={t('settings.general.desktopNotifications')} desc={t('settings.general.desktopNotificationsDesc')}>
+        <Switch checked={notifications.desktop} onCheckedChange={(desktop) => update({ notifications: { desktop } })} aria-label={t('settings.general.desktopNotifications')} aria-describedby={notificationHintId} />
+      </SettingRow>
+      <p id={notificationHintId} className="text-caption text-muted-foreground">{t(!taskNotifications.loading && !taskNotifications.snapshot.desktopSupported ? 'settings.general.desktopNotificationsUnavailable' : 'settings.general.desktopNotificationsHint')}</p>
     </SettingSection>
     <SettingSection title={t('settings.general.localPi')} desc={t('settings.general.localPiDesc')}>
       <div className="flex flex-wrap items-center gap-3 py-3">

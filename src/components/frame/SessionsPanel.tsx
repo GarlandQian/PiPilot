@@ -12,9 +12,10 @@ import type { OfficialPiSessionSummary } from '@/shared/conversation-scope'
 import type { WorkspaceSummary } from '@/shared/schemas/workspace'
 import { usePiExtensionUi, usePiRuntime } from '@/store/pi-rpc'
 import { useWorkspaceStore } from '@/store/workspace'
-import { deriveSessionActivityState, isOfficialSessionActiveRow, runtimeStateForOfficialSession } from '@/store/workspace-state'
+import { useTaskNotifications } from '@/store/task-notifications'
+import { deriveSessionActivityState, isOfficialSessionActiveRow, runtimeStateForOfficialSession, sameConversationScope } from '@/store/workspace-state'
 import { ConversationList, ProjectNavigationGroup, RecentChatGroup, type ConversationListActions, type SidebarConversationItem, type SidebarProjectNavigation } from '@/components/layout/SessionList'
-import { isNewBackgroundResult, isSidebarSessionRunning, preferredProjectSession, presentPrioritySessions, presentSidebarSessions, sortSidebarProjects, type SidebarSessionFilter, type SidebarSessionSort } from '@/components/layout/session-navigation'
+import { isSidebarSessionRunning, preferredProjectSession, presentPrioritySessions, presentSidebarSessions, sortSidebarProjects, type SidebarSessionFilter, type SidebarSessionSort } from '@/components/layout/session-navigation'
 import { projectlessCatalogNeedsDiscovery, sessionCatalogLoadTargets } from './session-catalog-search'
 
 const INITIAL_SESSION_LIMIT = 6
@@ -54,6 +55,7 @@ export function SessionsPanel({
   const workspace = useWorkspaceStore()
   const pi = usePiRuntime()
   const extensionUi = usePiExtensionUi()
+  const { snapshot: notifications } = useTaskNotifications()
   const t = useT()
   const [query, setQuery] = React.useState('')
   const searchRef = React.useRef<HTMLInputElement>(null)
@@ -68,7 +70,6 @@ export function SessionsPanel({
   const catalogLoadsStarted = React.useRef(new Set<string>())
   const projectlessDiscoveryStarted = React.useRef(false)
   const knownProjectIds = React.useRef<ReadonlySet<string> | null>(null)
-  const observedRunStatuses = React.useRef(new Map<string, SidebarConversationItem['status']>())
   const normalizedQuery = query.trim().toLowerCase()
   const filtering = normalizedQuery.length > 0 || sessionFilter !== 'all'
   const loadSessionCatalog = workspace.loadSessionCatalog
@@ -122,15 +123,18 @@ export function SessionsPanel({
     for (const status of runtimeSessionStatuses ?? []) {
       if (status.scope.kind === 'project') ids.add(status.scope.workspaceId)
     }
+    for (const notice of notifications.items) {
+      if (!notice.read && notice.scope.kind === 'project') ids.add(notice.scope.workspaceId)
+    }
     for (const [key, organization] of Object.entries(preferences.tasks)) {
-      if (!organization.pinned && !organization.unread) continue
+      if (!organization.pinned) continue
       try {
         const scope = JSON.parse(key)[0] as unknown
         if (typeof scope === 'string' && scope.startsWith('project:')) ids.add(scope.slice(8))
       } catch { /* Invalid persisted keys cannot start catalog work. */ }
     }
     return ids
-  }, [preferences.tasks, runtimeSessionStatuses, workspace.activeScope])
+  }, [notifications.items, preferences.tasks, runtimeSessionStatuses, workspace.activeScope])
 
   React.useEffect(() => {
     if (workspace.mode !== 'electron') return
@@ -165,6 +169,11 @@ export function SessionsPanel({
         const organizationKey = taskOrganizationKey(summary)
         items.push({
           summary, organizationKey, ...preferences.tasks[organizationKey],
+          // Main owns unread state across background work and renderer reloads.
+          unread: notifications.items.some((notice) =>
+            !notice.read && sameConversationScope(notice.scope, summary.scope) &&
+            (notice.catalogId ? notice.catalogId === summary.catalogId :
+              notice.sessionId === summary.sessionId && catalog.rows.filter((row) => row.sessionId === summary.sessionId).length === 1)),
           scopeLabel: project?.name ?? t('nav.redesign.general'),
           loading: opening,
           disabled: opening || summary.selectionToken === deletingSelectionToken || project?.available === false,
@@ -179,7 +188,7 @@ export function SessionsPanel({
       }
     }
     return items
-  }, [deletingSelectionToken, extensionUi.dialog, isOpeningSessionRow, pi.runtime?.generation, pi.session?.pendingMessageCount, pi.status, preferences.tasks, runtimeSessionStatuses, t, workspace.activeScope, workspace.activeSessionId, workspace.recentProjects, workspace.sessionCatalogs])
+  }, [deletingSelectionToken, extensionUi.dialog, isOpeningSessionRow, notifications.items, pi.runtime?.generation, pi.session?.pendingMessageCount, pi.status, preferences.tasks, runtimeSessionStatuses, t, workspace.activeScope, workspace.activeSessionId, workspace.recentProjects, workspace.sessionCatalogs])
 
   const selectTask = React.useCallback((item: SidebarConversationItem) => {
     setPendingProject(null)
@@ -200,18 +209,6 @@ export function SessionsPanel({
       return { ...next, lastSelected: { ...next.lastSelected, [scope]: key } }
     })
   }, [allItems, conversationReady, hidden])
-
-  React.useEffect(() => {
-    const completed: SidebarConversationItem[] = []
-    for (const item of allItems) {
-      if (!item.status || !item.organizationKey) continue
-      const previous = observedRunStatuses.current.get(item.organizationKey)
-      observedRunStatuses.current.set(item.organizationKey, item.status)
-      if (isNewBackgroundResult(item, previous)) completed.push(item)
-    }
-    if (completed.length) setPreferences((previous) => completed.reduce((next, item) =>
-      updateTaskOrganization(next, item.summary, { unread: true }), previous))
-  }, [allItems])
 
   const toggleProject = React.useCallback((id: string, expanded: boolean) => {
     setProjectExpansion((previous) => new Map(previous).set(id, expanded))

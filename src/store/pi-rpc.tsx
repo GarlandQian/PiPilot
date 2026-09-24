@@ -1884,7 +1884,8 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
       case 'confirm':
       case 'input':
       case 'editor':
-        setDialogs((previous) => [...previous, {
+        setDialogs((previous) => previous.some((dialog) => dialog.generation === generation && dialog.request.id === request.id)
+          ? previous : [...previous, {
           generation,
           sessionId: sessionRef.current?.sessionId ?? null,
           request,

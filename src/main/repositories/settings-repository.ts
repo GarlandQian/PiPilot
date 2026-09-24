@@ -133,7 +133,11 @@ export class SettingsRepository {
     } else if (scope === 'terminal') {
       this.settings = {
         ...this.settings,
-        terminal: cloneSettings(DEFAULT_SETTINGS).terminal,
+        terminal: {
+          ...this.settings.terminal,
+          fontFamily: DEFAULT_SETTINGS.terminal.fontFamily,
+          fontSize: DEFAULT_SETTINGS.terminal.fontSize,
+        },
       }
     } else {
       this.settings = cloneSettings(DEFAULT_SETTINGS)

@@ -1,11 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { access, realpath, stat } from 'node:fs/promises'
-import { constants } from 'node:fs'
-import {
-  basename,
-  isAbsolute,
-  win32,
-} from 'node:path'
+import { realpath, stat } from 'node:fs/promises'
 import type { IPty, IPtyForkOptions, IWindowsPtyForkOptions } from 'node-pty'
 import {
   TERMINAL_OUTPUT_EVENT_LIMIT,
@@ -14,10 +8,14 @@ import {
   terminalEventSchema,
   terminalResizeResultSchema,
   terminalSessionSchema,
+  terminalShellProfileIdSchema,
+  terminalShellProfileSchema,
   terminalSummarySchema,
   terminalTitleSchema,
   type TerminalEvent,
   type TerminalSession,
+  type TerminalShellProfile,
+  type TerminalShellProfileId,
   type TerminalSummary,
 } from '../../shared/terminal'
 import {
@@ -26,6 +24,15 @@ import {
 } from '../../shared/conversation-scope'
 import { conversationScopeKey } from '../conversations/conversation-scope-resolver'
 import { PIPILOT_VERSION } from '../../shared/build-info'
+import type { TerminalSettings } from '../../shared/settings'
+import {
+  mergeTerminalEnvironment,
+  TerminalProfileDiscovery,
+  wslWorkingDirectory,
+  type ResolvedShellProfile,
+  type ShellLaunch,
+  type TerminalDiscoveryOptions,
+} from './terminal-profile-discovery'
 
 const OUTPUT_FLUSH_INTERVAL_MS = 16
 const OUTPUT_PAUSE_THRESHOLD = 256 * 1024
@@ -38,10 +45,13 @@ export interface TerminalResolvedScope {
   cwd: string
 }
 
-interface ShellLaunch {
+interface TerminalLaunchSnapshot {
   file: string
   args: string[]
   label: string
+  environment: NodeJS.ProcessEnv
+  distribution?: string
+  validateExecutable: boolean
 }
 
 interface TerminalProcess {
@@ -79,6 +89,7 @@ interface TerminalRecord {
   cols: number
   rows: number
   process: TerminalProcess
+  launch: TerminalLaunchSnapshot
   sequence: number
   replay: string
   pendingOutput: string
@@ -92,9 +103,8 @@ interface TerminalRecord {
   resolveExit(): void
 }
 
-export interface TerminalServiceOptions {
-  environment?: NodeJS.ProcessEnv
-  platform?: NodeJS.Platform
+export interface TerminalServiceOptions extends TerminalDiscoveryOptions {
+  getTerminalSettings?: () => TerminalSettings
   resolveShell?: () => Promise<ShellLaunch> | ShellLaunch
   spawnPty?: SpawnPty
 }
@@ -142,6 +152,7 @@ export class TerminalService {
   private readonly scopeVersions = new Map<string, number>()
   private disposing = false
   private spawnPty?: SpawnPty
+  private readonly discovery: TerminalProfileDiscovery
 
   constructor(
     private readonly getActiveScope: () => ConversationScope,
@@ -153,6 +164,7 @@ export class TerminalService {
     this.environment = options.environment ?? process.env
     this.platform = options.platform ?? process.platform
     this.spawnPty = options.spawnPty
+    this.discovery = new TerminalProfileDiscovery(options)
   }
 
   subscribe(listener: TerminalListener) {
@@ -162,6 +174,11 @@ export class TerminalService {
 
   hasActiveTerminals() {
     return [...this.records.values()].some((record) => record.status === 'running')
+  }
+
+  async listShellProfiles(): Promise<TerminalShellProfile[]> {
+    return (await this.resolveShellProfiles()).map(({ launch: _launch, ...profile }) =>
+      terminalShellProfileSchema.parse(profile))
   }
 
   async list(rawScope: ConversationScope): Promise<TerminalSummary[]> {
@@ -188,12 +205,7 @@ export class TerminalService {
 
   async close(scope: ConversationScope, terminalId: string) {
     const record = await this.activeRecord(scope, terminalId)
-    if (record.status !== 'exited') {
-      throw new TerminalServiceError(
-        'TERMINAL_STILL_RUNNING',
-        'Stop the terminal process before closing its tab.',
-      )
-    }
+    await this.terminateRecord(record)
     this.records.delete(terminalId)
     return terminalActionResultSchema.parse({ scope, terminalId })
   }
@@ -209,14 +221,33 @@ export class TerminalService {
     rawScope: ConversationScope,
     cols: number,
     rows: number,
+    shellProfileId?: TerminalShellProfileId,
   ): Promise<TerminalSession> {
+    const scope = conversationScopeSchema.parse(rawScope)
+    const profileId = terminalShellProfileIdSchema.optional().parse(shellProfileId)
+    return this.queueCreation(scope, () => this.createTerminal(scope, cols, rows, profileId))
+  }
+
+  async restart(rawScope: ConversationScope, terminalId: string, cols: number, rows: number): Promise<TerminalSession> {
+    const scope = conversationScopeSchema.parse(rawScope)
+    return this.queueCreation(scope, async () => {
+      const previous = await this.activeRecord(scope, terminalId)
+      if (previous.status !== 'exited') {
+        throw new TerminalServiceError('TERMINAL_STILL_RUNNING', 'Only an exited terminal can be restarted.')
+      }
+      const session = await this.createTerminal(scope, cols, rows, undefined, previous)
+      this.records.delete(previous.terminalId)
+      return session
+    })
+  }
+
+  private async queueCreation(scope: ConversationScope, create: () => Promise<TerminalSession>) {
     if (this.disposing) {
       throw new TerminalServiceError(
         'TERMINAL_UNAVAILABLE',
         'The terminal runtime is unavailable.',
       )
     }
-    const scope = conversationScopeSchema.parse(rawScope)
     const key = conversationScopeKey(scope)
     const version = this.scopeVersions.get(key)
     let pending = this.pendingCreates.get(key)
@@ -230,7 +261,7 @@ export class TerminalService {
         'The terminal runtime is unavailable.',
       )
     }
-    const operation = this.createTerminal(scope, cols, rows)
+    const operation = create()
     this.pendingCreates.set(key, operation)
     try {
       return await operation
@@ -245,22 +276,26 @@ export class TerminalService {
     scope: ConversationScope,
     cols: number,
     rows: number,
+    shellProfileId?: TerminalShellProfileId,
+    previous?: TerminalRecord,
   ): Promise<TerminalSession> {
     const context = await this.context(scope)
     const key = conversationScopeKey(scope)
-    const shell = await this.resolveShell()
+    const launch = previous ? await this.restartLaunch(previous.launch) : await this.launchSnapshot(shellProfileId, context.cwd)
     const spawnPty = await this.loadSpawnPty()
     await this.assertActiveScope(scope, context.root)
-    const { title, ordinal } = this.nextTitle(key, shell.label)
+    const { title, ordinal } = previous
+      ? { title: previous.title, ordinal: this.scopeOrdinals.get(key) ?? 0 }
+      : this.nextTitle(key, launch.label)
 
     let processHandle: TerminalProcess
     try {
-      processHandle = spawnPty(shell.file, shell.args, {
+      processHandle = spawnPty(launch.file, [...launch.args], {
         name: 'xterm-256color',
         cols,
         rows,
         cwd: context.cwd,
-        env: this.buildEnvironment(context.cwd),
+        env: { ...launch.environment },
         encoding: 'utf8',
       })
     } catch {
@@ -281,12 +316,13 @@ export class TerminalService {
       terminalId,
       root: context.root,
       cwd: context.cwd,
-      shell: shell.label,
+      shell: launch.label,
       title,
       status: 'running',
       cols,
       rows,
       process: processHandle,
+      launch,
       sequence: 0,
       replay: '',
       pendingOutput: '',
@@ -401,56 +437,90 @@ export class TerminalService {
     }
   }
 
-  private async resolveShell(): Promise<ShellLaunch> {
-    if (this.options.resolveShell) return this.options.resolveShell()
-    if (this.platform === 'win32') {
-      const configured = this.environment.ComSpec ?? this.environment.COMSPEC
-      const file = configured && configured.length <= 4_096
-        ? configured
-        : 'powershell.exe'
-      return {
-        file,
-        args: [],
-        label: win32.basename(file).slice(0, 128),
-      }
+  private async resolveShell(profileId?: TerminalShellProfileId): Promise<ShellLaunch> {
+    const settings = this.options.getTerminalSettings?.()
+    const selectedId = profileId ?? settings?.defaultProfileId
+    if (selectedId) {
+      const custom = selectedId.startsWith('custom:')
+      const configured = custom ? settings?.profiles.find((entry) => entry.id === selectedId) : undefined
+      const profile = custom
+        ? configured && await this.discovery.resolveCustom(configured)
+        : (await this.resolveShellProfiles()).find((entry) => entry.id === selectedId)
+      if (profile?.available && profile.launch) return profile.launch
+      throw new TerminalServiceError(
+        'TERMINAL_SHELL_UNAVAILABLE',
+        'The selected shell is no longer installed or executable. Choose another shell.',
+      )
     }
+    return this.resolveDefaultShell()
+  }
 
-    const configured = this.environment.SHELL
-    const candidates = [
-      configured && isAbsolute(configured) ? configured : undefined,
-      this.platform === 'darwin' ? '/bin/zsh' : '/bin/bash',
-      '/bin/sh',
-    ].filter((candidate): candidate is string => Boolean(candidate))
-    for (const candidate of [...new Set(candidates)]) {
-      try {
-        const canonical = await realpath(candidate)
-        const details = await stat(canonical)
-        await access(canonical, constants.X_OK)
-        if (details.isFile()) {
-          return {
-            file: canonical,
-            args: ['-l'],
-            label: basename(canonical).slice(0, 128),
-          }
-        }
-      } catch {
-        // Try the next platform shell candidate.
-      }
+  private async resolveShellProfiles(): Promise<ResolvedShellProfile[]> {
+    const settings = this.options.getTerminalSettings?.()
+    const profiles = await this.discovery.discover(settings?.profiles ?? [])
+    if (settings?.defaultProfileId) {
+      const selected = profiles.find((profile) => profile.id === settings.defaultProfileId)
+      if (selected) selected.isDefault = true
+      else profiles.unshift({
+        id: settings.defaultProfileId, label: 'Unavailable shell', isDefault: true,
+        source: settings.defaultProfileId.startsWith('wsl:') ? 'wsl' : settings.defaultProfileId.startsWith('custom:') ? 'custom' : 'detected',
+        executable: '', args: [], available: false,
+        unavailableReason: settings.defaultProfileId.startsWith('wsl:') ? 'distribution-unavailable' : 'executable-not-found',
+      })
+    } else {
+      const defaultShell = await this.resolveDefaultShell().catch(() => undefined)
+      const selected = defaultShell && profiles.find((profile) => profile.source === 'detected' && (this.platform === 'win32'
+        ? profile.launch?.file.toLowerCase() === defaultShell.file.toLowerCase()
+        : profile.launch?.file === defaultShell.file))
+      if (selected) selected.isDefault = true
     }
+    return profiles.sort((left, right) => Number(right.isDefault) - Number(left.isDefault))
+  }
+
+  private async resolveDefaultShell(): Promise<ShellLaunch> {
+    if (this.options.resolveShell) return this.options.resolveShell()
+    const shell = await this.discovery.automatic()
+    if (shell) return shell
     throw new TerminalServiceError(
       'TERMINAL_SHELL_UNAVAILABLE',
       'No supported default shell is available.',
     )
   }
 
-  private buildEnvironment(cwd: string) {
-    const environment = { ...this.environment }
-    environment.PWD = cwd
-    environment.TERM = 'xterm-256color'
-    environment.COLORTERM = 'truecolor'
-    environment.TERM_PROGRAM = 'PiPilot'
-    environment.TERM_PROGRAM_VERSION = PIPILOT_VERSION
-    return environment
+  private async launchSnapshot(profileId: TerminalShellProfileId | undefined, cwd: string): Promise<TerminalLaunchSnapshot> {
+    const shell = await this.resolveShell(profileId)
+    const args = [...shell.args]
+    if (shell.distribution) {
+      const linuxCwd = wslWorkingDirectory(cwd, shell.distribution)
+      if (!linuxCwd) throw new TerminalServiceError('TERMINAL_CWD_UNAVAILABLE', 'This directory cannot be opened in the selected WSL distribution.')
+      args.push('--cd', linuxCwd)
+    }
+    return {
+      file: shell.file, args, label: shell.label,
+      environment: this.buildEnvironment(cwd, shell.env),
+      ...(shell.distribution ? { distribution: shell.distribution } : {}),
+      validateExecutable: !(this.options.resolveShell && profileId === undefined && !this.options.getTerminalSettings?.().defaultProfileId),
+    }
+  }
+
+  private async restartLaunch(launch: TerminalLaunchSnapshot): Promise<TerminalLaunchSnapshot> {
+    if (launch.validateExecutable && !await this.discovery.executable(launch.file)) {
+      throw new TerminalServiceError('TERMINAL_SHELL_UNAVAILABLE', 'The original shell is no longer installed or executable.')
+    }
+    if (launch.distribution && !(await this.discovery.discover()).some((profile) => profile.launch?.distribution?.toLowerCase() === launch.distribution?.toLowerCase() && profile.launch?.file.toLowerCase() === launch.file.toLowerCase())) {
+      throw new TerminalServiceError('TERMINAL_SHELL_UNAVAILABLE', 'The original WSL distribution is no longer installed.')
+    }
+    return { ...launch, args: [...launch.args], environment: { ...launch.environment } }
+  }
+
+  private buildEnvironment(cwd: string, overrides: Record<string, string | null> = {}) {
+    return mergeTerminalEnvironment(mergeTerminalEnvironment(this.environment, overrides, this.platform), {
+      PWD: cwd,
+      TERM: 'xterm-256color',
+      COLORTERM: 'truecolor',
+      TERM_PROGRAM: 'PiPilot',
+      TERM_PROGRAM_VERSION: PIPILOT_VERSION,
+    }, this.platform)
   }
 
   private async context(scope: ConversationScope) {

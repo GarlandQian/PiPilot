@@ -1,11 +1,13 @@
-import { TbArrowDown, TbFolderPlus } from 'react-icons/tb'
+import { TbArrowDown, TbFolderPlus, TbLoader2 } from 'react-icons/tb'
 import { PiLogo } from '@/components/PiLogo'
 import { Button } from '@/components/ui/button'
 import { useT } from '@/i18n'
 
-export function ConversationWelcome({ projectName, selected, onOpenProject }: {
+export function ConversationWelcome({ projectName, selected, starting = false, onStartWriting, onOpenProject }: {
   projectName?: string
   selected: boolean
+  starting?: boolean
+  onStartWriting(): void
   onOpenProject(): void
 }) {
   const t = useT()
@@ -18,9 +20,10 @@ export function ConversationWelcome({ projectName, selected, onOpenProject }: {
     </p>
     <p className="max-w-sm text-caption leading-relaxed text-muted-foreground">{t('chat.welcome.hint')}</p>
     <div className="mt-4 flex flex-wrap items-center gap-2">
-      <Button variant="default" onClick={() => {
-        document.querySelector<HTMLElement>('[data-composer-root] [contenteditable="true"]')?.focus()
-      }}><TbArrowDown aria-hidden />{t('chat.welcome.startWriting')}</Button>
+      <Button variant="default" onClick={onStartWriting} disabled={starting} aria-busy={starting}>
+        {starting ? <TbLoader2 className="animate-spin" aria-hidden /> : <TbArrowDown aria-hidden />}
+        {t(starting ? 'chat.loadingSession' : 'chat.welcome.startWriting')}
+      </Button>
       {!projectName ? <Button variant="ghost" onClick={onOpenProject}><TbFolderPlus aria-hidden />{t('chat.welcome.openProject')}</Button> : null}
     </div>
   </section>

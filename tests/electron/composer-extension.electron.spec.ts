@@ -76,6 +76,7 @@ test('uses one keyboard-safe Composer picker and middle-column extension surface
       settings: {
         ...DEFAULT_SETTINGS,
         locale: 'en-US',
+        notifications: { desktop: false },
       },
     }, null, 2)}\n`,
   )
@@ -261,11 +262,13 @@ test('uses one keyboard-safe Composer picker and middle-column extension surface
     await transcript.getByRole('status', { name: 'fixture: Fixture widget', exact: true }).getByRole('button').click()
     await expect(transcript.getByText('ready', { exact: true })).toBeVisible()
     const notificationButton = page.getByRole('button', {
-      name: 'Notifications',
-      exact: true,
+      name: /^Notifications/,
     })
     await notificationButton.click()
-    await expect(page.getByText('No notifications', { exact: true })).toBeVisible()
+    const notifications = page.getByRole('dialog', { name: 'Notifications', exact: true })
+    await expect(notifications).toBeVisible()
+    await expect(notifications.getByText('Fixture notification', { exact: true })).toHaveCount(0)
+    await expect(notifications.getByText('Fixture widget', { exact: true })).toHaveCount(0)
     await notificationButton.click()
     await expectInsideConversationColumn(page, widgetActivity)
 

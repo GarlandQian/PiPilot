@@ -44,7 +44,20 @@ function darkEnglishSettings(): AppSettings {
   }
 }
 
+const customShell = {
+  id: 'custom:fixture', name: 'Project shell', executable: '/bin/sh',
+  args: ['-l'], env: { PIPILOT_TEST: 'literal $(whoami)', REMOVE_ME: null },
+}
+
 describe('current settings schema', () => {
+  it('adds notification preferences without discarding existing appearance or shell profiles', () => {
+    const { notifications: _notifications, ...existing } = darkEnglishSettings()
+    existing.terminal = { ...existing.terminal, defaultProfileId: customShell.id, profiles: [customShell] }
+    const migrated = parseSettingsDocument({ version: SETTINGS_SCHEMA_VERSION, settings: existing }).settings
+    expect(migrated).toEqual({ ...existing, notifications: { desktop: true } })
+    expect(parseSettingsDocument({ version: SETTINGS_SCHEMA_VERSION, settings: { ...migrated, notifications: { desktop: false } } }).settings.notifications.desktop).toBe(false)
+    expect(() => parseSettingsDocument({ version: SETTINGS_SCHEMA_VERSION, settings: { ...migrated, notifications: { desktop: 'yes' } } })).toThrow()
+  })
   it('accepts only a complete current document', () => {
     expect(parseSettingsDocument({
       version: SETTINGS_SCHEMA_VERSION,
@@ -111,7 +124,33 @@ describe('current settings schema', () => {
       ...darkEnglishSettings(),
       terminal: { fontFamily: 'Maple Mono', fontSize: 16 },
     })
-    expect(valid.terminal).toEqual({ fontFamily: 'Maple Mono', fontSize: 16 })
+    expect(valid.terminal).toEqual({ ...DEFAULT_SETTINGS.terminal, fontFamily: 'Maple Mono', fontSize: 16 })
+  })
+
+  it('preserves existing appearance and terminal typography when adding shell preferences', () => {
+    for (const composer of [darkEnglishSettings().composer, { sendShortcut: 'mod-enter' }]) {
+      const previous = { ...darkEnglishSettings(), composer, terminal: { fontFamily: 'Maple Mono', fontSize: 16 } }
+      const migrated = parseSettingsDocument({ version: SETTINGS_SCHEMA_VERSION, settings: previous }).settings
+      expect(migrated.appearance).toEqual(previous.appearance)
+      expect(migrated.terminal).toEqual({ ...DEFAULT_SETTINGS.terminal, ...previous.terminal })
+      expect(migrated.composer.sendShortcut).toBe(composer.sendShortcut)
+    }
+  })
+
+  it('preserves a missing explicit default and rejects malformed or duplicate custom profiles', () => {
+    const settings = {
+      ...darkEnglishSettings(),
+      terminal: { ...DEFAULT_SETTINGS.terminal, defaultProfileId: 'detected:missing', profiles: [customShell] },
+    }
+    const parsed = parseSettingsDocument({ version: SETTINGS_SCHEMA_VERSION, settings }).settings
+    expect(parsed.terminal).toEqual(settings.terminal)
+    parsed.terminal.profiles[0]!.args.push('changed')
+    expect(customShell.args).toEqual(['-l'])
+    for (const profiles of [[customShell, customShell], [{ ...customShell, args: ['bad\0arg'] }], [{ ...customShell, id: 'detected:spoofed' }]]) {
+      expect(() => parseSettingsDocument({
+        version: SETTINGS_SCHEMA_VERSION, settings: { ...settings, terminal: { ...settings.terminal, profiles } },
+      })).toThrow()
+    }
   })
 })
 
@@ -140,7 +179,7 @@ describe('SettingsRepository', () => {
       expect(changed.settings.appearance.theme).toBe('dark')
       expect(changed.settings.composer.sendShortcut).toBe('mod-enter')
       expect(changed.settings.composer.runningSubmit).toBe('steer')
-      expect(changed.settings.terminal).toEqual({ fontFamily: 'Fira Code', fontSize: 16 })
+      expect(changed.settings.terminal).toEqual({ ...DEFAULT_SETTINGS.terminal, fontFamily: 'Fira Code', fontSize: 16 })
       const beforeFlush = JSON.parse(await readFile(filePath, 'utf8')) as {
         settings: AppSettings
       }
@@ -155,7 +194,7 @@ describe('SettingsRepository', () => {
       expect(afterFlush.settings.appearance.theme).toBe('dark')
       expect(afterFlush.settings.composer.sendShortcut).toBe('mod-enter')
       expect(afterFlush.settings.composer.runningSubmit).toBe('steer')
-      expect(afterFlush.settings.terminal).toEqual({ fontFamily: 'Fira Code', fontSize: 16 })
+      expect(afterFlush.settings.terminal).toEqual({ ...DEFAULT_SETTINGS.terminal, fontFamily: 'Fira Code', fontSize: 16 })
     } finally {
       repository.dispose()
       await rm(directory, { recursive: true, force: true })
@@ -251,12 +290,14 @@ describe('SettingsRepository', () => {
       repository.update({
         locale: 'en-US',
         appearance: { theme: 'dark' },
-        terminal: { fontFamily: 'Maple Mono', fontSize: 17 },
+        terminal: { fontFamily: 'Maple Mono', fontSize: 17, defaultProfileId: customShell.id, profiles: [customShell] },
       })
       const reset = repository.reset('terminal')
       expect(reset.settings.locale).toBe('en-US')
       expect(reset.settings.appearance.theme).toBe('dark')
-      expect(reset.settings.terminal).toEqual(DEFAULT_SETTINGS.terminal)
+      expect(reset.settings.terminal).toEqual({ ...DEFAULT_SETTINGS.terminal, defaultProfileId: customShell.id, profiles: [customShell] })
+      repository.flush()
+      expect(JSON.parse(await readFile(join(directory, 'settings.json'), 'utf8')).settings.terminal).toEqual(reset.settings.terminal)
     } finally {
       repository.dispose()
       await rm(directory, { recursive: true, force: true })
@@ -295,6 +336,28 @@ describe('settings adapters and store', () => {
     await vi.waitFor(() => expect(store.getSaveStatus()).toBe('saved'))
     expect(changes).toEqual(['saving', 'saved'])
     expect(store.get()).toEqual(darkEnglishSettings())
+    store.dispose()
+  })
+
+  it('acknowledges profile form saves only after persistence and reports failures to retain drafts', async () => {
+    const { adapter, pending } = controlledAdapter()
+    const store = createSettingsStore(adapter)
+    await store.whenReady()
+    const successful = store.updateTerminal({ profiles: [customShell], defaultProfileId: customShell.id })
+    expect(store.getSaveStatus()).toBe('saving')
+    const confirmed = { ...cloneSettings(DEFAULT_SETTINGS), terminal: { ...DEFAULT_SETTINGS.terminal, profiles: [customShell], defaultProfileId: customShell.id } }
+    pending[0].resolve({ revision: 2, settings: confirmed })
+    await expect(successful).resolves.toBe(true)
+    const failed = store.updateTerminal({ profiles: [{ ...customShell, name: 'Edited' }] })
+    pending[1].reject(new Error('write failed'))
+    await expect(failed).resolves.toBe(false)
+    expect(store.get().terminal.profiles[0]!.name).toBe(customShell.name)
+    expect(store.getSaveStatus()).toBe('error')
+    store.resetTerminal()
+    expect(store.get().terminal.profiles).toEqual([customShell])
+    expect(store.get().terminal.defaultProfileId).toBe(customShell.id)
+    pending[2].resolve({ revision: 3, settings: confirmed })
+    await vi.waitFor(() => expect(store.getSaveStatus()).toBe('saved'))
     store.dispose()
   })
 
@@ -401,13 +464,13 @@ describe('settings adapters and store', () => {
     expect(store.get().appearance.theme).toBe('system')
 
     store.updateTerminal({ fontFamily: 'Maple Mono', fontSize: 16 })
-    expect(store.get().terminal).toEqual({ fontFamily: 'Maple Mono', fontSize: 16 })
+    expect(store.get().terminal).toEqual({ ...DEFAULT_SETTINGS.terminal, fontFamily: 'Maple Mono', fontSize: 16 })
     resolveUpdate?.({
       revision: 3,
       settings: {
         ...cloneSettings(DEFAULT_SETTINGS),
         locale: 'en-US',
-        terminal: { fontFamily: 'Maple Mono', fontSize: 16 },
+        terminal: { ...DEFAULT_SETTINGS.terminal, fontFamily: 'Maple Mono', fontSize: 16 },
       },
     })
     await vi.waitFor(() => expect(store.get().terminal.fontFamily).toBe('Maple Mono'))
