@@ -1,8 +1,9 @@
-import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, join } from 'node:path'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TerminalService } from '../../src/main/terminal/terminal-service'
+import { wslWorkingDirectory } from '../../src/main/terminal/terminal-profile-discovery'
 import { PIPILOT_VERSION } from '../../src/shared/build-info'
 import type { ConversationScope } from '../../src/shared/conversation-scope'
 import { DEFAULT_SETTINGS, type TerminalSettings } from '../../src/shared/settings'
@@ -671,8 +672,7 @@ describe('TerminalService', () => {
 
   it('does not advertise missing Unix shells and revalidates a selected shell before creating', async () => {
     const root = await temporaryDirectory('terminal-unix-profiles')
-    const configuredShell = join(root, 'test-shell')
-    await writeFile(configuredShell, '#!/bin/sh\n', { mode: 0o755 })
+    const configuredShell = '/tools/test-shell'
     let shInstalled = true
     const spawnPty = vi.fn(() => new FakePty(80, 24))
     const service = new TerminalService(
@@ -702,8 +702,7 @@ describe('TerminalService', () => {
     'uses the configured executable Unix shell on %s',
     async (platform) => {
       const root = await temporaryDirectory(`terminal-shell-${platform}`)
-      const configuredShell = join(root, 'test-shell')
-      await writeFile(configuredShell, '#!/bin/sh\n', { mode: 0o755 })
+      const configuredShell = '/tools/test-shell'
       const launches: Array<{ file: string; args: string[] }> = []
       const service = new TerminalService(
         () => firstScope,
@@ -711,6 +710,7 @@ describe('TerminalService', () => {
         {
           environment: { SHELL: configuredShell },
           platform,
+          resolveExecutable: async (candidate) => candidate === configuredShell ? configuredShell : undefined,
           spawnPty: (file, args, options) => {
             launches.push({ file, args })
             return new FakePty(options.cols ?? 80, options.rows ?? 24)
@@ -719,9 +719,8 @@ describe('TerminalService', () => {
       )
 
       const created = await service.create(firstScope, 80, 24)
-      const canonicalShell = await realpath(configuredShell)
-      expect(created.shell).toBe(basename(canonicalShell))
-      expect(launches).toEqual([{ file: canonicalShell, args: ['-l'] }])
+      expect(created.shell).toBe('test-shell')
+      expect(launches).toEqual([{ file: configuredShell, args: ['-l'] }])
       await service.dispose()
     },
   )
@@ -861,10 +860,14 @@ describe('TerminalService', () => {
     await service.dispose()
   })
 
-  it('rejects an unmappable WSL cwd before launching a terminal', async () => {
+  it('maps host working directories for WSL and rejects unmappable ones before launching', async () => {
     const root = await temporaryDirectory('terminal-wsl-cwd')
     let settings: TerminalSettings = { ...DEFAULT_SETTINGS.terminal, defaultProfileId: null, profiles: [] }
-    const spawnPty = vi.fn(() => new FakePty(80, 24))
+    const launches: Array<{ file: string; args: string[] }> = []
+    const spawnPty = vi.fn((file: string, args: string[]) => {
+      launches.push({ file, args })
+      return new FakePty(80, 24)
+    })
     const service = new TerminalService(() => firstScope, async (scope) => ({ scope, cwd: root }), {
       platform: 'win32', environment: {}, getTerminalSettings: () => settings, readDirectory: async () => [],
       resolveExecutable: async (candidate) => candidate === 'C:\\Windows\\System32\\wsl.exe' ? candidate : undefined,
@@ -872,8 +875,15 @@ describe('TerminalService', () => {
     })
     const profile = (await service.listShellProfiles()).find(({ source }) => source === 'wsl')!
     settings = { ...settings, defaultProfileId: profile.id }
-    await expect(service.create(firstScope, 80, 24)).rejects.toMatchObject({ code: 'TERMINAL_CWD_UNAVAILABLE' })
-    expect(spawnPty).not.toHaveBeenCalled()
+    const linuxCwd = wslWorkingDirectory(await realpath(root), 'Ubuntu')
+    if (linuxCwd) {
+      const created = await service.create(firstScope, 80, 24)
+      expect(created.shell).toBe('Ubuntu (WSL)')
+      expect(launches).toEqual([{ file: profile.executable, args: [...profile.args, '--cd', linuxCwd] }])
+    } else {
+      await expect(service.create(firstScope, 80, 24)).rejects.toMatchObject({ code: 'TERMINAL_CWD_UNAVAILABLE' })
+      expect(launches).toEqual([])
+    }
     await service.dispose()
   })
 
