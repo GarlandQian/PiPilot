@@ -584,6 +584,7 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
       'localPi',
       'mcpConfig',
       'modelsConfig',
+      'notifications',
       'piIntegrations',
       'sessionCatalog',
       'settings',
