@@ -18,6 +18,8 @@ interface PiSdkFixtureOptions {
   promptDelays?: Readonly<Record<string, number>>
   /** Hold the provider response until a test has completed a real UI action. */
   promptGates?: Readonly<Record<string, Promise<void>>>
+  /** Hold a response after its first token, while the SDK is observably streaming. */
+  completionGates?: Readonly<Record<string, Promise<void>>>
   reasoningDelays?: Readonly<Record<string, number>>
   reasoningGates?: Readonly<Record<string, Promise<void>>>
   retryEnabled?: boolean
@@ -105,6 +107,7 @@ export async function startPiSdkFixture(
         stream.text(content)
         const completionDelay = options.completionDelays?.[prompt] ?? 0
         if (completionDelay > 0) await delay(completionDelay)
+        await options.completionGates?.[prompt]
         stream.finish(false)
       })().catch((error) => {
         if (!response.headersSent) response.writeHead(500, { 'content-type': 'text/plain' })
