@@ -43,11 +43,9 @@ function powershell(script: string, env = process.env) {
     Buffer.from(`$ProgressPreference = 'SilentlyContinue'; $ErrorActionPreference = 'Stop'; ${script}`, 'utf16le').toString('base64')], env)
 }
 
-async function installedProcesses(executable: string) {
+async function installedProcesses() {
   const output = await powershell(`@(Get-CimInstance Win32_Process -Filter "Name='PiPilot.exe'" |
-    Where-Object { $_.ExecutablePath -eq $env:PIPILOT_CANARY_EXE } |
-    Select-Object ProcessId,CommandLine) | ConvertTo-Json -Compress`,
-  { ...process.env, PIPILOT_CANARY_EXE: executable })
+    Select-Object ProcessId,CommandLine) | ConvertTo-Json -Compress`)
   if (!output.trim()) return [] as Array<{ ProcessId: number; CommandLine: string }>
   const parsed = JSON.parse(output)
   return (Array.isArray(parsed) ? parsed : [parsed]) as Array<{ ProcessId: number; CommandLine: string }>
@@ -61,11 +59,12 @@ async function allPiPilotProcesses() {
   return (Array.isArray(parsed) ? parsed : [parsed]) as Array<Record<string, unknown>>
 }
 
-async function stopInstalledApp(executable: string) {
-  for (const child of await installedProcesses(executable)) {
+async function stopInstalledApp(preexistingPids: ReadonlySet<number>) {
+  for (const child of await installedProcesses()) {
+    if (preexistingPids.has(child.ProcessId)) continue
     await run('taskkill.exe', ['/PID', String(child.ProcessId), '/T', '/F']).catch(() => undefined)
   }
-  await expect.poll(async () => (await installedProcesses(executable)).length).toBe(0)
+  await expect.poll(async () => (await installedProcesses()).every((child) => preexistingPids.has(child.ProcessId))).toBe(true)
 }
 
 async function freePort() {
@@ -186,6 +185,7 @@ test('installs unsigned A at a custom path, rejects corruption, then updates and
   const pathAdapter = createWindowsUserPathAdapter(process.env, join(root, 'registry-adapter'))
   const originalPath = await pathAdapter.read()
   let app: { child: ChildProcess; browser: Browser; page: Page } | undefined
+  let preexistingPids = new Set<number>()
   let output = ''
   const log = (value: string) => { output = `${output}${value}`.slice(-256_000) }
   try {
@@ -195,6 +195,9 @@ test('installs unsigned A at a custom path, rejects corruption, then updates and
       'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*') -ErrorAction SilentlyContinue |
       Where-Object { $_.DisplayName -like 'PiPilot*' }) | Select-Object DisplayName,InstallLocation | ConvertTo-Json -Compress`)
     expect(existing.trim(), 'The disposable runner must not already have PiPilot installed.').toBe('')
+    const preexistingProcesses = await installedProcesses()
+    preexistingPids = new Set(preexistingProcesses.map((process) => process.ProcessId))
+    expect(preexistingProcesses, 'The disposable runner must not already have PiPilot processes.').toEqual([])
     await run(manifest.olderInstaller, ['/S', '/currentuser', `/D=${installDirectory}`], env)
     expect(existsSync(executable)).toBe(true)
     // Only the installed fixture feed is changed. Candidate B remains exactly
@@ -239,7 +242,7 @@ test('installs unsigned A at a custom path, rejects corruption, then updates and
     })
     if (installResult) expect(installResult).toMatchObject({ outcome: 'accepted', snapshot: { state: 'downloaded' } })
     await expect.poll(() => app!.child.exitCode, { timeout: 120_000 }).toBe(0)
-    await expect.poll(async () => (await installedProcesses(executable))
+    await expect.poll(async () => (await installedProcesses())
       .some((process) => process.ProcessId !== oldPid && /--updated\b/u.test(process.CommandLine)),
     { timeout: 180_000, message: 'The updater must automatically relaunch B from the original custom installation directory.' }).toBe(true)
     const builderRequire = createRequire(require.resolve('electron-builder/package.json'))
@@ -249,7 +252,7 @@ test('installs unsigned A at a custom path, rejects corruption, then updates and
     expect(await pathAdapter.read()).toEqual(installedPath)
     // NSIS relaunches with --updated, not Chromium debug flags. Observe that
     // real relaunch above, then reopen B with CDP for application-level checks.
-    await stopInstalledApp(executable)
+    await stopInstalledApp(preexistingPids)
     await app.browser.close().catch(() => undefined)
     app = await launch(executable, env, log)
     expect((await app.page.evaluate(() => window.pipilot!.applicationUpdate.get())).policy.currentVersion).toBe(manifest.version)
@@ -277,7 +280,7 @@ test('installs unsigned A at a custom path, rejects corruption, then updates and
     await writeFile(testInfo.outputPath('post-update-processes.json'), JSON.stringify(
       await allPiPilotProcesses().catch((error: unknown) => [{ error: String(error) }]), null, 2,
     ))
-    await stopInstalledApp(executable).catch((error) => log(String(error)))
+    await stopInstalledApp(preexistingPids).catch((error) => log(String(error)))
     await app?.browser.close().catch(() => undefined)
     if (originalPath) await pathAdapter.write(originalPath)
     else await pathAdapter.remove()
