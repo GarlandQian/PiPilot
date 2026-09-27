@@ -144,7 +144,7 @@ test('installs unsigned A at a custom path, rejects corruption, then updates and
   const runningPrompt = 'Update canary keeps this task running until restart is explicitly confirmed'
   let releasePrompt!: () => void
   const promptGate = new Promise<void>((done) => { releasePrompt = done })
-  const pi = await startPiSdkFixture({ agentDir: join(root, 'agent-data'), completionGates: { [runningPrompt]: promptGate } })
+  const pi = await startPiSdkFixture({ agentDir: join(root, 'agent-data'), reasoningGates: { [runningPrompt]: promptGate } })
   const retainedSession = join(root, 'agent-data', 'sessions', 'update-canary', 'retained.jsonl')
   await mkdir(join(root, 'agent-data', 'sessions', 'update-canary'), { recursive: true })
   const retainedSessionContent = [
@@ -216,6 +216,7 @@ test('installs unsigned A at a custom path, rejects corruption, then updates and
     await expect.poll(() => app!.page.evaluate(() => window.pipilot!.localPi.runtime.status())).toMatchObject({ state: 'ready' })
     await app.page.evaluate((message) => window.pipilot!.localPi.runtime.command({ type: 'prompt', message }), runningPrompt)
     await expect.poll(() => pi.prompts.includes(runningPrompt)).toBe(true)
+    await expect(app.page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible()
     await expect.poll(() => app!.page.evaluate(() => window.pipilot!.localPi.runtime.status())).toMatchObject({
       sessionState: { isStreaming: true },
     })
