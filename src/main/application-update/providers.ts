@@ -383,7 +383,27 @@ export class ElectronUpdaterProvider extends BaseApplicationUpdateProvider {
   }
 
   install() {
-    this.updater.quitAndInstall(false, false)
+    // The official updater reports synchronous installer failures through its
+    // error event rather than throwing. Let the shutdown owner recover instead
+    // of treating a failed launch as a completed installation request.
+    let failed = false
+    const onError = () => { failed = true }
+    this.updater.on('error', onError)
+    try {
+      // Assisted NSIS only honors --force-run in silent mode. Confirmation is
+      // handled by PiPilot before reaching this method, so keep the existing
+      // installation directory and restart without another installer wizard.
+      const isNsis = this.policy.package === 'nsis'
+      this.updater.quitAndInstall(isNsis, isNsis)
+      if (failed) {
+        throw new ApplicationUpdateProviderError(
+          'UPDATE_INSTALL_FAILED',
+          'The update installer could not be started.',
+        )
+      }
+    } finally {
+      this.updater.removeListener('error', onError)
+    }
   }
 
   override dispose() {
@@ -398,7 +418,6 @@ export function createApplicationUpdatePolicy(options: {
   platform?: NodeJS.Platform
   resourcesPath?: string
   appImagePath?: string
-  enableWindowsNative?: boolean
 }) {
   const platform = options.platform ?? process.platform
   const normalizedPlatform = applicationUpdatePlatformSchema.parse(
@@ -415,7 +434,7 @@ export function createApplicationUpdatePolicy(options: {
       policy: applicationUpdatePolicySchema.parse({
         platform: normalizedPlatform,
         package: 'nsis',
-        capability: options.enableWindowsNative ? 'native-install' : 'manual-release',
+        capability: 'native-install',
         currentVersion: options.currentVersion,
         releaseUrl: APPLICATION_UPDATE_RELEASE_URL,
       }),
@@ -439,7 +458,6 @@ export async function createProductionApplicationUpdateProvider(options: {
   platform?: NodeJS.Platform
   resourcesPath?: string
   appImagePath?: string
-  enableWindowsNative?: boolean
   fetch?: typeof fetch
 }) {
   const selected = createApplicationUpdatePolicy(options)

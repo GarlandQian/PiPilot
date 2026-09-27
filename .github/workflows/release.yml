@@ -192,6 +192,12 @@ jobs:
         run: ${{ matrix.smoke }}
         env:
           PIPILOT_PACKAGED_ARCH: x64
+      - name: Prepare older Windows installer for native update canary
+        if: ${{ matrix.platform == 'windows' }}
+        run: node build/prepare-windows-update-canary.cjs
+      - name: Verify unsigned Windows installation and native A-to-B update
+        if: ${{ matrix.platform == 'windows' }}
+        run: node node_modules/@playwright/test/cli.js test --config=playwright.packaged.config.ts tests/packaged/windows-update-canary.spec.ts --output=test-results/windows-update-canary
       - name: Smoke-test macOS ARM64 package
         if: ${{ matrix.platform == 'macos' }}
         run: pnpm test:packaged --output=test-results/packaged-arm64

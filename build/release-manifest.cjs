@@ -104,10 +104,9 @@ const manifest = {
   platform,
   architectures: expectedArchitectures,
   trust: platform === 'macos' ? 'adhoc-no-developer-id' : 'unsigned',
-  // Windows metadata is shipped for a future native canary, but the current
-  // application deliberately keeps unsigned NSIS updates manual until that
-  // canary proves the official updater path on a Windows runner.
-  updateCapability: platform === 'linux' ? 'native-install' : 'manual-release',
+  // Windows NSIS and Linux AppImage use the official updater. macOS remains
+  // manual until Developer ID signing and notarization are configured.
+  updateCapability: platform === 'macos' ? 'manual-release' : 'native-install',
   files,
 }
 fs.writeFileSync(path.join(releaseDirectory, `${platform}-manifest.json`), `${JSON.stringify(manifest, null, 2)}\n`)

@@ -534,6 +534,97 @@ describe('TerminalService', () => {
     await service.dispose()
   })
 
+  it('closes all scopes after pending creation settles and remains reusable with the same event subscriptions', async () => {
+    const root = await temporaryDirectory('terminal-close-all')
+    let activeScope: ConversationScope = firstScope
+    let beginShellResolution: () => void = () => undefined
+    let finishShellResolution: (shell: { file: string; args: string[]; label: string }) => void = () => undefined
+    const shellResolutionStarted = new Promise<void>((resolve) => { beginShellResolution = resolve })
+    const pendingShell = new Promise<{ file: string; args: string[]; label: string }>((resolve) => { finishShellResolution = resolve })
+    const shell = { file: '/bin/sh', args: [], label: 'sh' }
+    let shouldWait = false
+    const processes: FakePty[] = []
+    const service = new TerminalService(
+      () => activeScope,
+      async (scope) => ({ scope, cwd: root }),
+      {
+        resolveShell: () => {
+          if (!shouldWait) return shell
+          beginShellResolution()
+          return pendingShell
+        },
+        spawnPty: (_file, _args, options) => {
+          const process = new FakePty(options.cols ?? 80, options.rows ?? 24)
+          processes.push(process)
+          return process
+        },
+      },
+    )
+    const listener = vi.fn()
+    service.subscribe(listener)
+    const first = await service.create(firstScope, 80, 24)
+    activeScope = secondScope
+    const second = await service.create(secondScope, 80, 24)
+    activeScope = firstScope
+    shouldWait = true
+    const creations = Promise.allSettled([
+      service.create(firstScope, 80, 24),
+      service.create(firstScope, 80, 24),
+    ])
+    await shellResolutionStarted
+    const closing = service.closeAll()
+    expect(service.closeAll()).toBe(closing)
+    let closed = false
+    void closing.then(() => { closed = true })
+    await expect(service.create(firstScope, 80, 24)).rejects.toMatchObject({ code: 'TERMINAL_UNAVAILABLE' })
+    expect(closed).toBe(false)
+    shouldWait = false
+    finishShellResolution(shell)
+    expect(await creations).toEqual([
+      expect.objectContaining({ status: 'rejected', reason: expect.objectContaining({ code: 'TERMINAL_UNAVAILABLE' }) }),
+      expect.objectContaining({ status: 'rejected', reason: expect.objectContaining({ code: 'TERMINAL_UNAVAILABLE' }) }),
+    ])
+    await closing
+    expect(service.hasActiveTerminals()).toBe(false)
+    expect(processes).toHaveLength(2)
+    for (const process of processes) expect(process.kills).toHaveLength(1)
+    expect(listener).toHaveBeenCalledWith(expect.objectContaining({ type: 'exit', terminalId: first.terminalId }))
+    expect(listener).toHaveBeenCalledWith(expect.objectContaining({ type: 'exit', terminalId: second.terminalId }))
+    expect(await service.list(firstScope)).toEqual([])
+    activeScope = secondScope
+    expect(await service.list(secondScope)).toEqual([])
+    const replacement = await service.create(secondScope, 80, 24)
+    processes[2].emitData('terminal after cancelled update')
+    await service.attach(secondScope, replacement.terminalId, 80, 24)
+    expect(listener).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'data', terminalId: replacement.terminalId, data: 'terminal after cancelled update',
+    }))
+    expect(service.hasActiveTerminals()).toBe(true)
+    await service.dispose()
+  })
+
+  it('does not reopen terminal creation when permanent disposal overlaps closeAll', async () => {
+    const root = await temporaryDirectory('terminal-close-all-dispose')
+    const process = new FakePty(80, 24)
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => undefined)
+    const service = new TerminalService(
+      () => firstScope,
+      async (scope) => ({ scope, cwd: root }),
+      {
+        resolveShell: () => ({ file: '/bin/sh', args: [], label: 'sh' }),
+        spawnPty: () => process,
+      },
+    )
+    await service.create(firstScope, 80, 24)
+    const closing = service.closeAll()
+    await Promise.resolve()
+    expect(kill).toHaveBeenCalledOnce()
+    const disposing = service.dispose()
+    process.emitExit(0)
+    await Promise.all([closing, disposing])
+    await expect(service.create(firstScope, 80, 24)).rejects.toMatchObject({ code: 'TERMINAL_UNAVAILABLE' })
+  })
+
   it('removes exited records and cancels queued creation when a project is disposed', async () => {
     const root = await temporaryDirectory('terminal-disposal-race')
     const process = new FakePty(80, 24)

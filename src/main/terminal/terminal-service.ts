@@ -151,6 +151,8 @@ export class TerminalService {
   private readonly disposingScopes = new Set<string>()
   private readonly scopeVersions = new Map<string, number>()
   private disposing = false
+  private disposed = false
+  private closeAllPromise: Promise<void> | undefined
   private spawnPty?: SpawnPty
   private readonly discovery: TerminalProfileDiscovery
 
@@ -407,16 +409,43 @@ export class TerminalService {
     }
   }
 
-  async dispose() {
+  closeAll(): Promise<void> {
+    if (this.closeAllPromise) return this.closeAllPromise
+    if (this.disposed) return Promise.resolve()
     this.disposing = true
+    // Invalidate creations already queued behind a pending shell lookup, even
+    // if they resume after this temporary shutdown has completed.
+    const scopes = new Set([
+      ...this.pendingCreates.keys(),
+      ...[...this.records.values()].map((record) => record.scopeKey),
+    ])
+    for (const key of scopes) {
+      this.scopeVersions.set(key, (this.scopeVersions.get(key) ?? 0) + 1)
+    }
+    const operation = this.closeAllRecords().finally(() => {
+      // A permanent dispose may have started while closeAll was waiting.
+      this.disposing = this.disposed
+      if (this.closeAllPromise === operation) this.closeAllPromise = undefined
+    })
+    this.closeAllPromise = operation
+    return operation
+  }
+
+  async dispose() {
+    this.disposed = true
+    this.disposing = true
+    await (this.closeAllPromise ?? this.closeAllRecords())
+    this.disposingScopes.clear()
+    this.scopeVersions.clear()
+    this.listeners.clear()
+  }
+
+  private async closeAllRecords() {
     await Promise.allSettled([...this.pendingCreates.values()])
     const records = [...this.records.values()]
     await Promise.allSettled(records.map((record) => this.terminateRecord(record)))
     this.records.clear()
     this.scopeOrdinals.clear()
-    this.disposingScopes.clear()
-    this.scopeVersions.clear()
-    this.listeners.clear()
   }
 
   private async loadSpawnPty() {

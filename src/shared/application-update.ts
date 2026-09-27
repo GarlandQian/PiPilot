@@ -134,9 +134,7 @@ export const applicationUpdatePolicySchema = z
     }
     const capabilityAllowed = (() => {
       if (policy.package === 'nsis') {
-        // Unsigned Windows packages remain manual-release until the native
-        // updater canary is proven. The package identity stays NSIS so the UI
-        // can present the correct SmartScreen/unknown-publisher warning.
+        // NSIS supports native installation and a manual release fallback.
         return policy.capability === 'manual-release' || policy.capability === 'native-install'
       }
       if (policy.package === 'appimage') return policy.capability === 'native-install'

@@ -32,7 +32,11 @@ PiPilot 是 Electron 桌面应用，不提供 Web 版本。
 | Windows | x64 | NSIS |
 | Linux | x64 | AppImage、DEB |
 
-当前安装包未签名，macOS 版本也未公证。macOS 可能要求用户先批准再打开应用；Windows 可能显示 SmartScreen 或未知发布者警告。PiPilot 不会静默下载或安装更新：macOS 采用手动下载；Windows/Linux 的原生更新仍在验证中，尚未启用。
+当前安装包未签名，macOS 版本也未公证。macOS 可能要求用户先批准再打开应用；Windows 可能显示 SmartScreen 或未知发布者警告。
+
+Windows 首次安装可选择安装目录。Windows NSIS 和 Linux AppImage 版本会自动检查较新的稳定版本；由用户点击下载，再确认重启安装。重启前会检查运行中的任务和未保存的配置。Windows 更新沿用原安装目录，保留 Pi 配置和会话；下载文件通过官方更新元数据校验，安装包仍不签名。
+
+macOS 和 Linux DEB 版本采用手动下载。使用旧版手动更新模式的 Windows 用户需要先手动安装一次新版，之后即可在应用内更新。自动更新要求版本号递增，覆盖同版本 Release 的附件不会触发更新。
 
 ## 开发
 

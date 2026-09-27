@@ -25,7 +25,7 @@ const platformPolicy: Record<Platform, {
   windows: {
     architectures: ['x64'],
     trust: 'unsigned',
-    updateCapability: 'manual-release',
+    updateCapability: 'native-install',
   },
   linux: {
     architectures: ['x64'],

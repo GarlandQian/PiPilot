@@ -21,7 +21,7 @@ const expectedTrust = {
 }
 const expectedUpdateCapability = {
   macos: 'manual-release',
-  windows: 'manual-release',
+  windows: 'native-install',
   linux: 'native-install',
 }
 const expectedPackageExtensions = {

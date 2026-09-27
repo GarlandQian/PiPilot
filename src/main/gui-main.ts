@@ -305,7 +305,7 @@ function activeApplicationWork() {
   }
 }
 
-async function disposeApplicationResources() {
+async function flushApplicationState() {
   try {
     settingsRepository.flush()
   } catch {
@@ -321,6 +321,23 @@ async function disposeApplicationResources() {
     observedPiSessionDirectories.flush(),
     windowStateController?.flush(),
   ])
+}
+
+async function prepareApplicationUpdate() {
+  await flushApplicationState()
+  // Stop work before starting NSIS: the installer otherwise force-closes a
+  // running old application before slow Hosts finish saving their sessions.
+  // Keep service instances reusable if the installer cannot be launched.
+  await piRuntimeFrontend?.stop()
+  await Promise.all([
+    piHostPool?.stopAll(),
+    terminalService.closeAll(),
+  ])
+  await flushApplicationState()
+}
+
+async function disposeApplicationResources() {
+  await flushApplicationState()
 
   applicationUpdateIpcController?.dispose()
   applicationUpdateIpcController = null
@@ -686,6 +703,7 @@ if (!hasSingleInstanceLock) {
       shutdownCoordinator = new ApplicationShutdownCoordinator({
         confirm: (intent) => shutdownGuard.confirm(intent),
         cancelConfirmation: () => shutdownGuard.cancel(),
+        prepareInstall: prepareApplicationUpdate,
         dispose: disposeApplicationResources,
         quit: () => app.quit(),
       })
@@ -760,9 +778,6 @@ if (!hasSingleInstanceLock) {
         platform: process.platform,
         resourcesPath: process.resourcesPath,
         appImagePath: process.env.APPIMAGE,
-        // Unsigned Windows NSIS updates remain disabled until the isolated
-        // official updater canary proves integrity on a native runner.
-        enableWindowsNative: false,
       })
       applicationUpdateService = new ApplicationUpdateService({
         provider: updateProvider,

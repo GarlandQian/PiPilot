@@ -145,6 +145,7 @@ export class ApplicationUpdateService {
   check(mode: 'manual' | 'automatic' = 'manual') {
     if (this.disposed) return Promise.resolve(this.acceptedResult())
     if (this.snapshot.state === 'disabled') return Promise.resolve(this.acceptedResult())
+    if (this.operation === 'install') return Promise.resolve(this.busyResult('install'))
     // A downloaded update is an explicit user decision waiting to be installed.
     // Do not let a timer/manual refresh replace it with a newer snapshot.
     if (this.snapshot.state === 'downloaded') return Promise.resolve(this.acceptedResult())
@@ -199,9 +200,14 @@ export class ApplicationUpdateService {
 
   download() {
     if (this.disposed) return Promise.resolve(this.acceptedResult())
+    if (this.operation === 'install') return Promise.resolve(this.busyResult('install'))
     if (this.downloadPromise) return this.downloadPromise
     if (this.checkPromise) return Promise.resolve(this.busyResult('check'))
-    if (this.snapshot.state !== 'available' || this.snapshot.policy.capability !== 'native-install') {
+    const canRetry = this.snapshot.state === 'error' &&
+      this.snapshot.recoverable &&
+      this.snapshot.operation === 'download' &&
+      this.snapshot.retryState === 'available'
+    if ((this.snapshot.state !== 'available' && !canRetry) || this.snapshot.policy.capability !== 'native-install') {
       this.publishError('download', new ApplicationUpdateProviderError('UPDATE_UNSUPPORTED', 'This update cannot be downloaded by the installed package.'))
       return Promise.resolve(this.acceptedResult())
     }
@@ -238,7 +244,11 @@ export class ApplicationUpdateService {
   async install(confirmActiveWork = false) {
     if (this.disposed) return this.acceptedResult()
     if (this.operation) return this.busyResult(this.operation)
-    if (this.snapshot.state !== 'downloaded' || this.snapshot.policy.capability !== 'native-install') {
+    const canRetry = this.snapshot.state === 'error' &&
+      this.snapshot.recoverable &&
+      this.snapshot.operation === 'install' &&
+      this.snapshot.retryState === 'downloaded'
+    if ((this.snapshot.state !== 'downloaded' && !canRetry) || this.snapshot.policy.capability !== 'native-install') {
       this.publishError('install', new ApplicationUpdateProviderError('UPDATE_NOT_DOWNLOADED', 'A downloaded update is required before installation.'))
       return this.acceptedResult()
     }
@@ -250,6 +260,9 @@ export class ApplicationUpdateService {
         activeWork,
         snapshot: this.getSnapshot(),
       })
+    }
+    if (canRetry) {
+      this.publish({ state: 'downloaded', ...updateFieldsFromSnapshot(this.snapshot) })
     }
     this.operation = 'install'
     try {

@@ -44,9 +44,17 @@ Download a build from [GitHub Releases](https://github.com/GarlandQian/PiPilot/r
 | Linux | x64 | AppImage, DEB |
 
 Installers are currently unsigned. macOS builds are not notarized, so macOS may ask you to approve
-the app before opening it. Windows may show a SmartScreen or unknown-publisher warning. PiPilot does
-not silently download or install updates; macOS uses manual downloads, and native Windows/Linux
-updates remain disabled while their update path is being validated.
+the app before opening it. Windows may show a SmartScreen or unknown-publisher warning.
+
+Windows setup lets you choose the installation directory. Windows NSIS and Linux AppImage builds
+automatically check for newer stable releases; you choose when to download and confirm when to
+restart and install. Active work and unsaved configuration are checked before restart. Windows
+updates reuse the existing installation directory and preserve Pi settings and sessions. Downloads
+are verified against the official updater metadata; Windows packages remain unsigned.
+
+macOS and Linux DEB builds use manual downloads. Older Windows builds with manual updates need one
+manual installation to enable the in-app update flow. Updates require a higher version number;
+replacing assets under the same release version does not trigger an update.
 
 ## Development
 

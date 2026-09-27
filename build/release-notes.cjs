@@ -11,8 +11,8 @@ fs.writeFileSync(
   'This public release was published only after all native package, smoke, manifest, and checksum gates completed successfully.\n\n' +
   '| Platform | Trust | Update path |\n| --- | --- | --- |\n' +
   '| macOS | Ad-hoc; not Developer ID signed or notarized | Manual GitHub Release download |\n' +
-  '| Windows | Unsigned; SmartScreen may warn | Manual GitHub Release download; native install remains disabled |\n' +
-  '| Linux AppImage | Unsigned | Native metadata included |\n' +
+  '| Windows | Unsigned; SmartScreen may warn | In-app download, then confirmed restart and install |\n' +
+  '| Linux AppImage | Unsigned | In-app download, then confirmed restart and install |\n' +
   '| Linux DEB | Unsigned | Manual package download |\n\n' +
   'SHA-256 manifests are included for each platform.\n',
 )
