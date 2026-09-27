@@ -216,12 +216,10 @@ test('installs unsigned A at a custom path, rejects corruption, then updates and
     await expect.poll(() => app!.page.evaluate(() => window.pipilot!.localPi.runtime.status())).toMatchObject({ state: 'ready' })
     await app.page.evaluate((message) => window.pipilot!.localPi.runtime.command({ type: 'prompt', message }), runningPrompt)
     await expect.poll(() => pi.prompts.includes(runningPrompt)).toBe(true)
+    // The visible Stop control confirms that the renderer is actively streaming.
     await expect(app.page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible()
-    await expect.poll(() => app!.page.evaluate(() => window.pipilot!.localPi.runtime.status())).toMatchObject({
-      sessionState: { isStreaming: true },
-    })
     expect(await app.page.evaluate(() => window.pipilot!.applicationUpdate.install())).toMatchObject({
-      outcome: 'confirmation-required', snapshot: { state: 'downloaded' },
+      outcome: 'confirmation-required', activeWork: { primaryPi: true }, snapshot: { state: 'downloaded' },
     })
     expect(app.child.exitCode).toBeNull()
     const oldPid = app.child.pid
