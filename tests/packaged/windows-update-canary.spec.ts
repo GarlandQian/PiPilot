@@ -40,7 +40,7 @@ async function run(command: string, args: string[], env = process.env, timeout =
 
 function powershell(script: string, env = process.env) {
   return run('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand',
-    Buffer.from(`$ErrorActionPreference = 'Stop'; ${script}`, 'utf16le').toString('base64')], env)
+    Buffer.from(`$ProgressPreference = 'SilentlyContinue'; $ErrorActionPreference = 'Stop'; ${script}`, 'utf16le').toString('base64')], env)
 }
 
 async function installedProcesses(executable: string) {
