@@ -123,6 +123,7 @@ describe('application update policy', () => {
         packaged: true,
         currentVersion: '0.0.1',
         platform: 'win32',
+        resourcesPath: '/custom/PiPilot/resources',
       })
       expect(provider).toBeInstanceOf(ElectronUpdaterProvider)
       await expect(provider.check()).resolves.toMatchObject({ version: '0.0.2' })
@@ -135,6 +136,7 @@ describe('application update policy', () => {
         allowDowngrade: false,
         allowPrerelease: false,
         channel: 'latest',
+        installDirectory: '/custom/PiPilot',
       })
       expect(updater.verifyUpdateCodeSignature).toBe(verifySignature)
     } finally {

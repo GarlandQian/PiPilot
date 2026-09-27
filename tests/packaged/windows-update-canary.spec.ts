@@ -53,6 +53,14 @@ async function installedProcesses(executable: string) {
   return (Array.isArray(parsed) ? parsed : [parsed]) as Array<{ ProcessId: number; CommandLine: string }>
 }
 
+async function allPiPilotProcesses() {
+  const output = await powershell(`@(Get-CimInstance Win32_Process -Filter "Name='PiPilot.exe'" |
+    Select-Object ProcessId,ExecutablePath,CommandLine) | ConvertTo-Json -Compress`)
+  if (!output.trim()) return [] as Array<Record<string, unknown>>
+  const parsed = JSON.parse(output)
+  return (Array.isArray(parsed) ? parsed : [parsed]) as Array<Record<string, unknown>>
+}
+
 async function stopInstalledApp(executable: string) {
   for (const child of await installedProcesses(executable)) {
     await run('taskkill.exe', ['/PID', String(child.ProcessId), '/T', '/F']).catch(() => undefined)
@@ -265,6 +273,9 @@ test('installs unsigned A at a custom path, rejects corruption, then updates and
     }, null, 2))
   } finally {
     await writeFile(testInfo.outputPath('application.log'), output)
+    await writeFile(testInfo.outputPath('post-update-processes.json'), JSON.stringify(
+      await allPiPilotProcesses().catch((error: unknown) => [{ error: String(error) }]), null, 2,
+    ))
     await stopInstalledApp(executable).catch((error) => log(String(error)))
     await app?.browser.close().catch(() => undefined)
     if (originalPath) await pathAdapter.write(originalPath)

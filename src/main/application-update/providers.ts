@@ -1,4 +1,5 @@
 import { net } from 'electron'
+import { dirname } from 'node:path'
 import type { AppUpdater, ProgressInfo, UpdateInfo } from 'electron-updater'
 import { z } from 'zod'
 import {
@@ -476,5 +477,11 @@ export async function createProductionApplicationUpdateProvider(options: {
   const module = await import('electron-updater')
   const updater = (module.autoUpdater ?? (module.default as { autoUpdater?: AppUpdater } | undefined)?.autoUpdater)
   if (!updater) return new DisabledApplicationUpdateProvider(selected.policy, 'missing-feed')
+  if (selected.policy.package === 'nsis' && options.resourcesPath) {
+    // electron-updater does not infer the install location from process.execPath.
+    // Passing it explicitly keeps silent NSIS updates in custom install paths.
+    const nsisUpdater = updater as AppUpdater & { installDirectory?: string }
+    nsisUpdater.installDirectory = dirname(options.resourcesPath)
+  }
   return new ElectronUpdaterProvider({ updater, policy: selected.policy })
 }
