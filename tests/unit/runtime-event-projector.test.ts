@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 import { projectRuntimeEvent } from '../../src/main/pi-host/runtime-event-projector'
-import { localPiSessionEntrySchema } from '../../src/shared/local-pi'
+import { localPiLiveMessageSnapshotSchema, localPiSessionEntrySchema } from '../../src/shared/local-pi'
 import {
   applyLocalPiProjectorEvent,
   createLocalPiProjectorState,
@@ -38,6 +38,37 @@ const publicToolCall = {
 }
 
 describe('embedded Pi event projection', () => {
+  it('validates sparse live content indices against the serialized content', () => {
+    const snapshot = {
+      message: assistantMessage([{ type: 'text', text: 'Working' }]),
+      isStreaming: true, sequence: 4,
+    }
+    expect(localPiLiveMessageSnapshotSchema.parse({ ...snapshot, contentIndices: [2] }).contentIndices).toEqual([2])
+    for (const contentIndices of [[], [0, 2], [-1], [0.5], [Infinity], [Number.MAX_SAFE_INTEGER + 1]]) {
+      expect(localPiLiveMessageSnapshotSchema.safeParse({ ...snapshot, contentIndices }).success).toBe(false)
+    }
+    expect(localPiLiveMessageSnapshotSchema.safeParse({
+      ...snapshot,
+      message: assistantMessage([{ type: 'text', text: 'One' }, { type: 'text', text: 'Two' }]),
+      contentIndices: [2, 2],
+    }).success).toBe(false)
+    expect(localPiLiveMessageSnapshotSchema.safeParse({ ...snapshot, message: null, contentIndices: [0] }).success).toBe(false)
+    expect(localPiLiveMessageSnapshotSchema.safeParse({ ...snapshot, message: null, contentIndices: [] }).success).toBe(true)
+  })
+
+  it('validates serialized live tool argument indices and tuple shape', () => {
+    const snapshot = { message: null, isStreaming: true, sequence: 3 }
+    expect(localPiLiveMessageSnapshotSchema.parse({
+      ...snapshot, toolCallDeltas: [[0, '{"command":"pn']],
+    }).toolCallDeltas).toEqual([[0, '{"command":"pn']])
+    for (const toolCallDeltas of [
+      [[-1, 'partial']], [[0.5, 'partial']], [[Infinity, 'partial']],
+      [[Number.MAX_SAFE_INTEGER + 1, 'partial']], [[0, 'partial', 'extra']], [[0, null]],
+    ]) {
+      expect(localPiLiveMessageSnapshotSchema.safeParse({ ...snapshot, toolCallDeltas }).success).toBe(false)
+    }
+  })
+
   it.each([
     ['JSON arguments', { index: 0, partialArgs: '{"command":"pnpm test"', customInput: undefined, streamIndex: 0 }],
     ['grammar input', {

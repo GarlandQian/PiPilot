@@ -176,7 +176,7 @@ describe('Pi Host RuntimeManager', () => {
     expect(messages.response).toMatchObject({
       command: 'get_messages',
       success: true,
-      data: { messages: [] },
+      data: { messages: [], live: { message: null, isStreaming: false, sequence: 0 } },
     })
     const commands = await manager.command('rt_primary', {
       type: 'get_commands',
@@ -216,6 +216,179 @@ describe('Pi Host RuntimeManager', () => {
       },
       { type: 'agent_start' },
     ])
+  })
+
+  it('hydrates a running public SDK thinking message at the recorded Host event boundary', async () => {
+    let releaseDelta!: () => void
+    const deltaGate = new Promise<void>((resolve) => { releaseDelta = resolve })
+    let deltaBlocked = false
+    let releaseFinal!: () => void
+    const finalGate = new Promise<void>((resolve) => { releaseFinal = resolve })
+    let finalBlocked = false
+    const { manager, agentDir, sessionDir } = await createFixture([{
+      name: 'fixture-delayed-thinking',
+      factory: (pi) => {
+        pi.on('message_update', async (event) => {
+          if (event.assistantMessageEvent.type === 'thinking_delta' &&
+            event.assistantMessageEvent.delta === ' the solution') {
+            deltaBlocked = true
+            await deltaGate
+          }
+        })
+        pi.on('message_end', async (event) => {
+          if (event.message.role === 'assistant') {
+            finalBlocked = true
+            await finalGate
+          }
+        })
+      },
+    }])
+    await writeFile(join(agentDir, 'models.json'), JSON.stringify({ providers: {
+      'fixture-stream': {
+        baseUrl: 'https://fixture.invalid/v1', api: 'openai-completions', apiKey: 'fixture-no-network',
+        models: [{ id: 'stream-model', reasoning: true }],
+      },
+    } }))
+    const created = await manager.create({ runtimeId: 'rt_live_thinking', sessionDir })
+    await manager.bindRuntime(created.runtimeId, created.generation)
+    await manager.command(created.runtimeId, { type: 'set_model', provider: 'fixture-stream', modelId: 'stream-model' })
+    const runtimes = Reflect.get(manager, 'runtimes') as Map<string, { runtime: { session: AgentSession } }>
+    const session = runtimes.get(created.runtimeId)!.runtime.session
+    const events: Array<{ sequence: number; event: { type: string } }> = []
+    manager.subscribeEvents((record) => events.push(record))
+    let stream!: ReadableStreamDefaultController<Uint8Array>
+    const encoder = new TextEncoder()
+    const enqueue = (delta: Record<string, string>, finishReason: string | null = null) => {
+      stream.enqueue(encoder.encode(`data: ${JSON.stringify({
+        id: 'fixture', object: 'chat.completion.chunk',
+        choices: [{ index: 0, delta, finish_reason: finishReason }],
+      })}\n\n`))
+    }
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(
+      new ReadableStream<Uint8Array>({ start(controller) { stream = controller } }),
+      { headers: { 'content-type': 'text/event-stream' } },
+    ))
+    const prompt = session.prompt('Keep thinking while I switch conversations.')
+    try {
+      await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce())
+      enqueue({ role: 'assistant', reasoning_content: 'Considering' })
+      await vi.waitFor(() => expect(session.agent.state.streamingMessage).toMatchObject({
+        role: 'assistant', content: [expect.objectContaining({ type: 'thinking', thinking: 'Considering' })],
+      }))
+
+      const snapshot = await manager.command(created.runtimeId, { type: 'get_messages' })
+      expect(snapshot.response).toMatchObject({ success: true, command: 'get_messages', data: {
+        messages: [expect.objectContaining({ role: 'user' })],
+        live: { sequence: events[events.length - 1]!.sequence, isStreaming: true, message: {
+          role: 'assistant', content: [{ type: 'thinking', thinking: 'Considering' }],
+        } },
+      } })
+      if (!snapshot.response.success || snapshot.response.command !== 'get_messages') throw new Error('Missing live snapshot')
+      const boundary = snapshot.response.data.live!.sequence
+
+      enqueue({ reasoning_content: ' the solution' })
+      await vi.waitFor(() => expect(deltaBlocked).toBe(true))
+      expect(session.agent.state.streamingMessage).toMatchObject({
+        content: [expect.objectContaining({ thinking: 'Considering the solution' })],
+      })
+      // The SDK updates its public state before awaited extensions notify Host.
+      // A snapshot must retain the emitted boundary, not duplicate this delta.
+      const whileBlocked = await manager.command(created.runtimeId, { type: 'get_messages' })
+      expect(whileBlocked.response).toMatchObject({ success: true, data: {
+        live: { sequence: boundary, isStreaming: true, message: {
+          content: [{ type: 'thinking', thinking: 'Considering' }],
+        } },
+      } })
+      releaseDelta()
+      await vi.waitFor(() => expect(session.agent.state.streamingMessage).toMatchObject({
+        content: [expect.objectContaining({ thinking: 'Considering the solution' })],
+      }))
+      await vi.waitFor(() => expect(events[events.length - 1]!.sequence).toBeGreaterThan(boundary))
+      expect(events[events.length - 1]!.sequence).toBeGreaterThan(boundary)
+      expect(snapshot.response.data.live!.message!.content[0]).toEqual({ type: 'thinking', thinking: 'Considering' })
+      enqueue({ content: 'Done' }, 'stop')
+      stream.enqueue(encoder.encode('data: [DONE]\n\n'))
+      stream.close()
+      await vi.waitFor(() => expect(finalBlocked).toBe(true))
+      expect(session.messages[session.messages.length - 1]).toMatchObject({ role: 'assistant' })
+      const finalizing = await manager.command(created.runtimeId, { type: 'get_messages' })
+      expect(finalizing.response).toMatchObject({ success: true, data: {
+        messages: [expect.objectContaining({ role: 'user' })],
+        live: { isStreaming: true, message: { role: 'assistant', content: [
+          { type: 'thinking', thinking: 'Considering the solution' },
+          { type: 'text', text: 'Done' },
+        ] } },
+      } })
+      releaseFinal()
+      await prompt
+      const settled = await manager.command(created.runtimeId, { type: 'get_messages' })
+      expect(settled.response).toMatchObject({ success: true, data: { live: { message: null, isStreaming: false } } })
+    } finally {
+      releaseDelta()
+      releaseFinal()
+      try { stream?.error(new Error('Fixture stream closed')) } catch { /* already settled */ }
+      await session.abort()
+      await prompt
+      fetch.mockRestore()
+    }
+  })
+
+  it('retains sparse content indices and incomplete tool argument prefixes until the tool call ends', async () => {
+    const { manager, sessionDir } = await createFixture()
+    const created = await manager.create({ runtimeId: 'rt_live_tool_arguments', sessionDir })
+    await manager.bindRuntime(created.runtimeId, created.generation)
+    const message = {
+      role: 'assistant' as const, content: [], api: 'openai-completions',
+      provider: 'fixture', model: 'fixture-model', stopReason: 'pending' as const, timestamp: 1,
+      usage: {
+        input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    }
+    emitSessionEvent(manager, created.runtimeId, { type: 'message_start', message })
+    emitSessionEvent(manager, created.runtimeId, {
+      type: 'message_update', message,
+      assistantMessageEvent: { type: 'toolcall_start', contentIndex: 0, partial: message },
+    })
+    emitSessionEvent(manager, created.runtimeId, {
+      type: 'message_update', message,
+      assistantMessageEvent: {
+        type: 'toolcall_delta', contentIndex: 0, delta: '{"command":"pn', partial: message,
+      },
+    })
+    emitSessionEvent(manager, created.runtimeId, {
+      type: 'message_update', message,
+      assistantMessageEvent: { type: 'text_start', contentIndex: 2, partial: message },
+    })
+    emitSessionEvent(manager, created.runtimeId, {
+      type: 'message_update', message,
+      assistantMessageEvent: { type: 'text_delta', contentIndex: 2, delta: 'Still working', partial: message },
+    })
+
+    const partial = await manager.command(created.runtimeId, { type: 'get_messages' })
+    expect(partial.response).toMatchObject({ success: true, command: 'get_messages', data: {
+      live: {
+        message: { content: [{ type: 'text', text: 'Still working' }] },
+        isStreaming: true, sequence: 5, contentIndices: [2],
+        toolCallDeltas: [[0, '{"command":"pn']],
+      },
+    } })
+
+    emitSessionEvent(manager, created.runtimeId, {
+      type: 'message_update', message,
+      assistantMessageEvent: {
+        type: 'toolcall_end', contentIndex: 0, partial: message,
+        toolCall: { type: 'toolCall', id: 'call-1', name: 'bash', arguments: { command: 'pnpm test' } },
+      },
+    })
+    const complete = await manager.command(created.runtimeId, { type: 'get_messages' })
+    expect(complete.response).toMatchObject({ success: true, data: {
+      live: { sequence: 6, toolCallDeltas: [], contentIndices: [0, 2], message: { content: [
+        { type: 'toolCall', id: 'call-1', name: 'bash', arguments: { command: 'pnpm test' } },
+        { type: 'text', text: 'Still working' },
+      ] } },
+    } })
+    expect(partial.response).toMatchObject({ data: { live: { toolCallDeltas: [[0, '{"command":"pn']] } } })
   })
 
   it('checks delivery ownership at admission and returns durable queue payloads after Stop', async () => {

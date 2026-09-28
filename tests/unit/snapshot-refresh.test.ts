@@ -5,6 +5,7 @@ import { projectLocalPiTurns } from '../../src/renderer/pi-rpc/presentation'
 import {
   advancePiSnapshotWatermark,
   createPiSnapshotWatermark,
+  PiLiveSnapshotJournal,
   reconcilePiProjectorSnapshot,
   reconcilePiSessionSnapshot,
   refreshPiSnapshot,
@@ -39,27 +40,140 @@ function harness(hydrated = false) {
   let state = createLocalPiProjectorState({ ...snapshot, messages: hydrated ? snapshot.messages : [] })
   let owner = 1
   let sequence = 0
+  const liveJournal = new PiLiveSnapshotJournal()
   return {
     get state() { return state },
     get watermark() { return watermark },
     invalidate() { owner += 1 },
     emit(event: LocalPiRpcEvent) {
       watermark = advancePiSnapshotWatermark(watermark, event)
-      state = applyLocalPiProjectorEvent(state, { generation: 7, eventId: `event-${++sequence}`, event })
+      const envelope = { generation: 7, eventId: `event-${++sequence}`, sequence, event }
+      liveJournal.record(envelope)
+      state = applyLocalPiProjectorEvent(state, envelope)
     },
     refresh(read: () => Promise<LocalPiProjectorSnapshot>) {
       const expectedOwner = owner
       return refreshPiSnapshot({
         isCurrent: () => owner === expectedOwner,
         watermark: () => watermark,
+        liveJournal,
         read,
-        apply: (next, startedAt) => { state = reconcilePiProjectorSnapshot(state, next, startedAt, watermark) },
+        apply: (next, startedAt, events) => { state = reconcilePiProjectorSnapshot(state, next, startedAt, watermark, events) },
       })
     },
   }
 }
 
 describe('conversation snapshot refresh', () => {
+  it('restores an already-thinking response on revisit without waiting for another provider event', async () => {
+    const subject = harness()
+    const message: LocalPiAssistantMessage = { ...assistant, content: [{ type: 'thinking', thinking: 'Reasoning before the switch' }] }
+    await subject.refresh(async () => ({ ...snapshot, live: { message, sequence: 42, isStreaming: true } }))
+    expect(subject.state.streamingMessage).toEqual(message)
+    expect(subject.state.isStreaming).toBe(true)
+    expect(projectLocalPiTurns(subject.state)).toContainEqual(expect.objectContaining({
+      kind: 'thinking', text: 'Reasoning before the switch', state: 'streaming',
+    }))
+  })
+
+  it('replays only tokens newer than the captured live snapshot, including deltas with no message_start', async () => {
+    const subject = harness()
+    const pending = deferred<LocalPiProjectorSnapshot>()
+    const read = vi.fn(() => pending.promise)
+    const refreshing = subject.refresh(read)
+    for (let index = 0; index < 7; index += 1) {
+      subject.emit({ type: 'message_update', usage: assistant.usage,
+        assistantMessageEvent: { type: 'thinking_delta', contentIndex: 0, delta: 'think ' } })
+    }
+    pending.resolve({ ...snapshot, live: {
+      message: { ...assistant, content: [{ type: 'thinking', thinking: 'think '.repeat(4) }] },
+      sequence: 4, isStreaming: true,
+    } })
+    await refreshing
+    expect(subject.state.streamingMessage?.content).toEqual([{ type: 'thinking', thinking: 'think '.repeat(7) }])
+    expect(subject.state.messageSequence).toBe(7)
+    expect(subject.state.shouldRefreshSnapshot).toBe(false)
+    expect(read).toHaveBeenCalledOnce()
+    subject.emit({ type: 'message_update', usage: assistant.usage,
+      assistantMessageEvent: { type: 'thinking_delta', contentIndex: 0, delta: 'next' } })
+    expect(subject.state.streamingMessage?.content).toEqual([{ type: 'thinking', thinking: `${'think '.repeat(7)}next` }])
+  })
+
+  it('ignores delayed message events already included in the live snapshot', async () => {
+    const subject = harness()
+    await subject.refresh(async () => ({ ...snapshot, live: {
+      message: { ...assistant, content: [{ type: 'text', text: 'Already captured' }] },
+      sequence: 100, isStreaming: true,
+    } }))
+    const before = subject.state
+    subject.emit({ type: 'message_update', usage: assistant.usage,
+      assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'Already captured' } })
+    expect(subject.state).toBe(before)
+    subject.emit({ type: 'agent_settled' })
+    expect(subject.state).toBe(before)
+  })
+
+  it('restores incomplete tool arguments and then replaces them with one completed call', async () => {
+    const subject = harness()
+    await subject.refresh(async () => ({ ...snapshot, live: {
+      message: assistant, sequence: 0, isStreaming: true,
+      toolCallDeltas: [[0, '{"command":']],
+    } }))
+    subject.emit({ type: 'message_update', usage: assistant.usage,
+      assistantMessageEvent: { type: 'toolcall_delta', contentIndex: 0, delta: '"pwd"}' } })
+    expect(subject.state.streamingToolCallDeltas.get(0)).toBe('{"command":"pwd"}')
+    expect(subject.state.shouldRefreshSnapshot).toBe(false)
+    const call = { type: 'toolCall' as const, id: 'call', name: 'bash', arguments: { command: 'pwd' } }
+    subject.emit({ type: 'message_update', usage: assistant.usage,
+      assistantMessageEvent: { type: 'toolcall_end', contentIndex: 0, toolCall: call } })
+    await subject.refresh(async () => ({ ...snapshot, live: {
+      message: { ...assistant, content: [call] }, sequence: 2, isStreaming: true, toolCallDeltas: [],
+    } }))
+    expect(subject.state.streamingToolCallDeltas.size).toBe(0)
+    expect(projectLocalPiTurns(subject.state).filter((turn) => turn.kind === 'tool')).toHaveLength(1)
+  })
+
+  it('preserves content indices when a pending tool leaves a gap before streamed text', async () => {
+    const subject = harness()
+    await subject.refresh(async () => ({ ...snapshot, live: {
+      message: { ...assistant, content: [{ type: 'text', text: 'Keep this prefix' }] },
+      sequence: 0, isStreaming: true, contentIndices: [1], toolCallDeltas: [[0, '{"command":']],
+    } }))
+    subject.emit({ type: 'message_update', usage: assistant.usage,
+      assistantMessageEvent: { type: 'text_delta', contentIndex: 1, delta: ' and suffix' } })
+    expect(subject.state.streamingMessage?.content).toEqual([{ type: 'text', text: 'Keep this prefix and suffix' }])
+    expect(subject.state.shouldRefreshSnapshot).toBe(false)
+    const call = { type: 'toolCall' as const, id: 'call', name: 'bash', arguments: { command: 'pwd' } }
+    subject.emit({ type: 'message_update', usage: assistant.usage,
+      assistantMessageEvent: { type: 'toolcall_end', contentIndex: 0, toolCall: call } })
+    expect(subject.state.streamingMessage?.content).toEqual([call, { type: 'text', text: 'Keep this prefix and suffix' }])
+  })
+
+  it('uses live snapshot activity when get_state came from an earlier phase', async () => {
+    const subject = harness()
+    subject.emit({ type: 'message_start', message: assistant })
+    await subject.refresh(async () => ({ ...snapshot, isStreaming: true,
+      live: { message: null, sequence: 50, isStreaming: false } }))
+    expect(subject.state.streamingMessage).toBeNull()
+    expect(subject.state.isStreaming).toBe(false)
+  })
+
+  it('releases read buffers on failure and rejects late events from another generation', async () => {
+    const journal = new PiLiveSnapshotJournal()
+    const capture = journal.capture()
+    capture.dispose()
+    journal.record({ generation: 7, sequence: 2, eventId: 'ignored', event: { type: 'agent_start' } })
+    expect(capture.events).toEqual([])
+    const base = createLocalPiProjectorState(snapshot)
+    const hydrated = reconcilePiProjectorSnapshot(base, { ...snapshot, live: {
+      message: { ...assistant, content: [{ type: 'thinking', thinking: 'A' }] }, sequence: 1, isStreaming: true,
+    } }, createPiSnapshotWatermark(), createPiSnapshotWatermark(), [{
+      generation: 8, sequence: 2, eventId: 'wrong-owner', event: { type: 'agent_settled' },
+    }])
+    expect(hydrated.isStreaming).toBe(true)
+    expect(hydrated.streamingMessage?.content).toEqual([{ type: 'thinking', thinking: 'A' }])
+  })
+
   it('hydrates complete older history while retaining a newer live thinking delta without retrying per token', async () => {
     const subject = harness()
     const pending = deferred<LocalPiProjectorSnapshot>()

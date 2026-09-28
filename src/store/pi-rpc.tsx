@@ -21,6 +21,7 @@ import {
   applyLocalPiProjectorEvent,
   createLocalPiProjectorState,
   hydrateLocalPiProjectorEntrySnapshot,
+  isLocalPiLiveMessageEvent,
   resetLocalPiProjectorState,
   setLocalPiRetryCancelling,
   type LocalPiProjectorState,
@@ -57,6 +58,7 @@ export type { PiHydrationSnapshot } from '@/renderer/pi-rpc/conversation-lifecyc
 import {
   advancePiSnapshotWatermark,
   createPiSnapshotWatermark,
+  PiLiveSnapshotJournal,
   reconcilePiProjectorSnapshot,
   reconcilePiSessionSnapshot,
   refreshPiSnapshot,
@@ -725,6 +727,7 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
   const [visitLifecycle] = React.useState(() => new PiConversationLifecycle(initialHydration))
   const commandOwnerRevision = visitLifecycle.ownerRevision
   const snapshotWatermark = React.useRef(createPiSnapshotWatermark())
+  const [liveSnapshotJournal] = React.useState(() => new PiLiveSnapshotJournal())
   const protocolRecoveryPending = React.useRef(false)
   const hydrationKey = React.useRef('')
   const notificationSequence = React.useRef(0)
@@ -1362,6 +1365,7 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
       ])
       await refreshPiSnapshot({
         isCurrent,
+        liveJournal: liveSnapshotJournal,
         watermark: () => snapshotWatermark.current,
         read: () => Promise.all([
           api.localPi.runtime.command({ type: 'get_state' }),
@@ -1371,7 +1375,7 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
           capabilities,
           api.localPi.runtime.command({ type: 'get_delivery_state', expectedSessionId }),
         ]),
-        apply: ([stateResponse, messagesResponse, statsResponse, entryPage, [modelsResponse, levelsResponse, commandsResponse], deliveryResponse], startedAt) => {
+        apply: ([stateResponse, messagesResponse, statsResponse, entryPage, [modelsResponse, levelsResponse, commandsResponse], deliveryResponse], startedAt, liveEvents) => {
           const nextSession = reconcilePiSessionSnapshot(
             responseData(stateResponse, 'get_state'),
             sessionRef.current,
@@ -1391,7 +1395,6 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
           const nextStats = responseData(statsResponse, 'get_session_stats')
           if (expectedSessionId && nextSession.sessionId !== expectedSessionId) return
 
-          commitSession(nextSession)
           commitDelivery(responseData(deliveryResponse, 'get_delivery_state'))
           setModels(modelData.models)
           setThinkingLevels(levelData.levels)
@@ -1402,6 +1405,7 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
             generation: expectedGeneration,
             sessionId: nextSession.sessionId,
             messages: messageData.messages,
+            live: messageData.live,
             entrySnapshot: mergeLocalPiEntrySnapshot(entryPage.appendTo, {
               generation: expectedGeneration,
               sessionId: nextSession.sessionId,
@@ -1412,11 +1416,12 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
             pendingMessageCount: nextSession.pendingMessageCount,
             isStreaming: nextSession.isStreaming,
             isCompacting: nextSession.isCompacting,
-          }, startedAt, snapshotWatermark.current)
+          }, startedAt, snapshotWatermark.current, liveEvents)
+          commitSession({ ...nextSession, isStreaming: nextProjection.isStreaming })
           restoreActiveResponseProvenance(
             nextProjection,
             expectedScopeKey,
-            nextSession.isStreaming || nextProjection.isTurnActive,
+            nextProjection.isStreaming || nextProjection.isTurnActive,
           )
           commitProjection(nextProjection)
           setCompacting(nextSession.isCompacting)
@@ -1447,7 +1452,7 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
     } finally {
       if (isCurrent()) setLoading(false)
     }
-  }, [activeScopeKey, api, commitDelivery, commitHydration, commitProjection, commitSession, fetchEntryPage, restoreActiveResponseProvenance])
+  }, [activeScopeKey, api, commitDelivery, commitHydration, commitProjection, commitSession, fetchEntryPage, liveSnapshotJournal, restoreActiveResponseProvenance])
 
   const refreshConversation = React.useCallback(async () => {
     const expected = runtimeRef.current
@@ -1466,6 +1471,7 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
     try {
       await refreshPiSnapshot({
         isCurrent,
+        liveJournal: liveSnapshotJournal,
         watermark: () => snapshotWatermark.current,
         read: () => Promise.all([
           api.localPi.runtime.command({ type: 'get_state' }),
@@ -1474,7 +1480,7 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
           fetchEntryPage(expectedGeneration, expectedSessionId, true),
           api.localPi.runtime.command({ type: 'get_delivery_state', expectedSessionId }),
         ]),
-        apply: ([stateResponse, messagesResponse, statsResponse, entryPage, deliveryResponse], startedAt) => {
+        apply: ([stateResponse, messagesResponse, statsResponse, entryPage, deliveryResponse], startedAt, liveEvents) => {
           const nextSession = reconcilePiSessionSnapshot(
             responseData(stateResponse, 'get_state'),
             sessionRef.current,
@@ -1484,7 +1490,6 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
           const messageData = responseData(messagesResponse, 'get_messages')
           const nextStats = responseData(statsResponse, 'get_session_stats')
           if (expectedSessionId && nextSession.sessionId !== expectedSessionId) return
-          commitSession(nextSession)
           commitDelivery(responseData(deliveryResponse, 'get_delivery_state'))
           setStats(nextStats)
           setTranscriptLoading(false)
@@ -1492,6 +1497,7 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
             generation: expectedGeneration,
             sessionId: nextSession.sessionId,
             messages: messageData.messages,
+            live: messageData.live,
             entrySnapshot: mergeLocalPiEntrySnapshot(entryPage.appendTo, {
               generation: expectedGeneration,
               sessionId: nextSession.sessionId,
@@ -1502,11 +1508,12 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
             pendingMessageCount: nextSession.pendingMessageCount,
             isStreaming: nextSession.isStreaming,
             isCompacting: nextSession.isCompacting,
-          }, startedAt, snapshotWatermark.current)
+          }, startedAt, snapshotWatermark.current, liveEvents)
+          commitSession({ ...nextSession, isStreaming: nextProjection.isStreaming })
           restoreActiveResponseProvenance(
             nextProjection,
             expectedScopeKey,
-            nextSession.isStreaming || nextProjection.isTurnActive,
+            nextProjection.isStreaming || nextProjection.isTurnActive,
           )
           commitProjection(nextProjection)
           setError(null)
@@ -1517,7 +1524,7 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
         setError(errorMessage(caught))
       }
     }
-  }, [activeScopeKey, api, commitDelivery, commitProjection, commitSession, fetchEntryPage, restoreActiveResponseProvenance])
+  }, [activeScopeKey, api, commitDelivery, commitProjection, commitSession, fetchEntryPage, liveSnapshotJournal, restoreActiveResponseProvenance])
 
   const prepareResponseActivityProvenance = React.useCallback(async () => {
     const expected = projectionRef.current
@@ -1655,8 +1662,11 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
 
   const applyEvent = React.useCallback((envelope: LocalPiRpcEventMessage) => {
     if (envelope.generation !== runtimeRef.current?.generation) return
+    liveSnapshotJournal.record(envelope)
     const previousProjection = projectionRef.current
     const event = envelope.event
+    if (isLocalPiLiveMessageEvent(event) && envelope.sequence !== undefined &&
+      previousProjection.messageSequence !== null && envelope.sequence <= previousProjection.messageSequence) return
     snapshotWatermark.current = advancePiSnapshotWatermark(snapshotWatermark.current, event)
     let nextProjection = applyLocalPiProjectorEvent(previousProjection, envelope)
     if (
@@ -1867,6 +1877,7 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
     commitQueue,
     commitProjection,
     commitSession,
+    liveSnapshotJournal,
     nextQueueItemId,
     flushPendingPromptActivities,
     refreshConversation,

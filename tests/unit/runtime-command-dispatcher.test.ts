@@ -11,6 +11,7 @@ import {
   promoteRuntimeFollowUp,
   removeRuntimeQueuedMessage,
 } from '../../src/main/pi-host/runtime-command-dispatcher'
+import { projectRuntimeAssistantMessage } from '../../src/main/pi-host/runtime-event-projector'
 import {
   LOCAL_PI_COMMAND_ARGUMENT_COMPLETION_MAX_ITEMS,
   LOCAL_PI_COMMAND_ARGUMENT_COMPLETION_VALUE_MAX_LENGTH,
@@ -66,6 +67,63 @@ afterEach(async () => {
 })
 
 describe('runtime command dispatcher', () => {
+  it('captures live assistant content and its sequence before the next event mutates SDK state', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pipilot-live-snapshot-'))
+    temporaryDirectories.push(root)
+    const thinking = { type: 'thinking', thinking: 'Inspecting', index: 0 }
+    const toolCall = {
+      type: 'toolCall', id: 'call-1', name: 'bash',
+      arguments: { command: 'pwd', partialArgs: 'public argument' },
+      index: 1, partialArgs: '{"command":"pwd"',
+      customInput: { mutableBuffer: true }, streamIndex: 1,
+    }
+    const message = {
+      role: 'assistant', content: [thinking, toolCall], api: 'openai-completions',
+      provider: 'fixture', model: 'fixture-model', stopReason: 'stop', timestamp: 1,
+      usage: {
+        input: 0, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 1,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    }
+    const runtime = { session: {
+      sessionManager: { getSessionDir: () => join(root, 'sessions') },
+      messages: [], isStreaming: true, agent: { state: { streamingMessage: message } },
+    } } as unknown as AgentSessionRuntime
+    let sequence = 7
+    const liveMessageSnapshot = vi.fn(() => {
+      queueMicrotask(() => {
+        thinking.thinking += ' the next token'
+        sequence += 1
+      })
+      return {
+        message: projectRuntimeAssistantMessage(message as never),
+        isStreaming: true,
+        sequence,
+      }
+    })
+
+    const result = await dispatchRuntimeCommand(runtime, { type: 'get_messages' }, { liveMessageSnapshot })
+
+    expect(result.response).toMatchObject({
+      command: 'get_messages', success: true,
+      data: { messages: [], live: { sequence: 7, isStreaming: true, message: {
+        content: [
+          { type: 'thinking', thinking: 'Inspecting' },
+          { type: 'toolCall', id: 'call-1', name: 'bash', arguments: toolCall.arguments },
+        ],
+      } } },
+    })
+    if (!result.response.success || result.response.command !== 'get_messages') throw new Error('Missing snapshot')
+    expect(result.response.data.live?.message?.content[0]).not.toHaveProperty('index')
+    for (const key of ['index', 'partialArgs', 'customInput', 'streamIndex']) {
+      expect(result.response.data.live?.message?.content[1]).not.toHaveProperty(key)
+    }
+    expect(liveMessageSnapshot).toHaveBeenCalledOnce()
+    expect(sequence).toBe(8)
+    expect(thinking.thinking).toBe('Inspecting the next token')
+    expect(toolCall).toHaveProperty('partialArgs')
+  })
+
   it('forwards non-empty Steer text and image content without degrading either payload', async () => {
     const root = await mkdtemp(join(tmpdir(), 'pipilot-steer-image-'))
     temporaryDirectories.push(root)

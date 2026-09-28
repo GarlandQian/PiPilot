@@ -1,18 +1,18 @@
 import type {
   LocalPiAgentMessage,
   LocalPiAssistantMessage,
-  LocalPiAssistantMessageEvent,
   LocalPiCompactionResult,
   LocalPiExtensionErrorEvent,
+  LocalPiLiveMessageSnapshot,
   LocalPiRpcEvent,
   LocalPiRpcEventMessage,
   LocalPiToolResult,
 } from '@/shared/local-pi'
+import { applyAssistantMessageEvent, contentMap, type LocalPiAssistantContent } from '@/shared/pi-stream-projection'
 import type { LocalPiEntrySnapshot } from './response-provenance'
 
 const MAX_EXTENSION_ERRORS = 20
 
-type LocalPiAssistantContent = LocalPiAssistantMessage['content'][number]
 type LocalPiCompactionReason = Extract<
   LocalPiRpcEvent,
   { type: 'compaction_start' }
@@ -24,6 +24,7 @@ export interface LocalPiProjectorScope {
 }
 
 export interface LocalPiProjectorSeed extends LocalPiProjectorScope {
+  live?: LocalPiLiveMessageSnapshot
   messages?: readonly LocalPiAgentMessage[]
   entrySnapshot?: LocalPiEntrySnapshot | null
   pendingMessageCount?: number
@@ -32,6 +33,7 @@ export interface LocalPiProjectorSeed extends LocalPiProjectorScope {
 }
 
 export interface LocalPiProjectorSnapshot extends LocalPiProjectorScope {
+  live?: LocalPiLiveMessageSnapshot
   messages: readonly LocalPiAgentMessage[]
   entrySnapshot: LocalPiEntrySnapshot | null
   pendingMessageCount: number
@@ -108,6 +110,7 @@ export interface LocalPiProjectorState extends LocalPiProjectorScope {
   messages: readonly LocalPiAgentMessage[]
   entrySnapshot: LocalPiEntrySnapshot | null
   streamingMessage: LocalPiAssistantMessage | null
+  messageSequence: number | null
   streamingContent: ReadonlyMap<number, LocalPiAssistantContent>
   streamingToolCallDeltas: ReadonlyMap<number, string>
   tools: ReadonlyMap<string, LocalPiProjectedTool>
@@ -153,9 +156,11 @@ function createState(
     sessionId: seed.sessionId,
     messages: [...(seed.messages ?? [])],
     entrySnapshot: scopedEntrySnapshot,
-    streamingMessage: null,
-    streamingContent: new Map(),
-    streamingToolCallDeltas: new Map(),
+    streamingMessage: seed.live?.message ?? null,
+    messageSequence: seed.live?.sequence ?? null,
+    streamingContent: new Map(seed.live?.message?.content.map((part, index) =>
+      [seed.live?.contentIndices?.[index] ?? index, part] as const) ?? []),
+    streamingToolCallDeltas: new Map(seed.live?.toolCallDeltas ?? []),
     tools: new Map(),
     queue: {
       pendingCount: seed.pendingMessageCount ?? 0,
@@ -167,7 +172,7 @@ function createState(
     retry: { kind: 'none' },
     retryTiming: emptyRetryTiming(),
     extensionErrors: [],
-    isStreaming: seed.isStreaming ?? false,
+    isStreaming: seed.live?.isStreaming ?? (seed.isStreaming ?? false),
     isTurnActive: false,
     lastAgentWillRetry: null,
     shouldRefreshSnapshot: false,
@@ -244,94 +249,6 @@ export function setLocalPiRetryCancelling(
   }
 }
 
-function contentMap(message: LocalPiAssistantMessage) {
-  return new Map(message.content.map((content, index) => [index, content]))
-}
-
-function messageWithContent(
-  message: LocalPiAssistantMessage,
-  content: ReadonlyMap<number, LocalPiAssistantContent>,
-): LocalPiAssistantMessage {
-  return {
-    ...message,
-    content: [...content.entries()]
-      .sort(([left], [right]) => left - right)
-      .map(([, value]) => value),
-  }
-}
-
-interface DeltaProjection {
-  message: LocalPiAssistantMessage
-  content: ReadonlyMap<number, LocalPiAssistantContent>
-  toolCallDeltas: ReadonlyMap<number, string>
-  uncertain: boolean
-}
-
-function applyAssistantMessageEvent(
-  message: LocalPiAssistantMessage,
-  currentContent: ReadonlyMap<number, LocalPiAssistantContent>,
-  currentToolCallDeltas: ReadonlyMap<number, string>,
-  event: LocalPiAssistantMessageEvent,
-): DeltaProjection {
-  const content = new Map(currentContent)
-  const toolCallDeltas = new Map(currentToolCallDeltas)
-  const current = content.get(event.contentIndex)
-  let uncertain = false
-
-  switch (event.type) {
-    case 'text_start':
-      content.set(event.contentIndex, { type: 'text', text: '' })
-      break
-    case 'text_delta':
-      if (current?.type !== 'text') uncertain = true
-      content.set(event.contentIndex, {
-        type: 'text',
-        text: `${current?.type === 'text' ? current.text : ''}${event.delta}`,
-      })
-      break
-    case 'text_end':
-      content.set(event.contentIndex, { type: 'text', text: event.content })
-      break
-    case 'thinking_start':
-      content.set(event.contentIndex, { type: 'thinking', thinking: '' })
-      break
-    case 'thinking_delta':
-      if (current?.type !== 'thinking') uncertain = true
-      content.set(event.contentIndex, {
-        type: 'thinking',
-        thinking: `${current?.type === 'thinking' ? current.thinking : ''}${event.delta}`,
-      })
-      break
-    case 'thinking_end':
-      content.set(event.contentIndex, {
-        type: 'thinking',
-        thinking: event.content,
-      })
-      break
-    case 'toolcall_start':
-      toolCallDeltas.set(event.contentIndex, '')
-      break
-    case 'toolcall_delta':
-      if (!toolCallDeltas.has(event.contentIndex)) uncertain = true
-      toolCallDeltas.set(
-        event.contentIndex,
-        `${toolCallDeltas.get(event.contentIndex) ?? ''}${event.delta}`,
-      )
-      break
-    case 'toolcall_end':
-      content.set(event.contentIndex, event.toolCall)
-      toolCallDeltas.delete(event.contentIndex)
-      break
-  }
-
-  return {
-    message: messageWithContent(message, content),
-    content,
-    toolCallDeltas,
-    uncertain,
-  }
-}
-
 function replaceTool(
   state: LocalPiProjectorState,
   tool: LocalPiProjectedTool,
@@ -352,6 +269,13 @@ function assertNever(value: never): never {
   throw new Error(`Unhandled local Pi event: ${JSON.stringify(value)}`)
 }
 
+export function isLocalPiLiveMessageEvent(event: LocalPiRpcEvent): boolean {
+  return event.type === 'message_start' || event.type === 'message_update' ||
+    event.type === 'message_end' || event.type === 'agent_start' ||
+    event.type === 'agent_end' || event.type === 'agent_settled' ||
+    event.type === 'turn_start' || event.type === 'turn_end'
+}
+
 export function applyLocalPiProjectorEvent(
   state: LocalPiProjectorState,
   envelope: LocalPiRpcEventMessage,
@@ -359,6 +283,12 @@ export function applyLocalPiProjectorEvent(
   if (envelope.generation !== state.generation) return state
 
   const event = envelope.event
+  if (isLocalPiLiveMessageEvent(event) && envelope.sequence !== undefined) {
+    // Hydration can overtake an already-produced event in the IPC queue. The
+    // live snapshot already includes every message event through its sequence.
+    if (state.messageSequence !== null && envelope.sequence <= state.messageSequence) return state
+    state = { ...state, messageSequence: envelope.sequence }
+  }
   const revision = state.revision + 1
   switch (event.type) {
     case 'agent_start':

@@ -1,10 +1,43 @@
-import type { LocalPiRpcEvent, LocalPiSessionState } from '@/shared/local-pi'
+import type { LocalPiRpcEvent, LocalPiRpcEventMessage, LocalPiSessionState } from '@/shared/local-pi'
 import {
+  applyLocalPiProjectorEvent,
+  isLocalPiLiveMessageEvent,
   replaceLocalPiProjectorSnapshot,
   type LocalPiProjectorSnapshot,
   type LocalPiProjectorState,
   type LocalPiProjectedTool,
 } from './projector'
+
+interface LiveSnapshotCapture {
+  events: LocalPiRpcEventMessage[]
+  overflowed: boolean
+  dispose(): void
+}
+
+/** Retain only events arriving during a read, never an off-screen transcript. */
+export class PiLiveSnapshotJournal {
+  private readonly captures = new Set<LiveSnapshotCapture>()
+
+  capture(): LiveSnapshotCapture {
+    const capture: LiveSnapshotCapture = {
+      events: [], overflowed: false,
+      dispose: () => this.captures.delete(capture),
+    }
+    this.captures.add(capture)
+    return capture
+  }
+
+  record(envelope: LocalPiRpcEventMessage) {
+    if (envelope.sequence === undefined || !isLocalPiLiveMessageEvent(envelope.event)) return
+    for (const capture of this.captures) {
+      if (capture.overflowed) continue
+      if (capture.events.length >= 8_192) {
+        capture.events.length = 0
+        capture.overflowed = true
+      } else capture.events.push(envelope)
+    }
+  }
+}
 
 export interface PiSnapshotWatermark {
   history: number
@@ -70,26 +103,33 @@ export async function refreshPiSnapshot<T>({
   watermark,
   read,
   apply,
+  liveJournal,
 }: {
   isCurrent(): boolean
   watermark(): PiSnapshotWatermark
   read(): Promise<T>
-  apply(value: T, startedAt: PiSnapshotWatermark): void
+  apply(value: T, startedAt: PiSnapshotWatermark, liveEvents: readonly LocalPiRpcEventMessage[]): void
+  liveJournal?: PiLiveSnapshotJournal
 }): Promise<boolean> {
   for (let attempt = 0; attempt < 4; attempt += 1) {
     if (!isCurrent()) return false
     const startedAt = watermark()
+    const capture = liveJournal?.capture()
     let value: T
     try {
-      value = await read()
-    } catch (error) {
+      try {
+        value = await read()
+      } catch (error) {
+        if (!isCurrent()) return false
+        throw error
+      }
       if (!isCurrent()) return false
-      throw error
+      if (startedAt.history !== watermark().history || capture?.overflowed) continue
+      apply(value, startedAt, capture?.events ?? [])
+      return true
+    } finally {
+      capture?.dispose()
     }
-    if (!isCurrent()) return false
-    if (startedAt.history !== watermark().history) continue
-    apply(value, startedAt)
-    return true
   }
   throw new Error('Pi conversation history is changing. Please retry loading the conversation.')
 }
@@ -118,12 +158,22 @@ export function reconcilePiProjectorSnapshot(
   snapshot: LocalPiProjectorSnapshot,
   startedAt: PiSnapshotWatermark,
   latest: PiSnapshotWatermark,
+  liveEvents: readonly LocalPiRpcEventMessage[] = [],
 ): LocalPiProjectorState {
   const next = replaceLocalPiProjectorSnapshot(current, snapshot)
   if (next === current || current.generation !== snapshot.generation || current.sessionId !== snapshot.sessionId) {
     return next
   }
-  const isStreaming = startedAt.activity !== latest.activity ? current.isStreaming : snapshot.isStreaming
+  let liveProjection = next
+  if (snapshot.live) {
+    for (const envelope of liveEvents) {
+      if (isLocalPiLiveMessageEvent(envelope.event)) liveProjection = applyLocalPiProjectorEvent(liveProjection, envelope)
+    }
+  }
+  const isStreaming = snapshot.live
+    ? liveProjection.isStreaming
+    : startedAt.activity !== latest.activity ? current.isStreaming : snapshot.isStreaming
+  const streaming = snapshot.live ? liveProjection : current
   const finalTools = new Set<string>()
   const knownCalls = new Set<string>()
   for (const message of snapshot.messages) {
@@ -134,8 +184,8 @@ export function reconcilePiProjectorSnapshot(
       }
     }
   }
-  if (isStreaming && current.streamingMessage) {
-    for (const part of current.streamingMessage.content) {
+  if (isStreaming && streaming.streamingMessage) {
+    for (const part of streaming.streamingMessage.content) {
       if (part.type === 'toolCall') knownCalls.add(part.id)
     }
   }
@@ -152,11 +202,12 @@ export function reconcilePiProjectorSnapshot(
   return {
     ...next,
     ...(isStreaming ? {
-      streamingMessage: current.streamingMessage,
-      streamingContent: current.streamingContent,
-      streamingToolCallDeltas: current.streamingToolCallDeltas,
-      isTurnActive: current.isTurnActive,
+      streamingMessage: streaming.streamingMessage,
+      streamingContent: streaming.streamingContent,
+      streamingToolCallDeltas: streaming.streamingToolCallDeltas,
+      isTurnActive: streaming.isTurnActive,
     } : {}),
+    messageSequence: streaming.messageSequence,
     isStreaming,
     // Compaction can remove earlier calls. Do not append their stale overlays
     // to the latest response simply because they once executed in this owner.

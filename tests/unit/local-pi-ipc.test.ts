@@ -70,6 +70,7 @@ describe('Local Pi IPC controller', () => {
       event: LocalPiRpcEvent,
       generation: number,
       runtimeId?: string,
+      sequence?: number,
     ) => void | Promise<void>
 
     const send = vi.fn()
@@ -120,12 +121,15 @@ describe('Local Pi IPC controller', () => {
       hostEpoch: 1, runtimeId: 'rt_a', generation: 1, scope,
       sessionId: 'session-a', sessionFile: '/sessions/a.jsonl',
     })
-    eventListener!({ type: 'agent_settled' }, 1, 'rt_a')
+    eventListener!({ type: 'agent_settled' }, 1, 'rt_a', 17)
     await flush()
 
     expect(invalidate).toHaveBeenCalledWith(scope)
     expect(getControlRuntimeState).toHaveBeenCalledOnce()
     expect(send.mock.calls.filter(([, message]) => message.event)).toHaveLength(1)
+    expect(send.mock.calls.find(([, message]) => message.event)?.[1]).toMatchObject({
+      generation: 1, sequence: 17, event: { type: 'agent_settled' },
+    })
 
     eventListener!({ type: 'agent_start' }, 1, 'runtime-a')
     await flush()

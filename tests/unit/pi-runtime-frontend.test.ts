@@ -1552,6 +1552,20 @@ describe('PiRuntimeFrontend', () => {
     await frontend.dispose()
   })
 
+  it('preserves the Host event boundary for selected Runtime hydration', async () => {
+    const { frontend, pool } = createHarness()
+    await frontend.start({ scope: projectScope })
+    const runtime = pool.runtime!
+    const listener = vi.fn()
+    frontend.subscribeEvents(listener)
+    const event = { type: 'agent_start' } as const
+
+    pool.emitEvent({ ...runtimeEvent(runtime.runtimeId, runtime.generation, event), sequence: 42 })
+
+    expect(listener).toHaveBeenCalledWith(event, runtime.generation, runtime.runtimeId, 42)
+    await frontend.dispose()
+  })
+
   it('observes background events before credit without projecting them as selected', async () => {
     const { frontend, pool } = createHarness()
     await frontend.start({

@@ -101,6 +101,8 @@ export function registerLocalPiIpc(options: RegisterLocalPiIpcOptions) {
   const eventUnsubscribe = runtimeHost.subscribeEvents((
     event,
     generation,
+    _runtimeId,
+    sequence,
   ) => {
     const forward = async () => {
       if (disposed) return
@@ -111,6 +113,7 @@ export function registerLocalPiIpc(options: RegisterLocalPiIpcOptions) {
         localPiRpcEventMessageSchema.parse({
           eventId: randomUUID(),
           generation,
+          ...(sequence === undefined ? {} : { sequence }),
           event,
         }),
       )

@@ -752,8 +752,32 @@ export const localPiTreeResultSchema = z
 
 export type LocalPiTreeResult = z.infer<typeof localPiTreeResultSchema>
 
+export const localPiLiveMessageSnapshotSchema = z.object({
+  message: localPiAssistantMessageSchema.nullable(),
+  isStreaming: z.boolean(),
+  sequence: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  toolCallDeltas: z.array(z.tuple([
+    z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    z.string(),
+  ])).optional(),
+  contentIndices: z.array(z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)).optional(),
+}).strict().superRefine((snapshot, context) => {
+  if (!snapshot.contentIndices) return
+  if (snapshot.contentIndices.length !== (snapshot.message?.content.length ?? 0)) {
+    context.addIssue({ code: 'custom', path: ['contentIndices'], message: 'Content indices must match live message content.' })
+  }
+  if (new Set(snapshot.contentIndices).size !== snapshot.contentIndices.length) {
+    context.addIssue({ code: 'custom', path: ['contentIndices'], message: 'Content indices must be unique.' })
+  }
+})
+
+export type LocalPiLiveMessageSnapshot = z.infer<typeof localPiLiveMessageSnapshotSchema>
+
 export const localPiMessagesResponseDataSchema = z
-  .object({ messages: z.array(localPiAgentMessageSchema) })
+  .object({
+    messages: z.array(localPiAgentMessageSchema),
+    live: localPiLiveMessageSnapshotSchema.optional(),
+  })
   .strict()
 
 export const localPiModelsResponseDataSchema = z
@@ -1121,6 +1145,7 @@ export const localPiRpcEventMessageSchema = z
   .object({
     eventId: z.uuid(),
     generation: z.number().int().nonnegative(),
+    sequence: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
     event: localPiRpcEventSchema,
   })
   .strict()

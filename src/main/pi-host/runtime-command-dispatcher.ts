@@ -9,7 +9,9 @@ import {
   LOCAL_PI_COMMAND_ARGUMENT_COMPLETION_MAX_ITEMS,
   localPiCommandArgumentCompletionSchema,
   localPiRpcResponseSchema,
+  type LocalPiAgentMessage,
   type LocalPiCommandArgumentCompletion,
+  type LocalPiLiveMessageSnapshot,
   type LocalPiQueuedMessagePayload,
   type LocalPiRpcCommand,
   type LocalPiRpcEvent,
@@ -25,6 +27,8 @@ export interface RuntimeDispatchResult {
 
 export interface RuntimeDispatchContext {
   emitEvent?(event: LocalPiRpcEvent): void
+  liveMessageSnapshot?(): LocalPiLiveMessageSnapshot
+  messagesSnapshot?(): readonly (AgentSessionRuntime['session']['messages'][number] | LocalPiAgentMessage)[]
   delivery?: RuntimeDelivery
 }
 
@@ -254,12 +258,18 @@ function getState(runtime: AgentSessionRuntime): LocalPiRpcResponse {
   })
 }
 
-function getMessages(runtime: AgentSessionRuntime): LocalPiRpcResponse {
+function getMessages(runtime: AgentSessionRuntime, context: RuntimeDispatchContext): LocalPiRpcResponse {
+  // Read the partial message and its event boundary in one synchronous turn.
+  // Renderer can replay only newer events without losing or duplicating tokens.
+  const live = context.liveMessageSnapshot?.()
   return successResponse({
     type: 'response',
     command: 'get_messages',
     success: true,
-    data: { messages: runtime.session.messages },
+    data: {
+      messages: context.messagesSnapshot?.() ?? runtime.session.messages,
+      ...(live ? { live } : {}),
+    },
   })
 }
 
@@ -815,7 +825,7 @@ export async function dispatchRuntimeCommand(
         return { replaced: false, response: noDataSuccess('set_session_name') }
       }
       case 'get_messages':
-        return { replaced: false, response: getMessages(runtime) }
+        return { replaced: false, response: getMessages(runtime, context) }
       case 'get_commands':
         return { replaced: false, response: getCommands(runtime) }
       case 'get_command_argument_completions':

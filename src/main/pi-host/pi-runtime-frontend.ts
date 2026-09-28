@@ -91,6 +91,7 @@ type EventListener = (
   event: LocalPiRpcEvent,
   generation: number,
   runtimeId?: string,
+  sequence?: number,
 ) => void | Promise<void>
 type UiListener = (event: PiHostUiRequestEventEnvelope) => void | Promise<void>
 
@@ -1666,6 +1667,7 @@ export class PiRuntimeFrontend {
               event,
               envelope.runtimeGeneration,
               envelope.runtimeId,
+              envelope.sequence,
             )))
           } catch {
             // Isolate Main consumers while still returning bounded Host credit.

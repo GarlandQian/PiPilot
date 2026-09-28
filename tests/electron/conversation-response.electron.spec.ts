@@ -45,6 +45,129 @@ async function expectNoHorizontalOverflow(page: Page) {
   }
 }
 
+test('restores in-flight thinking and text across repeated conversation switches and background completion', async ({}, testInfo) => {
+  test.setTimeout(90_000)
+  const userData = testInfo.outputPath('user-data')
+  const agentDir = testInfo.outputPath('pi-agent')
+  const titleA = 'Live response owner A'
+  const titleB = 'Live response owner B'
+  const prompt = 'Keep thinking while I visit another conversation'
+  const reasoningText = `Fixture reasoning: ${prompt}`
+  const answerText = `Fixture response: ${prompt}`
+  let releaseReasoning = () => {}
+  const reasoningGate = new Promise<void>((resolveGate) => { releaseReasoning = resolveGate })
+  let releaseCompletion = () => {}
+  const completionGate = new Promise<void>((resolveGate) => { releaseCompletion = resolveGate })
+  await seedSettings(userData)
+  const fixture = await startPiSdkFixture({
+    agentDir,
+    reasoningDelays: { [prompt]: 0 },
+    reasoningGates: { [prompt]: reasoningGate },
+    completionGates: { [prompt]: completionGate },
+  })
+  const app = await electron.launch({
+    args: [resolve(process.cwd())],
+    env: { ...process.env, ...fixture.env, PIPILOT_E2E_USER_DATA: userData, PIPILOT_E2E_DISABLE_AUTO_RESTART: '1' },
+  })
+  try {
+    const page = await app.firstWindow()
+    const pageErrors: string[] = []
+    page.on('pageerror', (error) => pageErrors.push(error.message))
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await expect(page.locator('[data-model-thinking-trigger]')).toContainText('Fake Chat', { timeout: 20_000 })
+    const chats = page.getByRole('region', { name: 'General chats', exact: true })
+    const ownerA = chats.getByRole('button', { name: titleA, exact: true })
+    const ownerB = chats.getByRole('button', { name: titleB, exact: true })
+    for (const title of [titleA, titleB]) {
+      await send(page, title)
+      await expect(responseFor(page, title).getByText(`Fixture response: ${title}`, { exact: true })).toBeVisible()
+      await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0)
+      const named = await page.evaluate((name) => window.pipilot!.localPi.runtime.command({
+        type: 'set_session_name', name,
+      }), title)
+      expect(named.success).toBe(true)
+      await expect(chats.getByRole('button', { name: title, exact: true })).toBeVisible()
+      if (title === titleA) {
+        await page.getByRole('button', { name: 'New general chat', exact: true }).click()
+        await expect(page.locator('[data-conversation-welcome]')).toBeVisible()
+      }
+    }
+    await ownerA.click()
+    await expect(responseFor(page, titleA)).toBeVisible()
+    const sessionA = (await page.evaluate(() => window.pipilot!.localPi.runtime.status())).sessionState!.sessionId
+    await send(page, prompt)
+    const response = responseFor(page, prompt)
+    const reasoning = response.getByRole('button', { name: /^(?:Thinking|Thought)/ })
+    const answer = response.locator('[data-response-region="answer"]')
+    await expect(response.getByText(reasoningText, { exact: true })).toBeVisible()
+
+    const visitB = async () => {
+      await ownerB.click()
+      await expect(ownerB).toHaveAttribute('aria-current', 'page')
+      await expect(responseFor(page, titleB)).toBeVisible()
+      await expect(response).toHaveCount(0)
+      await expect(page.getByRole('log', { name: 'Conversation' })).not.toContainText(reasoningText)
+      await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0)
+    }
+    const returnToLiveA = async () => {
+      await ownerA.click()
+      await expect(ownerA).toHaveAttribute('aria-current', 'page')
+      await expect(reasoning).toBeVisible()
+      await expect(reasoning).toHaveAttribute('aria-expanded', 'true')
+      await expect(response.getByText(reasoningText, { exact: true })).toBeVisible()
+      await expect(response.getByText('Waiting for the next response…', { exact: true })).toHaveCount(0)
+      await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeEnabled()
+      await expectContinuousTimeline(response)
+    }
+
+    // The provider stays paused after its reasoning token: reopening must
+    // restore the live message without relying on a later SSE event to repair it.
+    for (let visit = 0; visit < 2; visit += 1) {
+      await visitB()
+      await returnToLiveA()
+      await expect(answer).toHaveCount(0)
+      await expect(response.getByText(reasoningText, { exact: true })).toHaveCount(1)
+    }
+    releaseReasoning()
+    await expect(answer).toHaveText(answerText)
+    await expect(answer).toHaveCount(1)
+    await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible()
+    await visitB()
+    await returnToLiveA()
+    await expect(answer).toHaveText(answerText)
+    await expect(answer).toHaveCount(1)
+    await expect(response.getByText(reasoningText, { exact: true })).toHaveCount(1)
+
+    // Finish while B is selected, then reopen the persisted transcript. A live
+    // snapshot must neither leak into B nor duplicate the settled assistant.
+    await visitB()
+    releaseCompletion()
+    await expect.poll(async () => {
+      const runtime = await page.evaluate(() => window.pipilot!.localPi.runtime.status())
+      return runtime.sessionStatuses?.find((session) => session.sessionId === sessionA)?.status
+    }).toBe('completed')
+    await expect(responseFor(page, titleB)).toBeVisible()
+    await expect(response).toHaveCount(0)
+    await ownerA.click()
+    await expect(answer).toHaveText(answerText)
+    await expect(answer).toHaveCount(1)
+    await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0)
+    await expect(reasoning).toHaveAttribute('aria-expanded', 'false')
+    await reasoning.click()
+    await expect(response.getByText(reasoningText, { exact: true })).toBeVisible()
+    await expect(response.getByText(reasoningText, { exact: true })).toHaveCount(1)
+    await expect(response.getByRole('button', { name: 'Copy response', exact: true })).toBeVisible()
+    expect(fixture.prompts.filter((value) => value === prompt)).toHaveLength(1)
+    expect(pageErrors).toEqual([])
+    await page.screenshot({ path: testInfo.outputPath('conversation-live-switching-settled.png'), animations: 'disabled' })
+  } finally {
+    releaseReasoning()
+    releaseCompletion()
+    await closeFixtureApplication(app)
+    await fixture.close()
+  }
+})
+
 test('preserves live work reading, text identity, and final actions across settlement and session reopening', async ({}, testInfo) => {
   test.setTimeout(90_000)
   const userData = testInfo.outputPath('user-data')

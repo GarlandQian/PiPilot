@@ -12,6 +12,7 @@ import {
 } from '@earendil-works/pi-coding-agent'
 import {
   LOCAL_PI_RUNTIME_EVENT_PROJECTION_FAILED_CODE,
+  type LocalPiAgentMessage,
   type LocalPiExtensionUiRequest,
   type LocalPiExtensionUiResponse,
   type LocalPiRpcCommand,
@@ -24,7 +25,12 @@ import {
   type RuntimeExternalSubmitCommand,
   type RuntimeExternalSubmitResult,
 } from './runtime-command-dispatcher'
-import { projectRuntimeEvent } from './runtime-event-projector'
+import {
+  createRuntimeLiveMessageState,
+  projectRuntimeEvent,
+  reduceRuntimeLiveMessageState,
+  type RuntimeLiveMessageState,
+} from './runtime-event-projector'
 import { RuntimeExtensionUiBridge } from './runtime-extension-ui-bridge'
 import { RuntimeDelivery } from './runtime-delivery'
 import {
@@ -116,6 +122,8 @@ interface RuntimeEntry {
   operationTail: Promise<void>
   disposing: boolean
   sequence: number
+  liveMessage: RuntimeLiveMessageState
+  streamingHistory: Array<AgentSessionRuntime['session']['messages'][number] | LocalPiAgentMessage> | null
   unsubscribeSession: (() => void) | null
   uiBridge: RuntimeExtensionUiBridge
   delivery: RuntimeDelivery
@@ -452,6 +460,8 @@ export class RuntimeManager {
       operationTail: Promise.resolve(),
       disposing: false,
       sequence: 0,
+      liveMessage: createRuntimeLiveMessageState(),
+      streamingHistory: null,
       unsubscribeSession: null,
       delivery: new RuntimeDelivery(
         runtime,
@@ -609,6 +619,15 @@ export class RuntimeManager {
       const generationBefore = entry.generation
       const result = await dispatchRuntimeCommand(entry.runtime, command, {
         emitEvent: (event) => this.emitRuntimeEvent(runtimeId, entry, event),
+        liveMessageSnapshot: () => ({
+          message: entry.liveMessage.message,
+          isStreaming: entry.liveMessage.isStreaming,
+          sequence: entry.sequence,
+          toolCallDeltas: [...entry.liveMessage.toolCallDeltas],
+          contentIndices: entry.liveMessage.message
+            ? [...entry.liveMessage.content.keys()].sort((left, right) => left - right) : [],
+        }),
+        messagesSnapshot: () => entry.streamingHistory ?? entry.runtime.session.messages,
         delivery: entry.delivery,
       })
       if (result.replaced && entry.generation === generationBefore) {
@@ -766,6 +785,8 @@ export class RuntimeManager {
             beforeSessionStart: () => {
               entry.generation += 1
               entry.sequence = 0
+              entry.liveMessage = createRuntimeLiveMessageState()
+              entry.streamingHistory = null
             },
           })
           return {
@@ -958,6 +979,8 @@ export class RuntimeManager {
 
   private bindSessionEvents(runtimeId: string, entry: RuntimeEntry): void {
     entry.unsubscribeSession?.()
+    entry.liveMessage = createRuntimeLiveMessageState()
+    entry.streamingHistory = null
     entry.unsubscribeSession = entry.runtime.session.subscribe(
       (event: AgentSessionEvent) => {
         try {
@@ -985,6 +1008,17 @@ export class RuntimeManager {
     event: LocalPiRpcEvent,
   ): void {
     if (this.runtimes.get(runtimeId) !== entry || entry.disposing) return
+    if (event.type === 'message_start' && event.message.role === 'assistant') {
+      // SDK history receives a final message before awaited message_end
+      // extensions finish. Keep it aligned with the emitted live snapshot.
+      entry.streamingHistory = [...entry.runtime.session.messages]
+    } else if (event.type === 'agent_settled' ||
+      (event.type === 'message_end' && event.message.role === 'assistant')) {
+      entry.streamingHistory = null
+    } else if (event.type === 'message_end' && event.message.role !== 'assistant' && entry.streamingHistory) {
+      entry.streamingHistory = [...entry.streamingHistory, event.message]
+    }
+    entry.liveMessage = reduceRuntimeLiveMessageState(entry.liveMessage, event)
     entry.sequence += 1
     const record: RuntimeEventRecord = {
       runtimeId,
