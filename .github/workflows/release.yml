@@ -202,7 +202,7 @@ jobs:
         if: ${{ matrix.platform == 'linux' }}
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends libfuse2t64
+          sudo apt-get install --yes --no-install-recommends libfuse2t64 libnotify4 libsecret-1-0
       - name: Prepare older Linux AppImage for package lifecycle canary
         if: ${{ matrix.platform == 'linux' }}
         run: node build/prepare-linux-package-canary.cjs
