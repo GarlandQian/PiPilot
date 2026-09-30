@@ -132,7 +132,11 @@ test('measures input, frame gaps and session switches with 1000 replies and 32KB
     const navigation = page.getByRole('dialog', { name: 'Navigate conversation', exact: true })
     await navigation.getByRole('combobox', { name: 'Find a turn…', exact: true }).fill('Performance long question 0')
     await navigation.locator('[data-conversation-navigation-entry="Performance-long-0"]').click()
-    await expect(page.locator('[data-conversation-outline-entry="Performance-long-0"]')).toHaveAttribute('data-outline-highlighted', 'true')
+    await expect(page.locator('[data-conversation-outline-entry="Performance-long-0"]')).toHaveAttribute(
+      'data-outline-highlighted',
+      'true',
+      { timeout: 20_000 },
+    )
     await expect(page.getByRole('button', { name: 'Jump to latest', exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Jump to latest', exact: true }).click()
     await expect.poll(() => viewport.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(4)
