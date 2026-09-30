@@ -139,6 +139,7 @@ export function MessageList({
     completed: new Map(),
   }), [sessionKey])
   const highlightTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  const highlightFrameRef = React.useRef<number | null>(null)
   const forkFeedback = useConversationOperationFeedback(sessionKey ?? 'unavailable')
   const activityProjector = React.useMemo(createTranscriptActivityProjector, [sessionKey])
   const activity = React.useMemo(() => activityProjector(turns, status), [activityProjector, turns, status])
@@ -203,6 +204,10 @@ export function MessageList({
 
   React.useEffect(() => {
     setHighlightedEntryId(null)
+    if (highlightFrameRef.current !== null) {
+      cancelAnimationFrame(highlightFrameRef.current)
+      highlightFrameRef.current = null
+    }
     if (highlightTimerRef.current) {
       clearTimeout(highlightTimerRef.current)
       highlightTimerRef.current = null
@@ -210,6 +215,7 @@ export function MessageList({
   }, [ready, sessionKey])
 
   React.useEffect(() => () => {
+    if (highlightFrameRef.current !== null) cancelAnimationFrame(highlightFrameRef.current)
     if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current)
   }, [])
 
@@ -223,18 +229,31 @@ export function MessageList({
     const target = anchorNodes.get(jumpRequest.entryId)
     if (!target) return
 
+    if (highlightFrameRef.current !== null) {
+      cancelAnimationFrame(highlightFrameRef.current)
+      highlightFrameRef.current = null
+    }
+    if (highlightTimerRef.current) {
+      clearTimeout(highlightTimerRef.current)
+      highlightTimerRef.current = null
+    }
     pauseFollowing()
     setHighlightedEntryId(jumpRequest.entryId)
     target.scrollIntoView({
       block: 'start',
       behavior: motionEnabled ? 'smooth' : 'auto',
     })
-    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current)
-    highlightTimerRef.current = setTimeout(() => {
-      setHighlightedEntryId((current) =>
-        current === jumpRequest.entryId ? null : current)
-      highlightTimerRef.current = null
-    }, 1_600)
+    // Let the highlight paint before its short-lived feedback timer starts.
+    highlightFrameRef.current = requestAnimationFrame(() => {
+      highlightFrameRef.current = requestAnimationFrame(() => {
+        highlightFrameRef.current = null
+        highlightTimerRef.current = setTimeout(() => {
+          setHighlightedEntryId((current) =>
+            current === jumpRequest.entryId ? null : current)
+          highlightTimerRef.current = null
+        }, 1_600)
+      })
+    })
     return jumpRequest.query ? highlightSearchText(target, jumpRequest.query) : undefined
   }, [anchorNodes, jumpRequest, ready, sessionKey, motionEnabled, pauseFollowing])
 
