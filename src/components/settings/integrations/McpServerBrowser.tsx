@@ -98,7 +98,7 @@ export function McpServerBrowser({
             onKeyDown={handleCatalogKeyDown}
           >
             {filtered.map((server) => {
-              const enabled = server.definition.disabled !== true
+              const enabled = server.definition.enabled !== false
               const editable = structuredSupported(server)
               const active = server.name === selected?.name
               return (
@@ -178,7 +178,7 @@ export function McpServerBrowser({
                   <h4 className="break-words text-app font-semibold">{selected.name}</h4>
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
                     <Badge variant="secondary">{t(`settings.mcp.transport.${selected.transport}`)}</Badge>
-                    <Badge variant={selected.definition.disabled === true ? 'outline' : 'soft-success'}>{t(selected.definition.disabled === true ? 'settings.mcp.disabled' : 'settings.mcp.enabled')}</Badge>
+                    <Badge variant={selected.definition.enabled === false ? 'outline' : 'soft-success'}>{t(selected.definition.enabled === false ? 'settings.mcp.disabled' : 'settings.mcp.enabled')}</Badge>
                   </div>
                 </div>
               </div>

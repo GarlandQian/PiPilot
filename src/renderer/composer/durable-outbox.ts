@@ -1,4 +1,5 @@
 import type { LocalPiImageContent } from '@/shared/local-pi'
+import { IndexedDbRecordStore } from '../indexeddb-record-store'
 
 export type DurableOutboxAction = 'prompt' | 'follow_up' | 'steer'
 export type DurableOutboxStatus = 'pending' | 'sending' | 'failed' | 'unknown'
@@ -62,66 +63,18 @@ function validateStoredItems(value: unknown): readonly DurableOutboxItem[] {
 
 /** Never falls back to localStorage: a failed durable write must leave the draft intact. */
 export class IndexedDbOutboxPersistence implements DurableOutboxPersistence {
-  private database: Promise<IDBDatabase> | undefined
-
-  constructor(private readonly getFactory = (): IDBFactory | undefined => globalThis.indexedDB) {}
-
-  private open(): Promise<IDBDatabase> {
-    if (this.database) return this.database
-    const factory = this.getFactory()
-    if (!factory) return Promise.reject(new Error('Durable message storage is unavailable.'))
-    const opening = new Promise<IDBDatabase>((resolve, reject) => {
-      const request = factory.open(DATABASE_NAME, 1)
-      let rejected = false
-      request.onupgradeneeded = () => {
-        request.result.createObjectStore(STORE_NAME, { keyPath: 'key' })
-      }
-      request.onerror = () => reject(request.error ?? new Error('Could not open durable message storage.'))
-      request.onblocked = () => {
-        rejected = true
-        reject(new Error('Durable message storage is blocked by another application window.'))
-      }
-      request.onsuccess = () => {
-        const database = request.result
-        if (rejected) { database.close(); return }
-        database.onversionchange = () => {
-          database.close()
-          this.database = undefined
-        }
-        database.onclose = () => { this.database = undefined }
-        resolve(database)
-      }
-    })
-    this.database = opening
-    void opening.catch(() => { if (this.database === opening) this.database = undefined })
-    return opening
+  private readonly records: IndexedDbRecordStore
+  constructor(getFactory = (): IDBFactory | undefined => globalThis.indexedDB) {
+    this.records = new IndexedDbRecordStore(DATABASE_NAME, STORE_NAME, getFactory)
   }
 
   async read(key: string): Promise<readonly DurableOutboxItem[]> {
-    const database = await this.open()
-    return new Promise((resolve, reject) => {
-      const transaction = database.transaction(STORE_NAME, 'readonly')
-      const request = transaction.objectStore(STORE_NAME).get(key)
-      transaction.onabort = () => reject(transaction.error ?? new Error('Could not load saved messages.'))
-      transaction.onerror = () => reject(transaction.error ?? new Error('Could not load saved messages.'))
-      transaction.oncomplete = () => {
-        try { resolve(request.result === undefined ? EMPTY : validateStoredItems(request.result.items)) }
-        catch (error) { reject(error) }
-      }
-    })
+    const record = await this.records.read(key)
+    return record === undefined ? EMPTY : validateStoredItems((record as { items?: unknown }).items)
   }
 
   async write(key: string, items: readonly DurableOutboxItem[]): Promise<void> {
-    const database = await this.open()
-    return new Promise((resolve, reject) => {
-      // Strict durability waits for the backing store, not merely request success.
-      const transaction = database.transaction(STORE_NAME, 'readwrite', { durability: 'strict' })
-      transaction.oncomplete = () => resolve()
-      transaction.onabort = () => reject(transaction.error ?? new Error('Could not save this message.'))
-      transaction.onerror = () => reject(transaction.error ?? new Error('Could not save this message.'))
-      if (items.length) transaction.objectStore(STORE_NAME).put({ key, items })
-      else transaction.objectStore(STORE_NAME).delete(key)
-    })
+    return this.records.write(key, items.length ? { items } : undefined)
   }
 }
 

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AgentSessionEvent, AgentSessionRuntime } from '@earendil-works/pi-coding-agent'
@@ -53,6 +54,7 @@ export class RuntimeDelivery {
   private stopInFlight: Promise<void> | null = null
   private pumping = false
   private readonly nativeIdentities = new WeakMap<object, string>()
+  private readonly steeringContext = new AsyncLocalStorage<string>()
   private emptySteeringConsumed = 0
   private storageFailure: Error | null = null
 
@@ -250,8 +252,8 @@ export class RuntimeDelivery {
       void this.runtime.session.prompt(message, {
         images: images ? [...images] : undefined,
         source: 'rpc',
-        preflightResult: (accepted) => {
-          if (!accepted) return
+        preflightResult: (disposition) => {
+          if (disposition !== 'handled' && disposition !== 'queued' && disposition !== 'started') return
           // Pi invokes this immediately before starting the agent. Throwing
           // here prevents a delayed auth/input preflight from starting a new
           // run after Stop already returned. Intercepting extensions may have
@@ -281,18 +283,34 @@ export class RuntimeDelivery {
     // Session.steer still owns skill/template expansion and normal Pi behavior.
     const agent = session.agent
     const steer = agent.steer
-    const captured: object[] = []
-    agent.steer = (message) => {
-      captured.push(message)
+    const epoch = this.pauseEpoch
+    let nativeMessage: object | undefined
+    const capture: typeof agent.steer = (message) => {
+      if (this.steeringContext.getStore() === item.id) {
+        if (epoch !== this.pauseEpoch || this.stopRequested || ledger.paused) {
+          throw new DeliveryInterrupted('Stopped before the steering message was queued.')
+        }
+        nativeMessage = message
+        // Input handlers are asynchronous in Pi 0.99.1. Register identity
+        // before enqueueing, since consumption may precede promise resolution.
+        this.nativeIdentities.set(message, item.id)
+      }
       steer.call(agent, message)
     }
-    let pending: Promise<void>
-    try { pending = session.steer(item.message, item.images) }
-    finally { agent.steer = steer }
-    const nativeMessage = captured[captured.length - 1]
-    if (nativeMessage) this.nativeIdentities.set(nativeMessage, item.id)
+    agent.steer = capture
     try {
-      await pending
+      const disposition = await this.steeringContext.run(item.id, () => (
+        session.steer(item.message, item.images, { source: 'rpc' })
+      ))
+      if (disposition === 'handled' && ledger.items.includes(item)) {
+        // An extension accepted the input itself; it must never be replayed as
+        // a model message, even when it did not create a native queue entry.
+        ledger.items = ledger.items.filter((candidate) => candidate !== item)
+        const record = ledger.records.find(({ receipt }) => receipt.submissionId === item.submissionId)
+        if (record) record.receipt = { ...record.receipt, status: 'consumed' }
+        this.commit()
+        return
+      }
       if (!nativeMessage && ledger.items.includes(item)) throw new Error('Pi did not confirm the steering message hand-off.')
     } catch (error) {
       if (ledger.items.includes(item)) {
@@ -304,6 +322,8 @@ export class RuntimeDelivery {
         this.commit()
         throw error
       }
+    } finally {
+      if (agent.steer === capture) agent.steer = steer
     }
   }
 

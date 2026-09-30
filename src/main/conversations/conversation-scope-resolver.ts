@@ -56,6 +56,7 @@ export class ConversationScopeResolver {
   constructor(
     private readonly workspaces: WorkspaceLocationReader,
     projectlessCwd: string,
+    private readonly assertProjectAvailable?: (workspaceId: string) => void,
   ) {
     if (!isAbsolute(projectlessCwd)) {
       throw new Error('The projectless conversation cwd must be absolute.')
@@ -66,6 +67,7 @@ export class ConversationScopeResolver {
   async resolve(rawScope: ConversationScope): Promise<ResolvedConversationScope> {
     const scope = conversationScopeSchema.parse(rawScope)
     if (scope.kind === 'project') {
+      this.assertProjectAvailable?.(scope.workspaceId)
       const location = this.workspaces.getLocation(scope.workspaceId)
       if (!location) {
         throw new ConversationScopeError(
@@ -76,6 +78,7 @@ export class ConversationScopeResolver {
 
       try {
         const cwd = await canonicalDirectory(location.path)
+        this.assertProjectAvailable?.(scope.workspaceId)
         if (cwd !== location.path) {
           throw new Error('The selected project path changed identity.')
         }

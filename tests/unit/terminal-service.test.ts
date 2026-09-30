@@ -103,6 +103,25 @@ afterEach(async () => {
 })
 
 describe('TerminalService', () => {
+  it('holds terminal admission during archive and releases it even when moving fails', async () => {
+    const root = await temporaryDirectory('terminal-archive')
+    const service = new TerminalService(() => firstScope, async (scope) => ({ scope, cwd: root }), {
+      resolveShell: () => ({ file: '/bin/sh', args: [], label: 'sh' }),
+      spawnPty: () => new FakePty(80, 24),
+    })
+    let release!: () => void
+    const archiving = service.withInactiveScope(firstScope, () => new Promise<void>((resolve) => { release = resolve }))
+    await expect(service.create(firstScope, 80, 24)).rejects.toMatchObject({ code: 'TERMINAL_UNAVAILABLE' })
+    release(); await archiving
+    await expect(service.withInactiveScope(firstScope, async () => { throw new Error('move failed') })).rejects.toThrow('move failed')
+    const terminal = await service.create(firstScope, 80, 24)
+    const move = vi.fn(async () => undefined)
+    await expect(service.withInactiveScope(firstScope, move)).rejects.toMatchObject({ code: 'TERMINAL_STILL_RUNNING' })
+    expect(move).not.toHaveBeenCalled()
+    await service.close(firstScope, terminal.terminalId)
+    await expect(service.withInactiveScope(firstScope, async () => 'archived')).resolves.toBe('archived')
+    await service.dispose()
+  })
   it('retains background output across project switches without allowing background control', async () => {
     vi.useFakeTimers()
     const firstRoot = await temporaryDirectory('terminal-background-first')

@@ -21,16 +21,15 @@ test('retains target-owned MCP drafts through project A/B/A and semantic tab nav
   const agentDir = testInfo.outputPath('pi-agent')
   const projectA = testInfo.outputPath('project-A')
   const projectB = testInfo.outputPath('project-B')
-  for (const path of [userData, projectA, projectB]) await mkdir(path, { recursive: true })
-  const baselineA = '// Disk A\n{ "mcpServers": {}, "owner": "A" }\n'
-  const baselineB = '// Disk B\n{ "mcpServers": {}, "owner": "B" }\n'
-  await writeFile(join(projectA, '.mcp.json'), baselineA)
-  await writeFile(join(projectB, '.mcp.json'), baselineB)
+  for (const path of [userData, join(projectA, '.pi'), join(projectB, '.pi')]) await mkdir(path, { recursive: true })
+  const baselineA = '{ "mcpServers": {}, "owner": "A" }\n'
+  const baselineB = '{ "mcpServers": {}, "owner": "B" }\n'
+  await writeFile(join(projectA, '.pi', 'mcp.json'), baselineA)
+  await writeFile(join(projectB, '.pi', 'mcp.json'), baselineB)
   await writeFile(join(userData, 'settings.json'), JSON.stringify({
     version: SETTINGS_SCHEMA_VERSION,
     settings: { ...DEFAULT_SETTINGS, locale: 'en-US', appearance: { ...DEFAULT_SETTINGS.appearance, theme: 'light', reducedMotion: true } },
   }))
-  await writeFile(join(userData, 'pi-managed-packages.json'), JSON.stringify({ version: 1, mcpOptedOut: true }))
   const fixture = await startPiSdkFixture({ agentDir })
   const app = await electron.launch({
     args: [resolve(process.cwd())],
@@ -55,7 +54,7 @@ test('retains target-owned MCP drafts through project A/B/A and semantic tab nav
     await mcpPanel.getByRole('button', { name: 'JSON', exact: true }).click()
     const editor = mcpPanel.getByRole('textbox', { name: 'JSON', exact: true })
     await expect(editor).toHaveValue(baselineA)
-    const draftA = '// Unsaved A stays here\n{ "mcpServers": {}, "future": { "keep": true } }\n'
+    const draftA = '{ "mcpServers": {}, "future": { "keep": true } }\n'
     await editor.fill(draftA)
     await expect(mcpPanel.getByText('Unsaved changes', { exact: true })).toBeVisible()
 
@@ -78,7 +77,7 @@ test('retains target-owned MCP drafts through project A/B/A and semantic tab nav
 
     await settings.getByRole('button', { name: 'Global', exact: true }).click()
     await mcpPanel.getByRole('button', { name: 'JSON', exact: true }).click()
-    const globalDraft = '// Unsaved global\n{ "mcpServers": {} }\n'
+    const globalDraft = '{ "mcpServers": {} }\n'
     await editor.fill(globalDraft)
     await settings.getByRole('button', { name: 'Current project', exact: true }).click()
     await expect(editor).toHaveValue(draftA)
@@ -89,7 +88,7 @@ test('retains target-owned MCP drafts through project A/B/A and semantic tab nav
     await expect(settings.getByText('project-B', { exact: true })).toBeVisible()
     await mcpPanel.getByRole('button', { name: 'JSON', exact: true }).click()
     await expect(editor).toHaveValue(baselineB)
-    const draftB = '// Unsaved B stays here\n{ "mcpServers": {}, "future": "B" }\n'
+    const draftB = '{ "mcpServers": {}, "future": "B" }\n'
     await editor.fill(draftB)
 
     await page.getByRole('button', { name: 'Sessions', exact: true }).click()
@@ -112,10 +111,10 @@ test('retains target-owned MCP drafts through project A/B/A and semantic tab nav
     await mcpPanel.getByRole('button', { name: 'Refresh', exact: true }).click()
     await discard.getByRole('button', { name: 'Discard and reload', exact: true }).click()
     await expect(editor).toHaveValue(baselineA)
-    expect(await readFile(join(projectB, '.mcp.json'), 'utf8')).toBe(baselineB)
+    expect(await readFile(join(projectB, '.pi', 'mcp.json'), 'utf8')).toBe(baselineB)
     await editor.fill(draftA)
     await mcpPanel.getByRole('button', { name: 'Save', exact: true }).click()
-    await expect.poll(() => readFile(join(projectA, '.mcp.json'), 'utf8')).toBe(draftA)
+    await expect.poll(() => readFile(join(projectA, '.pi', 'mcp.json'), 'utf8')).toBe(draftA)
     await expect(mcpPanel.getByText('Unsaved changes', { exact: true })).toHaveCount(0)
 
     await page.setViewportSize({ width: 1_100, height: 680 })

@@ -1,3 +1,13 @@
+import type { Turn } from '@/types/chat'
+
+export function transientTurnAnimationKey(turnId: string) {
+  return turnId.replace(/:(?:stream|message):(\d+):[^:]+:/, ':message:$1:')
+}
+
+export function agentAnimationKey(turn: Extract<Turn, { kind: 'agent' }>) {
+  return transientTurnAnimationKey(turn.id)
+}
+
 function commonPrefixLength(left: string, right: string) {
   const limit = Math.min(left.length, right.length)
   let index = 0

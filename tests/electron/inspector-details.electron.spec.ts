@@ -27,7 +27,6 @@ test('returns from execution details to the same Markdown reader and keeps compa
   await writeFile(join(userData, 'settings.json'), JSON.stringify({ version: SETTINGS_SCHEMA_VERSION, settings: {
     ...DEFAULT_SETTINGS, locale: 'en-US', appearance: { ...DEFAULT_SETTINGS.appearance, theme: 'light', reducedMotion: true },
   } }))
-  await writeFile(join(userData, 'pi-managed-packages.json'), JSON.stringify({ version: 1, mcpOptedOut: true }))
   const canonicalProject = await realpath(project)
   const sessionDirectory = join(agentDir, 'sessions', `--${canonicalProject.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}--`)
   await mkdir(sessionDirectory, { recursive: true })

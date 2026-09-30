@@ -18,6 +18,7 @@ import {
 import { alignLocalPiMessageOrigins } from './response-provenance'
 import { mergeSubagentPresentation, presentToolCall } from './tool-presenters'
 import { truncateUtf8 } from './structured-value'
+import { adjacentTurnChanges, recordTurnChanges, type TurnChange } from './turn-changes'
 import type {
   ConversationOutlineItem,
   ConversationOutlineStatus,
@@ -351,6 +352,8 @@ function appendMessage(
   messageIndex?: number,
   streaming = false,
 ) {
+  // SDK 0.99 persists prompt/tool state in history; it is not a chat turn.
+  if (message.role === 'system') return
   if (message.role === 'user') {
     projection.turns.push({
       kind: 'user',
@@ -753,6 +756,7 @@ export function createLocalPiTurnsProjector() {
   let history: ReturnType<typeof projectHistoryTurns> | undefined
   let historyBuilds = 0
   let retained = new Map<string, Turn>()
+  let published: readonly Turn[] = []
   return {
     get historyBuilds() { return historyBuilds },
     project(state: LocalPiProjectorState, adapters: LocalPiTurnProjectionOptions = {}) {
@@ -767,12 +771,17 @@ export function createLocalPiTurnsProjector() {
       previousPlan = adapters.planMode
       const turns = projectLiveTurns(state, adapters, history)
       const next = new Map<string, Turn>()
-      const shared = turns.map((turn) => {
+      const changes: TurnChange[] = []
+      const shared = turns.map((turn, index) => {
         const old = retained.get(turn.id)
         const value = old && samePresentationValue(old, turn) ? old : turn
         next.set(turn.id, value)
+        if (published[index] !== value) changes.push({ index, before: published[index], after: value })
         return value
       })
+      for (let index = shared.length; index < published.length; index += 1) changes.push({ index, before: published[index], after: undefined })
+      recordTurnChanges(published, shared, changes)
+      published = shared
       retained = next
       return shared
     },
@@ -950,28 +959,53 @@ export function projectConversationOutline(
 }
 
 export function createConversationOutlineProjector() {
-  let cached = new Map<string, { turns: readonly Turn[]; item: ConversationOutlineItem | undefined }>()
+  let previous: readonly Turn[] = []
+  let items: ConversationOutlineItem[] = []
+  const groups = new Map<string, { turns: Map<number, Turn>; item?: ConversationOutlineItem; order: number }>()
   return (turns: readonly Turn[]): ConversationOutlineItem[] => {
-    const groups = new Map<string, Turn[]>()
-    const order = new Set<string>()
-    for (const turn of turns) {
-      if (!turn.anchorEntryId) continue
-      const group = groups.get(turn.anchorEntryId) ?? []
-      group.push(turn)
-      groups.set(turn.anchorEntryId, group)
-      if (turn.kind === 'user') order.add(turn.anchorEntryId)
+    const changes = adjacentTurnChanges(previous, turns)
+    const retained = changes ? undefined : new Map(groups)
+    const affected = new Set<string>()
+    const add = (turn: Turn, index: number) => {
+      if (!turn.anchorEntryId) return
+      let group = groups.get(turn.anchorEntryId)
+      if (!group) {
+        const old = retained?.get(turn.anchorEntryId)
+        group = { turns: new Map(), order: old?.order ?? index, item: old?.item }
+        groups.set(turn.anchorEntryId, group)
+      }
+      group.turns.set(index, turn)
+      affected.add(turn.anchorEntryId)
     }
-    const next = new Map<string, { turns: readonly Turn[]; item: ConversationOutlineItem | undefined }>()
-    const items: ConversationOutlineItem[] = []
-    for (const entryId of order) {
+    if (changes) {
+      for (const { index, before, after } of changes) {
+        if (before?.anchorEntryId) {
+          groups.get(before.anchorEntryId)?.turns.delete(index)
+          affected.add(before.anchorEntryId)
+        }
+        if (after) add(after, index)
+      }
+    } else {
+      groups.clear()
+      turns.forEach(add)
+    }
+    previous = turns
+    let changed = changes === undefined
+    for (const entryId of affected) {
       const group = groups.get(entryId)!
-      const old = cached.get(entryId)
-      const entry = old && old.turns.length === group.length && old.turns.every((turn, index) => turn === group[index])
-        ? old : { turns: group, item: projectConversationOutline(group)[0] }
-      next.set(entryId, entry)
-      if (entry.item) items.push(entry.item)
+      const ordered = [...group.turns].sort(([left], [right]) => left - right)
+      const item = projectConversationOutline(ordered.map(([, turn]) => turn))[0]
+      const order = ordered.find(([, turn]) => turn.kind === 'user')?.[0] ?? -1
+      if (!samePresentationValue(group.item, item) || group.order !== order) {
+        group.item = item
+        group.order = order
+        changed = true
+      }
+      if (group.turns.size === 0) groups.delete(entryId)
     }
-    cached = next
+    if (!changed) return items
+    const next = [...groups.values()].filter((group) => group.item).sort((left, right) => left.order - right.order).map((group) => group.item!)
+    if (next.length !== items.length || next.some((item, index) => item !== items[index])) items = next
     return items
   }
 }

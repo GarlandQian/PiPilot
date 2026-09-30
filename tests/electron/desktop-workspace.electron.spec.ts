@@ -16,7 +16,6 @@ test('keeps the unified desktop workspace usable with the official Pi configurat
     version: SETTINGS_SCHEMA_VERSION,
     settings: { ...DEFAULT_SETTINGS, locale: 'en-US', appearance: { ...DEFAULT_SETTINGS.appearance, theme: 'light', reducedMotion: true } },
   }))
-  await writeFile(join(userData, 'pi-managed-packages.json'), JSON.stringify({ version: 1, mcpOptedOut: true }))
   await writeFile(join(project, 'README.md'), '# Desktop workspace\n\nAn isolated visual fixture.\n')
   const prompt = 'Review **the workspace**\n\n## Implementation\n\n- Keep Pi configuration in its official directory.\n- Preserve background conversations.\n\n```ts\nconst status = "ready"\n```'
   const runningPrompt = 'Continue checking the workspace'

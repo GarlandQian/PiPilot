@@ -72,6 +72,15 @@ test('restores an existing project task and persists pin/archive without deletin
     await page.waitForLoadState('domcontentloaded')
     await page.setViewportSize({ width: 1440, height: 900 })
     await expect(page.locator('[data-model-thinking-trigger]')).toContainText('Fake Chat', { timeout: 20_000 })
+    await app.evaluate(({ app, BrowserWindow }) => {
+      app.focus({ steal: true })
+      const window = BrowserWindow.getAllWindows()[0]
+      window?.focus()
+      // This scenario represents viewed work. macOS automation can retain
+      // native focus even while Playwright clicks the real Electron window;
+      // background/hidden unread behavior has separate notification coverage.
+      if (window) Object.defineProperty(window, 'isFocused', { configurable: true, value: () => true })
+    })
 
     await addProject(app, page, projectA)
     const first = await seedTask(page, 'Keep the original archive needle', 'Remembered task')
@@ -92,6 +101,10 @@ test('restores an existing project task and persists pin/archive without deletin
     const resumedCatalog = await page.evaluate((scope) => window.pipilot!.sessionCatalog.list(scope), scopeA)
     expect(resumedCatalog.rows.map((row) => row.sessionId).sort())
       .toEqual(originalCatalog.rows.map((row) => row.sessionId).sort())
+    // An unread result intentionally remains discoverable after archiving.
+    // Require the viewed-task precondition through the real notification flow.
+    await expect.poll(async () => (await page.evaluate(() => window.pipilot!.notifications.get()))
+      .items.find((item) => item.sessionId === first.sessionState!.sessionId)?.read).toBe(true)
 
     await taskMenu(page, 'Remembered task')
     await page.getByRole('menuitem', { name: 'Pin task', exact: true }).click()

@@ -25,7 +25,7 @@ import {
   type PiHostUiRequestEventEnvelope,
 } from '../../shared/pi-host-protocol'
 
-export const PI_HOST_EXPECTED_SDK_VERSION = '0.85.1'
+export const PI_HOST_EXPECTED_SDK_VERSION = '0.99.1'
 // Packaged Intel builds may initialize the Electron utility under Rosetta.
 export const DEFAULT_PI_HOST_HANDSHAKE_TIMEOUT_MS = 60_000
 export const DEFAULT_PI_HOST_REQUEST_TIMEOUT_MS = 30_000
@@ -812,10 +812,11 @@ export class PiHostController {
   private matchesResponseTarget(
     pending: PendingRequest,
     response: PiHostResponseEnvelope,
-  ) {
+  ): boolean {
     switch (pending.command) {
       case 'ping':
       case 'shutdown':
+      case 'session.rename':
         return response.runtimeId === undefined &&
           response.runtimeGeneration === undefined
       case 'runtime.create':
@@ -828,6 +829,7 @@ export class PiHostController {
       case 'runtime.bind':
       case 'runtime.reload':
       case 'runtime.command':
+      case 'runtime.external_submit':
       case 'runtime.extension_ui_response':
       case 'runtime.dispose':
         return response.runtimeId === pending.runtimeId &&
@@ -835,6 +837,8 @@ export class PiHostController {
           pending.runtimeGeneration !== undefined &&
           response.runtimeGeneration >= pending.runtimeGeneration
     }
+    const unsupportedCommand: never = pending.command
+    throw new Error(`Unsupported Pi Host response command: ${unsupportedCommand}`)
   }
 
   private waitForHandshake(hostEpoch: number, requestId: string) {

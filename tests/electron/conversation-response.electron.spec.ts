@@ -15,7 +15,6 @@ async function seedSettings(userData: string) {
       appearance: { ...DEFAULT_SETTINGS.appearance, theme: 'light', reducedMotion: true },
     },
   }))
-  await writeFile(join(userData, 'pi-managed-packages.json'), JSON.stringify({ version: 1, mcpOptedOut: true }))
 }
 
 async function send(page: Page, prompt: string) {

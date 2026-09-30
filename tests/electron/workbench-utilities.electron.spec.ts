@@ -27,7 +27,6 @@ test('preserves file reading and PTY identity while navigating and refreshing wo
   await writeFile(join(userData, 'settings.json'), JSON.stringify({ version: SETTINGS_SCHEMA_VERSION, settings: {
     ...DEFAULT_SETTINGS, locale: 'en-US', appearance: { ...DEFAULT_SETTINGS.appearance, theme: 'light', reducedMotion: true },
   } }))
-  await writeFile(join(userData, 'pi-managed-packages.json'), JSON.stringify({ version: 1, mcpOptedOut: true }))
   const fixture = await startPiSdkFixture({ agentDir: testInfo.outputPath('pi-agent') })
   const app = await electron.launch({ args: [resolve(process.cwd())], env: {
     ...process.env, ...fixture.env, PIPILOT_E2E_USER_DATA: userData, PIPILOT_E2E_DISABLE_AUTO_RESTART: '1', PIPILOT_E2E_TERMINAL_SHELL: '/bin/sh',

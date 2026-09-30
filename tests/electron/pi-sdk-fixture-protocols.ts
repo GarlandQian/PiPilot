@@ -5,6 +5,7 @@ export const FIXTURE_PROVIDER_PROTOCOLS = [
 ] as const
 export type FixtureProviderProtocol = typeof FIXTURE_PROVIDER_PROTOCOLS[number]
 export const FIXTURE_WRITE_CALL_ID = 'call_pipilot_fixture_write'
+export const FIXTURE_CODEMODE_CALL_ID = 'call_pipilot_fixture_codemode'
 
 type JsonRecord = Record<string, unknown>
 function record(value: unknown): JsonRecord {
@@ -55,6 +56,7 @@ export interface FixtureStreamWriter {
   text(text: string): void
   thinking(text: string): void
   writeTool(args: { path: string; content: string }): void
+  codemodeTool?(code: string): void
   finish(tool: boolean): void
 }
 
@@ -93,6 +95,15 @@ export function createFixtureStreamWriter(
             index: 0,
             ...(index === 0 ? { id: FIXTURE_WRITE_CALL_ID, type: 'function' } : {}),
             function: { ...(index === 0 ? { name: 'write' } : {}), arguments: argumentsPart },
+          }],
+        }))
+      },
+      codemodeTool: (code) => {
+        pieces(JSON.stringify({ code })).forEach((part, index) => chunk({
+          role: 'assistant', tool_calls: [{
+            index: 0,
+            ...(index === 0 ? { id: FIXTURE_CODEMODE_CALL_ID, type: 'function' } : {}),
+            function: { ...(index === 0 ? { name: 'codemode' } : {}), arguments: part },
           }],
         }))
       },

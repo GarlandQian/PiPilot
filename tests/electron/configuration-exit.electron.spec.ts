@@ -14,7 +14,6 @@ async function setup(testInfo: TestInfo) {
     version: SETTINGS_SCHEMA_VERSION,
     settings: { ...DEFAULT_SETTINGS, locale: 'en-US', appearance: { ...DEFAULT_SETTINGS.appearance, theme: 'light', reducedMotion: true } },
   }))
-  await writeFile(join(userData, 'pi-managed-packages.json'), JSON.stringify({ version: 1, mcpOptedOut: true }))
   const fixture = await startPiSdkFixture({ agentDir, completionDelays: { 'Continue during cancelled quit': 500 } })
   const mcpPath = join(agentDir, 'mcp.json')
   const modelPath = join(agentDir, 'models.json')
@@ -201,7 +200,7 @@ test('preserves work on cancelled Quit and saves all configuration only after ex
     await mcpPanel.getByRole('button', { name: 'JSON', exact: true }).click()
     const mcpEditor = mcpPanel.getByRole('textbox', { name: 'JSON', exact: true })
     await expect(mcpEditor).toHaveValue('{"mcpServers":{}}\n')
-    const savedMcp = '// Explicitly saved at Quit\n{"mcpServers":{}}\n'
+    const savedMcp = '{"mcpServers":{},"note":"Explicitly saved at Quit"}\n'
     await mcpEditor.fill(savedMcp)
     await requestQuit(app)
     await requestQuit(app)

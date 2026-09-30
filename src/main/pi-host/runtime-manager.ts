@@ -33,6 +33,7 @@ import {
 } from './runtime-event-projector'
 import { RuntimeExtensionUiBridge } from './runtime-extension-ui-bridge'
 import { RuntimeDelivery } from './runtime-delivery'
+import { createRuntimeNativeMcpExtensions } from './runtime-native-mcp'
 import {
   PIPILOT_RUNTIME_MESSAGE_SANITIZER_EXTENSION,
   PIPILOT_RUNTIME_MESSAGE_SANITIZER_EXTENSION_PATH,
@@ -224,6 +225,7 @@ export class RuntimeManager {
     this.resourceLoaderOptions = {
       ...(resourceLoaderOptions ?? {}),
       extensionFactories: [
+        ...createRuntimeNativeMcpExtensions(this.agentDir),
         ...(resourceLoaderOptions?.extensionFactories ?? []),
         PIPILOT_RUNTIME_MESSAGE_SANITIZER_EXTENSION,
       ],

@@ -9,9 +9,10 @@ import { transientTurnAnimationKey } from './ConversationMessages'
 /** Every source segment keeps its place, including commentary before tools.
  * Disclosures belong to the individual thinking/tool renderer, never the reply.
  */
-export function ConversationResponse({ response, highlighted, anchorRef, renderPrompt, renderSegment }: {
+export function ConversationResponse({ response, highlighted, anchorRef, renderPrompt, renderSegment, searchPreview }: {
   response: ResponsePresentation
   highlighted: boolean
+  searchPreview?: React.ReactNode
   anchorRef?: (node: HTMLDivElement | null) => void
   sessionKey: string | null
   focusRequest?: SubagentInspectorFocusRequest | null
@@ -26,6 +27,7 @@ export function ConversationResponse({ response, highlighted, anchorRef, renderP
     data-conversation-response={response.id}
     className={cn('min-w-0 rounded-lg pb-2 transition-colors duration-(--duration-base) motion-reduce:transition-none', highlighted && 'bg-accent/35 ring-2 ring-inset ring-ring/45')}
   >
+    {searchPreview}
     {response.prompt ? <div className="mb-7 min-w-0">{renderPrompt(response.prompt)}</div> : null}
     <div className="conversation-flow min-w-0">
       {response.segments.map((item) => <div

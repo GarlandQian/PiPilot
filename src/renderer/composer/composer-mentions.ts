@@ -1,4 +1,5 @@
 import type { JSONContent } from '@tiptap/core'
+import { isPrecisionReference, PRECISION_REFERENCE_NODE, serializePrecisionReference } from './precision-reference'
 import {
   isComposerSkillCommandName,
   type ComposerExecutableCandidate,
@@ -348,6 +349,14 @@ function analyzeComposerDocument(document: unknown): ComposerDocumentAnalysis | 
         continue
       }
 
+      if (inlineNode.type === PRECISION_REFERENCE_NODE) {
+        if (!hasExactKeys(inlineNode, ['type', 'attrs']) || !isRecord(inlineNode.attrs) ||
+          !hasExactKeys(inlineNode.attrs, ['reference']) || !isPrecisionReference(inlineNode.attrs.reference)) return null
+        removeFollowingSkillSeparator = false
+        hasContent = true
+        bodyParts.push(serializePrecisionReference(inlineNode.attrs.reference))
+        continue
+      }
       if (inlineNode.type !== COMPOSER_MENTION_NODE_TYPE) return null
       if (
         !hasExactKeys(inlineNode, ['type', 'attrs']) ||

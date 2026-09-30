@@ -80,12 +80,26 @@ import type {
 import type { ApplicationShutdownDecision, ApplicationShutdownEvent } from './application-shutdown'
 import type { TaskNotificationPresentation, TaskNotificationSnapshot } from './task-notifications'
 import type { OfficialPiSessionSummary } from './conversation-scope'
+import type { ConversationSearchInput, ConversationSearchResult } from './conversation-search'
+import type { ScheduledTaskInput, ScheduledTasksSnapshot, ScheduledTarget } from './scheduled-tasks'
 
 export interface PiPilotApiError extends AppError {
   readonly name: 'PiPilotApiError'
 }
 
 export interface PiPilotApi {
+  readonly conversationSearch: { find(input: ConversationSearchInput): Promise<ConversationSearchResult> }
+  readonly projectWorkflows: import('./project-workflows').ProjectWorkflowsApi
+  readonly sideConversations: import('./side-conversations').SideConversationsApi
+  readonly scheduledTasks: {
+    get(): Promise<ScheduledTasksSnapshot>
+    save(task: ScheduledTaskInput): Promise<ScheduledTasksSnapshot>
+    remove(id: string): Promise<ScheduledTasksSnapshot>
+    setEnabled(id: string, enabled: boolean): Promise<ScheduledTasksSnapshot>
+    runNow(id: string): Promise<ScheduledTasksSnapshot>
+    listTargets(cursor?: string): Promise<{ conversations: ScheduledTarget[]; nextCursor: string | null; diagnostics: { scope: string; status: 'not_loaded' | 'unavailable' }[] }>
+    subscribe(listener: (snapshot: ScheduledTasksSnapshot) => void): () => void
+  }
   readonly notifications: {
     get(): Promise<TaskNotificationSnapshot>
     setPresentation(presentation: TaskNotificationPresentation): Promise<TaskNotificationSnapshot>

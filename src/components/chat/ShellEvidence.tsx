@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { QuoteSelection, type QuoteSource } from '@/components/precision/PrecisionReferences'
 import { TbCheck, TbCopy } from 'react-icons/tb'
 import { Button } from '@/components/ui/button'
 import { useT } from '@/i18n'
@@ -8,6 +9,7 @@ import { MarkdownContent } from './markdown/MarkdownContent'
 import { ShellLogViewer } from './ShellLogViewer'
 
 interface ShellEvidenceProps {
+  quoteSource?: Omit<QuoteSource, 'literal'>
   label: string
   source: string
   sourceTruncated?: boolean
@@ -53,6 +55,7 @@ export function ShellEvidence(props: ShellEvidenceProps) {
 }
 
 function StandardEvidence({
+  quoteSource,
   label,
   source,
   sourceTruncated = false,
@@ -141,6 +144,7 @@ function StandardEvidence({
           {copied ? <TbCheck className="text-sage" aria-hidden /> : <TbCopy aria-hidden />}
         </Button>
       </header>
+      <QuoteSelection enabled={Boolean(quoteSource)} source={quoteSource ? { ...quoteSource, literal: view === 'raw' && !evidence.truncated && !sourceTruncated ? evidence.source : undefined } : { kind: 'command', sourceId: label, label }}>
       {view === 'formatted' && formattedMarkdown ? (
         <div className="scroll-slim max-h-[min(28rem,55vh)] min-w-0 overflow-auto pr-1">
           <MarkdownContent markdown={formattedMarkdown} />
@@ -156,6 +160,7 @@ function StandardEvidence({
       {evidence.truncated || sourceTruncated ? (
         <p className="text-micro text-muted-foreground">{t('tool.outputTruncated')}</p>
       ) : null}
+      </QuoteSelection>
     </section>
   )
 }

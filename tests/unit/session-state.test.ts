@@ -5,6 +5,7 @@ import type {
 } from '../../src/shared/conversation-scope'
 import {
   deriveSessionActivityState,
+  createOfficialSessionLookup,
   deriveOfficialSessionState,
   isOfficialSessionActiveRow,
   isOfficialSessionOpeningRow,
@@ -38,6 +39,35 @@ function session(
 }
 
 describe('workspace session state', () => {
+  it('indexes exact and legacy runtime identities without widening ambiguous session ids', () => {
+    const rows = [session('same', 'a', ''), session('same', 'b', ''), session('unique', 'c', '')]
+    const statuses = [
+      { scope: projectScope, sessionId: 'same', status: 'failed' as const },
+      { scope: projectScope, sessionId: 'same', selectionToken: rows[1].selectionToken, status: 'running' as const, selected: true as const },
+      { scope: projectScope, sessionId: 'unique', status: 'completed' as const },
+      { scope: { kind: 'projectless' as const }, sessionId: 'unique', selectionToken: rows[2].selectionToken, status: 'failed' as const },
+    ]
+    const lookup = createOfficialSessionLookup(rows, statuses)
+    for (const row of rows) {
+      const runtime = runtimeStateForOfficialSession(row, statuses, rows)
+      expect(lookup.runtime(row)).toBe(runtime)
+      expect(lookup.active(row, projectScope, 'same', runtime?.selected)).toBe(
+        isOfficialSessionActiveRow(row, rows, projectScope, 'same', runtime?.selected))
+    }
+    expect(lookup.isUnique(rows[0])).toBe(false)
+    expect(lookup.isUnique(rows[2])).toBe(true)
+  })
+
+  it('matches 5000 historical rows without rereading their siblings for each row', () => {
+    let reads = 0
+    const rows = Array.from({ length: 5_000 }, (_, index) => ({ ...session(String(index), String(index), ''),
+      get sessionId() { reads += 1; return String(index) },
+    }))
+    const lookup = createOfficialSessionLookup(rows, undefined)
+    for (const row of rows) expect(lookup.runtime(row)).toBeUndefined()
+    expect(reads).toBeLessThan(50_000)
+  })
+
   it('maps official rows, sorts by activity, and preserves the active identity', () => {
     const result = deriveOfficialSessionState([
       session('active', 'a'.repeat(32), '2026-08-08T03:00:00.000Z'),

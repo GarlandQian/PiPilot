@@ -12,7 +12,6 @@ import {
   type LocalPiAgentMessage,
   type LocalPiCommandArgumentCompletion,
   type LocalPiLiveMessageSnapshot,
-  type LocalPiQueuedMessagePayload,
   type LocalPiRpcCommand,
   type LocalPiRpcEvent,
   type LocalPiRpcResponse,
@@ -77,162 +76,23 @@ function noDataSuccess(command: LocalPiRpcCommand['type']) {
   return successResponse({ type: 'response', command, success: true })
 }
 
-function sameQueueTexts(
-  actual: readonly string[],
-  expected: readonly LocalPiQueuedMessagePayload[],
-) {
-  return actual.length === expected.length &&
-    actual.every((text, index) => text === expected[index]?.message)
-}
-
-function enqueueQueueSnapshot(
-  runtime: AgentSessionRuntime,
-  steering: readonly LocalPiQueuedMessagePayload[],
-  followUp: readonly LocalPiQueuedMessagePayload[],
-  completions: Promise<void>[],
-) {
-  // The pinned SDK enqueues synchronously, but returns promises. Do not yield
-  // inside the rewrite: the agent can consume a message at the next microtask.
-  for (const item of steering) {
-    completions.push(runtime.session.steer(item.message, item.images))
-  }
-  for (const item of followUp) {
-    completions.push(runtime.session.followUp(item.message, item.images))
-  }
-}
-
-interface RuntimeQueueSnapshot {
-  steering: readonly LocalPiQueuedMessagePayload[]
-  followUp: readonly LocalPiQueuedMessagePayload[]
-}
-
-function runtimeQueueMatches(
-  runtime: AgentSessionRuntime,
-  snapshot: RuntimeQueueSnapshot,
-) {
-  return sameQueueTexts(runtime.session.getSteeringMessages(), snapshot.steering) &&
-    sameQueueTexts(runtime.session.getFollowUpMessages(), snapshot.followUp)
-}
-
-async function rewriteRuntimeQueue(
-  runtime: AgentSessionRuntime,
-  before: RuntimeQueueSnapshot,
-  after: RuntimeQueueSnapshot,
-  operation: string,
-) {
-  const { session } = runtime
-  if (!session.isStreaming) {
-    throw new Error(`${operation} requires a running conversation.`)
-  }
-  if (!runtimeQueueMatches(runtime, before)) {
-    throw new Error(`The Pi queue changed before ${operation.toLowerCase()}.`)
-  }
-
-  const completions: Promise<void>[] = []
-  let failure: unknown
-  try {
-    rewriteQueueSynchronously(runtime, before, after, operation, completions)
-  } catch (error) {
-    failure = error
-  }
-  // Once we yield, missing entries may already have executed. Never clear or
-  // replay the original snapshot after awaiting SDK completions.
-  const outcomes = await Promise.allSettled(completions)
-  if (failure) throw failure
-  const rejected = outcomes.find((outcome) => outcome.status === 'rejected')
-  if (rejected?.status === 'rejected') throw rejected.reason
-}
-
-function rewriteQueueSynchronously(
-  runtime: AgentSessionRuntime,
-  before: RuntimeQueueSnapshot,
-  after: RuntimeQueueSnapshot,
-  operation: string,
-  completions: Promise<void>[],
-) {
-  const { session } = runtime
-  const cleared = session.clearQueue()
-  if (
-    !sameQueueTexts(cleared.steering, before.steering) ||
-    !sameQueueTexts(cleared.followUp, before.followUp)
-  ) {
-    try {
-      enqueueQueueSnapshot(runtime, before.steering, before.followUp, completions)
-      if (!runtimeQueueMatches(runtime, before)) {
-        throw new Error('Pi did not preserve the restored queue order.')
-      }
-    } catch (rollbackError) {
-      const detail = rollbackError instanceof Error
-        ? rollbackError.message
-        : String(rollbackError)
-      throw new Error(`${operation} detected a changed queue and could not restore it: ${detail}`)
-    }
-    throw new Error(`The Pi queue changed while ${operation.toLowerCase()}.`)
-  }
-
-  try {
-    enqueueQueueSnapshot(runtime, after.steering, after.followUp, completions)
-    if (!runtimeQueueMatches(runtime, after)) {
-      throw new Error(`Pi did not preserve the queue order after ${operation.toLowerCase()}.`)
-    }
-  } catch (error) {
-    try {
-      session.clearQueue()
-      enqueueQueueSnapshot(runtime, before.steering, before.followUp, completions)
-      if (!runtimeQueueMatches(runtime, before)) {
-        throw new Error('Pi did not preserve the restored queue order.')
-      }
-    } catch (rollbackError) {
-      const detail = rollbackError instanceof Error
-        ? rollbackError.message
-        : String(rollbackError)
-      throw new Error(`${operation} failed and the queue could not be restored: ${detail}`)
-    }
-    throw error
-  }
-}
-
+/**
+ * Native queue entries can be consumed while asynchronous input hooks run.
+ * Clearing/replaying a text snapshot is therefore unsafe. Current clients use
+ * mutate_delivery, whose durable items retain their ownership and attachments.
+ */
 export async function promoteRuntimeFollowUp(
-  runtime: AgentSessionRuntime,
-  command: Extract<LocalPiRpcCommand, { type: 'promote_follow_up' }>,
+  _runtime: AgentSessionRuntime,
+  _command: Extract<LocalPiRpcCommand, { type: 'promote_follow_up' }>,
 ) {
-  if (command.followUpIndex >= command.followUp.length) {
-    throw new Error('The queued Follow-up no longer exists.')
-  }
-
-  const target = command.followUp[command.followUpIndex]!
-  await rewriteRuntimeQueue(
-    runtime,
-    { steering: command.steering, followUp: command.followUp },
-    {
-      steering: [...command.steering, target],
-      followUp: command.followUp.filter((_, index) => index !== command.followUpIndex),
-    },
-    'Follow-up promotion',
-  )
+  throw new Error('Native queue rewriting is unavailable. Use the managed delivery queue to promote a message.')
 }
 
 export async function removeRuntimeQueuedMessage(
-  runtime: AgentSessionRuntime,
-  command: Extract<LocalPiRpcCommand, { type: 'remove_queued_message' }>,
+  _runtime: AgentSessionRuntime,
+  _command: Extract<LocalPiRpcCommand, { type: 'remove_queued_message' }>,
 ) {
-  const source = command.kind === 'steering' ? command.steering : command.followUp
-  if (command.itemIndex >= source.length) {
-    throw new Error('The queued message no longer exists.')
-  }
-  await rewriteRuntimeQueue(
-    runtime,
-    { steering: command.steering, followUp: command.followUp },
-    {
-      steering: command.kind === 'steering'
-        ? command.steering.filter((_, index) => index !== command.itemIndex)
-        : command.steering,
-      followUp: command.kind === 'followUp'
-        ? command.followUp.filter((_, index) => index !== command.itemIndex)
-        : command.followUp,
-    },
-    'Queued-message removal',
-  )
+  throw new Error('Native queue rewriting is unavailable. Use the managed delivery queue to remove a message.')
 }
 
 function getState(runtime: AgentSessionRuntime): LocalPiRpcResponse {
@@ -398,8 +258,8 @@ function dispatchPrompt(
       images: command.images,
       streamingBehavior: command.streamingBehavior,
       source: 'rpc',
-      preflightResult: (accepted) => {
-        if (accepted) finish(noDataSuccess('prompt'))
+      preflightResult: (disposition) => {
+        if (disposition === 'handled' || disposition === 'queued' || disposition === 'started') finish(noDataSuccess('prompt'))
       },
     }).then(
       () => finish(noDataSuccess('prompt')),
@@ -426,8 +286,8 @@ function acceptExternalPrompt(
     }
     void runtime.session.prompt(message, {
       source: 'rpc',
-      preflightResult: (accepted) => {
-        if (accepted) accept()
+      preflightResult: (disposition) => {
+        if (disposition === 'handled' || disposition === 'queued' || disposition === 'started') accept()
         else rejectPreflight(new RuntimeExternalSubmitError(
           'Pi rejected the prompt before submission.',
         ))
@@ -477,9 +337,9 @@ export async function dispatchExternalSubmit(
     )
   }
   if (acceptedMode === 'steer') {
-    await runtime.session.steer(command.message)
+    await runtime.session.steer(command.message, undefined, { source: 'rpc' })
   } else {
-    await runtime.session.followUp(command.message)
+    await runtime.session.followUp(command.message, undefined, { source: 'rpc' })
   }
   return { acceptedMode }
 }
@@ -523,10 +383,10 @@ export async function dispatchRuntimeCommand(
       case 'prompt':
         return dispatchPrompt(runtime, command)
       case 'steer':
-        await session.steer(command.message, command.images)
+        await session.steer(command.message, command.images, { source: 'rpc' })
         return { replaced: false, response: noDataSuccess('steer') }
       case 'follow_up':
-        await session.followUp(command.message, command.images)
+        await session.followUp(command.message, command.images, { source: 'rpc' })
         return { replaced: false, response: noDataSuccess('follow_up') }
       case 'new_session': {
         const result = await runtime.newSession(

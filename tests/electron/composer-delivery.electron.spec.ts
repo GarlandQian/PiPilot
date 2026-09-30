@@ -5,8 +5,9 @@ import { _electron as electron, expect, test, type ElectronApplication, type Pag
 import { ipcChannels } from '../../src/shared/ipc/contracts'
 import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from '../../src/shared/settings'
 import { startPiSdkFixture } from './pi-sdk-fixture'
+import { PNG_FIXTURE_BASE64 } from '../helpers/image-fixture'
 
-const pixelPng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nWQAAAAASUVORK5CYII=', 'base64')
+const pixelPng = Buffer.from(PNG_FIXTURE_BASE64, 'base64')
 const imageSrc = `data:image/png;base64,${pixelPng.toString('base64')}`
 
 function deferred() {
@@ -385,6 +386,120 @@ test('recovers a saved message after consecutive IndexedDB status-write aborts w
     await page.evaluate(() => (
       window as typeof window & { __deliveryStorageFault?: { restore(): void } }
     ).__deliveryStorageFault?.restore()).catch(() => {})
+    await app.close()
+    await fixture.close()
+  }
+})
+
+test('blocks sending and retries until the saved draft cleanup commits, then preserves the next draft across reload', async ({}, testInfo) => {
+  test.setTimeout(60_000)
+  const { app, page, fixture } = await launchFixture(testInfo)
+  const title = 'Draft storage boundary'
+  const message = 'Do not deliver before the old draft is durably cleared'
+  const nextDraft = 'Keep this new draft after retry and reload'
+  try {
+    await seedAndName(page, title)
+    await composer(page).fill(message)
+    await page.locator('input[type="file"]').setInputFiles({ name: 'draft-boundary.png', mimeType: 'image/png', buffer: pixelPng })
+    await expect(page.getByRole('button', { name: 'Remove image draft-boundary.png', exact: true })).toBeAttached()
+    await expect(page.locator('[data-composer-root]')).toHaveAttribute('data-draft-storage', 'ready')
+
+    await page.evaluate(() => {
+      const originalPut = IDBObjectStore.prototype.put
+      const originalDelete = IDBObjectStore.prototype.delete
+      const state = {
+        aborted: 0,
+        restore() { IDBObjectStore.prototype.put = originalPut; IDBObjectStore.prototype.delete = originalDelete },
+      }
+      const abortDraftWrite = (store: IDBObjectStore) => {
+        if (store.transaction.db.name !== 'pipilot-composer-drafts') return
+        state.aborted += 1
+        // Abort the actual browser transaction. Outbox writes must still commit.
+        store.transaction.abort()
+      }
+      ;(window as typeof window & { __draftCleanupFault?: typeof state }).__draftCleanupFault = state
+      IDBObjectStore.prototype.put = function (value: unknown, key?: IDBValidKey) {
+        const request = key === undefined ? originalPut.call(this, value) : originalPut.call(this, value, key)
+        abortDraftWrite(this)
+        return request
+      }
+      IDBObjectStore.prototype.delete = function (key: IDBValidKey | IDBKeyRange) {
+        const request = originalDelete.call(this, key)
+        abortDraftWrite(this)
+        return request
+      }
+    })
+    const aborted = () => page.evaluate(() => (
+      window as typeof window & { __draftCleanupFault?: { aborted: number } }
+    ).__draftCleanupFault?.aborted ?? 0)
+    await page.locator('[data-composer-submit]').click()
+    const failed = page.locator('[data-outbox-status="failed"]')
+    await expect(failed).toContainText(message)
+    await expect(failed.getByRole('img', { name: 'Queued image 1', exact: true })).toHaveAttribute('src', imageSrc)
+    await expect(page.locator('[data-composer-root]')).toHaveAttribute('data-draft-storage', 'error')
+    await expect(composer(page)).toHaveText('')
+    await expect.poll(aborted).toBeGreaterThan(0)
+    expect(fixture.prompts).not.toContain(message)
+
+    // The two real databases now disagree intentionally: the outbox committed,
+    // while abort left the original draft on disk. Dispatch must remain blocked.
+    const persisted = await page.evaluate(async () => {
+      const read = async (name: string) => {
+        const database = await new Promise<IDBDatabase>((resolveDatabase, reject) => {
+          const request = indexedDB.open(name, 1)
+          request.onsuccess = () => resolveDatabase(request.result)
+          request.onerror = () => reject(request.error)
+        })
+        try {
+          return await new Promise<unknown[]>((resolveRecords, reject) => {
+            const transaction = database.transaction('conversations', 'readonly')
+            const request = transaction.objectStore('conversations').getAll()
+            transaction.oncomplete = () => resolveRecords(request.result)
+            transaction.onabort = () => reject(transaction.error)
+            transaction.onerror = () => reject(transaction.error)
+          })
+        } finally { database.close() }
+      }
+      return { outbox: await read('pipilot-composer-outbox'), drafts: await read('pipilot-composer-drafts') }
+    })
+    expect(persisted.outbox).toEqual([expect.objectContaining({ items: [expect.objectContaining({
+      status: 'failed', text: message, images: [{ type: 'image', data: pixelPng.toString('base64'), mimeType: 'image/png' }],
+    })] })])
+    expect(persisted.drafts).toEqual([expect.objectContaining({
+      document: expect.objectContaining({ content: [expect.objectContaining({ content: [{ type: 'text', text: message }] })] }),
+      attachments: [expect.objectContaining({ name: 'draft-boundary.png' })],
+    })])
+
+    const beforeRetry = await aborted()
+    await failed.getByRole('button', { name: 'Retry', exact: true }).click()
+    await expect.poll(aborted).toBeGreaterThan(beforeRetry)
+    await expect(failed).toContainText(message)
+    await expect(failed.getByRole('button', { name: 'Retry', exact: true })).toBeEnabled()
+    expect(fixture.prompts).not.toContain(message)
+
+    await page.evaluate(() => (
+      window as typeof window & { __draftCleanupFault?: { restore(): void } }
+    ).__draftCleanupFault?.restore())
+    await composer(page).fill(nextDraft)
+    await expect(page.locator('[data-composer-root]')).toHaveAttribute('data-draft-storage', 'ready')
+    await failed.getByRole('button', { name: 'Retry', exact: true }).click()
+    await expect.poll(() => fixture.prompts.filter((prompt) => prompt === message).length).toBe(1)
+    await expect(page.locator('[data-composer-outbox]')).toHaveCount(0)
+    await expect(composer(page)).toHaveText(nextDraft)
+    await expect.poll(async () => (await history(page)).filter((entry) => entry.role === 'user' &&
+      Array.isArray(entry.content) && entry.content.some((part) => part.type === 'text' && part.text === message) &&
+      entry.content.some((part) => part.type === 'image' && part.data === pixelPng.toString('base64'))).length).toBe(1)
+    await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0)
+    await page.reload()
+    await projectSession(page, title).click()
+    await expect(composer(page)).toHaveText(nextDraft)
+    await expect(page.locator('[data-composer-attachments]')).toHaveCount(0)
+    await expect(page.locator('[data-composer-outbox]')).toHaveCount(0)
+    expect(fixture.prompts.filter((prompt) => prompt === message)).toHaveLength(1)
+  } finally {
+    await page.evaluate(() => (
+      window as typeof window & { __draftCleanupFault?: { restore(): void } }
+    ).__draftCleanupFault?.restore()).catch(() => {})
     await app.close()
     await fixture.close()
   }

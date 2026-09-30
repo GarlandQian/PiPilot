@@ -4,6 +4,7 @@ import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescript
 import { useT } from '@/i18n'
 import type { ConfigurationDocumentExitGuard } from '@/renderer/configuration-document-exit'
 import type { ApplicationShutdownEvent } from '@/shared/application-shutdown'
+import { sessionComposerDrafts } from '@/renderer/composer/session-drafts'
 
 export function ConfigurationExitDialog({ guard }: { guard: ConfigurationDocumentExitGuard }) {
   const t = useT()
@@ -20,6 +21,7 @@ export function ConfigurationExitDialog({ guard }: { guard: ConfigurationDocumen
     active.current = null
     operation.current = false
     guard.unlock()
+    sessionComposerDrafts.setLocked(false)
     setRequest(null)
     setBusy(false)
     setFailed(false)
@@ -30,12 +32,26 @@ export function ConfigurationExitDialog({ guard }: { guard: ConfigurationDocumen
     if (active.current?.shutdownId !== event.shutdownId) return
     if (!ready) reset()
     try {
+      if (ready) {
+        try { await sessionComposerDrafts.flushAll() } catch {
+          if (active.current?.shutdownId !== event.shutdownId) return
+          guard.unlock()
+          sessionComposerDrafts.setLocked(false)
+          operation.current = false
+          setRequest(event)
+          setBusy(false)
+          setApproved(false)
+          setFailed(true)
+          return
+        }
+        if (active.current?.shutdownId !== event.shutdownId) return
+      }
       const result = await window.pipilot!.app.respondToShutdown(event.shutdownId, ready ? 'ready' : 'cancel')
       if (active.current?.shutdownId === event.shutdownId && (!ready || !result.accepted)) reset()
     } catch {
       if (active.current?.shutdownId === event.shutdownId) reset()
     }
-  }, [reset])
+  }, [guard, reset])
 
   React.useEffect(() => {
     const api = window.pipilot?.app
@@ -47,6 +63,7 @@ export function ConfigurationExitDialog({ guard }: { guard: ConfigurationDocumen
       }
       if (active.current) return
       active.current = event
+      sessionComposerDrafts.setLocked(true)
       void api.respondToShutdown(event.shutdownId, 'pending').then(({ accepted }) => {
         if (!accepted && active.current?.shutdownId === event.shutdownId) reset()
       }).catch(() => {
@@ -64,6 +81,7 @@ export function ConfigurationExitDialog({ guard }: { guard: ConfigurationDocumen
       const event = active.current
       if (event) void api.respondToShutdown(event.shutdownId, 'cancel').catch(() => undefined)
       guard.unlock()
+      sessionComposerDrafts.setLocked(false)
     }
   }, [guard, reset, respond])
 
@@ -81,6 +99,7 @@ export function ConfigurationExitDialog({ guard }: { guard: ConfigurationDocumen
     operation.current = true
     setBusy(true)
     setFailed(false)
+    sessionComposerDrafts.setLocked(true)
     let ready = false
     try {
       ready = save ? await guard.saveAndLock() : guard.discardAndLock()
@@ -94,6 +113,7 @@ export function ConfigurationExitDialog({ guard }: { guard: ConfigurationDocumen
       operation.current = false
       setBusy(false)
       setFailed(true)
+      sessionComposerDrafts.setLocked(false)
       return
     }
     setApproved(true)

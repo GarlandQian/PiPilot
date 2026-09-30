@@ -58,6 +58,17 @@ function envelope(event: LocalPiRpcEvent): LocalPiRpcEventMessage {
 }
 
 describe('official Pi transcript presentation', () => {
+  it('keeps SDK system prompt and tool declaration records out of visible turns', () => {
+    const state = createLocalPiProjectorState({ generation: 4, sessionId: 'session-a', messages: [
+      { role: 'system', content: 'Internal instructions', sections: { rules: 'Internal rules' },
+        toolsAdded: [{ name: 'fixture', description: 'Internal tool', parameters: {} }], timestamp: 0 },
+      { role: 'user', content: 'Hello', timestamp: 1 },
+      { role: 'system', content: '', toolsRemoved: [{ name: 'fixture' }], timestamp: 2 },
+    ] })
+    expect(projectLocalPiTurns(state)).toMatchObject([{ kind: 'user', text: 'Hello' }])
+    expect(projectLocalPiTurns(state)).toHaveLength(1)
+  })
+
   it('preserves user image attachments in the projected transcript', () => {
     const state = createLocalPiProjectorState({
       generation: 4,

@@ -21,6 +21,7 @@ export const SETTINGS_ROUTE_IDS = [
   'language',
   'models',
   'integrations',
+  'scheduled-tasks',
   'terminal',
   'about',
 ] as const

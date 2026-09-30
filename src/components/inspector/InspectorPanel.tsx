@@ -38,6 +38,7 @@ interface InspectorPanelProps {
   onCloseSubagent?: () => void
   commandCall?: ToolCall | null
   onCloseCommand?: () => void
+  sideChat?: React.ReactNode
 }
 
 function errorCode(error: unknown) {
@@ -242,11 +243,11 @@ export function InspectorPanel(props: InspectorPanelProps) {
   const workspace = selectedProject?.available ? selectedProject : null
   const visible = props.visible ?? true
   const emptyMessage = workspaceStore.activeScope.kind === 'project' ? t('inspector.project.unavailable') : t('inspector.project.required')
-  const onBack = activeTab === 'command' ? props.onCloseCommand : activeTab === 'subagent' ? props.onCloseSubagent : undefined
+  const onBack = activeTab === 'sidechat' ? () => onActiveTabChange('files') : activeTab === 'command' ? props.onCloseCommand : activeTab === 'subagent' ? props.onCloseSubagent : undefined
 
   return <aside aria-label={t('inspector.title')} style={{ width: props.width, maxWidth: '100%' }} className="relative flex h-full min-w-0 flex-col border-l border-border bg-surface">
     <div data-inspector-views className="flex min-h-0 flex-1 flex-col gap-0">
-      <InspectorToolbar activeView={activeTab} onViewChange={onActiveTabChange} onClose={props.onClose} onBack={onBack} workspaceName={selectedProject?.name} onExpand={props.onExpand} expanded={props.expanded} />
+      <InspectorToolbar activeView={activeTab} onViewChange={onActiveTabChange} onClose={props.onClose} onBack={onBack} workspaceName={activeTab === 'sidechat' ? t('inspector.tab.sidechat') : selectedProject?.name} onExpand={props.onExpand} expanded={props.expanded} hasSideChat={Boolean(props.sideChat)} />
       {workspace && adapter ? <WorkspaceInspectorTabs
         key={workspace.id} adapter={adapter} workspaceId={workspace.id} workspaceName={workspace.name}
         tab={activeTab} onTabChange={onActiveTabChange} visible={visible} sessionKey={props.sessionKey}
@@ -259,6 +260,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
       </>}
       {props.subagentCall && props.onCloseSubagent ? <InspectorView view="subagent" activeView={activeTab}><SubagentExecutionPanel call={props.subagentCall} onClose={props.onCloseSubagent} /></InspectorView> : null}
       {props.commandCall && props.onCloseCommand ? <InspectorView view="command" activeView={activeTab}><CommandExecutionPanel call={props.commandCall} onClose={props.onCloseCommand} /></InspectorView> : null}
+      {props.sideChat ? <InspectorView view="sidechat" activeView={activeTab}>{props.sideChat}</InspectorView> : null}
     </div>
   </aside>
 }

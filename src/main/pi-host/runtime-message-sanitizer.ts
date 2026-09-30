@@ -11,9 +11,10 @@ export const PIPILOT_RUNTIME_MESSAGE_SANITIZER_EXTENSION_PATH =
 
 type RuntimeMessage = ContextEvent['messages'][number]
 
+export const EMPTY_ASSISTANT_CONTENT_FALLBACK = '[Empty assistant message]'
 const EMPTY_CONTENT_FALLBACKS = {
   user: '[Empty user message]',
-  assistant: '[Empty assistant message]',
+  assistant: EMPTY_ASSISTANT_CONTENT_FALLBACK,
   toolResult: '[Tool returned no content.]',
 } as const
 

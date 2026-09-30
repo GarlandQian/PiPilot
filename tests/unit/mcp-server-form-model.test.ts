@@ -3,6 +3,7 @@ import {
   parseMcpConfigDocument,
   renameMcpServer,
   upsertMcpServer,
+  convertMcpConfigToNativeJson,
 } from '../../src/shared/mcp-config-parser'
 import {
   definitionFromFormValue,
@@ -24,6 +25,8 @@ const STDIO_VALUE: McpServerFormValue = {
   headers: [],
   enabled: true,
   description: '',
+  exposure: 'codemode',
+  timeout: '',
 }
 
 describe('MCP form <-> draft sync', () => {
@@ -65,7 +68,7 @@ describe('MCP form <-> draft sync', () => {
     const next = upsertMcpServer(draft, STDIO_VALUE.name, definitionFromFormValue(STDIO_VALUE))
 
     expect(next).toContain('// keep this comment')
-    const parsed = parseMcpConfigDocument(next)
+    const parsed = parseMcpConfigDocument(convertMcpConfigToNativeJson(next))
     expect(parsed.valid).toBe(true)
     expect(structuredDocumentSupported(parsed)).toBe(true)
 
@@ -108,7 +111,7 @@ describe('MCP form <-> draft sync', () => {
     expect(updated?.definition.description).toBe('remark')
   })
 
-  it('omits description and disabled unless the form sets them', () => {
+  it('writes native enabled and preserves native preferences', () => {
     const bare = definitionFromFormValue(STDIO_VALUE)
     expect(bare.description).toBeUndefined()
     expect(bare.disabled).toBeUndefined()
@@ -119,7 +122,9 @@ describe('MCP form <-> draft sync', () => {
       description: 'local only',
     })
     expect(described.description).toBe('local only')
-    expect(described.disabled).toBe(true)
+    expect(described.enabled).toBe(false)
+    expect(described.disabled).toBeUndefined()
+    expect(definitionFromFormValue({ ...STDIO_VALUE, exposure: 'direct', timeout: '30' })).toMatchObject({ exposure: 'direct', timeout: 30 })
   })
 
   it('renames a server in place, keeping position and comments', () => {
@@ -137,7 +142,7 @@ describe('MCP form <-> draft sync', () => {
     expect(renamed).not.toContain('"alpha"')
 
     const parsed = parseMcpConfigDocument(renamed)
-    expect(parsed.valid).toBe(true)
+    expect(parsed.valid).toBe(false)
     expect(parsed.servers.map((server) => server.name)).toEqual(['gamma', 'beta'])
   })
 

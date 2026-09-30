@@ -77,6 +77,97 @@ function emitSessionEvent(
 }
 
 describe('Pi Host RuntimeManager', () => {
+  it('awaits SDK input hooks when promoting a managed follow-up and preserves its image identity', async () => {
+    const sources: string[] = []
+    const { manager, sessionDir } = await createFixture([{ name: 'async-input-transform', factory: (pi) => {
+      pi.on('input', async (event) => {
+        sources.push(event.source)
+        await Promise.resolve()
+        return { action: 'transform', text: `transformed: ${event.text}`, images: event.images }
+      })
+    } }])
+    const created = await manager.create({ runtimeId: 'rt_async_promote', sessionDir })
+    await manager.bindRuntime(created.runtimeId, created.generation)
+    const entries = Reflect.get(manager, 'runtimes') as Map<string, { runtime: { session: AgentSession } }>
+    const session = entries.get(created.runtimeId)!.runtime.session
+    vi.spyOn(session, 'isStreaming', 'get').mockReturnValue(true)
+    const steer = vi.spyOn(session.agent, 'steer')
+    const images = [{ type: 'image' as const, data: 'cGl4ZWw=', mimeType: 'image/png' }]
+    const queued = await manager.command(created.runtimeId, {
+      type: 'submit_message', submissionId: 'async-image', message: 'original', images, mode: 'auto',
+    })
+    if (!queued.response.success || queued.response.command !== 'submit_message') throw new Error('Queue submission failed')
+    expect(sources).toEqual([])
+    const promoted = await manager.command(created.runtimeId, {
+      type: 'mutate_delivery', itemId: queued.response.data.receipt.itemId!,
+      revision: queued.response.data.delivery.revision, action: 'promote',
+    })
+    expect(promoted.response.success).toBe(true)
+    expect(sources).toEqual(['rpc'])
+    expect(session.getSteeringMessages()).toEqual(['transformed: original'])
+    const native = steer.mock.calls[0]![0]
+    expect(native).toMatchObject({ role: 'user', content: [
+      { type: 'text', text: 'transformed: original' }, ...images,
+    ] })
+    emitSessionEvent(manager, created.runtimeId, { type: 'message_start', message: native })
+    const delivered = await manager.command(created.runtimeId, { type: 'get_delivery_state' })
+    expect(delivered.response).toMatchObject({ success: true, data: { items: [], receipts: [{ status: 'consumed' }] } })
+  })
+
+  it('treats an SDK handled steering input as consumed without creating a phantom pending message', async () => {
+    const { manager, sessionDir } = await createFixture([{ name: 'async-input-handled', factory: (pi) => {
+      pi.on('input', async () => { await Promise.resolve(); return { action: 'handled' } })
+    } }])
+    const created = await manager.create({ runtimeId: 'rt_async_handled', sessionDir })
+    await manager.bindRuntime(created.runtimeId, created.generation)
+    const entries = Reflect.get(manager, 'runtimes') as Map<string, { runtime: { session: AgentSession } }>
+    const session = entries.get(created.runtimeId)!.runtime.session
+    vi.spyOn(session, 'isStreaming', 'get').mockReturnValue(true)
+    const steer = vi.spyOn(session.agent, 'steer')
+    const result = await manager.command(created.runtimeId, {
+      type: 'submit_message', submissionId: 'handled-input', message: 'Handled by extension', mode: 'steer',
+    })
+    expect(result.response).toMatchObject({ success: true, data: { receipt: { status: 'consumed' }, delivery: { items: [] } } })
+    expect(steer).not.toHaveBeenCalled()
+    expect(session.getSteeringMessages()).toEqual([])
+  })
+
+  it('prevents a real SDK input hook from queueing steering after Stop returned', async () => {
+    let release!: () => void
+    let entered = false
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const { manager, sessionDir } = await createFixture([{ name: 'async-input-blocked', factory: (pi) => {
+      pi.on('input', async () => { entered = true; await gate; return { action: 'continue' } })
+    } }])
+    const created = await manager.create({ runtimeId: 'rt_async_stop', sessionDir })
+    await manager.bindRuntime(created.runtimeId, created.generation)
+    const entries = Reflect.get(manager, 'runtimes') as Map<string, { runtime: { session: AgentSession } }>
+    const session = entries.get(created.runtimeId)!.runtime.session
+    const streaming = vi.spyOn(session, 'isStreaming', 'get').mockReturnValue(true)
+    const steer = vi.spyOn(session.agent, 'steer')
+    const images = [{ type: 'image' as const, data: 'cGl4ZWw=', mimeType: 'image/png' }]
+    const pending = manager.command(created.runtimeId, {
+      type: 'submit_message', submissionId: 'blocked-input', message: 'Keep this message', images, mode: 'steer',
+    })
+    try {
+      await vi.waitFor(() => expect(entered).toBe(true))
+      const stopped = await manager.command(created.runtimeId, { type: 'abort' })
+      expect(stopped.response.success).toBe(true)
+      streaming.mockReturnValue(false)
+      release()
+      expect((await pending).response.success).toBe(false)
+      expect(steer).not.toHaveBeenCalled()
+      expect(session.getSteeringMessages()).toEqual([])
+      const snapshot = await manager.command(created.runtimeId, { type: 'get_delivery_state' })
+      expect(snapshot.response).toMatchObject({ success: true, data: {
+        paused: true, items: [{ status: 'frozen', message: 'Keep this message', images }],
+      } })
+    } finally {
+      release()
+      await pending
+    }
+  })
+
   it('loads the hidden PiPilot sanitizer after caller extensions', async () => {
     const callerExtension: InlineExtension = {
       name: 'fixture-caller-extension',
@@ -277,8 +368,9 @@ describe('Pi Host RuntimeManager', () => {
       }))
 
       const snapshot = await manager.command(created.runtimeId, { type: 'get_messages' })
+      expect(snapshot.response.success, JSON.stringify(snapshot.response)).toBe(true)
       expect(snapshot.response).toMatchObject({ success: true, command: 'get_messages', data: {
-        messages: [expect.objectContaining({ role: 'user' })],
+        messages: [expect.objectContaining({ role: 'system' }), expect.objectContaining({ role: 'user' })],
         live: { sequence: events[events.length - 1]!.sequence, isStreaming: true, message: {
           role: 'assistant', content: [{ type: 'thinking', thinking: 'Considering' }],
         } },
@@ -313,7 +405,7 @@ describe('Pi Host RuntimeManager', () => {
       expect(session.messages[session.messages.length - 1]).toMatchObject({ role: 'assistant' })
       const finalizing = await manager.command(created.runtimeId, { type: 'get_messages' })
       expect(finalizing.response).toMatchObject({ success: true, data: {
-        messages: [expect.objectContaining({ role: 'user' })],
+        messages: [expect.objectContaining({ role: 'system' }), expect.objectContaining({ role: 'user' })],
         live: { isStreaming: true, message: { role: 'assistant', content: [
           { type: 'thinking', thinking: 'Considering the solution' },
           { type: 'text', text: 'Done' },
@@ -418,7 +510,7 @@ describe('Pi Host RuntimeManager', () => {
     const session = runtimes.get(created.runtimeId)!.runtime.session
     const streaming = vi.spyOn(session, 'isStreaming', 'get').mockReturnValue(true)
     const prompt = vi.spyOn(session, 'prompt').mockImplementation(async (_message, options) => {
-      options?.preflightResult?.(true)
+      options?.preflightResult?.('started')
       streaming.mockReturnValue(true)
     })
     for (const submissionId of ['one', 'two']) await manager.command(created.runtimeId, { type: 'submit_message', submissionId, message: submissionId, mode: 'auto' })
@@ -537,6 +629,7 @@ describe('Pi Host RuntimeManager', () => {
     } }))
     const reloaded = await manager.reloadRuntime(created.runtimeId, created.generation, undefined, true)
     const models = await manager.command(created.runtimeId, { type: 'get_available_models' }, reloaded.generation)
+    expect(models.response.success, JSON.stringify(models.response)).toBe(true)
     expect(models.response).toMatchObject({ success: true, data: { models: expect.arrayContaining([
       expect.objectContaining({ provider: 'fixture-config-apply', id: 'configured-model' }),
     ]) } })

@@ -216,17 +216,17 @@ export function createIpcResultSchema<TSchema extends z.ZodType>(valueSchema: TS
 }
 
 export interface IpcContract<TRequest, TResponse> {
-  readonly channel: IpcChannel
+  readonly channel: `pipilot:${string}`
   readonly requestSchema: z.ZodType<TRequest, any>
   readonly responseSchema: z.ZodType<TResponse, any>
   readonly resultSchema: z.ZodType<IpcResult<TResponse>, any>
 }
 
-function defineIpcContract<
+export function defineIpcContract<
   TRequestSchema extends z.ZodType,
   TResponseSchema extends z.ZodType,
 >(
-  channel: IpcChannel,
+  channel: `pipilot:${string}`,
   requestSchema: TRequestSchema,
   responseSchema: TResponseSchema,
 ): IpcContract<z.output<TRequestSchema>, z.output<TResponseSchema>> {

@@ -178,6 +178,16 @@ export class TerminalService {
     return [...this.records.values()].some((record) => record.status === 'running')
   }
 
+  async withInactiveScope<T>(scope: ConversationScope, operation: () => Promise<T>): Promise<T> {
+    const key = conversationScopeKey(scope)
+    if (this.disposingScopes.has(key) || this.pendingCreates.has(key) ||
+        [...this.records.values()].some((record) => record.scopeKey === key && record.status === 'running')) {
+      throw new TerminalServiceError('TERMINAL_STILL_RUNNING', 'Close the project terminals before archiving its working copy.')
+    }
+    this.disposingScopes.add(key)
+    try { return await operation() } finally { this.disposingScopes.delete(key) }
+  }
+
   async listShellProfiles(): Promise<TerminalShellProfile[]> {
     return (await this.resolveShellProfiles()).map(({ launch: _launch, ...profile }) =>
       terminalShellProfileSchema.parse(profile))

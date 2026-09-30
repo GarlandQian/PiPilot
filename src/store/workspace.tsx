@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { sessionComposerDrafts } from '@/renderer/composer/session-drafts'
 import { CatalogInvalidationQueue } from '@/renderer/catalog-invalidation-queue'
 import {
   createDefaultWorkspaceAdapter,
@@ -843,6 +844,12 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     if (!sameConversationScope(scope, result.scope)) {
       throw new Error('The deleted session belonged to another conversation scope.')
     }
+
+    // Remove only the deleted conversation's input. Never clear the visible
+    // conversation just because another row was removed in the sidebar.
+    // A local storage failure must not undo an authoritative deletion in the
+    // sidebar. The tombstone remains dirty and shutdown retries its removal.
+    await sessionComposerDrafts.remove(`${conversationScopeKey(result.scope)}:${result.sessionId}`).catch(() => undefined)
 
     const catalogKey = conversationScopeKey(result.scope)
     updateState((previous) => {

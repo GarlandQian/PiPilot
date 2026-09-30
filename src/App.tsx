@@ -27,6 +27,10 @@ import { useSessionOpening } from '@/components/frame/useSessionOpening'
 import { useStartWriting } from '@/components/frame/useStartWriting'
 import { useTaskNotificationNavigation } from '@/components/frame/useTaskNotificationNavigation'
 import { ConversationNotices } from '@/components/chat/ConversationNotices'
+import { ConversationSearchDialog } from '@/components/chat/ConversationSearchDialog'
+import { PrecisionReferencesProvider } from '@/components/precision/PrecisionReferences'
+import type { OfficialPiSessionSummary } from '@/shared/conversation-scope'
+import type { ConversationSearchMatch } from '@/shared/conversation-search'
 import { CommandPalette } from '@/components/frame/CommandPalette'
 import { SessionsPanel } from '@/components/frame/SessionsPanel'
 import type { SidebarConversationItem } from '@/components/layout/SessionList'
@@ -50,12 +54,11 @@ import {
   type InspectorTab,
 } from '@/components/inspector/InspectorPanel'
 import { InspectorPortalHost } from '@/components/inspector/InspectorPortalHost'
+import { SideConversationsPanel, type SideQuestionRequest } from '@/components/inspector/SideConversationsPanel'
+import type { PrecisionReference } from '@/renderer/composer/precision-reference'
 import { TerminalDrawer } from '@/components/inspector/TerminalDrawer'
 import { PanelResizeHandle } from '@/components/layout/PanelResizeHandle'
-import {
-  SettingsLayout,
-  type IntegrationsTabId,
-} from '@/components/settings/SettingsLayout'
+import type { IntegrationsTabId } from '@/components/settings/SettingsLayout'
 import {
   type CommandContext,
   type SessionCommandEntry,
@@ -105,6 +108,8 @@ import {
   sameConversationScope,
 } from '@/store/workspace-state'
 
+const SettingsLayout = React.lazy(() => import('@/components/settings/SettingsLayout').then((module) => ({ default: module.SettingsLayout })))
+
 const EMPTY_COMPOSER_QUEUE: ComposerQueueState = Object.freeze({
   pendingCount: 0,
   detailsKnown: false,
@@ -140,6 +145,10 @@ export default function App() {
     openPalette, toggleContextPanel, toggleInspector,
   } = useWorkbenchNavigation()
   const [integrationsTab, setIntegrationsTab] = React.useState<IntegrationsTabId>('overview')
+  const [searchScope, setSearchScope] = React.useState<'current' | 'all'>('current')
+  const [searchOpen, setSearchOpen] = React.useState(false)
+  const [sideQuestion, setSideQuestion] = React.useState<SideQuestionRequest | null>(null)
+  const [pendingSearchJump, setPendingSearchJump] = React.useState<{ session: OfficialPiSessionSummary; entryId: string; query: string; match: ConversationSearchMatch; selectionRevision: number } | null>(null)
   const [renamingToken, setRenamingToken] = React.useState<string | null>(null)
   const {
     openingSession, switching, selectionRevision, abandonSessionOpening,
@@ -304,6 +313,47 @@ export default function App() {
       sequence: ++conversationJumpSequence.current,
     })
   }, [conversationSessionKey])
+  const navigateSearch = React.useCallback((entryId: string, query: string, match: ConversationSearchMatch) => {
+    if (!conversationSessionKey) return
+    setConversationJump({ sessionKey: conversationSessionKey, entryId, query, match, sequence: ++conversationJumpSequence.current })
+  }, [conversationSessionKey])
+  const askSideQuestion = React.useCallback((reference: PrecisionReference) => {
+    if (!conversationReady || !workspace.activeSessionId || reference.ownerKey !== `${conversationScopeKey(workspace.activeScope)}:${workspace.activeSessionId}`) return
+    setSideQuestion({ id: crypto.randomUUID(), scope: workspace.activeScope, parentSessionId: workspace.activeSessionId, reference })
+    setInspectorTab('sidechat')
+    setResourceExpanded(false)
+    if (compactConversation) setCompactInspectorOpen(true)
+    else setPanelLayout((current) => ({ ...current, inspectorOpen: true }))
+  }, [conversationReady, workspace.activeSessionId, workspace.activeScope, compactConversation, setCompactInspectorOpen, setPanelLayout])
+  const openSearchResult = React.useCallback((session: OfficialPiSessionSummary, entryId: string, query: string, match: ConversationSearchMatch) => {
+    setRail('sessions')
+    setResourceExpanded(false)
+    if (conversationReady && sameConversationScope(session.scope, workspace.activeScope) && activeRuntimeSelectionToken === session.selectionToken) {
+      setPendingSearchJump(null)
+      navigateSearch(entryId, query, match)
+      return
+    }
+    setPendingSearchJump({ session, entryId, query, match, selectionRevision: selectionRevision + 1 })
+    requestSessionOpening({ summary: session })
+  }, [activeRuntimeSelectionToken, conversationReady, navigateSearch, requestSessionOpening, setRail, workspace.activeScope, selectionRevision])
+  React.useEffect(() => {
+    if (pendingSearchJump && selectionRevision !== pendingSearchJump.selectionRevision) { setPendingSearchJump(null); return }
+    if (!pendingSearchJump || !conversationReady || !conversationSessionKey) return
+    if (activeRuntimeSelectionToken !== pendingSearchJump.session.selectionToken || !sameConversationScope(workspace.activeScope, pendingSearchJump.session.scope)) return
+    navigateSearch(pendingSearchJump.entryId, pendingSearchJump.query, pendingSearchJump.match)
+    setPendingSearchJump(null)
+  }, [pendingSearchJump, conversationReady, conversationSessionKey, activeRuntimeSelectionToken, workspace.activeScope, navigateSearch, selectionRevision])
+  React.useEffect(() => {
+    const keydown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || !conversationWorkspace || !(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'f') return
+      if (event.target instanceof Element && event.target.closest('[role="dialog"],[role="alertdialog"],.xterm')) return
+      event.preventDefault()
+      setSearchScope(event.shiftKey ? 'all' : 'current')
+      setSearchOpen(true)
+    }
+    window.addEventListener('keydown', keydown)
+    return () => window.removeEventListener('keydown', keydown)
+  }, [conversationWorkspace])
   const closeSubagentExecution = React.useCallback(() => {
     if (!subagentSelection) return
     setSubagentSelection(null)
@@ -402,9 +452,11 @@ export default function App() {
   ), [openingSession, pi.runtime?.generation])
 
   const openConversation = React.useCallback((item: SidebarConversationItem) => {
+    setPendingSearchJump(null)
     requestSessionOpening(item)
   }, [requestSessionOpening])
   const openConversationFromPalette = React.useCallback((item: SidebarConversationItem) => {
+    setPendingSearchJump(null)
     setRail('sessions')
     requestSessionOpening(item)
   }, [requestSessionOpening, setRail])
@@ -543,6 +595,8 @@ export default function App() {
       onCloseSubagent={closeSubagentExecution}
       commandCall={selectedCommandCall}
       onCloseCommand={closeCommandExecution}
+      sideChat={sideQuestion ? <SideConversationsPanel request={sideQuestion} ownerKey={`${conversationScopeKey(workspace.activeScope)}:${workspace.activeSessionId ?? 'unselected'}`} ready={conversationReady}
+        visible={conversationWorkspace && inspectorTab === 'sidechat' && (compactConversation ? compactInspectorVisible : panelLayout.inspectorOpen)} /> : undefined}
     />
   )
   const compactSettingsDetailVisible = frameLayoutMode === 'settings-compact' && compactSettingsDetailOpen
@@ -550,6 +604,10 @@ export default function App() {
 
   return (
     <TooltipProvider delayDuration={350}>
+      <PrecisionReferencesProvider ownerKey={`${conversationScopeKey(workspace.activeScope)}:${workspace.activeSessionId ?? 'unselected'}`}
+        askSideQuestion={conversationReady ? askSideQuestion : undefined}
+        workspaceId={workspace.activeScope.kind === 'project' ? workspace.activeScope.workspaceId : null}>
+      <ConversationSearchDialog open={searchOpen} onOpenChange={setSearchOpen} initialScope={searchScope} onNavigate={navigateSearch} onOpenResult={openSearchResult} />
       <div className="flex h-screen w-full min-w-0 flex-col overflow-hidden bg-background text-foreground">
         {nativeOpenFailed ? <div role="alert" className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2 text-caption text-destructive">
           <span className="flex-1">{t('notifications.openFailed')}</span>
@@ -576,6 +634,7 @@ export default function App() {
               className="min-h-0 w-full flex-1 border-r-0"
             >
               <SessionsPanel
+                onSearchAll={() => { setSearchScope('all'); setSearchOpen(true) }}
                 hidden={!conversationWorkspace}
                 conversationReady={conversationReady}
                 renamingSelectionToken={renamingToken}
@@ -660,6 +719,7 @@ export default function App() {
             className="relative flex min-w-0 flex-1 flex-col overflow-x-hidden bg-surface"
           >
             <ConversationHeader
+              onSearch={() => { setSearchScope('current'); setSearchOpen(true) }}
               title={title}
               ownerKey={conversationSessionKey}
               projectName={workspace.activeScope.kind === 'project' ? workspace.workspace?.name : undefined}
@@ -789,6 +849,7 @@ export default function App() {
           </main>
 
           {frameNav.settingsVisited && (
+            <React.Suspense fallback={<div hidden={conversationWorkspace} className="flex min-w-0 flex-1 items-center justify-center text-muted-foreground" role="status"><TbLoader2 className="mr-2 size-4 animate-spin" aria-hidden />{t('settings.loadingPage')}</div>}>
             <SettingsLayout
               hidden={conversationWorkspace}
               operationOwnerKey={operationOwnerKey}
@@ -799,6 +860,7 @@ export default function App() {
               detailVisible={frameLayoutMode !== 'settings-compact' || compactSettingsDetailOpen}
               onBack={frameLayoutMode === 'settings-compact' ? closeCompactSettingsDetail : undefined}
             />
+            </React.Suspense>
           )}
 
           {conversationWorkspace && panelLayout.inspectorOpen && !compactConversation && (
@@ -1061,6 +1123,7 @@ export default function App() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      </PrecisionReferencesProvider>
     </TooltipProvider>
   )
 }

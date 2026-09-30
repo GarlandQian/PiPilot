@@ -36,6 +36,7 @@ import type { WorkspaceSummary } from '@/shared/schemas/workspace'
 import type { AgentStatus } from '@/types/chat'
 import type { SessionActivityState } from '@/store/workspace-state'
 import { sidebarConversationTitle } from './session-navigation'
+import { ProjectWorkflowsDialog } from '@/components/projects/ProjectWorkflowsDialog'
 
 export interface SidebarConversationItem {
   summary: OfficialPiSessionSummary
@@ -534,6 +535,7 @@ export function ProjectNavigationGroup({
   onArchive,
 }: ProjectNavigationGroupProps) {
   const t = useT()
+  const [workflowProject, setWorkflowProject] = React.useState<WorkspaceSummary | null>(null)
   const conversationActions: ConversationListActions = {
     renamingSelectionToken,
     onSelect,
@@ -547,6 +549,8 @@ export function ProjectNavigationGroup({
 
   return (
     <section aria-labelledby="sidebar-projects-heading">
+      {workflowProject && <ProjectWorkflowsDialog workspaceId={workflowProject.id} projectName={workflowProject.name}
+        open onOpenChange={(open) => { if (!open) setWorkflowProject(null) }} onOpenProject={onStartProjectTask} />}
       <div className="mb-1 flex min-h-8 items-center justify-between px-2">
         <h2 id="sidebar-projects-heading" className="text-micro font-medium tracking-wide text-muted-foreground">
           {t('sidebar.projects')}
@@ -679,6 +683,9 @@ export function ProjectNavigationGroup({
                         {t(project.pinned
                           ? 'sidebar.workspace.unpinShort'
                           : 'sidebar.workspace.pinShort')}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => setWorkflowProject(project)}>
+                        <TbFolderPlus aria-hidden />{t('worktree.tools')}
                       </DropdownMenuItem>
                       <DropdownMenuSeparator />
                       <DropdownMenuItem

@@ -28,6 +28,7 @@ import { RuntimeMaintenanceBusyError, RuntimeMaintenanceGate, type RuntimeMainte
 
 // Cold packaged Intel startup loads the SDK extension graph under Rosetta.
 const PROJECT_RUNTIME_CREATE_TIMEOUT_MS = 120_000
+const DEFAULT_IDLE_HOST_TIMEOUT_MS = 60_000
 
 export type ProjectHostScopeKind = 'project' | 'projectless'
 
@@ -134,6 +135,16 @@ export interface ProjectHostPoolOptions {
   canonicalizeCwd?: (cwd: string) => string
   createRuntimeId?: () => string
   onHostDiagnostic?: (code: string) => void
+  /** Grace period before an empty Host exits. Running Runtimes are never retired. */
+  idleHostTimeoutMs?: number
+}
+
+export interface ProjectRuntimeIdentity {
+  hostKey: string
+  hostEpoch: number
+  hostState: ProjectHostState
+  scope: ProjectHostScope
+  runtime: ProjectRuntimeSummary
 }
 
 interface RuntimeEntry {
@@ -148,6 +159,7 @@ interface HostEntry {
   cwd: string
   controller: ProjectHostControllerLike
   state: ProjectHostState
+  hostEpoch: number
   error: PiHostError | null
   runtimes: Map<string, RuntimeEntry>
   ready: Promise<void>
@@ -279,6 +291,10 @@ export class ProjectHostPool {
   private readonly canonicalizeCwd: (cwd: string) => string
   private readonly createRuntimeId: () => string
   private readonly onHostDiagnostic: (code: string) => void
+  private readonly idleHostTimeoutMs: number
+  private readonly idleHostTimers = new Map<HostEntry, ReturnType<typeof setTimeout>>()
+  private readonly retiringHosts = new Map<string, Promise<void>>()
+  private readonly stoppingHosts = new Map<HostEntry, Promise<void>>()
   private readonly hosts = new Map<string, HostEntry>()
   private readonly hostRecoveries = new Map<string, Promise<HostEntry>>()
   private readonly runtimeOwners = new Map<string, HostEntry>()
@@ -306,6 +322,24 @@ export class ProjectHostPool {
     this.createRuntimeId = options.createRuntimeId ?? (() => `rt_${crypto.randomUUID()}`)
     this.createHost = options.createHost ?? ((scope) => new PiHostController({ cwd: scope.cwd }))
     this.onHostDiagnostic = options.onHostDiagnostic ?? (() => undefined)
+    this.idleHostTimeoutMs = options.idleHostTimeoutMs ?? DEFAULT_IDLE_HOST_TIMEOUT_MS
+    if (!Number.isFinite(this.idleHostTimeoutMs) || this.idleHostTimeoutMs < 0) {
+      throw new TypeError('idleHostTimeoutMs must be a non-negative finite number.')
+    }
+  }
+
+  /** Internal identity checks must not materialize every Host and Runtime. */
+  getRuntimeIdentity(runtimeId: string): ProjectRuntimeIdentity | null {
+    const host = this.runtimeOwners.get(runtimeId)
+    const runtime = host?.runtimes.get(runtimeId)
+    if (!host || !runtime) return null
+    return {
+      hostKey: host.hostKey,
+      hostEpoch: host.hostEpoch,
+      hostState: host.state,
+      scope: { ...host.scope },
+      runtime: runtimeSummary(runtime),
+    }
   }
 
   getSnapshot(): ProjectHostPoolSnapshot {
@@ -425,6 +459,9 @@ export class ProjectHostPool {
   async createRuntime(scope: ProjectHostScope, target: ProjectRuntimeTarget): Promise<ProjectRuntimeDescriptor> {
     this.assertActive()
     const normalizedScope = this.normalizeScope(scope)
+    const retiring = this.retiringHosts.get(scopeKey(normalizedScope))
+    if (retiring) await retiring
+    this.assertActive()
     return this.maintenanceGate.operation(normalizedScope.cwd, () =>
       this.createAdmittedRuntime(normalizedScope, target))
   }
@@ -487,6 +524,7 @@ export class ProjectHostPool {
         leaseKey: actualLease,
       }
       entry.runtimes.set(runtimeId, runtime)
+      this.cancelEmptyHostRetirement(entry)
       this.runtimeOwners.set(runtimeId, entry)
       if (actualLease !== null) this.sessionLeases.set(actualLease, runtimeId)
       this.publish()
@@ -501,6 +539,7 @@ export class ProjectHostPool {
       ) {
         this.pendingSessionLeases.delete(requestedLease)
       }
+      this.scheduleEmptyHostRetirement(entry)
     }
   }
 
@@ -770,6 +809,9 @@ export class ProjectHostPool {
   ): Promise<{ sessionId: string; name: string }> {
     this.assertActive()
     const normalizedScope = this.normalizeScope(scope)
+    const retiring = this.retiringHosts.get(scopeKey(normalizedScope))
+    if (retiring) await retiring
+    this.assertActive()
     return this.maintenanceGate.operation(normalizedScope.cwd, () =>
       this.renameAdmittedSession(normalizedScope, sessionFile, name))
   }
@@ -850,7 +892,7 @@ export class ProjectHostPool {
     }
   }
 
-  async disposeRuntime(runtimeId: string, expectedGeneration?: number): Promise<ProjectRuntimeDescriptor | null> {
+  async disposeRuntime(runtimeId: string, expectedGeneration?: number, maintenancePermit?: RuntimeMaintenancePermit): Promise<ProjectRuntimeDescriptor | null> {
     this.assertActive()
     const entry = this.runtimeOwners.get(runtimeId)
     if (!entry) {
@@ -859,7 +901,7 @@ export class ProjectHostPool {
     }
     const runtime = entry.runtimes.get(runtimeId)
     if (!runtime) return null
-    this.maintenanceGate.assertAdmission(entry.cwd)
+    this.maintenanceGate.assertAdmission(entry.cwd, maintenancePermit)
     if (expectedGeneration !== undefined && runtime.descriptor.generation !== expectedGeneration) {
       throw new ProjectHostPoolError(
         'RUNTIME_STALE_GENERATION',
@@ -880,7 +922,7 @@ export class ProjectHostPool {
       }, {
         runtimeId,
         runtimeGeneration: runtime.descriptor.generation,
-      })
+      }, maintenancePermit)
       const parsed = runtimeDisposeResultSchema.safeParse(result)
       if (!parsed.success) {
         throw new ProjectHostPoolError(
@@ -906,13 +948,15 @@ export class ProjectHostPool {
     }
   }
 
-  async stop(scope: ProjectHostScope): Promise<ProjectHostSummary | null> {
+  async stop(scope: ProjectHostScope, maintenancePermit?: RuntimeMaintenancePermit): Promise<ProjectHostSummary | null> {
     this.assertActive()
     const normalizedScope = this.normalizeScope(scope)
+    const retiring = this.retiringHosts.get(scopeKey(normalizedScope))
+    if (retiring) await retiring
     const entry = this.hosts.get(scopeKey(normalizedScope))
     if (!entry) return null
     if (entry.state === 'stopped') return this.hostSummary(entry)
-    await this.maintenanceGate.operation(normalizedScope.cwd, () => this.stopEntry(entry))
+    await this.maintenanceGate.operation(normalizedScope.cwd, () => this.stopEntry(entry), maintenancePermit)
     return this.hostSummary(entry)
   }
 
@@ -920,6 +964,7 @@ export class ProjectHostPool {
     this.assertActive()
     this.stopping = true
     this.publish()
+    await Promise.allSettled([...this.retiringHosts.values()])
     const entries = [...this.hosts.values()]
     await Promise.allSettled(entries.map((entry) => this.stopEntry(entry)))
     this.stopping = false
@@ -930,6 +975,9 @@ export class ProjectHostPool {
   async restart(scope: ProjectHostScope): Promise<ProjectHostSummary> {
     this.assertActive()
     const normalizedScope = this.normalizeScope(scope)
+    const retiring = this.retiringHosts.get(scopeKey(normalizedScope))
+    if (retiring) await retiring
+    this.assertActive()
     return this.maintenanceGate.operation(normalizedScope.cwd, () =>
       this.restartAdmittedHost(normalizedScope))
   }
@@ -938,6 +986,7 @@ export class ProjectHostPool {
     const key = scopeKey(normalizedScope)
     const current = this.hosts.get(key)
     if (current) await this.stopEntry(current)
+    this.assertActive()
     const entry = this.getOrCreateHost(normalizedScope)
     await entry.ready
     return this.hostSummary(entry)
@@ -947,6 +996,7 @@ export class ProjectHostPool {
     if (this.disposed) return
     this.disposed = true
     this.stopping = true
+    await Promise.allSettled([...this.retiringHosts.values()])
     const entries = [...this.hosts.values()]
     await Promise.allSettled(entries.map((entry) => this.stopEntry(entry)))
     for (const entry of entries) {
@@ -988,6 +1038,7 @@ export class ProjectHostPool {
     }
 
     const entry = this.getOrCreateHost(scope)
+    this.cancelEmptyHostRetirement(entry)
     await entry.ready
     if (this.hosts.get(key) !== entry) {
       throw new ProjectHostPoolError(
@@ -1169,6 +1220,7 @@ export class ProjectHostPool {
       cwd: scope.cwd,
       controller,
       state: 'starting',
+      hostEpoch: 0,
       error: null,
       runtimes: new Map(),
       ready,
@@ -1243,6 +1295,7 @@ export class ProjectHostPool {
   }
 
   private handleControllerSnapshot(entry: HostEntry, snapshot: PiHostControllerSnapshot): void {
+    entry.hostEpoch = snapshot.hostEpoch
     if (this.hosts.get(entry.hostKey) !== entry) return
     const previousState = entry.state
     const nextState = hostStateFromController(snapshot)
@@ -1257,6 +1310,7 @@ export class ProjectHostPool {
       this.dropRuntimeOwnership(entry)
     }
     this.publish()
+    this.scheduleEmptyHostRetirement(entry)
   }
 
   private markRuntimesCrashed(entry: HostEntry): void {
@@ -1394,6 +1448,40 @@ export class ProjectHostPool {
     if (runtime.leaseKey !== null && this.sessionLeases.get(runtime.leaseKey) === runtimeId) this.sessionLeases.delete(runtime.leaseKey)
     entry.runtimes.delete(runtimeId)
     this.runtimeOwners.delete(runtimeId)
+    this.scheduleEmptyHostRetirement(entry)
+  }
+
+  private cancelEmptyHostRetirement(entry: HostEntry): void {
+    const timer = this.idleHostTimers.get(entry)
+    if (timer) clearTimeout(timer)
+    this.idleHostTimers.delete(entry)
+  }
+
+  private scheduleEmptyHostRetirement(entry: HostEntry): void {
+    if (this.disposed || this.stopping || entry.state !== 'ready' || entry.runtimes.size > 0 ||
+        this.idleHostTimers.has(entry) || this.retiringHosts.has(entry.hostKey)) return
+    const timer = setTimeout(() => {
+      this.idleHostTimers.delete(entry)
+      if (this.disposed || this.stopping || this.hosts.get(entry.hostKey) !== entry ||
+          entry.state !== 'ready' || entry.runtimes.size > 0) return
+      // Register the retirement before its first Host notification, so a
+      // reentrant acquisition waits for replacement instead of entering it.
+      const retirement = Promise.resolve().then(() => this.maintenanceGate.maintenance(entry.cwd, async () => {
+        if (entry.runtimes.size > 0 || [...this.pendingRuntimeOwners.values()].includes(entry)) return
+        await this.stopEntry(entry)
+        if (this.hosts.get(entry.hostKey) === entry) {
+          this.hosts.delete(entry.hostKey)
+          this.publish()
+        }
+      })).then(() => undefined, () => undefined)
+      this.retiringHosts.set(entry.hostKey, retirement)
+      void retirement.finally(() => {
+        if (this.retiringHosts.get(entry.hostKey) === retirement) this.retiringHosts.delete(entry.hostKey)
+        if (this.hosts.get(entry.hostKey) === entry) this.scheduleEmptyHostRetirement(entry)
+      })
+    }, this.idleHostTimeoutMs)
+    timer.unref()
+    this.idleHostTimers.set(entry, timer)
   }
 
   private allocateRuntimeId(): string {
@@ -1410,7 +1498,18 @@ export class ProjectHostPool {
     throw new ProjectHostPoolError('RUNTIME_ALREADY_EXISTS', 'Could not allocate a unique Runtime identity.')
   }
 
-  private async stopEntry(entry: HostEntry): Promise<void> {
+  private stopEntry(entry: HostEntry): Promise<void> {
+    const pending = this.stoppingHosts.get(entry)
+    if (pending) return pending
+    const stopping = Promise.resolve().then(() => this.stopHostEntry(entry))
+    this.stoppingHosts.set(entry, stopping)
+    const finish = () => { if (this.stoppingHosts.get(entry) === stopping) this.stoppingHosts.delete(entry) }
+    void stopping.then(finish, finish)
+    return stopping
+  }
+
+  private async stopHostEntry(entry: HostEntry): Promise<void> {
+    this.cancelEmptyHostRetirement(entry)
     if (entry.state === 'stopped') return
     entry.state = 'stopping'
     for (const runtime of entry.runtimes.values()) runtime.state = 'stopping'
@@ -1472,5 +1571,6 @@ export class ProjectHostPool {
 
   private assertActive(): void {
     if (this.disposed) throw new ProjectHostPoolError('POOL_DISPOSED', 'Project Host pool is disposed.')
+    if (this.stopping) throw new ProjectHostPoolError('HOST_STOPPED', 'Project Host pool is stopping.')
   }
 }

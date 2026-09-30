@@ -1,19 +1,19 @@
 import type * as React from 'react'
-import { TbArrowLeft, TbArrowsMaximize, TbArrowsMinimize, TbFiles, TbGitCompare, TbX } from 'react-icons/tb'
+import { TbArrowLeft, TbArrowsMaximize, TbArrowsMinimize, TbFiles, TbGitCompare, TbX, TbMessages } from 'react-icons/tb'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useT } from '@/i18n'
 
 export const INSPECTOR_TABS = ['files', 'diff'] as const
-export type InspectorTab = (typeof INSPECTOR_TABS)[number] | 'subagent' | 'command'
+export type InspectorTab = (typeof INSPECTOR_TABS)[number] | 'subagent' | 'command' | 'sidechat'
 
 export function isInspectorTab(value: string): value is InspectorTab {
-  return value === 'subagent' || value === 'command' || (INSPECTOR_TABS as readonly string[]).includes(value)
+  return value === 'sidechat' || value === 'subagent' || value === 'command' || (INSPECTOR_TABS as readonly string[]).includes(value)
 }
 
 const viewIcons = { files: TbFiles, diff: TbGitCompare }
 
-export function InspectorToolbar({ activeView, onViewChange, onClose, onBack, workspaceName, onExpand, expanded }: {
+export function InspectorToolbar({ activeView, onViewChange, onClose, onBack, workspaceName, onExpand, expanded, hasSideChat }: {
   activeView: InspectorTab
   onViewChange: (view: InspectorTab) => void
   onClose?: () => void
@@ -22,16 +22,18 @@ export function InspectorToolbar({ activeView, onViewChange, onClose, onBack, wo
   workspaceName?: string
   onExpand?: () => void
   expanded?: boolean
+  hasSideChat?: boolean
 }) {
   const t = useT()
-  const detail = activeView === 'command' || activeView === 'subagent'
+  const detail = activeView === 'command' || activeView === 'subagent' || activeView === 'sidechat'
   return <header className="shrink-0 border-b border-border/60 bg-surface px-3 pt-3">
     <div className="flex min-w-0 items-center gap-1 pb-2">
       {detail && onBack ? <Button variant="ghost" size="icon-xs" onClick={onBack} aria-label={t('inspector.resource.back')} title={t('inspector.resource.back')}><TbArrowLeft aria-hidden /></Button> : null}
       <div className="min-w-0 flex-1 px-1">
         <p className="truncate text-caption font-medium" title={workspaceName}>{workspaceName || t('inspector.resource.workspace')}</p>
-        {detail ? <p className="text-micro text-muted-foreground">{t(`inspector.tab.${activeView}`)}</p> : null}
+        {detail && activeView !== 'sidechat' ? <p className="text-micro text-muted-foreground">{t(`inspector.tab.${activeView}`)}</p> : null}
       </div>
+      {hasSideChat && activeView !== 'sidechat' ? <Button variant="ghost" size="icon-xs" onClick={() => onViewChange('sidechat')} aria-label={t('inspector.tab.sidechat')} title={t('inspector.tab.sidechat')}><TbMessages aria-hidden /></Button> : null}
       {onExpand ? <Button variant="ghost" size="icon-xs" onClick={onExpand} aria-label={t(expanded ? 'inspector.resource.restore' : 'inspector.resource.expand')} title={t(expanded ? 'inspector.resource.restore' : 'inspector.resource.expand')}>
         {expanded ? <TbArrowsMinimize aria-hidden /> : <TbArrowsMaximize aria-hidden />}
       </Button> : null}

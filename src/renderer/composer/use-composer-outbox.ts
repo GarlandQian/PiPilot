@@ -3,6 +3,7 @@ import { useT } from '@/i18n'
 import type { LocalPiImageContent } from '@/shared/local-pi'
 import { PiSubmissionError, type PiSubmissionStatus } from '@/renderer/pi-rpc/delivery-state'
 import { durableComposerOutbox as storage, type DurableOutboxItem } from './durable-outbox'
+import { sessionComposerDrafts } from './session-drafts'
 
 // Visit changes must not dispose a submission whose Pi acceptance is in flight.
 const activeDeliveries = new Set<string>()
@@ -55,6 +56,10 @@ export function useComposerOutbox({ draftKey, scopeKey, onSubmit, onCheckSubmiss
     activeDeliveries.add(identity)
     let submitted = false
     try {
+      // Applies to both first send and explicit retry. The durable outbox owns
+      // the message; its old editable draft must not reappear after restart.
+      try { await sessionComposerDrafts.flush(draftKey) }
+      catch { throw new Error(t('composer.draftSaveFailed')) }
       await storage.update(draftKey, item.id, { status: 'sending', error: undefined })
       if (owner.current !== scopeKey) {
         await storage.update(draftKey, item.id, { status: 'failed', error: t('composer.outboxConversationChanged') })

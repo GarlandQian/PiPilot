@@ -2,11 +2,11 @@
 
 [English](README.md) | **简体中文**
 
-PiPilot 是基于官方 [Pi coding agent](https://github.com/earendil-works/pi) 的 Electron 桌面客户端。它在隔离的 Electron utility process 中运行锁定版本的 Pi SDK 0.85.1，为对话、项目、文件、终端、模型和 Pi 扩展提供桌面工作区。
+PiPilot 是基于官方 [Pi coding agent](https://github.com/earendil-works/pi) 的 Electron 桌面客户端。它在隔离的 Electron utility process 中运行锁定版本的 Pi SDK 0.99.1，为对话、项目、文件、终端、模型和 Pi 扩展提供桌面工作区。
 
 Pi 继续管理自己的 Session、配置和资源。PiPilot 负责桌面体验，不维护另一套 Agent Runtime，也不把 Pi 数据迁移到私有格式中。
 
-**源码版本：**0.0.9 · [下载发布版本](https://github.com/GarlandQian/PiPilot/releases)
+**源码版本：**0.1.0 · [下载发布版本](https://github.com/GarlandQian/PiPilot/releases)
 
 [![CI](https://github.com/GarlandQian/PiPilot/actions/workflows/ci.yml/badge.svg)](https://github.com/GarlandQian/PiPilot/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2f3437.svg)](LICENSE)
@@ -15,12 +15,19 @@ Pi 继续管理自己的 Session、配置和资源。PiPilot 负责桌面体验�
 
 - **项目与对话**：由用户明确选择项目目录，也可发起无项目聊天；浏览、搜索、整理和管理 Pi Session。
 - **对话工作区**：在同一时间线查看消息与工具活动；排队、编辑或调整后续消息；使用 Commands、Skills、文件引用、模型选择和 Thinking 控制。
+- **本机草稿**：重启后恢复未发送的文字、引用和图片。草稿保存在 PiPilot 本机应用数据中；发送或清空输入后移除对应草稿，删除会话时同步清理，退出前等待未完成的草稿写入。
 - **项目工具**：查看文件和 diff、搜索命令输出、检查子代理活动，并使用按项目组织的终端标签页。
+- **精准引用与审阅**：选中消息、文件或命令文字后，将带来源的片段快照加入输入框；选中 Diff 行号添加评论，再集中加入草稿，由用户发送。
+- **对话全文搜索**：Cmd/Ctrl+F 搜索当前消息正文，Cmd/Ctrl+Shift+F 搜索所有已添加项目，点击结果跳转到所属回复。历史会话搜索当前保存的分支；过大或不可用的会话会明确提示未覆盖。
+- **侧边追问**：围绕所选文字，在右侧使用独立的官方 Pi 会话提问。关闭视图不会停止任务，也不会删除已保存的会话；点击「停止追问」请求取消，完成、取消和失败分别显示状态。
+- **工作副本与项目动作**：从项目菜单创建本地 Git worktree，保存带平台覆盖的安装、测试、开发命令，明确点击运行并查看日志。创建时也可选择并确认一个已保存的 setup 动作。归档将完整工作副本移入本机保存目录，保留暂存、未暂存、未跟踪和忽略文件，不释放磁盘空间。归档前请切换到其他项目，并停止本项目终端与动作；执行中、排队中、等待交互或持有租约的会话也会阻止归档。恢复时返回原路径，路径已被占用则拒绝覆盖；Pi 会话文件保持官方原位置。不自动提交、合并或推送。
 - **Pi 配置**：管理模型与 Provider、Packages、Resources、Extensions、Skills、Prompts、Themes，以及全局或项目级 MCP 设置。
 - **桌面偏好**：支持浅色和深色主题、英文和简体中文、键盘操作及可配置的终端字体。
 - **External Control**：可选的本地 MCP 接口，用于查看对话状态和控制 Prompt。默认关闭，详见 [External Control](#external-control)。
 
 PiPilot 是 Electron 桌面应用，不提供 Web 版本。
+
+切换项目不会停止后台会话。闲置 Runtime 缓存使用全局预算，空项目 Host 在宽限期后退出；执行中、排队中、等待交互或持有租约的工作受到保护。回收缓存不会移除左侧的会话记录。
 
 ## 下载与安装
 
@@ -44,7 +51,7 @@ macOS 和 Linux DEB 版本采用手动下载。使用旧版手动更新模式的
 
 - macOS、Windows 或 Linux
 - Node.js 24.18.0
-- pnpm 12.3.4（由 `package.json` 声明）
+- pnpm 12.8.1（由 `package.json` 声明）
 
 使用安装包时无需另行安装 Node.js、pnpm 或 Pi 可执行文件。开发环境使用 `package.json` 和 `pnpm-lock.yaml` 锁定的 Pi SDK 版本。
 
@@ -69,6 +76,8 @@ pnpm build
 
 Electron 回归测试通过 Playwright 运行。CI 会在 macOS、Windows、Linux 上运行单元契约测试，并在 macOS 上运行完整 Electron 测试。Provider 契约测试使用 Pi SDK 连接本机 HTTP/SSE fixture，覆盖 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages 和 Google Generative AI；不需要真实 Provider 账户，也不使用个人 Pi 数据。
 
+`tests/electron/renderer-performance.electron.spec.ts` 使用 1,000 条历史回复和 32 KB 流式 Markdown 测量输入响应、帧间隔与会话切换，保存 JSON 指标及 Chromium CPU profile，并验证表格、后置引用定义、完整复制和导航。耗时仅作报告，不使用依赖机器性能的固定通过阈值。
+
 ### 本地打包
 
 ~~~sh
@@ -89,7 +98,7 @@ PIPILOT_PACKAGED_ARCH=arm64 pnpm test:packaged
 PIPILOT_PACKAGED_ARCH=x64 pnpm test:packaged
 ~~~
 
-检查会验证指定应用的架构；缺少对应构建时会失败，不会改测另一个架构。Apple Silicon 运行 Intel 版本需要 Rosetta。打包冒烟测试检查的是未解包的应用目录，不代表完整 DMG、NSIS 或 DEB 安装流程已验证。
+检查会验证指定应用的架构；缺少对应构建时会失败，不会改测另一个架构。Apple Silicon 运行 Intel 版本需要 Rosetta。普通打包冒烟测试运行 unpacked 应用目录。发布流程还会在一次性 runner 上运行受保护的安装检查：Windows 验证 NSIS 安装和升级；Linux 实际启动 AppImage，将隔离的 0.0.0 测试包原生升级为未经修改的发布候选，观察自动重启，并核对设置、Pi 配置、项目和含图片的会话保留。Linux 还会用 dpkg 安装候选 DEB，通过注册的可执行文件启动，验证手动更新策略，再卸载。两项 Linux 检查通过后才能上传候选包，并保留日志和截图。检查拒绝覆盖已有安装，用户数据和缓存全部隔离，未准备好的 CI 环境及开发者本机会跳过这些安装检查。完整 macOS DMG 安装流程尚未覆盖。
 
 ## 架构
 
@@ -106,7 +115,7 @@ PIPILOT_PACKAGED_ARCH=x64 pnpm test:packaged
 
 ## Pi 配置与数据
 
-PiPilot 不会扫描磁盘寻找项目，也不会自动把主目录当作项目。项目目录只能通过系统文件夹选择器选取。无项目聊天使用应用私有工作目录，Session 仍保存在 Pi 的官方 Session 目录中。
+PiPilot 不会扫描磁盘寻找项目，也不会自动把主目录当作项目。已有项目通过系统文件夹选择器添加，也可从项目菜单创建受管理的本地 Git 工作副本。无项目聊天使用应用私有工作目录，Session 仍保存在 Pi 的官方 Session 目录中。
 
 默认 Pi Agent 目录是 `~/.pi/agent`。设置环境变量 `PI_CODING_AGENT_DIR` 可指定其他目录；Pi Runtime、包管理、模型编辑器和全局 MCP 编辑器都会使用该目录。
 
@@ -118,9 +127,21 @@ PiPilot 不会扫描磁盘寻找项目，也不会自动把主目录当作项目
 | `~/.pi/agent/mcp.json` | 全局 MCP 配置 |
 | `~/.pi/agent/sessions/` | Pi 官方 Session |
 | `<project>/.pi/settings.json` | 项目级 Pi 设置 |
-| `<project>/.mcp.json` | 项目级 MCP 配置 |
+| `<project>/.pi/mcp.json` | 项目级 MCP 配置 |
 
-MCP 配置遵循 PiPilot 的扩展约定；Pi 核心本身没有定义 MCP 配置格式。外观、导航和窗口偏好单独保存在 Electron 应用数据目录。请勿提交包含 API Key、Token 或真实 Session 内容的文件。
+MCP 连接使用 Pi 原生支持和标准 JSON 配置。内置 Runtime 支持 stdio 与 Streamable HTTP，无需 MCP 适配插件，也不会自动安装。已安装的用户扩展仍由你管理；Pi 会优先使用已启用的 `pi-mcp-adapter`，替代原生集成。确认原生配置后，在 **设置 > Integrations > 包** 中移除旧适配器并重新加载 Runtime，即可使用原生 MCP。PiPilot 不会自动卸载个人扩展。
+
+PiPilot 本体使用内置 Pi，无需另行安装 Node.js。你配置的 stdio MCP 服务器仍可能需要 `node`、`npx` 或 `uvx` 等运行环境；命令必须能从应用进程的 PATH 找到，或配置为可执行文件的绝对路径。macOS 从 Finder 启动时的 PATH 可能与终端不同。打开会话时会随项目资源加载项目 MCP 配置，因此只添加可信项目。
+
+MCP 编辑器可以把旧的项目 `.mcp.json` 导入 `.pi/mcp.json` 草稿，并将 `disabled` 转换为 `enabled`。导入后只有保存才写入新文件，原文件会保留。不支持的 socket 或仅 SSE 配置会明确报错，不会静默丢弃。外观、导航和窗口偏好单独保存在 Electron 应用数据目录。请勿提交包含 API Key、Token 或真实 Session 内容的文件。
+
+## 定时任务
+
+在 **设置 > 定时任务** 中，选择一个已保存的现有 Pi 会话，配置单次时间、带 IANA 时区的每日时间或固定间隔。仅在 PiPilot 运行时调度，不安装系统后台守护程序，也不依赖 External Control 开关。后台运行不会切换当前会话。
+
+错过的时间默认最多补跑一次，也可选择跳过延迟超过一分钟的执行。上次运行未结束时跳过重叠时间。每日任务遇到夏令时不存在的时间会跳过当天，重复时间只执行一次。暂停只影响后续执行；当前运行结束后才可编辑、删除。删除保留会话及历史，立即运行是独立的一次尝试，不替换计划。
+
+Electron 用户数据目录内的私有 `scheduled-tasks/ledger.json` 保存最多 100 个任务和最近 500 次执行。每次发送前，先将执行记录同步落盘；重启时未确认终态的记录标为「结果未知」并暂停任务，不自动重发、不假报完成。请检查对应会话后再恢复。目标被删除或替换、运行需要交互时同样暂停，不会自动批准请求。完成与失败提醒遵循桌面通知设置；账本损坏或无法保存时停止调度并保留原文件。
 
 ## External Control
 

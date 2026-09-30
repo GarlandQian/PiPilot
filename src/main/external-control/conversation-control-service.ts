@@ -33,6 +33,7 @@ import type {
   ConversationMcpResolvedTarget,
 } from './conversation-inventory'
 import type { ConversationMcpOperationRegistry } from './operation-registry'
+import { EMPTY_ASSISTANT_CONTENT_FALLBACK } from '../pi-host/runtime-message-sanitizer'
 
 const MAX_BUFFERED_PRE_ACCEPTANCE_EVENTS = 512
 const BLOCKING_UI_METHODS = new Set(['select', 'confirm', 'input', 'editor'])
@@ -41,6 +42,7 @@ type AttributionRuntimeEvent =
   | { type: 'queue'; addedHashes: string[] }
   | { type: 'user'; text: string }
   | { type: 'assistant'; text: string }
+  | { type: 'outcome'; status: 'completed' | 'failed' | 'aborted'; error?: string }
   | { type: 'settled' }
 
 interface TrackedOperation {
@@ -55,6 +57,7 @@ interface TrackedOperation {
   anchorMatched: boolean
   anchorSource?: 'entry' | 'queue'
   finalResponse?: string
+  outcome?: Extract<AttributionRuntimeEvent, { type: 'outcome' }>
   bufferedEvents: AttributionRuntimeEvent[]
   bufferedBytes: number
 }
@@ -63,6 +66,7 @@ type RuntimeControl = Pick<
   PiRuntimeFrontend,
   | 'abortControlRuntime'
   | 'acquireControlRuntime'
+  | 'getActiveRuntimeIdentity'
   | 'getControlRuntimeState'
   | 'listControlRuntimes'
   | 'releaseControlRuntime'
@@ -99,12 +103,11 @@ function visibleMessageText(message: LocalPiAgentMessage): string | undefined {
 }
 
 function userEntryText(event: LocalPiRpcEvent): string | undefined {
-  if (
-    event.type !== 'entry_appended' ||
-    event.entry.type !== 'message' ||
-    event.entry.message.role !== 'user'
-  ) return undefined
-  const content = event.entry.message.content
+  // Pi emits ordinary user messages through message_start/message_end.
+  // entry_appended is for extension custom entries. Use one lifecycle boundary
+  // so the same user message cannot anchor two queued operations.
+  if (event.type !== 'message_start' || event.message.role !== 'user') return undefined
+  const content = event.message.content
   if (typeof content === 'string') return content
   return content
     .filter((block): block is Extract<typeof block, { type: 'text' }> =>
@@ -180,6 +183,12 @@ function projectAttributionEvent(
   if (assistantText !== undefined) {
     return { type: 'assistant', text: boundUtf8(assistantText) }
   }
+  if (event.type === 'agent_end') {
+    const assistant = [...event.messages].reverse().find((message) => message.role === 'assistant')
+    return { type: 'outcome', status: assistant?.stopReason === 'error' ? 'failed' : assistant?.stopReason === 'aborted' ? 'aborted' : 'completed',
+      ...(assistant?.stopReason === 'error' && assistant.errorMessage ? { error: assistant.errorMessage.slice(0, 512) } : {}),
+    }
+  }
   if (event.type === 'agent_settled') return { type: 'settled' }
   return null
 }
@@ -193,6 +202,8 @@ function attributionEventBytes(event: AttributionRuntimeEvent) {
       return 16 + Buffer.byteLength(event.text)
     case 'settled':
       return 16
+    case 'outcome':
+      return 16 + Buffer.byteLength(event.error ?? '')
   }
 }
 
@@ -258,10 +269,16 @@ export class ConversationMcpControlService {
     }
   }
 
-  async sendPrompt(rawInput: unknown) {
+  async sendPrompt(rawInput: unknown, expectedTarget?: { sessionId: string; headerIdentity: string; signal?: AbortSignal }) {
     this.assertActive()
     const input = sendPromptInputSchema.parse(rawInput)
     const target = await this.inventory.resolveConversation(input.conversationId)
+    if (expectedTarget?.signal?.aborted) throw new ExternalControlError('invalid_state', 'The scheduled dispatch was cancelled while PiPilot was stopping.')
+    if (expectedTarget && (target.catalogTarget?.mode !== 'open' ||
+        target.catalogTarget.sessionId !== expectedTarget.sessionId ||
+        target.catalogTarget.headerIdentity !== expectedTarget.headerIdentity)) {
+      throw new ExternalControlError('conversation_unavailable', 'The saved scheduled conversation was deleted or replaced. Choose its target again.')
+    }
     this.rememberConversationLabel(target)
     const reserved = this.operations.reserve({
       conversationId: input.conversationId,
@@ -272,7 +289,7 @@ export class ConversationMcpControlService {
     })
     if (reserved.created) {
       queueMicrotask(() => {
-        void this.runSend(reserved.operation.operationId, target, input.prompt, input.mode)
+        void this.runSend(reserved.operation.operationId, target, input.prompt, input.mode, expectedTarget?.signal)
       })
     }
     return reserved.receipt
@@ -363,6 +380,7 @@ export class ConversationMcpControlService {
     target: ConversationMcpResolvedTarget,
     prompt: string,
     mode: 'auto' | 'prompt' | 'follow_up' | 'steer',
+    signal?: AbortSignal,
   ) {
     let lease: PiRuntimeControlLease | undefined
     this.pendingAcquisitions.set(operationId, target)
@@ -372,9 +390,13 @@ export class ConversationMcpControlService {
       }
       const revalidated = await this.inventory.revalidateTarget(target)
       if (this.operationIsTerminal(operationId)) return
+      if (signal?.aborted) throw new ExternalControlError('invalid_state', 'The scheduled dispatch was cancelled while PiPilot was stopping.')
+      this.assertForegroundPromptAvailable(revalidated, mode)
       lease = await this.runtime.acquireControlRuntime(acquisitionTarget(revalidated))
       this.pendingAcquisitions.delete(operationId)
       if (this.operationIsTerminal(operationId)) return
+      if (signal?.aborted) throw new ExternalControlError('invalid_state', 'The scheduled dispatch was cancelled while PiPilot was stopping.')
+      this.assertForegroundPromptAvailable(revalidated, mode)
       if (
         (mode === 'follow_up' || mode === 'steer') &&
         this.hasOppositeQueuedMode(baseHandle(lease), mode)
@@ -561,6 +583,14 @@ export class ConversationMcpControlService {
       case 'settled':
         this.settleRuntime(tracked.handle)
         break
+      case 'outcome': {
+        const current = this.firstTrackedForRuntime(tracked.handle)
+        // A queued operation does not own the preceding turn's outcome. Retry
+        // attempts may fail before a later attempt succeeds; settle only after
+        // Pi's final boundary, using the most recently observed owned outcome.
+        if (current?.phase === 'accepted' && current.anchorSource === 'entry') current.outcome = event
+        break
+      }
     }
   }
 
@@ -680,11 +710,18 @@ export class ConversationMcpControlService {
       this.pendingTargetMatches(target, handle))
     if (tracked.length === 0 && pending.length === 0) return
 
-    await this.runtime.respondToControlExtensionUi(handle, {
-      type: 'extension_ui_response',
-      id: event.request.id,
-      cancelled: true,
-    }).catch(() => undefined)
+    const selected = this.runtime.getActiveRuntimeIdentity()
+    // Startup and submission may race a user's foreground turn. Until an
+    // exact prompt anchor proves ownership, leave its dialog for that user.
+    const foregroundPreparation = tracked.every((operation) => !operation.anchorMatched) && selected &&
+      selected.runtimeId === handle.runtimeId && selected.generation === handle.generation
+    if (!foregroundPreparation) {
+      await this.runtime.respondToControlExtensionUi(handle, {
+        type: 'extension_ui_response',
+        id: event.request.id,
+        cancelled: true,
+      }).catch(() => undefined)
+    }
     const error = new ExternalControlError(
       'interaction_required',
       'The external operation required interactive extension input.',
@@ -770,13 +807,18 @@ export class ConversationMcpControlService {
   }
 
   private completeOperation(tracked: TrackedOperation) {
-    this.operations.transition(tracked.operationId, 'completed', {
-      ...(tracked.finalResponse ? { finalResponse: tracked.finalResponse } : {}),
+    const status = tracked.kind === 'send_prompt' ? tracked.outcome?.status ?? 'completed' : 'completed'
+    const finalResponse = status !== 'completed' && tracked.finalResponse === EMPTY_ASSISTANT_CONTENT_FALLBACK
+      ? undefined : tracked.finalResponse
+    this.operations.transition(tracked.operationId, status, {
+      ...(finalResponse ? { finalResponse } : {}),
+      ...(status === 'failed' ? { error: { code: 'internal_error' as const, message: tracked.outcome?.error || 'Pi ended the turn with an error.' } } : {}),
     })
     this.untrack(tracked.operationId)
   }
 
   private failOperation(operationId: string, error: unknown) {
+    this.pendingAcquisitions.delete(operationId)
     const mapped = this.mapFailure(error)
     this.operations.transition(operationId, mapped.status, {
       error: mapped.error,
@@ -889,7 +931,7 @@ export class ConversationMcpControlService {
 
   private pendingTargetMatches(
     target: ConversationMcpResolvedTarget,
-    handle: PiRuntimeControlHandle,
+    handle: Pick<PiRuntimeControlHandle, 'scope' | 'sessionFile'>,
   ) {
     const scope = target.catalogTarget?.scope ?? target.runtime?.scope
     if (!scope || !sameScope(scope, handle.scope)) return false
@@ -897,6 +939,25 @@ export class ConversationMcpControlService {
       ? target.catalogTarget.sessionFile
       : target.runtime?.sessionFile
     return expectedFile !== undefined && expectedFile === handle.sessionFile
+  }
+
+  private assertForegroundPromptAvailable(
+    target: ConversationMcpResolvedTarget,
+    mode: 'auto' | 'prompt' | 'follow_up' | 'steer',
+  ) {
+    const selected = this.runtime.getActiveRuntimeIdentity()
+    if (!selected || !this.pendingTargetMatches(target, selected)) return
+    const ready = this.runtime.listControlRuntimes().find((entry) =>
+      entry.runtimeId === selected.runtimeId && entry.generation === selected.generation)
+    if (!ready || ready.activity === 'interaction') {
+      throw new ExternalControlError(
+        'interaction_required',
+        'The selected conversation is still opening or waiting for interactive input. Finish that interaction before running this operation.',
+      )
+    }
+    if (mode === 'prompt' && ready.lifecycle !== 'idle') {
+      throw new ExternalControlError('invalid_state', 'The selected conversation is busy. Wait for it to finish before running this prompt.')
+    }
   }
 
   private assertActive() {

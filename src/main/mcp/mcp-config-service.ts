@@ -28,6 +28,8 @@ export type McpConfigErrorCode =
   | 'MCP_CONFIG_CONFLICT'
   | 'MCP_CONFIG_READ_FAILED'
   | 'MCP_CONFIG_WRITE_FAILED'
+  | 'MCP_CONFIG_EXTENSION_OVERRIDE'
+  | 'MCP_CONFIG_RUNTIME_UNAVAILABLE'
 
 export class McpConfigError extends Error {
   constructor(
@@ -44,6 +46,7 @@ interface McpConfigServiceOptions {
   agentDirectory?: string
   getActiveScope(): ConversationScope
   scopeResolver: ConversationScopeResolver
+  assertNativeConfigurationWritable?(target: McpConfigTarget): Promise<void>
 }
 
 function fingerprint(content: string | Buffer) {
@@ -59,6 +62,7 @@ export class McpConfigService {
   private readonly agentDirectory: string
   private readonly getActiveScope: () => ConversationScope
   private readonly scopeResolver: ConversationScopeResolver
+  private readonly assertNativeConfigurationWritable: McpConfigServiceOptions['assertNativeConfigurationWritable']
 
   constructor(options: McpConfigServiceOptions) {
     if (!isAbsolute(options.homeDirectory)) {
@@ -72,14 +76,26 @@ export class McpConfigService {
     this.homeDirectory = resolve(options.homeDirectory)
     this.getActiveScope = options.getActiveScope
     this.scopeResolver = options.scopeResolver
+    this.assertNativeConfigurationWritable = options.assertNativeConfigurationWritable
   }
 
   async load(rawTarget: McpConfigTarget): Promise<McpConfigSnapshot> {
     const target = mcpConfigTargetSchema.parse(rawTarget)
     const targetPath = await this.resolveTargetPath(target)
     const disk = await this.readTarget(targetPath)
+    const legacyPath = target.kind === 'project' ? join(dirname(dirname(targetPath)), '.mcp.json') : null
+    let legacy: Awaited<ReturnType<McpConfigService['readTarget']>> | null = null
+    let legacyUnavailablePath: string | undefined
+    if (legacyPath) {
+      try { legacy = await this.readTarget(legacyPath) }
+      catch { legacyUnavailablePath = legacyPath }
+    }
     await this.assertSameTarget(target, targetPath)
-    return this.snapshot(target, targetPath, disk.exists, disk.content)
+    return {
+      ...this.snapshot(target, targetPath, disk.exists, disk.content),
+      ...(legacy?.exists && legacyPath ? { legacy: { path: legacyPath, content: legacy.content } } : {}),
+      ...(legacyUnavailablePath ? { legacyUnavailablePath } : {}),
+    }
   }
 
   async save(
@@ -101,6 +117,7 @@ export class McpConfigService {
         parsed.diagnostics[0]?.message ?? 'The MCP configuration is invalid.',
       )
     }
+    await this.assertNativeConfigurationWritable?.(target)
 
     const targetPath = await this.resolveTargetPath(target)
     const current = await this.readTarget(targetPath)
@@ -183,7 +200,7 @@ export class McpConfigService {
     }
     try {
       const resolvedScope = await this.scopeResolver.resolve(activeScope)
-      return join(resolvedScope.cwd, '.mcp.json')
+      return join(resolvedScope.cwd, '.pi', 'mcp.json')
     } catch {
       throw new McpConfigError(
         'MCP_CONFIG_SCOPE_UNAVAILABLE',
@@ -258,7 +275,7 @@ export class McpConfigController {
     const applyStatus = await this.applyCoordinator.apply({
       path: snapshot.path,
       fingerprint: snapshot.fingerprint,
-      ...(target.kind === 'project' ? { cwd: dirname(snapshot.path) } : {}),
+      ...(target.kind === 'project' ? { cwd: dirname(dirname(snapshot.path)) } : {}),
     })
     return mcpConfigSaveResultSchema.parse({
       snapshot: { ...snapshot, applyStatus },

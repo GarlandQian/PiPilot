@@ -140,6 +140,43 @@ export function runtimeStateForOfficialSession(
     status.selectionToken === undefined && status.sessionId === summary.sessionId)
 }
 
+/** Build once per catalogue rather than checking every sibling for every row. */
+export function createOfficialSessionLookup(
+  siblings: readonly OfficialPiSessionSummary[],
+  statuses: readonly LocalPiRuntimeSessionStatus[] | undefined,
+) {
+  const counts = new Map<string, number>()
+  const scopedCounts = new Map<string, number>()
+  const exact = new Map<string, LocalPiRuntimeSessionStatus>()
+  const fallback = new Map<string, LocalPiRuntimeSessionStatus>()
+  const key = (scope: ConversationScope, id: string) => JSON.stringify([
+    scope.kind === 'project' ? scope.workspaceId : null, id,
+  ])
+  for (const row of siblings) {
+    counts.set(row.sessionId, (counts.get(row.sessionId) ?? 0) + 1)
+    const scoped = key(row.scope, row.sessionId)
+    scopedCounts.set(scoped, (scopedCounts.get(scoped) ?? 0) + 1)
+  }
+  for (const status of statuses ?? []) {
+    const target = status.selectionToken === undefined ? fallback : exact
+    const identity = key(status.scope, status.selectionToken ?? status.sessionId)
+    // The single-row helpers use find: preserve the first matching status.
+    if (!target.has(identity)) target.set(identity, status)
+  }
+  return {
+    isUnique: (row: OfficialPiSessionSummary) => counts.get(row.sessionId) === 1,
+    runtime(row: OfficialPiSessionSummary) {
+      return exact.get(key(row.scope, row.selectionToken)) ?? (counts.get(row.sessionId) === 1
+        ? fallback.get(key(row.scope, row.sessionId)) : undefined)
+    },
+    active(row: OfficialPiSessionSummary, activeScope: ConversationScope, activeSessionId: string, runtimeSelected = false) {
+      return sameConversationScope(row.scope, activeScope) && (runtimeSelected || (
+        Boolean(activeSessionId) && row.sessionId === activeSessionId && scopedCounts.get(key(row.scope, row.sessionId)) === 1
+      ))
+    },
+  }
+}
+
 export function runtimeStatusForOfficialSession(
   summary: OfficialPiSessionSummary,
   statuses: readonly LocalPiRuntimeSessionStatus[] | undefined,

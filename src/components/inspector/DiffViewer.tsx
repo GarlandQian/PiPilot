@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { DiffReviewProvider, DiffReviewSummary } from '@/components/precision/DiffReview'
 import { TbAlertCircle, TbFileText, TbLoader2, TbRefresh } from 'react-icons/tb'
 import { Button } from '@/components/ui/button'
 import { useT } from '@/i18n'
@@ -179,7 +180,7 @@ function DiffFileSection({
         <React.Suspense
           fallback={<DiffInlineState loading>{t('inspector.diff.loadingRenderer')}</DiffInlineState>}
         >
-          <ReadOnlyPatchDiff patch={patch} />
+          <ReadOnlyPatchDiff patch={patch} file={file} />
         </React.Suspense>
       </DiffRenderErrorBoundary>
     )
@@ -356,6 +357,7 @@ export function DiffViewer({
   const empty = emptyMessage ?? t('inspector.diff.clean')
 
   return (
+    <DiffReviewProvider files={files} complete={!listLoading && !listTruncated && !listErrorMessage}>
     <div className="flex h-full min-h-0 flex-col">
       <InspectorSectionToolbar title={t('inspector.diff.projectChanges')} description={t('inspector.diff.summary', { count: new Set(files.map((file) => file.path)).size })}>
         <DiffFileNavigator files={orderedFiles} onSelect={(path) => {
@@ -377,6 +379,7 @@ export function DiffViewer({
           {listLoading ? <TbLoader2 className="animate-spin motion-reduce:animate-none" aria-hidden /> : <TbRefresh aria-hidden />}
         </Button>
       </InspectorSectionToolbar>
+      <DiffReviewSummary />
       {focusRequest && !listLoading && !files.some((file) => file.path === focusRequest.path) ? <p role="status" className="shrink-0 border-b border-border px-3 py-2 text-caption text-muted-foreground">{focusRequest.path} · {t('inspector.diff.noFileChanges')}</p> : null}
       {listErrorMessage && files.length > 0 ? <div role="alert" className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2 text-caption text-destructive">
         <span className="min-w-0 flex-1">{listErrorMessage}</span>
@@ -435,5 +438,6 @@ export function DiffViewer({
         </DiffRenderErrorBoundary>
       )}
     </div>
+    </DiffReviewProvider>
   )
 }

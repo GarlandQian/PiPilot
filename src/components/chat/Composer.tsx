@@ -1,5 +1,7 @@
 import * as React from 'react'
-import { SessionComposerDrafts } from '@/renderer/composer/session-drafts'
+import { sessionComposerDrafts, type SessionComposerDrafts } from '@/renderer/composer/session-drafts'
+import { usePrecisionComposer } from '@/components/precision/PrecisionReferences'
+import type { PrecisionReference } from '@/renderer/composer/precision-reference'
 import {
   TbArrowUp,
   TbLoader2,
@@ -477,12 +479,25 @@ function initialEditorChange(): ComposerEditorChange {
 }
 
 export function Composer(props: ComposerProps) {
-  const [drafts] = React.useState(() => new SessionComposerDrafts())
+  const drafts = sessionComposerDrafts
+  const t = useT()
   const consumedMentionInsertionSequence = React.useRef(0)
   const consumedFocusSequence = React.useRef(0)
-  React.useEffect(() => () => drafts.dispose(), [drafts])
   const draftKey = props.draftKey ?? props.scopeKey
+  const getStorageState = React.useCallback(() => drafts.storageState(draftKey), [draftKey, drafts])
+  const storageState = React.useSyncExternalStore(drafts.subscribeStorage, getStorageState, getStorageState)
+  const locked = React.useSyncExternalStore(drafts.subscribeStorage, drafts.isLocked, drafts.isLocked)
+  React.useEffect(() => { void drafts.load(draftKey).catch(() => undefined) }, [draftKey, drafts])
+  if (!drafts.isLoaded(draftKey)) return (
+    <div data-composer-root className="flex min-h-32 shrink-0 items-center justify-center gap-2 p-6 text-sm text-muted-foreground" role={storageState === 'error' ? 'alert' : 'status'}>
+      {storageState === 'error' ? <>
+        <span>{t('composer.draftRestoreFailed')}</span>
+        <Button size="sm" variant="ghost" onClick={() => { void drafts.load(draftKey).catch(() => undefined) }}>{t('common.retry')}</Button>
+      </> : <><TbLoader2 className="size-4 animate-spin" aria-hidden /><span>{t('composer.draftRestoring')}</span></>}
+    </div>
+  )
   return <SessionComposer key={draftKey} {...props} drafts={drafts} draftKey={draftKey}
+    draftEditable={props.draftEditable !== false && !locked} connected={props.connected && !locked}
     consumedMentionInsertionSequence={consumedMentionInsertionSequence}
     consumedFocusSequence={consumedFocusSequence} />
 }
@@ -543,6 +558,8 @@ function SessionComposer({
   const stopFeedback = useConversationOperationFeedback(operationOwnerKey)
   const submitting = Boolean(submitFeedback.pending)
   const outbox = useComposerOutbox({ draftKey, scopeKey, onSubmit, onCheckSubmission })
+  const draftStorageSnapshot = React.useCallback(() => drafts.storageState(draftKey), [draftKey, drafts])
+  const draftStorageState = React.useSyncExternalStore(drafts.subscribeStorage, draftStorageSnapshot, draftStorageSnapshot)
   const [commandPickerOpen, setCommandPickerOpen] = React.useState(false)
   const [slashActiveId, setSlashActiveId] = React.useState<string | null>(null)
   const [commandArgumentState, setCommandArgumentState] =
@@ -555,6 +572,9 @@ function SessionComposer({
   const appliedDraftRevision = React.useRef(0)
   const fileInput = React.useRef<HTMLInputElement>(null)
   const editorRef = React.useRef<ComposerEditorHandle>(null)
+  const insertReferences = React.useCallback((references: readonly PrecisionReference[]) =>
+    !drafts.isLocked() && (editorRef.current?.insertReferences(references) ?? false), [drafts])
+  usePrecisionComposer(draftKey, insertReferences, draftEditable)
   const dismissedSlashText = React.useRef<string | null>(null)
   const attachmentSnapshot = React.useRef<readonly ComposerImageAttachment[]>(initialDraft.attachments)
   const mentionRequestSequence = React.useRef(0)
@@ -1115,7 +1135,7 @@ function SessionComposer({
   }, [])
 
   const addFiles = React.useCallback((files: readonly File[]) => {
-    if (files.length === 0) return
+    if (files.length === 0 || drafts.isLocked()) return
     if (!supportsImages) {
       setSubmitError(t('composer.imageUnsupportedModel'))
       return
@@ -1140,6 +1160,7 @@ function SessionComposer({
   }, [draftKey, drafts, supportsImages, t])
 
   const removeAttachment = React.useCallback((id: string) => {
+    if (drafts.isLocked()) return
     const updated = attachmentSnapshot.current.filter((attachment) => attachment.id !== id)
     attachmentSnapshot.current = updated
     drafts.updateAttachments(draftKey, updated)
@@ -1182,7 +1203,7 @@ function SessionComposer({
       } catch {
         throw new Error(t('composer.outboxStorageFailed'))
       }
-      const remainingDraft = drafts.acknowledge(draftKey, capturedDraft)
+      drafts.acknowledge(draftKey, capturedDraft)
       // Pi acceptance belongs to the saved message, not to this editor visit.
       void outbox.send(saved)
       if (!isCurrent() || scopeKeyRef.current !== capturedScopeKey) return
@@ -1195,7 +1216,7 @@ function SessionComposer({
       )) {
         editorRef.current?.clearIfRevision(capturedDocument.revision)
       }
-      const remainingAttachments = remainingDraft.attachments
+      const remainingAttachments = drafts.get(draftKey).attachments
       attachmentSnapshot.current = remainingAttachments
       setAttachments(remainingAttachments)
     }, t('composer.sendFailed'))
@@ -1311,8 +1332,12 @@ function SessionComposer({
     : submitMode.kind === 'steer' ? TbRoute : TbArrowUp
 
   return (
-    <div data-composer-root className="shrink-0 bg-background px-6 pb-4 pt-3">
+    <div data-composer-root data-draft-storage={draftStorageState} className="shrink-0 bg-background px-6 pb-4 pt-3">
       <div className="mx-auto min-w-0 w-full max-w-(--conversation-width)">
+        {draftStorageState === 'error' && <div role="alert" className="mb-2 flex items-center gap-2 text-caption text-destructive">
+          <span>{t('composer.draftSaveFailed')}</span>
+          <Button size="sm" variant="ghost" onClick={() => { void drafts.flush(draftKey).catch(() => undefined) }}>{t('common.retry')}</Button>
+        </div>}
         <ComposerOutbox
           items={outbox.items}
           storageError={outbox.storageError}

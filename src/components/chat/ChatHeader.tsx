@@ -8,6 +8,7 @@ import {
   TbFileDiff,
   TbLoader2,
   TbTerminal2,
+  TbSearch,
 } from 'react-icons/tb'
 import { ConversationNavigation } from './ConversationNavigation'
 import type { AgentStatus, ConversationOutlineItem } from '@/types/chat'
@@ -42,6 +43,7 @@ export interface ChatHeaderProps {
   status?: AgentStatus
   outline?: readonly ConversationOutlineItem[]
   onNavigate?: (entryId: string) => void
+  onSearch?: () => void
   onNewConversation?: () => void
   onShowChanges?: () => void
   terminalOpen?: boolean
@@ -62,6 +64,7 @@ export function ChatHeader({
   status,
   outline = [],
   onNavigate,
+  onSearch,
   onNewConversation,
   onShowChanges,
   terminalOpen,
@@ -94,6 +97,7 @@ export function ChatHeader({
       </span> : null}
 
       <div className="flex shrink-0 items-center gap-0.5">
+        {onSearch ? <Button variant="ghost" size="icon-sm" onClick={onSearch} aria-label={t('conversationSearch.title')} title={t('conversationSearch.title')}><TbSearch aria-hidden /></Button> : null}
         {onNavigate ? <ConversationNavigation ownerKey={ownerKey} items={outline} onNavigate={onNavigate} /> : null}
         {onShowChanges ? <Button variant="ghost" size="icon-sm" onClick={onShowChanges} aria-label={t('header.showChanges')} title={t('header.showChanges')}><TbFileDiff aria-hidden /></Button> : null}
         {onToggleTerminal ? <Button variant={terminalOpen ? 'secondary' : 'ghost'} size="icon-sm" onClick={onToggleTerminal} aria-label={t('terminal.drawer.title')} title={t('terminal.drawer.title')} aria-expanded={terminalOpen} aria-controls="workspace-terminal-drawer"><TbTerminal2 aria-hidden /></Button> : null}

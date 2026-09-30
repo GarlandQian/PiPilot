@@ -162,7 +162,7 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:
-          version: 12.3.4
+          version: 12.8.1
       - name: Install Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -198,6 +198,27 @@ jobs:
       - name: Verify unsigned Windows installation and native A-to-B update
         if: ${{ matrix.platform == 'windows' }}
         run: node node_modules/@playwright/test/cli.js test --config=playwright.packaged.config.ts tests/packaged/windows-update-canary.spec.ts --output=test-results/windows-update-canary
+      - name: Install Linux AppImage runtime prerequisite
+        if: ${{ matrix.platform == 'linux' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libfuse2t64
+      - name: Prepare older Linux AppImage for package lifecycle canary
+        if: ${{ matrix.platform == 'linux' }}
+        run: node build/prepare-linux-package-canary.cjs
+      - name: Verify Linux AppImage native update and DEB installation
+        if: ${{ matrix.platform == 'linux' }}
+        run: xvfb-run --auto-servernum node node_modules/@playwright/test/cli.js test --config=playwright.packaged.config.ts tests/packaged/linux-package-canary.spec.ts --output=test-results/linux-package-canary
+        env:
+          PIPILOT_REQUIRE_LINUX_PACKAGE_CANARY: '1'
+      - name: Upload Linux package lifecycle evidence
+        if: ${{ always() && matrix.platform == 'linux' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linux-package-canary-${{ needs.preflight.outputs.version }}
+          path: test-results/linux-package-canary/
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Smoke-test macOS ARM64 package
         if: ${{ matrix.platform == 'macos' }}
         run: pnpm test:packaged --output=test-results/packaged-arm64
@@ -239,7 +260,7 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:
-          version: 12.3.4
+          version: 12.8.1
       - name: Install Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:

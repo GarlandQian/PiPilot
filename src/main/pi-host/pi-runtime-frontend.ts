@@ -7,6 +7,7 @@ import {
   localPiRuntimeSnapshotSchema,
   localPiSessionStateSchema,
   localPiDeliverySnapshotSchema,
+  localPiMessagesResponseDataSchema,
   type LocalPiDeliverySnapshot,
   type LocalPiExtensionUiResponse,
   type LocalPiRendererRpcCommand,
@@ -200,21 +201,39 @@ interface ActiveRuntime {
   activity: RuntimeActivity
 }
 
+interface PreparedRuntimeTarget {
+  scope: ProjectHostScope
+  sessionFile?: string
+  forkSessionFile?: string
+}
+
+interface RuntimePreparation {
+  promise: Promise<ActiveRuntime>
+  sessionFiles: ReadonlySet<string>
+  state: {
+    runtime: ActiveRuntime | null
+    listeners: Set<(runtime: ActiveRuntime) => void>
+  }
+}
+
 export interface PiRuntimeFrontendOptions {
   /**
    * Idle cache size only. Running Runtimes never count toward this value and
    * are never evicted to satisfy it.
    */
   maxRetainedIdleRuntimesPerHost?: number
+  /** Global idle budget across projects; selected and protected work do not count. */
+  maxRetainedIdleRuntimes?: number
   now?: () => number
   isPersistedSessionFile?: (sessionFile: string) => boolean
 }
 
 const DEFAULT_MAX_RETAINED_IDLE_RUNTIMES_PER_HOST = 4
+const DEFAULT_MAX_RETAINED_IDLE_RUNTIMES = 12
 
 function requireIdleCacheSize(value: number): number {
   if (!Number.isInteger(value) || value < 0) {
-    throw new TypeError('maxRetainedIdleRuntimesPerHost must be a non-negative integer.')
+    throw new TypeError('Idle Runtime cache limits must be non-negative integers.')
   }
   return value
 }
@@ -305,6 +324,12 @@ export class PiRuntimeFrontend {
     LocalPiRuntimeSessionStatus
   >()
   private readonly maxRetainedIdleRuntimesPerHost: number
+  private readonly maxRetainedIdleRuntimes: number
+  private readonly preparations = new Map<string, RuntimePreparation>()
+  private readonly pendingPreparations = new Set<RuntimePreparation>()
+  private readonly releasingSessionFiles = new Set<string>()
+  private readonly preparingRuntimeIds = new Set<string>()
+  private readonly runtimeRetirements = new Map<string, Promise<boolean>>()
   private readonly now: () => number
   private readonly isPersistedSessionFile: (sessionFile: string) => boolean
   private readonly pendingIdleReclaims = new Set<string>()
@@ -349,6 +374,9 @@ export class PiRuntimeFrontend {
     this.maxRetainedIdleRuntimesPerHost = requireIdleCacheSize(
       options.maxRetainedIdleRuntimesPerHost ??
         DEFAULT_MAX_RETAINED_IDLE_RUNTIMES_PER_HOST,
+    )
+    this.maxRetainedIdleRuntimes = requireIdleCacheSize(
+      options.maxRetainedIdleRuntimes ?? DEFAULT_MAX_RETAINED_IDLE_RUNTIMES,
     )
     this.now = options.now ?? Date.now
     this.isPersistedSessionFile = options.isPersistedSessionFile ??
@@ -476,6 +504,18 @@ export class PiRuntimeFrontend {
       // its selected generation before replaying any generation-scoped UI.
       this.publish(active.snapshot)
     }
+    await this.replayRetainedUiRequests(active, handle)
+  }
+
+  private async replayStartingRuntimeUi(runtime: ActiveRuntime): Promise<void> {
+    if (this.disposed || this.active !== runtime || runtime.snapshot.state !== 'starting' ||
+        this.publishedSnapshot.state !== 'starting' || this.publishedSnapshot.generation !== runtime.descriptor.generation) return
+    let handle: PiRuntimeControlHandle
+    try { handle = this.controlHandleFor(runtime, true) } catch { return }
+    await this.replayRetainedUiRequests(runtime, handle)
+  }
+
+  private async replayRetainedUiRequests(active: ActiveRuntime, handle: PiRuntimeControlHandle): Promise<void> {
     const pending: Promise<void>[] = []
     for (const { envelope, sessionId } of this.pendingUiEnvelopes.get(active.runtimeId)?.values() ?? []) {
       if (sessionId !== handle.sessionId || envelope.hostEpoch !== handle.hostEpoch ||
@@ -573,76 +613,138 @@ export class PiRuntimeFrontend {
    * Acquire and hydrate an exact Runtime without changing Renderer selection.
    * Cold startup shares the same Host and Runtime registry as desktop use.
    */
-  acquireControlRuntime(
+  async acquireControlRuntime(
     target: PiRuntimeFrontendTarget,
+    onCreated?: (handle: PiRuntimeControlHandle) => void,
   ): Promise<PiRuntimeControlLease> {
-    return this.enqueue(async () => {
-      this.assertNotDisposed()
-      const prepared = await this.prepareTarget(target)
-      const cached = this.findCachedRuntime(prepared.scope, prepared.sessionFile)
-      if (cached) {
-        cached.scope = target.scope
-        if (target.selectionToken) cached.selectionToken = target.selectionToken
-        this.touchActivity(cached)
-        return this.pinControlRuntime(cached)
-      }
+    this.assertNotDisposed()
+    const prepared = await this.prepareTarget(target)
+    const runtime = await this.prepareRuntime(target, prepared, onCreated ? (runtime) => onCreated(this.controlHandleFor(runtime, true)) : undefined)
+    this.assertNotDisposed()
+    this.assertAdmission(runtime.hostScope.cwd)
+    this.assertSessionAvailable(prepared)
+    const retirement = this.runtimeRetirements.get(runtime.runtimeId)
+    if (retirement) {
+      await retirement
+      return this.acquireControlRuntime(target, onCreated)
+    }
+    runtime.scope = target.scope
+    if (target.selectionToken) runtime.selectionToken = target.selectionToken
+    this.touchActivity(runtime)
+    return this.pinControlRuntime(runtime)
+  }
 
-      let runtime: ActiveRuntime | null = null
-      try {
-        let descriptor = await this.pool.createRuntime(prepared.scope, {
-          ...(prepared.sessionFile === undefined
-            ? {}
-            : { sessionFile: prepared.sessionFile }),
-          ...(prepared.forkSessionFile === undefined
-            ? {}
-            : { forkSessionFile: prepared.forkSessionFile }),
-        })
-        const startingSnapshot: LocalPiRuntimeSnapshot = {
-          state: 'starting',
-          generation: descriptor.generation,
-          cwd: descriptor.cwd,
-          sessionFile: descriptor.sessionFile,
-          sessionState: null,
-          commands: [],
-          stderr: '',
-          diagnostics: [],
-        }
-        runtime = {
-          runtimeId: descriptor.runtimeId,
-          hostScope: prepared.scope,
-          scope: target.scope,
-          descriptor,
-          snapshot: startingSnapshot,
-          lastCredibleSessionFile: descriptor.sessionFile,
-          ...(target.selectionToken ? { selectionToken: target.selectionToken } : {}),
-          lastUsedAt: this.now(),
-          activity: createRuntimeActivity(startingSnapshot.sessionState),
-        }
-        this.runtimes.set(runtime.runtimeId, runtime)
-        const token = this.markCommandStart(runtime, descriptor.generation)
-        try {
-          descriptor = await this.pool.bindRuntime(
-            descriptor.runtimeId,
-            descriptor.generation,
-          )
-          this.setRuntimeDescriptor(runtime, descriptor)
-          runtime.snapshot = await this.hydrate(descriptor, prepared)
-          runtime.lastCredibleSessionFile = runtime.snapshot.sessionFile
-          return this.pinControlRuntime(runtime)
-        } finally {
-          this.markCommandEnd(runtime, token)
-        }
-      } catch (error) {
-        if (runtime) {
-          await this.pool.disposeRuntime(
-            runtime.runtimeId,
-            runtime.descriptor.generation,
-          ).catch(() => undefined)
-          this.dropCachedRuntime(runtime.runtimeId)
-        }
-        throw this.toFrontendError(error)
+  /** Resource loading is shared by exact Session target, independently of UI selection. */
+  private prepareRuntime(
+    target: PiRuntimeFrontendTarget,
+    prepared: PreparedRuntimeTarget,
+    onCreated?: (runtime: ActiveRuntime) => void,
+  ): Promise<ActiveRuntime> {
+    this.assertNotDisposed()
+    this.assertSessionAvailable(prepared)
+    const key = prepared.sessionFile === undefined ? undefined : JSON.stringify([
+      prepared.scope.kind, pathIdentity(prepared.scope.cwd), pathIdentity(prepared.sessionFile),
+    ])
+    const pending = key === undefined ? undefined : this.preparations.get(key)
+    if (pending) {
+      if (onCreated) {
+        if (pending.state.runtime) onCreated(pending.state.runtime)
+        else pending.state.listeners.add(onCreated)
       }
+      return pending.promise
+    }
+    const cached = this.findCachedRuntime(prepared.scope, prepared.sessionFile)
+    if (cached) {
+      const retirement = this.runtimeRetirements.get(cached.runtimeId)
+      return retirement
+        ? retirement.then(() => this.prepareRuntime(target, prepared, onCreated))
+        : Promise.resolve(cached)
+    }
+
+    const state: RuntimePreparation['state'] = { runtime: null, listeners: new Set(onCreated ? [onCreated] : []) }
+    const operation = this.createPreparedRuntime(target, prepared, (runtime) => {
+      state.runtime = runtime
+      for (const listener of state.listeners) listener(runtime)
+      state.listeners.clear()
     })
+    const preparation = {
+      promise: operation, state,
+      sessionFiles: new Set([prepared.sessionFile, prepared.forkSessionFile]
+        .filter((file): file is string => file !== undefined).map(pathIdentity)),
+    }
+    this.pendingPreparations.add(preparation)
+    if (key !== undefined) this.preparations.set(key, preparation)
+    const finish = () => {
+      this.pendingPreparations.delete(preparation)
+      if (key !== undefined && this.preparations.get(key) === preparation) this.preparations.delete(key)
+    }
+    void operation.then(finish, finish)
+    return operation
+  }
+
+  private async createPreparedRuntime(
+    target: PiRuntimeFrontendTarget,
+    prepared: PreparedRuntimeTarget,
+    onCreated?: (runtime: ActiveRuntime) => void,
+  ): Promise<ActiveRuntime> {
+    let runtime: ActiveRuntime | null = null
+    let descriptor: ProjectRuntimeDescriptor | null = null
+    try {
+      descriptor = await this.pool.createRuntime(prepared.scope, {
+        ...(prepared.sessionFile === undefined ? {} : { sessionFile: prepared.sessionFile }),
+        ...(prepared.forkSessionFile === undefined ? {} : { forkSessionFile: prepared.forkSessionFile }),
+      })
+      this.assertNotDisposed()
+      this.assertSessionAvailable(prepared)
+      const snapshot: LocalPiRuntimeSnapshot = {
+        state: 'starting', generation: descriptor.generation, cwd: descriptor.cwd,
+        sessionFile: descriptor.sessionFile, sessionState: null, commands: [], stderr: '', diagnostics: [],
+      }
+      runtime = {
+        runtimeId: descriptor.runtimeId, hostScope: prepared.scope, scope: target.scope, descriptor,
+        snapshot, lastCredibleSessionFile: descriptor.sessionFile,
+        ...(target.selectionToken ? { selectionToken: target.selectionToken } : {}),
+        lastUsedAt: this.now(), activity: createRuntimeActivity(),
+      }
+      this.preparingRuntimeIds.add(runtime.runtimeId)
+      this.runtimes.set(runtime.runtimeId, runtime)
+      onCreated?.(runtime)
+      const token = this.markCommandStart(runtime, descriptor.generation)
+      try {
+        descriptor = await this.pool.bindRuntime(descriptor.runtimeId, descriptor.generation)
+        this.assertNotDisposed()
+        this.assertSessionAvailable(prepared)
+        this.setRuntimeDescriptor(runtime, descriptor)
+        runtime.snapshot = await this.hydrate(descriptor, prepared)
+        this.assertNotDisposed()
+        this.assertSessionAvailable(prepared)
+        this.controlHandleFor(runtime)
+        if (this.runtimes.get(runtime.runtimeId) !== runtime || runtime.descriptor.generation !== descriptor.generation ||
+            runtime.descriptor.sessionId !== descriptor.sessionId) {
+          throw new PiRuntimeFrontendError('PI_RUNTIME_STALE_GENERATION', 'The prepared Runtime was retired.')
+        }
+        runtime.lastCredibleSessionFile = runtime.snapshot.sessionFile
+        return runtime
+      } finally {
+        this.markCommandEnd(runtime, token)
+      }
+    } catch (error) {
+      if (descriptor) {
+        const owned = runtime && this.runtimes.get(runtime.runtimeId) === runtime ? runtime.descriptor : descriptor
+        await this.pool.disposeRuntime(owned.runtimeId, owned.generation).catch(() => undefined)
+        this.dropCachedRuntime(descriptor.runtimeId)
+      }
+      throw this.toFrontendError(error)
+    } finally {
+      if (runtime) {
+        const completed = runtime
+        // All preparation waiters claim their own lease/selection before reclamation.
+        setImmediate(() => {
+          this.preparingRuntimeIds.delete(completed.runtimeId)
+          if (!this.disposed) this.scheduleIdleReclaim(completed.hostScope)
+        })
+      }
+    }
   }
 
   /** Release one exact acquisition lease. Replays and stale leases are no-ops. */
@@ -665,6 +767,35 @@ export class PiRuntimeFrontend {
       this.scheduleIdleReclaim(runtime.hostScope)
     }
     return true
+  }
+
+  /** A cancelled fresh side conversation has no user Session to retain in the idle cache. */
+  discardUnpersistedControlRuntime(handle: PiRuntimeControlHandle): Promise<void> {
+    return this.enqueue(async () => {
+      let runtime: ActiveRuntime
+      try { runtime = this.requireControlRuntime(handle) } catch { return }
+      const eligible = () => {
+        const file = runtime.descriptor.sessionFile ?? runtime.lastCredibleSessionFile
+        return this.runtimes.get(runtime.runtimeId) === runtime && runtime !== this.active &&
+          isRuntimeIdle(runtime.activity) && runtime.activity.managedMessages === 0 &&
+          (!file || !this.isPersistedSessionFile(file))
+      }
+      if (!eligible()) return
+      await this.pool.withMaintenance(runtime.hostScope.cwd, async (permit) => {
+        if (!eligible()) return
+        const revision = runtime.activity.revision
+        const [state, delivery] = await Promise.all([
+          this.pool.command(runtime.runtimeId, { type: 'get_state' }, handle.generation, undefined, permit),
+          this.pool.command(runtime.runtimeId, { type: 'get_delivery_state', expectedSessionId: handle.sessionId }, handle.generation, undefined, permit),
+        ])
+        const parsed = this.parseStateResponse(state.response)
+        if (!eligible() || runtime.activity.revision !== revision || state.runtime.generation !== handle.generation ||
+            delivery.runtime.generation !== handle.generation || isSessionStateBusy(parsed) || parsed.messageCount !== 0 ||
+            this.parseDeliveryResponse(delivery.response).items.length !== 0) return
+        await this.pool.disposeRuntime(runtime.runtimeId, handle.generation, permit)
+        if (this.runtimes.get(runtime.runtimeId) === runtime) this.dropCachedRuntime(runtime.runtimeId)
+      })
+    })
   }
 
   async submitControlPrompt(
@@ -740,6 +871,19 @@ export class PiRuntimeFrontend {
     } finally {
       this.markCommandEnd(runtime, token)
     }
+  }
+
+  /** Read the exact background Session; never consult the selected Renderer transcript. */
+  async getControlTranscript(handle: PiRuntimeControlHandle) {
+    this.assertNotDisposed()
+    const runtime = this.requireControlRuntime(handle)
+    const result = await this.pool.command(handle.runtimeId, { type: 'get_messages' }, handle.generation)
+    this.requireControlRuntime(handle)
+    if (this.runtimes.get(runtime.runtimeId) !== runtime || result.runtime.generation !== handle.generation ||
+        !result.response.success || result.response.command !== 'get_messages') {
+      throw new PiRuntimeFrontendError('PI_RUNTIME_OPERATION_FAILED', 'The side conversation transcript is no longer available.')
+    }
+    return localPiMessagesResponseDataSchema.parse(result.response.data)
   }
 
   async abortControlRuntime(
@@ -1075,17 +1219,50 @@ export class PiRuntimeFrontend {
    * the activation service first; treating an active match as an error keeps
    * the activation scope and published snapshot from drifting apart.
    */
-  releaseSession(sessionFile: string): Promise<boolean> {
+  releaseSession(sessionFile: string, afterRelease?: () => Promise<void>): Promise<boolean> {
+    const identity = pathIdentity(sessionFile)
+    if (this.releasingSessionFiles.has(identity)) {
+      return Promise.reject(new PiRuntimeFrontendError('PI_RUNTIME_OPERATION_FAILED', 'The Session is already being released.'))
+    }
+    // Admission closes before entering the UI lifecycle queue. Keep it closed
+    // through the caller's filesystem mutation, including revalidation.
+    this.releasingSessionFiles.add(identity)
     return this.enqueue(async () => {
       this.assertNotDisposed()
-      const identity = pathIdentity(sessionFile)
+      const preparing = [...this.pendingPreparations].filter((entry) => entry.sessionFiles.has(identity))
+      if (preparing.some((entry) => entry.state.runtime && entry.state.runtime === this.active)) {
+        throw new PiRuntimeFrontendError('PI_RUNTIME_OPERATION_FAILED', 'The active Pi session must be stopped before it can be released.', false)
+      }
+      // Cancellation also releases a startup dialog that a background bind
+      // may be awaiting. Creations not yet returned observe the admission
+      // marker before binding and dispose their own result.
+      await Promise.allSettled(preparing.map(async (entry) => {
+        const runtime = entry.state.runtime
+        if (runtime) {
+          await Promise.allSettled([...runtime.activity.pendingUiRequests].map(async (id) => {
+            await this.pool.respondToExtensionUi(runtime.runtimeId, { type: 'extension_ui_response', id, cancelled: true }, runtime.descriptor.generation)
+            this.updateActivity(runtime, { type: 'ui_responded', id })
+          }))
+        }
+        await entry.promise.catch(() => undefined)
+      }))
       const matches = [...this.runtimes.values()].filter((runtime) => {
         const cachedSessionFile = runtime.descriptor.sessionFile ??
           runtime.lastCredibleSessionFile
         return cachedSessionFile !== null &&
           pathIdentity(cachedSessionFile) === identity
       })
-      if (matches.some((runtime) => runtime.runtimeId === this.active?.runtimeId)) {
+      const owned = new Map(matches.map((runtime) => [runtime.runtimeId, runtime.descriptor]))
+      // Preparation failure may have detached the frontend even if its
+      // best-effort cleanup failed. The Pool still owns the authoritative
+      // Session lease and must release it before filesystem mutation.
+      for (const host of this.pool.getSnapshot().hosts) {
+        for (const runtime of host.runtimes) {
+          const file = runtime.sessionFile ?? runtime.leaseKey
+          if (runtime.state !== 'stopped' && file && pathIdentity(file) === identity) owned.set(runtime.runtimeId, runtime)
+        }
+      }
+      if (this.active && owned.has(this.active.runtimeId)) {
         throw new PiRuntimeFrontendError(
           'PI_RUNTIME_OPERATION_FAILED',
           'The active Pi session must be stopped before it can be released.',
@@ -1093,11 +1270,11 @@ export class PiRuntimeFrontend {
         )
       }
 
-      for (const runtime of matches) {
+      for (const runtime of owned.values()) {
         try {
           await this.pool.disposeRuntime(
             runtime.runtimeId,
-            runtime.descriptor.generation,
+            runtime.generation,
           )
         } catch (error) {
           if (
@@ -1109,7 +1286,55 @@ export class PiRuntimeFrontend {
         }
         this.dropCachedRuntime(runtime.runtimeId)
       }
-      return matches.length > 0
+      await afterRelease?.()
+      return owned.size > 0 || preparing.length > 0
+    }).finally(() => { this.releasingSessionFiles.delete(identity) })
+  }
+
+  /** Hold project admission closed while an owned checkout is archived. */
+  withInactiveProject<T>(cwd: string, operation: () => Promise<T>): Promise<T> {
+    return this.enqueue(async () => {
+      const result = await this.pool.withMaintenance(cwd, async (permit) => {
+        const runtimes = [...this.runtimes.values()].filter((runtime) => pathIdentity(runtime.hostScope.cwd) === pathIdentity(cwd))
+        if (runtimes.some((runtime) => runtime === this.active || !isRuntimeIdle(runtime.activity) || runtime.activity.managedMessages > 0 ||
+            this.preparingRuntimeIds.has(runtime.runtimeId) || !runtime.lastCredibleSessionFile ||
+            !this.isPersistedSessionFile(runtime.lastCredibleSessionFile))) {
+          throw new PiRuntimeFrontendError('PI_RUNTIME_OPERATION_FAILED', 'Switch to another project and finish its running or unsaved sessions before archiving.')
+        }
+        const observed = runtimes.map((runtime) => ({ runtime, generation: runtime.descriptor.generation, revision: runtime.activity.revision }))
+        const unchanged = () => observed.every(({ runtime, generation, revision }) =>
+          this.runtimes.get(runtime.runtimeId) === runtime && runtime.descriptor.generation === generation &&
+          runtime.activity.revision === revision && runtime !== this.active && isRuntimeIdle(runtime.activity) && runtime.activity.managedMessages === 0)
+        // Confirm every Session before the first teardown, including paused delivery queues.
+        for (const { runtime, generation } of observed) {
+          const [state, delivery] = await Promise.all([
+            this.pool.command(runtime.runtimeId, { type: 'get_state' }, generation, undefined, permit),
+            this.pool.command(runtime.runtimeId, { type: 'get_delivery_state', expectedSessionId: runtime.descriptor.sessionId }, generation, undefined, permit),
+          ])
+          const deliveries = this.parseDeliveryResponse(delivery.response)
+          if (!unchanged() || state.runtime.generation !== generation || delivery.runtime.generation !== generation ||
+              isSessionStateBusy(this.parseStateResponse(state.response)) || isDeliverySnapshotBusy(deliveries) || deliveries.items.length > 0) {
+            throw new PiRuntimeFrontendError('PI_RUNTIME_OPERATION_FAILED', 'The project still has running or queued work. Finish it before archiving.')
+          }
+        }
+        for (const runtime of runtimes) {
+          const expected = observed.find((entry) => entry.runtime === runtime)!
+          if (this.runtimes.get(runtime.runtimeId) !== runtime || runtime.descriptor.generation !== expected.generation ||
+              runtime.activity.revision !== expected.revision || !isRuntimeIdle(runtime.activity) || runtime.activity.managedMessages > 0) {
+            throw new PiRuntimeFrontendError('PI_RUNTIME_OPERATION_FAILED', 'The project started work while preparing to archive. Retry after it finishes.')
+          }
+          await this.pool.disposeRuntime(runtime.runtimeId, runtime.descriptor.generation, permit)
+          this.dropCachedRuntime(runtime.runtimeId)
+        }
+        const host = this.pool.getHost({ kind: 'project', cwd })
+        if (host?.runtimes.some((runtime) => runtime.state !== 'stopped')) {
+          throw new PiRuntimeFrontendError('PI_RUNTIME_OPERATION_FAILED', 'The project still owns a Runtime. Retry after it finishes.')
+        }
+        await this.pool.stop({ kind: 'project', cwd }, permit)
+        return operation()
+      })
+      if (!result.admitted) throw new PiRuntimeFrontendError('PI_RUNTIME_OPERATION_FAILED', 'The project is busy. Retry when its current operation finishes.')
+      return result.value
     })
   }
 
@@ -1262,6 +1487,7 @@ export class PiRuntimeFrontend {
   async dispose() {
     if (this.disposed) return
     this.disposed = true
+    await Promise.allSettled([...this.pendingPreparations].map((entry) => entry.promise))
     await this.enqueue(async () => {
       const runtimes = [...this.runtimes.values()]
       this.setSelectedRuntime(null)
@@ -1394,47 +1620,21 @@ export class PiRuntimeFrontend {
         this.dropCachedHost(prepared.scope)
         await this.pool.restart(prepared.scope)
       }
-      const cached = options.restartHost
-        ? null
-        : this.findCachedRuntime(prepared.scope, prepared.sessionFile)
-      descriptor = cached?.descriptor ?? await this.pool.createRuntime(prepared.scope, {
-        ...(prepared.sessionFile === undefined ? {} : { sessionFile: prepared.sessionFile }),
-        ...(prepared.forkSessionFile === undefined ? {} : { forkSessionFile: prepared.forkSessionFile }),
-      })
-      selected = cached
-      if (!selected) {
+      selected = await this.prepareRuntime(target, prepared, (runtime) => {
         createdRuntime = true
-        const startingSnapshot: LocalPiRuntimeSnapshot = {
-          state: 'starting',
-          generation: descriptor.generation,
-          cwd: descriptor.cwd,
-          sessionFile: descriptor.sessionFile,
-          sessionState: null,
-          commands: [],
-          stderr: '',
-          diagnostics: [],
-        }
-        selected = {
-          runtimeId: descriptor.runtimeId,
-          hostScope: prepared.scope,
-          scope: target.scope,
-          descriptor,
-          snapshot: startingSnapshot,
-          lastCredibleSessionFile: descriptor.sessionFile,
-          ...(target.selectionToken ? { selectionToken: target.selectionToken } : {}),
-          lastUsedAt: this.now(),
-          activity: createRuntimeActivity(startingSnapshot.sessionState),
-        }
-        this.setSelectedRuntime(selected)
-        this.runtimes.set(descriptor.runtimeId, selected)
-        this.publish(startingSnapshot)
-        descriptor = await this.pool.bindRuntime(
-          descriptor.runtimeId,
-          descriptor.generation,
-        )
-        this.setRuntimeDescriptor(selected, descriptor)
+        selected = runtime
+        descriptor = runtime.descriptor
+        this.setSelectedRuntime(runtime)
+        this.publish(runtime.snapshot)
+        void this.replayStartingRuntimeUi(runtime)
+      })
+      descriptor = selected.descriptor
+      const snapshot = createdRuntime ? selected.snapshot : await this.hydrate(descriptor, prepared)
+      this.assertNotDisposed()
+      this.controlHandleFor(selected)
+      if (selected.descriptor.generation !== descriptor.generation || selected.descriptor.sessionId !== descriptor.sessionId) {
+        throw new PiRuntimeFrontendError('PI_RUNTIME_STALE_GENERATION', 'The Session changed while it was being selected.')
       }
-      const snapshot = await this.hydrate(descriptor, prepared)
       this.setSelectedRuntime(selected)
       selected.scope = target.scope
       if (target.selectionToken) selected.selectionToken = target.selectionToken
@@ -1471,7 +1671,11 @@ export class PiRuntimeFrontend {
       const failedRuntime = selected
       const shouldDisposeFailedRuntime = Boolean(
         descriptor &&
+        createdRuntime &&
         failedRuntime &&
+        this.runtimes.get(failedRuntime.runtimeId) === failedRuntime &&
+        failedRuntime.descriptor.generation === descriptor.generation &&
+        isRuntimeIdle(failedRuntime.activity) &&
         failedRuntime !== previousActive,
       ) || Boolean(descriptor && createdRuntime && !failedRuntime)
       if (descriptor && shouldDisposeFailedRuntime) {
@@ -1566,6 +1770,14 @@ export class PiRuntimeFrontend {
       if (tracked && tracked.descriptor.generation === envelope.runtimeGeneration &&
         (trackedHandle || activeAccepted)) {
         controlChanged = this.applyUiActivity(tracked, envelope)
+      }
+      if (blocking && tracked && trackedHandle && [...this.pendingPreparations].some((preparation) =>
+        preparation.state.runtime === tracked && [...preparation.sessionFiles].some((file) => this.releasingSessionFiles.has(file)))) {
+        await this.pool.respondToExtensionUi(tracked.runtimeId, {
+          type: 'extension_ui_response', id: envelope.request.id, cancelled: true,
+        }, trackedHandle.generation)
+        this.updateActivity(tracked, { type: 'ui_responded', id: envelope.request.id })
+        return
       }
       if (controlChanged && !blocking) this.publishControlRuntimes()
 
@@ -1868,7 +2080,7 @@ export class PiRuntimeFrontend {
       .filter((runtime) => {
         if (
           runtime.runtimeId === this.active?.runtimeId ||
-          !sameHostScope(runtime.hostScope, scope) ||
+          this.preparingRuntimeIds.has(runtime.runtimeId) ||
           !isRuntimeIdle(runtime.activity)
         ) {
           return false
@@ -1879,14 +2091,15 @@ export class PiRuntimeFrontend {
       })
       .sort((left, right) => left.lastUsedAt - right.lastUsedAt)
 
-    let remainingToReclaim = Math.max(
-      0,
-      candidates.length - this.maxRetainedIdleRuntimesPerHost,
-    )
+    let globalExcess = Math.max(0, candidates.length - this.maxRetainedIdleRuntimes)
+    let hostExcess = Math.max(0, candidates.filter((runtime) => sameHostScope(runtime.hostScope, scope)).length - this.maxRetainedIdleRuntimesPerHost)
     for (const candidate of candidates) {
-      if (remainingToReclaim === 0) break
+      const inHost = sameHostScope(candidate.hostScope, scope)
+      if (globalExcess === 0 && hostExcess === 0) break
+      if (globalExcess === 0 && !inHost) continue
       if (await this.reclaimRuntimeIfStillIdle(candidate)) {
-        remainingToReclaim -= 1
+        globalExcess = Math.max(0, globalExcess - 1)
+        if (inHost) hostExcess = Math.max(0, hostExcess - 1)
       }
     }
   }
@@ -1897,6 +2110,7 @@ export class PiRuntimeFrontend {
     const current = this.runtimes.get(candidate.runtimeId)
     if (
       current !== candidate ||
+      this.preparingRuntimeIds.has(candidate.runtimeId) ||
       current.runtimeId === this.active?.runtimeId ||
       !isRuntimeIdle(current.activity)
     ) {
@@ -1940,11 +2154,22 @@ export class PiRuntimeFrontend {
         parsed.data.sessionFile ?? sessionFile
       if (!this.isPersistedSessionFile(confirmedSessionFile)) return false
 
-      await this.pool.disposeRuntime(current.runtimeId, generation)
-      if (this.runtimes.get(current.runtimeId) === current) {
-        this.dropCachedRuntime(current.runtimeId)
+      const retirement = Promise.resolve().then(async () => {
+        // Register before disposal can publish. A cached acquisition already
+        // resolving this turn can still pin; newer callers await retirement.
+        if (this.runtimes.get(current.runtimeId) !== current ||
+            this.active?.runtimeId === current.runtimeId ||
+            current.descriptor.generation !== generation || !isRuntimeIdle(current.activity)) return false
+        await this.pool.disposeRuntime(current.runtimeId, generation)
+        if (this.runtimes.get(current.runtimeId) === current) this.dropCachedRuntime(current.runtimeId)
+        return true
+      }).catch(() => false)
+      this.runtimeRetirements.set(current.runtimeId, retirement)
+      try {
+        return await retirement
+      } finally {
+        if (this.runtimeRetirements.get(current.runtimeId) === retirement) this.runtimeRetirements.delete(current.runtimeId)
       }
-      return true
     } catch {
       // Automatic reclamation is best-effort. A failed revalidation must keep
       // the Runtime rather than turn cache cleanup into a user-visible error.
@@ -2099,20 +2324,23 @@ export class PiRuntimeFrontend {
     }
   }
 
+  private assertSessionAvailable(target: Pick<PreparedRuntimeTarget, 'sessionFile' | 'forkSessionFile'>): void {
+    if ([target.sessionFile, target.forkSessionFile].some((file) =>
+      file !== undefined && this.releasingSessionFiles.has(pathIdentity(file)))) {
+      throw new PiRuntimeFrontendError('PI_RUNTIME_OPERATION_FAILED', 'The Session is being released. Retry after deletion finishes.')
+    }
+  }
+
   private controlHandleFor(
     runtime: ActiveRuntime,
     allowStarting = false,
   ): PiRuntimeControlHandle {
-    const host = this.pool.getSnapshot().hosts.find((entry) =>
-      entry.scope.kind === runtime.hostScope.kind &&
-      entry.cwd === runtime.hostScope.cwd,
-    )
-    const summary = host?.runtimes.find((entry) =>
-      entry.runtimeId === runtime.runtimeId,
-    )
+    const identity = this.pool.getRuntimeIdentity(runtime.runtimeId)
+    const summary = identity?.runtime
     if (
-      !host ||
-      host.state !== 'ready' ||
+      !identity ||
+      !sameHostScope(identity.scope, runtime.hostScope) ||
+      identity.hostState !== 'ready' ||
       !summary ||
       (summary.state !== 'ready' && !(allowStarting && summary.state === 'starting')) ||
       summary.generation !== runtime.descriptor.generation
@@ -2123,7 +2351,7 @@ export class PiRuntimeFrontend {
       )
     }
     return {
-      hostEpoch: host.controller.hostEpoch,
+      hostEpoch: identity.hostEpoch,
       runtimeId: runtime.runtimeId,
       generation: runtime.descriptor.generation,
       scope: structuredClone(runtime.scope),
@@ -2205,10 +2433,10 @@ export class PiRuntimeFrontend {
     }
   }
 
-  private publish(snapshot: LocalPiRuntimeSnapshot, updateActive = true) {
+  private publish(snapshot: LocalPiRuntimeSnapshot, updateActive = true, summaries?: PiRuntimeControlSummary[]) {
     const cloned = structuredClone({
       ...snapshot,
-      sessionStatuses: this.collectSessionStatuses(),
+      sessionStatuses: this.collectSessionStatuses(summaries),
     })
     this.publishedSnapshot = cloned
     if (
@@ -2231,12 +2459,12 @@ export class PiRuntimeFrontend {
     // Background Runtime activity does not change the selected Runtime
     // snapshot. Reuse the existing snapshot subscription to notify Renderer
     // consumers without adding another IPC channel or state store.
-    this.publish(this.publishedSnapshot, false)
+    this.publish(this.publishedSnapshot, false, summaries)
   }
 
-  private collectSessionStatuses(): LocalPiRuntimeSessionStatus[] {
+  private collectSessionStatuses(summaries = this.collectControlRuntimes()): LocalPiRuntimeSessionStatus[] {
     return projectRuntimeSessionStatuses(
-      this.collectControlRuntimes(),
+      summaries,
       [...this.terminalSessionStatuses.values()],
     )
   }

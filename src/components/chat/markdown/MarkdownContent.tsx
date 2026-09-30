@@ -7,6 +7,14 @@ import { CodeBlock } from './CodeBlock'
 import { MarkdownLink, sanitizeHref } from './MarkdownLink'
 import { useT } from '@/i18n'
 
+// rehype-highlight constructs a complete language registry when its plugin is
+// attached. Sharing the stateless transformer avoids rebuilding it per reply.
+const highlight = rehypeHighlight({ detect: false })
+const sharedHighlight = () => highlight
+const remarkPlugins = [remarkGfm]
+const highlightedPlugins = [sharedHighlight]
+const streamingPlugins: typeof highlightedPlugins = []
+
 /** Minimal structural hast types (avoids a @types/hast dependency). */
 interface HastNode {
   type: string
@@ -109,16 +117,14 @@ interface MarkdownRendererProps extends MarkdownContentProps {
   codeOptions?: MarkdownCodeOptions
 }
 
-function MarkdownRenderer({ markdown, streaming = false, codeOptions }: MarkdownRendererProps) {
+const MarkdownRenderer = React.memo(function MarkdownRenderer({ markdown, streaming = false, codeOptions }: MarkdownRendererProps) {
   const components = useMarkdownComponents(codeOptions)
   return (
     <div className="md-body w-full min-w-0 max-w-[800px]">
       <ReactMarkdown
         skipHtml
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={streaming
-          ? []
-          : [[rehypeHighlight, { detect: false, ignoreUnknown: true }]]}
+        remarkPlugins={remarkPlugins}
+        rehypePlugins={streaming ? streamingPlugins : highlightedPlugins}
         urlTransform={urlTransform}
         components={components}
       >
@@ -126,10 +132,13 @@ function MarkdownRenderer({ markdown, streaming = false, codeOptions }: Markdown
       </ReactMarkdown>
     </div>
   )
-}
+})
 
 export function MarkdownContent(props: MarkdownContentProps) {
-  return <MarkdownRenderer {...props} />
+  // Keep typing and controls responsive while React prepares a whole-document
+  // parse. The final render remains authoritative, including late references.
+  const deferredMarkdown = React.useDeferredValue(props.markdown)
+  return <MarkdownRenderer {...props} markdown={props.streaming ? deferredMarkdown : props.markdown} />
 }
 
 function sourceFence(code: string, language?: string) {

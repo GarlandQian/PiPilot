@@ -19,6 +19,7 @@ import type {
   ConversationMcpResolvedTarget,
 } from '../../src/main/external-control/conversation-inventory'
 import { ConversationMcpOperationRegistry } from '../../src/main/external-control/operation-registry'
+import { EMPTY_ASSISTANT_CONTENT_FALLBACK } from '../../src/main/pi-host/runtime-message-sanitizer'
 import {
   PiRuntimeFrontendError,
   type PiRuntimeControlHandle,
@@ -76,19 +77,13 @@ function assistantMessage(text: string): LocalPiAssistantMessage {
   }
 }
 
-function userEntry(text: string, id: string): LocalPiRpcEvent {
+function userEntry(text: string, _id: string): LocalPiRpcEvent {
   return {
-    type: 'entry_appended',
-    entry: {
-      id,
-      parentId: null,
-      timestamp: '2026-08-22T00:00:00.000Z',
-      type: 'message',
-      message: {
-        role: 'user',
-        content: text,
-        timestamp: 1,
-      },
+    type: 'message_start',
+    message: {
+      role: 'user',
+      content: text,
+      timestamp: 1,
     },
   }
 }
@@ -184,6 +179,10 @@ class FakeRuntimeControl {
   })
 
   readonly listControlRuntimes = vi.fn(() => [structuredClone(this.summary)])
+
+  readonly getActiveRuntimeIdentity = vi.fn(() => this.summary.selected
+    ? { ...this.handle, selectionRevision: 1 }
+    : null)
 
   readonly respondToControlExtensionUi = vi.fn(async (
     _handle: PiRuntimeControlHandle,
@@ -331,6 +330,7 @@ function createHarness(
       PiRuntimeFrontend,
       | 'abortControlRuntime'
       | 'acquireControlRuntime'
+      | 'getActiveRuntimeIdentity'
       | 'getControlRuntimeState'
       | 'listControlRuntimes'
       | 'releaseControlRuntime'
@@ -358,6 +358,44 @@ async function waitForStatus(
 }
 
 describe('ConversationMcpControlService', () => {
+  it('rejects a scheduled target whose file path now belongs to a different official session', async () => {
+    const { inventory, operations, runtime, service } = createHarness()
+    inventory.target.catalogTarget = {
+      scope: projectScope, cwd: '/project', root: '/sessions', sessionFile: runtime.handle.sessionFile!,
+      sessionId: 'replacement-session', mode: 'open', headerIdentity: 'replacement-header', contentDigest: 'new',
+      createdAt: '2026-09-29T00:00:00Z', modifiedAt: '2026-09-29T00:00:00Z',
+      identity: { dev: 1, ino: 2, size: 10, ctimeMs: 1, mtimeMs: 1 },
+    }
+    await expect(service.sendPrompt({ conversationId, prompt: 'Scheduled prompt', mode: 'prompt', idempotencyKey: 'scheduled-target' }, { sessionId: 'original-session', headerIdentity: 'original-header' }))
+      .rejects.toMatchObject({ code: 'conversation_unavailable' })
+    expect(operations.recent()).toHaveLength(0)
+    expect(runtime.acquireControlRuntime).not.toHaveBeenCalled()
+    expect(runtime.submitControlPrompt).not.toHaveBeenCalled()
+    await service.dispose()
+  })
+
+  it.each(['revalidation', 'acquisition'] as const)('cancels a scheduled dispatch suspended during %s before submitting it', async (phase) => {
+    const { inventory, operations, runtime, service } = createHarness()
+    inventory.target.catalogTarget = {
+      scope: projectScope, cwd: '/project', root: '/sessions', sessionFile: runtime.handle.sessionFile!,
+      sessionId: runtime.handle.sessionId, mode: 'open', headerIdentity: 'saved-header', contentDigest: 'original',
+      createdAt: '2026-09-29T00:00:00Z', modifiedAt: '2026-09-29T00:00:00Z',
+      identity: { dev: 1, ino: 2, size: 10, ctimeMs: 1, mtimeMs: 1 },
+    }
+    const gate = deferred<void>()
+    if (phase === 'revalidation') inventory.revalidateGate = gate.promise
+    else runtime.acquireGate = gate.promise
+    const controller = new AbortController()
+    const receipt = await service.sendPrompt({ conversationId, prompt: 'Scheduled prompt', mode: 'prompt', idempotencyKey: `scheduled-cancel-${phase}` }, { sessionId: runtime.handle.sessionId, headerIdentity: 'saved-header', signal: controller.signal })
+    await vi.waitFor(() => expect(phase === 'revalidation' ? inventory.revalidateTarget : runtime.acquireControlRuntime).toHaveBeenCalledOnce())
+    controller.abort()
+    gate.resolve()
+    await waitForStatus(operations, receipt.operationId, 'failed')
+    expect(runtime.submitControlPrompt).not.toHaveBeenCalled()
+    expect(runtime.releaseControlRuntime).toHaveBeenCalledTimes(phase === 'acquisition' ? 1 : 0)
+    await service.dispose()
+  })
+
   it('returns received before revalidation and authoritative acceptance', async () => {
     const { inventory, operations, runtime, service } = createHarness('idle', 'inactive')
     const revalidateGate = deferred<void>()
@@ -410,6 +448,70 @@ describe('ConversationMcpControlService', () => {
       finalResponse: 'Buffered final response',
     })
     expect(runtime.releaseControlRuntime).toHaveBeenCalledOnce()
+    await service.dispose()
+  })
+
+  it('uses the real SDK user message start only, without treating message end as a second submitted prompt', async () => {
+    const { operations, runtime, service } = createHarness()
+    const prompt = 'Match this ordinary SDK message.'
+    const receipt = await service.sendPrompt({ conversationId, prompt, mode: 'prompt', idempotencyKey: 'sdk-user-events' })
+    await waitForStatus(operations, receipt.operationId, 'accepted')
+    const message = { role: 'user' as const, content: [{ type: 'text' as const, text: prompt }], timestamp: 1 }
+    await runtime.emitEvent({ type: 'message_start', message })
+    await runtime.emitEvent({ type: 'message_end', message })
+    expect(operations.get(receipt.operationId).status).toBe('accepted')
+    await runtime.emitEvent(finalMessage('Owned SDK answer'))
+    await runtime.emitEvent({ type: 'agent_end', messages: [message, assistantMessage('Owned SDK answer')], willRetry: false })
+    await runtime.emitEvent({ type: 'agent_settled' })
+    expect(operations.get(receipt.operationId)).toMatchObject({ status: 'completed', finalResponse: 'Owned SDK answer' })
+    await service.dispose()
+  })
+
+  it.each(['error', 'aborted'] as const)('preserves an owned %s outcome emitted before acceptance without reporting success', async (stopReason) => {
+    const { operations, runtime, service } = createHarness()
+    const gate = runtime.delayNextSubmit()
+    const prompt = 'Preserve the terminal outcome.'
+    const receipt = await service.sendPrompt({ conversationId, prompt, mode: 'prompt', idempotencyKey: `owned-${stopReason}` })
+    await vi.waitFor(() => expect(runtime.submitControlPrompt).toHaveBeenCalledOnce())
+    await runtime.emitEvent(userEntry(prompt, 'owned-outcome-user'))
+    await runtime.emitEvent({ type: 'agent_end', messages: [{ ...assistantMessage(''), stopReason, errorMessage: 'Fixture provider rejected this request.' }], willRetry: false })
+    await runtime.emitEvent({ type: 'agent_settled' })
+    expect(operations.get(receipt.operationId).status).toBe('accepting')
+    gate.resolve({ handle: { ...runtime.handle }, acceptedMode: 'prompt' })
+    const result = await waitForStatus(operations, receipt.operationId, stopReason === 'error' ? 'failed' : 'aborted')
+    if (stopReason === 'error') expect(result.error).toEqual({ code: 'internal_error', message: 'Fixture provider rejected this request.' })
+    else expect(result.error).toBeUndefined()
+    await service.dispose()
+  })
+
+  it.each([EMPTY_ASSISTANT_CONTENT_FALLBACK, 'A real partial answer'])('keeps failed-turn output only when it is meaningful: %s', async (text) => {
+    const { operations, runtime, service } = createHarness()
+    const prompt = 'Preserve partial work, not a sanitizer placeholder.'
+    const receipt = await service.sendPrompt({ conversationId, prompt, mode: 'prompt', idempotencyKey: 'partial-error-output' })
+    await waitForStatus(operations, receipt.operationId, 'accepted')
+    await runtime.emitEvent(userEntry(prompt, 'partial-output-user'))
+    const message = { ...assistantMessage(text), stopReason: 'error' as const, errorMessage: 'Provider disconnected.' }
+    await runtime.emitEvent({ type: 'message_end', message })
+    await runtime.emitEvent({ type: 'agent_end', messages: [message], willRetry: false })
+    await runtime.emitEvent({ type: 'agent_settled' })
+    expect(operations.get(receipt.operationId)).toMatchObject({ status: 'failed', error: { message: 'Provider disconnected.' } })
+    expect(operations.get(receipt.operationId).finalResponse).toBe(text === EMPTY_ASSISTANT_CONTENT_FALLBACK ? undefined : text)
+    await service.dispose()
+  })
+
+  it('allows a successful retry to replace its earlier failed attempt before the owned turn settles', async () => {
+    const { operations, runtime, service } = createHarness()
+    const prompt = 'Retry this turn.'
+    const receipt = await service.sendPrompt({ conversationId, prompt, mode: 'prompt', idempotencyKey: 'retry-outcome' })
+    await waitForStatus(operations, receipt.operationId, 'accepted')
+    await runtime.emitEvent(userEntry(prompt, 'retry-user'))
+    await runtime.emitEvent({ type: 'agent_end', messages: [{ ...assistantMessage(''), stopReason: 'error', errorMessage: 'Temporary provider failure.' }], willRetry: true })
+    expect(operations.get(receipt.operationId).status).toBe('accepted')
+    await runtime.emitEvent(finalMessage('Recovered answer'))
+    await runtime.emitEvent({ type: 'agent_end', messages: [assistantMessage('Recovered answer')], willRetry: false })
+    await runtime.emitEvent({ type: 'agent_settled' })
+    expect(operations.get(receipt.operationId)).toMatchObject({ status: 'completed', finalResponse: 'Recovered answer' })
+    expect(operations.get(receipt.operationId).error).toBeUndefined()
     await service.dispose()
   })
 
@@ -819,6 +921,71 @@ describe('ConversationMcpControlService', () => {
       'failed',
     )).toMatchObject({ error: { code: 'conversation_unavailable' } })
     expect(runtime.acquireControlRuntime).not.toHaveBeenCalled()
+    await service.dispose()
+  })
+
+  it.each(['starting', 'interaction'] as const)('preserves a foreground %s interaction before acquiring its runtime', async (phase) => {
+    const { operations, runtime, service } = createHarness('idle', 'inactive')
+    runtime.summary = { ...runtime.summary, selected: true, ...(phase === 'interaction' ? { activity: 'interaction' as const } : {}) }
+    if (phase === 'starting') runtime.listControlRuntimes.mockReturnValue([])
+    const receipt = await service.sendPrompt({ conversationId, prompt: 'Do not interrupt foreground startup.', mode: 'prompt', idempotencyKey: `foreground-${phase}` })
+
+    expect(await waitForStatus(operations, receipt.operationId, 'failed')).toMatchObject({ error: { code: 'interaction_required' } })
+    expect(runtime.acquireControlRuntime).not.toHaveBeenCalled()
+    expect(runtime.respondToControlExtensionUi).not.toHaveBeenCalled()
+    expect(runtime.submitControlPrompt).not.toHaveBeenCalled()
+    await service.dispose()
+  })
+
+  it('leaves a shared startup dialog for the user when its runtime becomes selected during acquisition', async () => {
+    const { operations, runtime, service } = createHarness('idle', 'inactive')
+    const acquireGate = deferred<void>()
+    runtime.acquireGate = acquireGate.promise
+    const receipt = await service.sendPrompt({ conversationId, prompt: 'Background startup.', mode: 'prompt', idempotencyKey: 'startup-selected-later' })
+    await vi.waitFor(() => expect(runtime.acquireControlRuntime).toHaveBeenCalledOnce())
+    runtime.summary = { ...runtime.summary, selected: true }
+    await runtime.emitBlockingUi('foreground-confirm')
+
+    expect(operations.get(receipt.operationId)).toMatchObject({ status: 'failed', error: { code: 'interaction_required' } })
+    expect(runtime.respondToControlExtensionUi).not.toHaveBeenCalled()
+    runtime.summary = { ...runtime.summary, selected: false }
+    await runtime.emitBlockingUi('later-unrelated-confirm')
+    expect(runtime.respondToControlExtensionUi).not.toHaveBeenCalled()
+    acquireGate.resolve()
+    await vi.waitFor(() => expect(runtime.releaseControlRuntime).toHaveBeenCalledOnce())
+    expect(runtime.submitControlPrompt).not.toHaveBeenCalled()
+    await service.dispose()
+  })
+
+  it.each(['before-acquisition', 'after-acquisition'] as const)('rejects a strict prompt when the foreground is busy %s', async (phase) => {
+    const { operations, runtime, service } = createHarness()
+    const acquireGate = deferred<void>()
+    runtime.summary = { ...runtime.summary, selected: true, lifecycle: phase === 'before-acquisition' ? 'running' : 'idle' }
+    if (phase === 'after-acquisition') runtime.acquireGate = acquireGate.promise
+    const receipt = await service.sendPrompt({ conversationId, prompt: 'Do not overlap foreground.', mode: 'prompt', idempotencyKey: `foreground-busy-${phase}` })
+    if (phase === 'after-acquisition') {
+      await vi.waitFor(() => expect(runtime.acquireControlRuntime).toHaveBeenCalledOnce())
+      runtime.summary = { ...runtime.summary, lifecycle: 'running' }
+      acquireGate.resolve()
+    }
+    expect(await waitForStatus(operations, receipt.operationId, 'failed')).toMatchObject({ error: { code: 'invalid_state' } })
+    expect(runtime.submitControlPrompt).not.toHaveBeenCalled()
+    expect(runtime.releaseControlRuntime).toHaveBeenCalledTimes(phase === 'after-acquisition' ? 1 : 0)
+    await service.dispose()
+  })
+
+  it('preserves a foreground dialog when an in-flight submission has not acquired its own turn', async () => {
+    const { operations, runtime, service } = createHarness()
+    runtime.summary = { ...runtime.summary, selected: true }
+    const submitGate = runtime.delayNextSubmit()
+    const receipt = await service.sendPrompt({ conversationId, prompt: 'Lose a race to the foreground.', mode: 'prompt', idempotencyKey: 'foreground-submit-race' })
+    await vi.waitFor(() => expect(runtime.submitControlPrompt).toHaveBeenCalledOnce())
+    await runtime.emitBlockingUi('foreground-busy-confirm')
+    expect(operations.get(receipt.operationId)).toMatchObject({ status: 'failed', error: { code: 'interaction_required' } })
+    expect(runtime.respondToControlExtensionUi).not.toHaveBeenCalled()
+    submitGate.reject(new Error('Runtime was busy.'))
+    await vi.waitFor(() => expect(runtime.releaseControlRuntime).toHaveBeenCalledOnce())
+    expect(runtime.abortControlRuntime).not.toHaveBeenCalled()
     await service.dispose()
   })
 

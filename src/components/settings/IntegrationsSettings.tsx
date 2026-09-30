@@ -203,7 +203,7 @@ export function IntegrationsSettings({ tab, onTab, active = true }: Integrations
         </TabsContent>
       ))}
       <TabsContent value="mcp" forceMount hidden={tab !== 'mcp'} className="min-w-0">
-        <McpSettings scope={integrations.scope} active={active && tab === 'mcp'} />
+        <McpSettings scope={integrations.scope} active={active && tab === 'mcp'} onManagePackages={() => onTab('packages')} />
       </TabsContent>
       <TabsContent value="external-control" className="min-w-0"><ExternalControlView active={active && tab === 'external-control'} /></TabsContent>
 

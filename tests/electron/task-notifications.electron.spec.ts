@@ -46,7 +46,6 @@ async function launchFixture(testInfo: TestInfo, options: {
       appearance: { ...DEFAULT_SETTINGS.appearance, theme: 'light', reducedMotion: true },
     },
   }))
-  await writeFile(join(userData, 'pi-managed-packages.json'), JSON.stringify({ version: 1, mcpOptedOut: true }))
   const sdk = await startPiSdkFixture({ agentDir, promptGates: options.promptGates })
   let app: ElectronApplication | undefined
   const close = async () => {

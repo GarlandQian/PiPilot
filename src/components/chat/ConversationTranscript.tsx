@@ -1,5 +1,5 @@
 import type * as React from 'react'
-import { usePiTranscript } from '@/store/pi-rpc'
+import { usePiOutline, usePiTranscript } from '@/store/pi-rpc'
 import { ChatHeader, type ChatHeaderProps } from './ChatHeader'
 import { MessageList } from './MessageList'
 
@@ -10,6 +10,6 @@ export function ConversationTranscript(props: Omit<React.ComponentProps<typeof M
 }
 
 export function ConversationHeader(props: Omit<ChatHeaderProps, 'outline'>) {
-  const transcript = usePiTranscript()
-  return <ChatHeader {...props} outline={props.sessionVisible ? transcript.outline : []} />
+  const outline = usePiOutline()
+  return <ChatHeader {...props} outline={props.sessionVisible ? outline : []} />
 }

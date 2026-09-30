@@ -96,14 +96,16 @@ export class OfficialPiSessionDeletionService {
         }
       }
 
+      let disposition: 'trash' | 'unlink' | undefined
       try {
-        await this.runtimeHost.releaseSession(target.sessionFile)
+        await this.runtimeHost.releaseSession(target.sessionFile, async () => {
+          await this.catalog.revalidateDeletionTarget(target)
+          disposition = await this.remove(target)
+        })
       } catch {
         throw this.failed()
       }
-
-      await this.catalog.revalidateDeletionTarget(target)
-      const disposition = await this.remove(target)
+      if (!disposition) throw this.failed()
       return sessionCatalogDeleteResultSchema.parse({
         scope: target.scope,
         sessionId: target.sessionId,

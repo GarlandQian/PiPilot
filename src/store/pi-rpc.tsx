@@ -2571,6 +2571,11 @@ export function usePiTranscriptLoading() {
   return React.useSyncExternalStore(store.subscribe, store.getLoading, store.getLoading)
 }
 
+export function usePiOutline() {
+  const store = requiredContext(TranscriptContext, 'usePiOutline')
+  return React.useSyncExternalStore(store.subscribe, store.getOutline, store.getOutline)
+}
+
 export function usePiTranscriptToolCall(toolCallId: string | null) {
   const store = requiredContext(TranscriptContext, 'usePiTranscriptToolCall')
   const read = React.useCallback(() => store.getToolCall(toolCallId), [store, toolCallId])

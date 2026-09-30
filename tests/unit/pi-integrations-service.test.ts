@@ -43,6 +43,7 @@ function payload(
         enabled: retry.effectiveEnabled,
         maxRetries: 3,
         baseDelayMs: 1000,
+        maxAgentDelayMs: 60_000,
       },
     },
     diagnostics: [],
@@ -92,7 +93,6 @@ async function fixture() {
   const service = new LocalPiIntegrationService({
     getActiveScope: () => activeScope,
     helperHost,
-    managedPackageStatePath: join(root, 'state', 'pi-managed-packages.json'),
     restartMarkerPath: join(root, 'state', 'pi-integrations.json'),
     runtimeHost: runtimeHost as never,
     reloadHosts,
@@ -111,7 +111,6 @@ async function fixture() {
     reloadHosts,
     restartHosts,
     service,
-    managedPackageStatePath: join(root, 'state', 'pi-managed-packages.json'),
     restartMarkerPath: join(root, 'state', 'pi-integrations.json'),
     setScope(scope: typeof activeScope) {
       activeScope = scope
@@ -128,7 +127,7 @@ describe('LocalPiIntegrationService', () => {
     try {
         await expect(service.load({ kind: 'global' })).resolves.toMatchObject({
           state: 'ready',
-          executable: { path: 'bundled', version: '0.85.1' },
+          executable: { path: 'bundled', version: '0.99.1' },
         packages: [],
       })
       expect(runtimeHost.restart).not.toHaveBeenCalled()
@@ -191,28 +190,27 @@ describe('LocalPiIntegrationService', () => {
     }
   })
 
-  it('auto-installs MCP once and honors explicit removal opt-out', async () => {
+  it('keeps legacy MCP extensions user-managed and never installs packages while loading', async () => {
     const work = await fixture()
     try {
       await Promise.all([
-        work.service.ensureRecommendedPackages(),
-        work.service.ensureRecommendedPackages(),
+        work.service.load({ kind: 'global' }),
+        work.service.load({ kind: 'global' }),
       ])
+      expect(work.commands.every((command) => command.action === 'snapshot')).toBe(true)
+
+      await work.service.install({ kind: 'global' }, 'npm:pi-mcp-adapter')
+      await work.service.update({ kind: 'global' }, 'npm:pi-mcp-adapter')
+      await work.service.remove({ kind: 'global' }, 'npm:pi-mcp-adapter')
+      await work.service.load({ kind: 'global' })
       expect(work.commands.filter((command) => command.action === 'install')).toEqual([
         expect.objectContaining({
           source: 'npm:pi-mcp-adapter',
           scope: { kind: 'global' },
         }),
       ])
-
-      await work.service.remove({ kind: 'global' }, 'npm:pi-mcp-adapter')
-      expect(JSON.parse(await readFile(work.managedPackageStatePath, 'utf8')))
-        .toMatchObject({ version: 1, mcpOptedOut: true })
-
-      const installsBefore = work.commands.filter((command) => command.action === 'install').length
-      await work.service.ensureRecommendedPackages()
-      expect(work.commands.filter((command) => command.action === 'install'))
-        .toHaveLength(installsBefore)
+      expect(work.commands.filter((command) => command.action === 'update')).toHaveLength(1)
+      expect(work.commands.filter((command) => command.action === 'remove')).toHaveLength(1)
     } finally {
       await work.service.dispose()
     }
@@ -294,7 +292,7 @@ describe('LocalPiIntegrationService', () => {
         snapshot: {
           retry: {
             globalEnabled: false,
-            effective: { enabled: true, maxRetries: 3, baseDelayMs: 1000 },
+            effective: { enabled: true, maxRetries: 3, baseDelayMs: 1000, maxAgentDelayMs: 60_000 },
           },
         },
       })

@@ -26,15 +26,22 @@ import {
 } from './application-storage'
 import { MainDiagnostics } from './diagnostics/main-diagnostics'
 import { ConfigApplyCoordinator } from './config-apply/config-apply-coordinator'
+import { createScheduledTaskFeature } from './scheduled-tasks/bootstrap'
+import { registerScheduledTasksIpc } from './ipc/register-scheduled-tasks-ipc'
 import { OfficialPiSessionCatalogObserver } from './conversations/official-pi-session-catalog-observer'
 import { registerAppIpc } from './ipc/register-app-ipc'
 import { registerTerminalIpc } from './ipc/register-terminal-ipc'
 import { registerWorkspaceIpc } from './ipc/register-workspace-ipc'
+import { createProjectWorkflowsService } from './worktrees/project-workflows-service'
+import { registerProjectWorkflowsIpc } from './ipc/register-project-workflows-ipc'
+import { registerSideConversationsIpc } from './ipc/register-side-conversations-ipc'
+import { SideConversationService } from './conversations/side-conversation-service'
 import { registerLocalPiIpc } from './ipc/register-local-pi-ipc'
 import { registerMcpConfigIpc } from './ipc/register-mcp-config-ipc'
 import { registerModelsConfigIpc } from './ipc/register-models-config-ipc'
 import { registerPiIntegrationsIpc } from './ipc/register-pi-integrations-ipc'
 import { registerSessionCatalogIpc } from './ipc/register-session-catalog-ipc'
+import { registerConversationSearchIpc } from './ipc/register-conversation-search-ipc'
 import { registerConversationIpc } from './ipc/register-conversation-ipc'
 import { SettingsRepository } from './repositories/settings-repository'
 import { WorkspaceRepository } from './repositories/workspace-repository'
@@ -61,6 +68,7 @@ import {
   McpConfigController,
   McpConfigService,
 } from './mcp/mcp-config-service'
+import { createMcpConfigWriteGuard } from './mcp/mcp-config-write-guard'
 import {
   ModelsConfigController,
   ModelsConfigService,
@@ -212,6 +220,7 @@ const projectlessCwd = join(app.getPath('userData'), 'general-chat', 'workspace'
 const conversationScopeResolver = new ConversationScopeResolver(
   workspaceRepository,
   projectlessCwd,
+  (id) => projectWorkflowsService?.assertAvailable(id),
 )
 const conversationNavigationRepository = new ConversationNavigationRepository(
   join(app.getPath('userData'), 'conversation-navigation.json'),
@@ -267,6 +276,10 @@ let applicationTray: Tray | null = null
 let traySettingsUnsubscribe: (() => boolean) | null = null
 let piHostPool: ProjectHostPool | null = null
 let piRuntimeFrontend: PiRuntimeFrontend | null = null
+let projectWorkflowsService: ReturnType<typeof createProjectWorkflowsService> | null = null
+let projectWorkflowsIpc: ReturnType<typeof registerProjectWorkflowsIpc> | null = null
+let sideConversationService: SideConversationService | null = null
+let sideConversationIpc: ReturnType<typeof registerSideConversationsIpc> | null = null
 let localPiIpcController: ReturnType<typeof registerLocalPiIpc> | null = null
 let mcpConfigController: McpConfigController | null = null
 let modelsConfigController: ModelsConfigController | null = null
@@ -281,6 +294,8 @@ let externalControlIpcController: ReturnType<typeof registerExternalControlIpc> 
 let shutdownCoordinator: ApplicationShutdownCoordinator | null = null
 let taskNotificationService: TaskNotificationService | null = null
 let notificationIpcController: ReturnType<typeof registerNotificationsIpc> | null = null
+let scheduledTaskFeature: ReturnType<typeof createScheduledTaskFeature> | null = null
+let scheduledTaskIpc: ReturnType<typeof registerScheduledTasksIpc> | null = null
 
 function activeApplicationWork() {
   const primaryPi = Boolean(
@@ -301,7 +316,7 @@ function activeApplicationWork() {
   return {
     primaryPi,
     runtimePool,
-    terminals: terminalService.hasActiveTerminals(),
+    terminals: terminalService.hasActiveTerminals() || Boolean(projectWorkflowsService?.hasActive()),
   }
 }
 
@@ -324,6 +339,8 @@ async function flushApplicationState() {
 }
 
 async function prepareApplicationUpdate() {
+  scheduledTaskFeature?.service.suspend()
+  sideConversationService?.suspend()
   await flushApplicationState()
   // Stop work before starting NSIS: the installer otherwise force-closes a
   // running old application before slow Hosts finish saving their sessions.
@@ -332,11 +349,25 @@ async function prepareApplicationUpdate() {
   await Promise.all([
     piHostPool?.stopAll(),
     terminalService.closeAll(),
+    projectWorkflowsService?.closeAll(),
   ])
   await flushApplicationState()
 }
 
 async function disposeApplicationResources() {
+  scheduledTaskFeature?.service.suspend()
+  projectWorkflowsIpc?.dispose()
+  sideConversationIpc?.dispose()
+  sideConversationIpc = null
+  await sideConversationService?.dispose()
+  sideConversationService = null
+  projectWorkflowsIpc = null
+  await projectWorkflowsService?.dispose()
+  projectWorkflowsService = null
+  scheduledTaskIpc?.dispose()
+  scheduledTaskIpc = null
+  await scheduledTaskFeature?.dispose()
+  scheduledTaskFeature = null
   await flushApplicationState()
 
   applicationUpdateIpcController?.dispose()
@@ -519,6 +550,16 @@ if (!hasSingleInstanceLock) {
             conversationScopeResolver,
           )
           const runtimeHost = piRuntimeFrontend
+      projectWorkflowsService = createProjectWorkflowsService({
+        directory: app.getPath('userData'), workspaces: workspaceRepository,
+        runtime: runtimeHost, terminals: terminalService,
+      })
+      await projectWorkflowsService.initialize()
+      sideConversationService = new SideConversationService(runtimeHost)
+      sideConversationIpc = registerSideConversationsIpc({ getMainWindow: () => mainWindow, policy, service: sideConversationService })
+      projectWorkflowsIpc = registerProjectWorkflowsIpc({
+        getMainWindow: () => mainWindow, policy, service: projectWorkflowsService.api,
+      })
       taskNotificationService = new TaskNotificationService({
         filePath: join(app.getPath('userData'), 'task-notifications.json'),
         runtime: runtimeHost,
@@ -535,6 +576,21 @@ if (!hasSingleInstanceLock) {
       })
       await taskNotificationService.initialize()
       notificationIpcController = registerNotificationsIpc({ getMainWindow: () => mainWindow, policy, service: taskNotificationService })
+      scheduledTaskFeature = createScheduledTaskFeature({
+        directory: join(app.getPath('userData'), 'scheduled-tasks'),
+        catalog: officialPiSessionCatalog,
+        runtime: runtimeHost,
+        workspaces: workspaceRepository,
+        desktopEnabled: () => settingsRepository.get().settings.notifications.desktop,
+        notificationBody: (run) => {
+          const configured = settingsRepository.get().settings.locale
+          const locale = configured === 'system' ? app.getLocale() : configured
+          const messages = locale.toLowerCase().startsWith('zh') ? zhCN : enUS
+          return messages[run.status === 'completed' ? 'scheduledTasks.notificationCompleted' : 'scheduledTasks.notificationFailed']
+        },
+        revealWindow: revealMainWindow,
+      })
+      scheduledTaskIpc = registerScheduledTasksIpc({ getMainWindow: () => mainWindow, policy, service: scheduledTaskFeature.service })
       const synchronizeAffectedPiRuntimes = async (
         scope: { kind: 'global' } | { kind: 'project' },
         cwd: string,
@@ -547,6 +603,16 @@ if (!hasSingleInstanceLock) {
         agentDirectory: applicationAgentDirectory,
         getActiveScope: () => conversationNavigationRepository.get().activeScope,
         scopeResolver: conversationScopeResolver,
+        assertNativeConfigurationWritable: createMcpConfigWriteGuard({
+          loadIntegrations: async (scope) => {
+            if (!piIntegrationService) throw new Error('Pi package management is not ready.')
+            return piIntegrationService.load(scope)
+          },
+          getRuntime: () => {
+            const identity = runtimeHost.getActiveRuntimeIdentity()
+            return identity ? { scope: identity.scope, snapshot: runtimeHost.getSnapshot() } : undefined
+          },
+        }),
       })
       mcpConfigController = new McpConfigController(
         mcpConfigService,
@@ -579,7 +645,6 @@ if (!hasSingleInstanceLock) {
       piIntegrationService = new LocalPiIntegrationService({
         getActiveScope: () => conversationNavigationRepository.get().activeScope,
         helperHost: piManagementHost,
-        managedPackageStatePath: join(app.getPath('userData'), 'pi-managed-packages.json'),
         restartMarkerPath: join(app.getPath('userData'), 'pi-integrations-state.json'),
         runtimeHost,
         reloadHosts: synchronizeAffectedPiRuntimes,
@@ -702,7 +767,7 @@ if (!hasSingleInstanceLock) {
       })
       shutdownCoordinator = new ApplicationShutdownCoordinator({
         confirm: (intent) => shutdownGuard.confirm(intent),
-        cancelConfirmation: () => shutdownGuard.cancel(),
+        cancelConfirmation: () => { shutdownGuard.cancel(); scheduledTaskFeature?.service.resume(); sideConversationService?.resume() },
         prepareInstall: prepareApplicationUpdate,
         dispose: disposeApplicationResources,
         quit: () => app.quit(),
@@ -733,7 +798,6 @@ if (!hasSingleInstanceLock) {
         policy,
         service: piIntegrationService,
       })
-      void piIntegrationService.ensureRecommendedPackages()
       const modelsConfigService = new ModelsConfigService({
         homeDirectory: applicationHomeDirectory,
         agentDirectory: applicationAgentDirectory,
@@ -759,6 +823,7 @@ if (!hasSingleInstanceLock) {
         getMainWindow: () => mainWindow,
         policy,
       })
+      registerConversationSearchIpc({ catalog: officialPiSessionCatalog, getMainWindow: () => mainWindow, policy })
       registerTerminalIpc({
         getMainWindow: () => mainWindow,
         policy,
@@ -771,6 +836,7 @@ if (!hasSingleInstanceLock) {
         contentService: workspaceContentService,
         contextService: conversationContextService,
         terminalService,
+        withRemovableProject: (id, operation) => projectWorkflowsService!.withRemovableProject(id, operation),
       })
       const updateProvider = await createProductionApplicationUpdateProvider({
         packaged: app.isPackaged,

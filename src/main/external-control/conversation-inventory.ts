@@ -68,6 +68,16 @@ export class ConversationMcpInventoryService {
   }
 
   async listConversations(rawInput: unknown) {
+    const page = await this.listConversationTargets(rawInput)
+    return listConversationsResultSchema.parse({
+      conversations: page.targets.map((entry) => entry.conversation),
+      nextCursor: page.nextCursor,
+      diagnostics: page.diagnostics,
+    })
+  }
+
+  /** Trusted Main consumers retain the exact catalog identity behind each row. */
+  async listConversationTargets(rawInput: unknown) {
     const input = listConversationsInputSchema.parse(rawInput)
     const inventory = await this.scan()
     let startIndex = 0
@@ -109,8 +119,8 @@ export class ConversationMcpInventoryService {
       }
     }
 
-    return listConversationsResultSchema.parse({
-      conversations: page.map((entry) => entry.conversation),
+    return structuredClone({
+      targets: page,
       nextCursor,
       diagnostics: inventory.diagnostics,
     })

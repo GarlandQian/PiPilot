@@ -96,13 +96,13 @@ export function projectRuntimeAssistantMessage(
 }
 
 /**
- * Reproduces Pi 0.85.1's public JSON/RPC event shape without importing the
+ * Reproduces Pi 0.99.1's public JSON/RPC event shape without importing the
  * stdio-owned `runRpcMode()` implementation. Streaming assistant snapshots are
  * intentionally removed; the bounded delta and cumulative usage remain.
  */
 export function projectRuntimeEvent(event: AgentSessionEvent): LocalPiRpcEvent {
   if (event.type === 'message_start' && event.message.role === 'assistant') {
-    // Pi 0.85.1 shallow-copies message_start while tool blocks can still carry
+    // Pi shallow-copies message_start while tool blocks can still carry
     // the provider's scratch buffers. Final messages remain strictly validated.
     return localPiRpcEventSchema.parse(projectPiHostDto({
       ...event,

@@ -20,10 +20,6 @@ import {
   type PiManagementSnapshotPayload,
 } from '../../shared/pi-integrations'
 import type { ConversationScope } from '../../shared/conversation-scope'
-import {
-  PI_MCP_ADAPTER_SOURCE,
-  isManagedMcpPackageSource,
-} from '../../shared/pi-package-adapters'
 import type { ConversationScopeResolver } from '../conversations/conversation-scope-resolver'
 import type { PiRuntimeFrontend } from '../pi-host/pi-runtime-frontend'
 import {
@@ -35,8 +31,6 @@ import { VERSION as BUNDLED_PI_VERSION } from '@earendil-works/pi-coding-agent'
 const RESTART_MARKER_VERSION = 1
 const MAX_RESTART_MARKERS = 1_000
 const RESTART_MARKER_FILE_LIMIT = 128 * 1_024
-const MANAGED_PACKAGE_STATE_VERSION = 1
-const MANAGED_PACKAGE_STATE_FILE_LIMIT = 4 * 1_024
 
 export type LocalPiIntegrationErrorCode =
   | 'PI_INTEGRATIONS_DISPOSED'
@@ -67,7 +61,6 @@ interface CapturedManagementTarget {
 interface LocalPiIntegrationServiceOptions {
   getActiveScope(): ConversationScope
   helperHost: LocalPiManagementHost
-  managedPackageStatePath: string
   restartMarkerPath: string
   runtimeHost: Pick<PiRuntimeFrontend, 'getSnapshot' | 'request' | 'restart'>
   reloadHosts(scope: PiIntegrationScope, cwd: string): Promise<void>
@@ -82,11 +75,6 @@ type OperationListener = (operation: PiIntegrationOperation) => void
 interface RestartMarkerDocument {
   version: number
   markers: string[]
-}
-
-interface ManagedPackageStateDocument {
-  version: number
-  mcpOptedOut: boolean
 }
 
 function sameScope(left: ConversationScope, right: PiIntegrationScope) {
@@ -123,16 +111,10 @@ export class LocalPiIntegrationService {
   private readonly listeners = new Set<OperationListener>()
   private readonly createId: () => string
   private readonly now: () => number
-  private readonly managedPackageStatePath: string
   private readonly restartMarkerPath: string
   private restartMarkers = new Set<string>()
   private restartMarkersLoaded: Promise<void> | null = null
   private restartMarkerPersistenceFailed = false
-  private managedPackageStateLoaded: Promise<void> | null = null
-  private managedPackageStatePersistenceFailed = false
-  private mcpOptedOut = false
-  private recommendedInstallFlight: Promise<void> | null = null
-  private recommendedInstallDiagnostic: PiIntegrationSnapshot['diagnostics'][number] | null = null
   private sdkModuleRootPromise: Promise<string> | null = null
   private snapshotGeneration = 0
   private mutationChain: Promise<unknown> = Promise.resolve()
@@ -140,13 +122,9 @@ export class LocalPiIntegrationService {
   private disposed = false
 
   constructor(private readonly options: LocalPiIntegrationServiceOptions) {
-    if (!isAbsolute(options.managedPackageStatePath)) {
-      throw new Error('The Pi managed package state path must be absolute.')
-    }
     if (!isAbsolute(options.restartMarkerPath)) {
       throw new Error('The Pi integration restart marker path must be absolute.')
     }
-    this.managedPackageStatePath = resolve(options.managedPackageStatePath)
     this.restartMarkerPath = resolve(options.restartMarkerPath)
     this.createId = options.createId ?? randomUUID
     this.now = options.now ?? Date.now
@@ -155,31 +133,6 @@ export class LocalPiIntegrationService {
   subscribe(listener: OperationListener) {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
-  }
-
-  /**
-   * Best-effort installation of PiPilot's one managed recommended package.
-   * The operation is single-flight and never blocks chat/Host startup.
-   */
-  ensureRecommendedPackages(): Promise<void> {
-    this.assertActive()
-    if (this.recommendedInstallFlight) return this.recommendedInstallFlight
-    const flight = this.ensureRecommendedPackagesUncached()
-      .catch((error) => {
-        this.recommendedInstallDiagnostic = {
-          code: 'PI_MCP_ADAPTER_AUTO_INSTALL_FAILED',
-          message: errorMessage(error),
-          severity: 'warning',
-          source: PI_MCP_ADAPTER_SOURCE,
-        }
-      })
-      .finally(() => {
-        if (this.recommendedInstallFlight === flight) {
-          this.recommendedInstallFlight = null
-        }
-      })
-    this.recommendedInstallFlight = flight
-    return flight
   }
 
   async load(rawScope: PiIntegrationScope, checkUpdates = false) {
@@ -431,10 +384,6 @@ export class LocalPiIntegrationService {
       }, (progress) => this.progress(operation, progress))
       await this.setRestartMarker(target.markerKey, true)
       this.assertCurrent(target)
-      if (target.scope.kind === 'global' && isManagedMcpPackageSource(source)) {
-        await this.setMcpOptOut(kind === 'remove')
-        if (kind !== 'remove') this.recommendedInstallDiagnostic = null
-      }
 
       let runtimeSync: PiIntegrationOperationResult['runtimeSync'] = 'persisted-only'
       let runtimeError: string | undefined
@@ -524,25 +473,6 @@ export class LocalPiIntegrationService {
         // A renderer bridge listener cannot interrupt the owning operation.
       }
     }
-  }
-
-  private async ensureRecommendedPackagesUncached(): Promise<void> {
-    await this.ensureManagedPackageStateLoaded()
-    if (this.mcpOptedOut) return
-
-    const scope: PiIntegrationScope = { kind: 'global' }
-    const target = await this.captureTarget(scope)
-    const payload = await this.runHelper(target, {
-      action: 'snapshot',
-      operationId: this.createId(),
-    })
-    this.assertCurrent(target)
-    if (payload.packages.some((pkg) => isManagedMcpPackageSource(pkg.source))) {
-      this.recommendedInstallDiagnostic = null
-      return
-    }
-
-    await this.install(scope, PI_MCP_ADAPTER_SOURCE)
   }
 
   private async loadUncached(
@@ -636,9 +566,7 @@ export class LocalPiIntegrationService {
     payload: PiManagementSnapshotPayload,
   ) {
     await this.ensureRestartMarkersLoaded()
-    const diagnostics = this.restartMarkerPersistenceFailed ||
-      this.managedPackageStatePersistenceFailed ||
-      this.recommendedInstallDiagnostic
+    const diagnostics = this.restartMarkerPersistenceFailed
       ? payload.diagnostics.slice(0, PI_INTEGRATION_DIAGNOSTIC_LIMIT - 1)
       : [...payload.diagnostics]
     if (this.restartMarkerPersistenceFailed) {
@@ -647,23 +575,6 @@ export class LocalPiIntegrationService {
         message: 'PiPilot could not persist the pending restart marker.',
         severity: 'warning' as const,
       })
-    }
-    if (
-      this.managedPackageStatePersistenceFailed &&
-      diagnostics.length < PI_INTEGRATION_DIAGNOSTIC_LIMIT
-    ) {
-      diagnostics.push({
-        code: 'PI_MANAGED_PACKAGE_STATE_PERSIST_FAILED',
-        message: 'PiPilot could not persist the managed MCP package preference.',
-        severity: 'warning' as const,
-        source: PI_MCP_ADAPTER_SOURCE,
-      })
-    }
-    if (
-      this.recommendedInstallDiagnostic &&
-      diagnostics.length < PI_INTEGRATION_DIAGNOSTIC_LIMIT
-    ) {
-      diagnostics.push(this.recommendedInstallDiagnostic)
     }
     const sdkModuleRoot = await this.bundledSdkModuleRoot()
     return piIntegrationSnapshotSchema.parse({
@@ -785,65 +696,6 @@ export class LocalPiIntegrationService {
     } catch (error) {
       await unlink(temporaryPath).catch(() => undefined)
       throw error
-    }
-  }
-
-  private ensureManagedPackageStateLoaded() {
-    if (this.managedPackageStateLoaded) return this.managedPackageStateLoaded
-    this.managedPackageStateLoaded = this.loadManagedPackageState()
-    return this.managedPackageStateLoaded
-  }
-
-  private async loadManagedPackageState() {
-    try {
-      const details = await stat(this.managedPackageStatePath)
-      if (!details.isFile() || details.size > MANAGED_PACKAGE_STATE_FILE_LIMIT) {
-        this.managedPackageStatePersistenceFailed = true
-        return
-      }
-      const raw: unknown = JSON.parse(
-        await readFile(this.managedPackageStatePath, 'utf8'),
-      )
-      if (
-        typeof raw === 'object' &&
-        raw !== null &&
-        'version' in raw &&
-        raw.version === MANAGED_PACKAGE_STATE_VERSION &&
-        'mcpOptedOut' in raw &&
-        typeof raw.mcpOptedOut === 'boolean'
-      ) {
-        this.mcpOptedOut = raw.mcpOptedOut
-      }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        this.managedPackageStatePersistenceFailed = true
-      }
-    }
-  }
-
-  private async setMcpOptOut(optedOut: boolean) {
-    await this.ensureManagedPackageStateLoaded()
-    this.mcpOptedOut = optedOut
-    const document: ManagedPackageStateDocument = {
-      version: MANAGED_PACKAGE_STATE_VERSION,
-      mcpOptedOut: optedOut,
-    }
-    const temporaryPath = `${this.managedPackageStatePath}.${this.createId()}.tmp`
-    try {
-      await mkdir(dirname(this.managedPackageStatePath), {
-        recursive: true,
-        mode: 0o700,
-      })
-      await writeFile(temporaryPath, `${JSON.stringify(document, null, 2)}\n`, {
-        encoding: 'utf8',
-        mode: 0o600,
-        flag: 'wx',
-      })
-      await rename(temporaryPath, this.managedPackageStatePath)
-      this.managedPackageStatePersistenceFailed = false
-    } catch {
-      await unlink(temporaryPath).catch(() => undefined)
-      this.managedPackageStatePersistenceFailed = true
     }
   }
 

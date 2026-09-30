@@ -131,6 +131,7 @@ export const piRetryEffectiveSettingsSchema = z
     enabled: z.boolean(),
     maxRetries: z.number().int().nonnegative().max(100),
     baseDelayMs: z.number().int().nonnegative().max(86_400_000),
+    maxAgentDelayMs: z.number().int().nonnegative().max(86_400_000),
   })
   .strict()
 

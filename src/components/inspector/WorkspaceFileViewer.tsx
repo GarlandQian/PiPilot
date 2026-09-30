@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { QuoteSelection } from '@/components/precision/PrecisionReferences'
 import {
   TbArrowLeft,
   TbAt,
@@ -278,18 +279,18 @@ export function WorkspaceFileViewer({
             value="preview"
             className="scroll-slim min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-3 py-3 data-[state=inactive]:hidden"
           >
-            <MarkdownContent markdown={markdown.content} />
+            <QuoteSelection source={{ kind: 'file', sourceId: path, label: path, path, revision: markdown.fingerprint }}><MarkdownContent markdown={markdown.content} /></QuoteSelection>
           </TabsContent>
           <TabsContent
             value="source"
             className="scroll-slim min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden data-[state=inactive]:hidden"
           >
-            <SourceDocument classification={classification} content={markdown.content} />
+            <QuoteSelection source={{ kind: 'file', sourceId: path, label: path, path, revision: markdown.fingerprint, literal: markdown.content }}><SourceDocument classification={classification} content={markdown.content} /></QuoteSelection>
           </TabsContent>
         </Tabs>
       ) : (
         <div className="scroll-slim min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
-          {body}
+          <QuoteSelection enabled={Boolean(textPreview)} source={{ kind: 'file', sourceId: path, label: path, path, revision: textPreview?.fingerprint, literal: textPreview?.content }}>{body}</QuoteSelection>
         </div>
       )}
     </section>

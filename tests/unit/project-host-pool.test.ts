@@ -1,5 +1,5 @@
 import { resolve } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type {
   PiHostCommand,
   PiHostDto,
@@ -31,6 +31,7 @@ class FakeProjectHostController implements ProjectHostControllerLike {
   private readonly runtimes = new Map<string, ProjectRuntimeDescriptor>()
   readonly requests: Array<{ command: PiHostCommand; options?: PiHostRequestOptions }> = []
   createDelay: Promise<void> | null = null
+  stopDelay: Promise<void> | null = null
   reloadObservation: ((runtime: ProjectRuntimeDescriptor) => Promise<void>) | null = null
   private readonly uiListeners = new Set<(event: PiHostUiRequestEventEnvelope) => void>()
   readonly acknowledgements: PiHostUiRequestEventEnvelope[] = []
@@ -60,7 +61,7 @@ class FakeProjectHostController implements ProjectHostControllerLike {
       state: 'ready',
       hostEpoch: this.snapshot.hostEpoch + 1,
       pid: 1_001,
-      sdkVersion: '0.85.1',
+      sdkVersion: '0.99.1',
       nodeVersion: '24.18.1',
       electronVersion: '44.2.0',
       capabilities: ['runtime.create', 'runtime.bind', 'runtime.reload', 'runtime.command', 'runtime.dispose'],
@@ -169,6 +170,7 @@ class FakeProjectHostController implements ProjectHostControllerLike {
   }
 
   async stop(): Promise<PiHostControllerSnapshot> {
+    if (this.stopDelay) await this.stopDelay
     this.runtimes.clear()
     this.publish({
       ...this.snapshot,
@@ -232,6 +234,7 @@ class FakeProjectHostController implements ProjectHostControllerLike {
 function createHarness(options: {
   createDelay?: Promise<void>
   failStartAt?: number[]
+  idleHostTimeoutMs?: number
 } = {}) {
   const controllers: FakeProjectHostController[] = []
   const diagnostics: string[] = []
@@ -240,6 +243,7 @@ function createHarness(options: {
     canonicalizeCwd: (cwd) => cwd,
     createRuntimeId: () => `rt_${++runtimeSequence}`,
     onHostDiagnostic: (code) => diagnostics.push(code),
+    idleHostTimeoutMs: options.idleHostTimeoutMs,
     createHost: (scope) => {
       const controller = new FakeProjectHostController(scope.cwd)
       controller.createDelay = options.createDelay ?? null
@@ -260,6 +264,137 @@ const projectA: ProjectHostScope = { kind: 'project', cwd: '/projects/a' }
 const projectB: ProjectHostScope = { kind: 'project', cwd: '/projects/b' }
 
 describe('ProjectHostPool', () => {
+  it('allows the maintenance owner to dispose and stop while rejecting unrelated acquisitions', async () => {
+    const { pool, controllers } = createHarness()
+    const scope: ProjectHostScope = { kind: 'project', cwd: '/project/archive' }
+    const runtime = await pool.createRuntime(scope, {})
+    await pool.bindRuntime(runtime.runtimeId, runtime.generation)
+    const result = await pool.withMaintenance(scope.cwd, async (permit) => {
+      await expect(pool.createRuntime(scope, {})).rejects.toThrow('configuration')
+      await expect(pool.disposeRuntime(runtime.runtimeId, runtime.generation)).rejects.toThrow('configuration')
+      await pool.disposeRuntime(runtime.runtimeId, runtime.generation, permit)
+      await pool.stop(scope, permit)
+      return true
+    })
+    expect(result).toEqual({ admitted: true, value: true })
+    expect(controllers[0].disposeCount).toBe(1)
+    await pool.dispose()
+  })
+  afterEach(() => vi.useRealTimers())
+
+  it('returns an isolated exact-runtime identity without building the pool snapshot', async () => {
+    const { pool } = createHarness()
+    const runtime = await pool.createRuntime(projectA, {})
+    await pool.bindRuntime(runtime.runtimeId, runtime.generation)
+    const fullSnapshot = vi.spyOn(pool, 'getSnapshot')
+    const identity = pool.getRuntimeIdentity(runtime.runtimeId)!
+    expect(identity).toMatchObject({ hostEpoch: 1, hostState: 'ready', scope: projectA, runtime: { ...runtime, state: 'ready' } })
+    identity.scope.cwd = '/mutated'
+    identity.runtime.generation = 999
+    expect(pool.getRuntimeIdentity(runtime.runtimeId)).toMatchObject({ scope: projectA, runtime: { generation: 1 } })
+    expect(pool.getRuntimeIdentity('missing')).toBeNull()
+    expect(fullSnapshot).not.toHaveBeenCalled()
+    await pool.dispose()
+  })
+
+  it('retires an empty Host only after its grace period and preserves occupied Hosts', async () => {
+    vi.useFakeTimers()
+    const { pool, controllers } = createHarness({ idleHostTimeoutMs: 100 })
+    const empty = await pool.createRuntime(projectA, {})
+    await pool.createRuntime(projectB, {})
+    await pool.disposeRuntime(empty.runtimeId, empty.generation)
+    await vi.advanceTimersByTimeAsync(99)
+    expect(controllers[0].disposeCount).toBe(0)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(controllers[0].disposeCount).toBe(1)
+    expect(controllers[1].disposeCount).toBe(0)
+    expect(pool.getSnapshot().hosts.map((host) => host.scope)).toEqual([projectB])
+    await pool.dispose()
+  })
+
+  it('cancels empty Host retirement when a new Runtime starts loading', async () => {
+    vi.useFakeTimers()
+    const { pool, controllers } = createHarness({ idleHostTimeoutMs: 100 })
+    const first = await pool.createRuntime(projectA, {})
+    await pool.disposeRuntime(first.runtimeId, first.generation)
+    const gate = deferred()
+    controllers[0].createDelay = gate.promise
+    const next = pool.createRuntime(projectA, {})
+    await vi.advanceTimersByTimeAsync(200)
+    expect(controllers[0].disposeCount).toBe(0)
+    gate.resolve()
+    const runtime = await next
+    expect(pool.getRuntimeIdentity(runtime.runtimeId)?.hostState).toBe('ready')
+    expect(controllers).toHaveLength(1)
+    await pool.dispose()
+  })
+
+  it('waits for an already retiring Host before creating its replacement', async () => {
+    vi.useFakeTimers()
+    const { pool, controllers } = createHarness({ idleHostTimeoutMs: 100 })
+    const first = await pool.createRuntime(projectA, {})
+    const stopping = deferred()
+    controllers[0].stopDelay = stopping.promise
+    await pool.disposeRuntime(first.runtimeId, first.generation)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(pool.getSnapshot().hosts[0].state).toBe('stopping')
+    const next = pool.createRuntime(projectA, {})
+    await vi.advanceTimersByTimeAsync(200)
+    expect(controllers).toHaveLength(1)
+    stopping.resolve()
+    const runtime = await next
+    expect(controllers).toHaveLength(2)
+    expect(pool.getRuntimeIdentity(runtime.runtimeId)?.runtime.state).toBe('starting')
+    await pool.bindRuntime(runtime.runtimeId, runtime.generation)
+    expect(pool.getRuntimeIdentity(runtime.runtimeId)?.hostState).toBe('ready')
+    await pool.dispose()
+  })
+
+  it('finishes an in-flight retirement once during shutdown and rejects new creation meanwhile', async () => {
+    vi.useFakeTimers()
+    const { pool, controllers } = createHarness({ idleHostTimeoutMs: 100 })
+    const first = await pool.createRuntime(projectA, {})
+    const stopping = deferred()
+    controllers[0].stopDelay = stopping.promise
+    await pool.disposeRuntime(first.runtimeId, first.generation)
+    await vi.advanceTimersByTimeAsync(100)
+    const shutdown = pool.stopAll()
+    await expect(pool.createRuntime(projectB, {})).rejects.toMatchObject({ code: 'HOST_STOPPED' })
+    stopping.resolve()
+    await shutdown
+    expect(controllers[0].disposeCount).toBe(1)
+    expect(pool.getSnapshot().hosts).toEqual([])
+    await pool.dispose()
+  })
+
+  it('retires an empty Host created only to rename a historical session', async () => {
+    vi.useFakeTimers()
+    const { pool, controllers } = createHarness({ idleHostTimeoutMs: 100 })
+    await pool.renameSession(projectA, '/sessions/historical.jsonl', 'Renamed')
+    expect(pool.getSnapshot().hosts[0].runtimes).toEqual([])
+    await vi.advanceTimersByTimeAsync(100)
+    expect(controllers[0].disposeCount).toBe(1)
+    expect(pool.getSnapshot().hosts).toEqual([])
+    await pool.dispose()
+  })
+
+  it.each(['stopAll', 'dispose'] as const)('does not restart a Host after concurrent %s has begun', async (shutdownMethod) => {
+    const { pool, controllers } = createHarness()
+    await pool.createRuntime(projectA, {})
+    const gate = deferred()
+    controllers[0].stopDelay = gate.promise
+    const restart = pool.restart(projectA)
+    const rejected = expect(restart).rejects.toMatchObject({ code: shutdownMethod === 'dispose' ? 'POOL_DISPOSED' : 'HOST_STOPPED' })
+    await vi.waitFor(() => expect(pool.getSnapshot().hosts[0]?.state).toBe('stopping'))
+    const shutdown = pool[shutdownMethod]()
+    gate.resolve()
+    await Promise.all([rejected, shutdown])
+    expect(controllers).toHaveLength(1)
+    expect(controllers[0].disposeCount).toBe(1)
+    expect(pool.getSnapshot().hosts.every((host) => host.state === 'stopped')).toBe(true)
+    if (shutdownMethod !== 'dispose') await pool.dispose()
+  })
+
   it('adopts only the exact in-flight reload generation before forwarding new startup observations', async () => {
     const { pool, controllers } = createHarness()
     const created = await pool.createRuntime(projectA, {})

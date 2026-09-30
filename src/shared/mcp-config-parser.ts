@@ -12,6 +12,7 @@ import {
 import {
   MCP_CONFIG_SERVER_LIMIT,
   MCP_CONFIG_DIAGNOSTIC_LIMIT,
+  MCP_EXPOSURES,
   mcpConfigDocumentSchema,
   type McpConfigDiagnostic,
   type McpConfigDocument,
@@ -19,6 +20,13 @@ import {
 } from './mcp-config'
 
 const PARSE_OPTIONS = { allowTrailingComma: true, disallowComments: false }
+const NATIVE_PARSE_OPTIONS = { allowTrailingComma: false, disallowComments: true }
+const LEGACY_SERVER_FIELDS = [
+  'inheritEnv', 'caFile', 'requestHeadersCommand', 'auth', 'bearerToken', 'bearerTokenEnv',
+  'bearerTokenStore', 'lifecycle', 'idleTimeout', 'requestTimeoutMs', 'exposeResources',
+  'directTools', 'toolPrefix', 'includeTools', 'excludeTools', 'searchKeywords', 'approveTools',
+  'debug', 'trace', 'httpTransport', 'pluginDataDir', 'literalEnv', 'protocolVersion', 'tasks',
+] as const
 const EDIT_OPTIONS = {
   formattingOptions: { insertSpaces: true, tabSize: 2, eol: '\n' },
 }
@@ -82,7 +90,6 @@ function transportFor(
   const selectors = [
     ['command', 'stdio'],
     ['url', 'http'],
-    ['socket', 'socket'],
   ] as const
   const declared = selectors.filter(([field]) =>
     Object.prototype.hasOwnProperty.call(definition, field))
@@ -114,7 +121,7 @@ function transportFor(
       root,
       ['mcpServers', name],
       'MCP_TRANSPORT_INVALID',
-      'A server must define exactly one non-empty command, url, or socket.',
+      'A server must define exactly one non-empty command or URL.',
     ))
   }
 
@@ -145,7 +152,54 @@ function transportFor(
       ))
     }
   }
-  return transport
+  const fieldError = (field: string, message: string) => diagnostics.push(diagnosticAtPath(
+    text, root, ['mcpServers', name, ...field.split('.')], 'MCP_NATIVE_FIELD_INVALID', message,
+  ))
+  if (definition.socket !== undefined) fieldError('socket', 'Native Pi MCP does not support Unix socket transport. Configure stdio or streamable HTTP instead.')
+  if (definition.disabled !== undefined) fieldError('disabled', 'Native Pi uses enabled, not disabled. Convert this document to native JSON before saving.')
+  for (const field of LEGACY_SERVER_FIELDS) {
+    if (definition[field] !== undefined) fieldError(field, `Native Pi does not use the adapter field ${field}. Review or replace it explicitly before saving.`)
+  }
+  if (definition.type !== undefined && !['stdio', 'http', 'streamable-http'].includes(String(definition.type))) {
+    fieldError('type', 'Native Pi supports stdio and streamable HTTP; legacy SSE is not supported.')
+  } else if (definition.type !== undefined && (
+    (transport === 'stdio' && definition.type !== 'stdio') ||
+    (transport === 'http' && definition.type === 'stdio')
+  )) fieldError('type', 'The transport type must match the command or URL.')
+  if (transport === 'http' && typeof definition.url === 'string' && definition.url.trim()) {
+    try {
+      if (!['http:', 'https:'].includes(new URL(definition.url).protocol)) throw new Error()
+    } catch { fieldError('url', 'Server URL must be an http or https URL.') }
+  }
+  if (definition.enabled !== undefined && typeof definition.enabled !== 'boolean') fieldError('enabled', 'Server enabled must be a boolean.')
+  if (definition.cwd !== undefined && typeof definition.cwd !== 'string') fieldError('cwd', 'Server cwd must be a string.')
+  if (definition.timeout !== undefined && (typeof definition.timeout !== 'number' || !(definition.timeout > 0))) fieldError('timeout', 'Server timeout must be a positive number of seconds.')
+  const isExposure = (value: unknown) => MCP_EXPOSURES.some((candidate) => candidate === value)
+  if (definition.exposure !== undefined && !isExposure(definition.exposure)) fieldError('exposure', `Server exposure must be one of: ${MCP_EXPOSURES.join(', ')}.`)
+  if (definition.toolExposure !== undefined && (!isRecord(definition.toolExposure) || Object.values(definition.toolExposure).some((value) => !isExposure(value)))) fieldError('toolExposure', 'toolExposure must map tool names or patterns to supported exposures.')
+  if (definition.oauth !== undefined) {
+    const oauth = definition.oauth
+    if (!isRecord(oauth)) fieldError('oauth', 'OAuth configuration must be an object.')
+    else {
+      for (const field of ['scopes', 'grantType', 'clientMetadataUrl', 'redirectUri', 'authorizationParams', 'authorizationUrl', 'tokenUrl', 'clientName', 'clientUri', 'logoUri', 'authServerMetadataUrl', 'skipIssuerMetadataValidation']) {
+        if (oauth[field] !== undefined) fieldError(`oauth.${field}`, `Native Pi does not use the adapter OAuth field ${field}. Review the native OAuth configuration before saving.`)
+      }
+      for (const key of ['clientId', 'clientSecret', 'scope']) {
+        if (oauth[key] !== undefined && typeof oauth[key] !== 'string') fieldError(`oauth.${key}`, `OAuth ${key} must be a string.`)
+      }
+      const port = oauth.callbackPort
+      if (port !== undefined && (typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535)) fieldError('oauth.callbackPort', 'OAuth callbackPort must be between 1 and 65535.')
+      if (oauth.callbackUrl !== undefined) {
+        try {
+          if (typeof oauth.callbackUrl !== 'string') throw new Error()
+          const url = new URL(oauth.callbackUrl)
+          if (url.protocol !== 'http:' || !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) || url.search || url.hash) throw new Error()
+          if (url.port && port !== undefined && Number(url.port) !== port) fieldError('oauth.callbackUrl', 'OAuth callbackUrl and callbackPort must use the same port.')
+        } catch { fieldError('oauth.callbackUrl', 'OAuth callbackUrl must be an HTTP loopback URL without a query or fragment.') }
+      }
+    }
+  }
+  return definition.socket !== undefined || definition.type === 'sse' ? 'invalid' : transport
 }
 
 function duplicateKeyDiagnostics(text: string) {
@@ -175,7 +229,9 @@ function duplicateKeyDiagnostics(text: string) {
 
 export function parseMcpConfigDocument(text: string): McpConfigDocument {
   const parseErrors: ParseError[] = []
-  const root = parseTree(text, parseErrors, PARSE_OPTIONS)
+  // Keep an editable projection of old JSONC, but never call it valid for Pi's JSON.parse reader.
+  parseTree(text, parseErrors, NATIVE_PARSE_OPTIONS)
+  const root = parseTree(text, [], PARSE_OPTIONS)
   const diagnostics = parseErrors.map((error) => diagnostic(
     text,
     `MCP_JSON_${printParseErrorCode(error.error).toUpperCase()}`,
@@ -217,16 +273,16 @@ export function parseMcpConfigDocument(text: string): McpConfigDocument {
           ))
           break
         }
-        if (name.length === 0 || name.length > 128) {
+        if (name.length === 0 || name.length > 128 || !/^[A-Za-z0-9_-]+$/u.test(name)) {
           diagnostics.push(diagnostic(
             text,
             'MCP_SERVER_NAME_INVALID',
-            'Server names must contain 1 to 128 characters.',
+            'Server names must contain 1 to 128 letters, digits, underscores, or hyphens.',
             0,
             0,
             `mcpServers.${name}`,
           ))
-          continue
+          if (name.length === 0 || name.length > 128) continue
         }
         if (!isRecord(value)) {
           diagnostics.push(diagnostic(
@@ -246,6 +302,14 @@ export function parseMcpConfigDocument(text: string): McpConfigDocument {
         })
       }
     }
+    if (isRecord(document) && document.autoEnableCodemode !== undefined && typeof document.autoEnableCodemode !== 'boolean') {
+      diagnostics.push(diagnosticAtPath(text, root, ['autoEnableCodemode'], 'MCP_NATIVE_FIELD_INVALID', 'autoEnableCodemode must be a boolean.'))
+    }
+    if (isRecord(document) && isRecord(document.settings)) {
+      for (const field of LEGACY_SERVER_FIELDS) {
+        if (document.settings[field] !== undefined) diagnostics.push(diagnosticAtPath(text, root, ['settings', field], 'MCP_LEGACY_SETTING_UNSUPPORTED', `Native Pi does not use adapter settings.${field}. Review its effect before saving.`))
+      }
+    }
   }
 
   return mcpConfigDocumentSchema.parse({
@@ -253,6 +317,30 @@ export function parseMcpConfigDocument(text: string): McpConfigDocument {
     diagnostics: diagnostics.slice(0, MCP_CONFIG_DIAGNOSTIC_LIMIT),
     valid: diagnostics.length === 0,
   })
+}
+
+/** Explicit, previewable conversion only. Never writes or drops unsupported/unknown fields. */
+export function convertMcpConfigToNativeJson(text: string): string {
+  const errors: ParseError[] = []
+  const root = parseTree(text, errors, PARSE_OPTIONS)
+  if (!root || root.type !== 'object' || errors.length || duplicateKeyDiagnostics(text).length) {
+    throw new Error('Fix invalid JSON syntax or duplicate keys before converting.')
+  }
+  const document = getNodeValue(root) as Record<string, unknown>
+  if (isRecord(document.mcpServers)) {
+    for (const definition of Object.values(document.mcpServers)) {
+      if (!isRecord(definition) || typeof definition.disabled !== 'boolean') continue
+      if (definition.enabled !== undefined && definition.enabled !== !definition.disabled) continue
+      definition.enabled = !definition.disabled
+      delete definition.disabled
+    }
+  }
+  return `${JSON.stringify(document, null, 2)}\n`
+}
+
+export function validateMcpServerDefinition(name: string, definition: unknown): string | null {
+  const parsed = parseMcpConfigDocument(JSON.stringify({ mcpServers: { [name]: definition } }))
+  return parsed.diagnostics[0]?.message ?? null
 }
 
 function requireEditableDocument(text: string) {

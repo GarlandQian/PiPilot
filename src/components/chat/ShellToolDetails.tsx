@@ -32,6 +32,7 @@ export function ShellToolDetails({ call, onOpenCommand }: { call: ToolCall; onOp
       {call.body ? <pre className="scroll-slim max-h-32 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 px-3 py-2 font-mono text-caption text-foreground/90"><code>{call.body}</code></pre> : null}
     </section> : null}
     {output !== undefined && output.length > 0 ? <ShellEvidence
+      quoteSource={{ kind: 'command', sourceId: call.id, label: (call.body ?? call.title).slice(0, 256) }}
       label={t(outputKind === 'progress' ? 'tool.progress' : 'tool.result')}
       source={output}
       sourceTruncated={call.details?.[outputKind]?.truncated}
@@ -39,6 +40,7 @@ export function ShellToolDetails({ call, onOpenCommand }: { call: ToolCall; onOp
       followOutput
     /> : live ? <p className="text-micro text-muted-foreground" role="status">{t('tool.redesign.waitingOutput')}</p> : null}
     {error && error !== output ? <ShellEvidence label={t('tool.error')} source={error}
+      quoteSource={{ kind: 'command', sourceId: call.id, label: (call.body ?? call.title).slice(0, 256) }}
       sourceTruncated={call.details?.error?.truncated} tone="error" followOutput /> : null}
     {call.patch || call.details?.patch?.copyText ? <ShellEvidence label={t('tool.patch')}
       source={call.patch ?? call.details?.patch?.copyText ?? ''} format="verbatim" /> : null}

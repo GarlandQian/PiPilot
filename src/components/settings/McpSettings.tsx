@@ -1,7 +1,5 @@
 import * as React from 'react'
 import {
-  TbCheck,
-  TbCopy,
   TbFileCode,
   TbPlus,
   TbRefresh,
@@ -39,6 +37,7 @@ import {
 import { displayMcpConfigPath } from '@/renderer/mcp/mcp-path-presentation'
 import {
   parseMcpConfigDocument,
+  convertMcpConfigToNativeJson,
   removeMcpServer,
   renameMcpServer,
   upsertMcpServer,
@@ -49,8 +48,10 @@ import type {
   McpConfigTarget,
 } from '@/shared/mcp-config'
 import type { PiIntegrationScope } from '@/shared/pi-integrations'
+import { usePiIntegrations } from '@/store/pi-integrations'
+import { useWorkspaceStore } from '@/store/workspace'
+import { hasEnabledLegacyMcpAdapter, isNativeMcpCommand } from '@/shared/mcp-config-compatibility'
 import {
-  usePiExtensionUi,
   usePiRpcActions,
   usePiRuntime,
 } from '@/store/pi-rpc'
@@ -60,12 +61,11 @@ import {
 } from './McpServerFormDialog'
 import { McpServerBrowser } from './integrations/McpServerBrowser'
 
-const INSTALL_COMMAND = 'pi install npm:pi-mcp-adapter'
-
 export interface McpSettingsProps {
   scope: PiIntegrationScope
   active?: boolean
   onDirtyChange?(dirty: boolean): void
+  onManagePackages?(): void
 }
 
 function targetFor(scope: PiIntegrationScope): McpConfigTarget {
@@ -78,25 +78,21 @@ function targetKey(target: McpConfigTarget) {
   return target.kind === 'global' ? 'global' : `project:${target.workspaceId}`
 }
 
-function adapterDetected(commands: readonly { name: string }[]) {
-  return commands.some((command) => command.name.replace(/^\//u, '') === 'mcp')
-}
-
-
-export function McpSettings({ scope, active = true, onDirtyChange }: McpSettingsProps) {
+export function McpSettings({ scope, active = true, onDirtyChange, onManagePackages }: McpSettingsProps) {
   const [, retry] = React.useReducer((value: number) => value + 1, 0)
   const { document, available } = useMcpConfigurationDocument(targetFor(scope))
   return document ? (
-    <McpDocumentSettings key={targetKey(targetFor(scope))} scope={scope} active={active} onDirtyChange={onDirtyChange} document={document} />
+    <McpDocumentSettings key={targetKey(targetFor(scope))} scope={scope} active={active} onDirtyChange={onDirtyChange} onManagePackages={onManagePackages} document={document} />
   ) : <ConfigurationDocumentUnavailable capacity={available} retry={retry} />
 }
 
-function McpDocumentSettings({ scope, active = true, onDirtyChange, document }: McpSettingsProps & {
+function McpDocumentSettings({ scope, active = true, onDirtyChange, onManagePackages, document }: McpSettingsProps & {
   document: ConfigurationDocument<McpConfigSnapshot>
 }) {
   const t = useT()
   const runtime = usePiRuntime()
-  const extension = usePiExtensionUi()
+  const integrations = usePiIntegrations()
+  const workspace = useWorkspaceStore()
   const actions = usePiRpcActions()
   const [adapter] = React.useState<McpConfigAdapter | null>(createMcpConfigAdapter)
   const target = React.useMemo(() => targetFor(scope), [scope])
@@ -107,9 +103,6 @@ function McpDocumentSettings({ scope, active = true, onDirtyChange, document }: 
   const [reloadOpen, setReloadOpen] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [status, setStatus] = React.useState<string | null>(null)
-  const [copied, setCopied] = React.useState(false)
-  const [copyFailed, setCopyFailed] = React.useState(false)
-  const copyTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const [formOpen, setFormOpen] = React.useState(false)
   const [editing, setEditing] = React.useState<McpConfigServer | null>(null)
   const [removeName, setRemoveName] = React.useState<string | null>(null)
@@ -128,8 +121,15 @@ function McpDocumentSettings({ scope, active = true, onDirtyChange, document }: 
   )
   const parsed = React.useMemo(() => parseMcpConfigDocument(draftText), [draftText])
   const formSupported = structuredDocumentSupported(parsed)
-  const available = adapterDetected(runtime.commands)
   const runtimeReady = runtime.runtime?.state === 'ready'
+  const mcpCommand = runtimeReady ? runtime.commands.find((command) => command.name === 'mcp') : undefined
+  // A project extension can also read the global MCP document. Protect that
+  // shared file while restricting project documents to their own runtime.
+  const runtimeScopeMatches = scope.kind === 'global' ||
+    (workspace.activeScope.kind === 'project' && workspace.activeScope.workspaceId === scope.workspaceId)
+  const runtimeOverride = runtimeScopeMatches && mcpCommand && !isNativeMcpCommand(mcpCommand)
+  const legacyAdapterEnabled = integrations.snapshot ? hasEnabledLegacyMcpAdapter(integrations.snapshot) : false
+  const nativeWritesBlocked = Boolean(runtimeOverride) || legacyAdapterEnabled
   const displayedPath = snapshotIsCurrent
     ? displayMcpConfigPath(snapshot.target, snapshot.path, snapshot.displayPath)
     : t('settings.mcp.loading')
@@ -159,25 +159,7 @@ function McpDocumentSettings({ scope, active = true, onDirtyChange, document }: 
 
   React.useEffect(() => () => {
     requestEpoch.current += 1
-    if (copyTimer.current) clearTimeout(copyTimer.current)
   }, [])
-
-  const copyInstallCommand = async () => {
-    const epoch = requestEpoch.current
-    if (copyTimer.current) clearTimeout(copyTimer.current)
-    setCopyFailed(false)
-    try {
-      await navigator.clipboard.writeText(INSTALL_COMMAND)
-      if (!isCurrentRequest(epoch, targetKeyValue)) return
-      setCopied(true)
-      copyTimer.current = setTimeout(() => { setCopied(false); copyTimer.current = null }, 1_500)
-    } catch {
-      if (isCurrentRequest(epoch, targetKeyValue)) {
-        setCopied(false)
-        setCopyFailed(true)
-      }
-    }
-  }
 
   const save = async (restart: boolean) => {
     if (
@@ -187,25 +169,24 @@ function McpDocumentSettings({ scope, active = true, onDirtyChange, document }: 
       (!dirty && !restart) ||
       !parsed.valid ||
       loading ||
-      saving
+      saving ||
+      nativeWritesBlocked
     ) return
     setError(null)
     setStatus(null)
     await document.save(restart)
   }
 
-  const restartDetection = async () => {
+  const showRuntimeStatus = async () => {
     if (!adapter || loading || saving) return
     const epoch = ++requestEpoch.current
     const expectedTargetKey = targetKeyValue
     setDetecting(true)
     setError(null)
     try {
-      const result = await adapter.restart()
+      await actions.send('/mcp', 'prompt')
       if (!isCurrentRequest(epoch, expectedTargetKey)) return
-      if (!result.applied && !result.restarted) throw new Error(result.error || t('settings.mcp.restartFailed'))
-      await actions.refresh()
-      setStatus(t(result.applied ? 'settings.mcp.apply.applied' : 'settings.mcp.restarted'))
+      setStatus(t('settings.mcp.runtimeStatusRequested'))
     } catch (caught) {
       if (isCurrentRequest(epoch, expectedTargetKey)) {
         setError(caught instanceof Error ? caught.message : t('settings.mcp.restartFailed'))
@@ -251,12 +232,23 @@ function McpDocumentSettings({ scope, active = true, onDirtyChange, document }: 
   const toggleServerEnabled = (server: McpConfigServer, enabled: boolean) => {
     try {
       const definition = { ...server.definition }
-      if (enabled) delete definition.disabled
-      else definition.disabled = true
+      if (enabled) delete definition.enabled
+      else definition.enabled = false
       updateDraft(upsertMcpServer(draftText, server.name, definition))
       setError(null)
     } catch {
       setError(t('settings.mcp.editFailed'))
+    }
+  }
+
+  const convertDraft = (content: string) => {
+    try {
+      if (!updateDraft(convertMcpConfigToNativeJson(content))) return
+      setView('json')
+      setStatus(t('settings.mcp.migration.review'))
+      setError(null)
+    } catch {
+      setError(t('settings.mcp.migration.failed'))
     }
   }
 
@@ -283,51 +275,30 @@ function McpDocumentSettings({ scope, active = true, onDirtyChange, document }: 
             </TooltipTrigger>
             <TooltipContent>{t('common.refresh')}</TooltipContent>
           </Tooltip>
-          <Button variant="outline" size="sm" disabled={!dirty || !parsed.valid || loading || saving} onClick={() => void save(false)}>
+          <Button variant="outline" size="sm" disabled={!dirty || !parsed.valid || loading || saving || nativeWritesBlocked} onClick={() => void save(false)}>
             {t('common.save')}
           </Button>
-          <Button size="sm" disabled={!snapshotIsCurrent || apply.status?.state === 'superseded' || !parsed.valid || loading || saving} onClick={() => void save(true)}>
+          <Button size="sm" disabled={!snapshotIsCurrent || apply.status?.state === 'superseded' || !parsed.valid || loading || saving || nativeWritesBlocked} onClick={() => void save(true)}>
             {t(dirty ? 'settings.mcp.saveRestart' : 'settings.configApply.retry')}
           </Button>
         </div>
       </div>
 
       <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 text-caption text-muted-foreground">
-        <span className="inline-flex items-center gap-1.5">
-          <span className={cn('size-1.5 rounded-full', runtimeReady && available ? 'bg-success' : 'bg-muted-foreground/60')} aria-hidden />
-          {t(!runtimeReady ? 'settings.integrations.mcp.runtimeNotReady' : available ? 'settings.mcp.detected' : 'settings.mcp.notDetected')}
-        </span>
-        {runtimeReady && extension.statuses.mcp ? <span className="min-w-0 break-words">{extension.statuses.mcp}</span> : null}
+        <span>{t(nativeWritesBlocked ? 'settings.mcp.extensionOverride' : isNativeMcpCommand(mcpCommand) ? 'settings.mcp.nativeDescription' : 'settings.mcp.nativeConfigured')}</span>
+        <Button variant="ghost" size="sm" disabled={!runtimeReady || !mcpCommand || loading || saving} onClick={() => void showRuntimeStatus()}>{t('settings.mcp.runtimeStatus')}</Button>
       </div>
+      {nativeWritesBlocked ? <div className="space-y-2 rounded-lg border border-warning/30 bg-warning/5 p-3 text-caption" role="alert"><p>{t('settings.mcp.extensionMigrationBlocked')}</p>{onManagePackages ? <Button variant="outline" size="sm" onClick={onManagePackages}>{t('settings.mcp.managePackages')}</Button> : null}</div> : null}
 
-      {runtimeReady && !available && (
-        <div className="flex flex-col gap-3 rounded-lg bg-muted/40 p-3 @min-[680px]/mcp:flex-row @min-[680px]/mcp:items-center @min-[680px]/mcp:justify-between">
-          <div>
-            <p className="text-caption text-foreground">{t('settings.mcp.optionalOnly')}</p>
-            <code className="mt-1 block font-mono text-micro text-muted-foreground">{INSTALL_COMMAND}</code>
-          </div>
-          <div className="flex gap-1.5">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="icon-sm"
-                  aria-label={t('settings.mcp.copyInstall')}
-                  onClick={() => void copyInstallCommand()}
-                >
-                  {copied ? <TbCheck aria-hidden /> : <TbCopy aria-hidden />}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>{t('settings.mcp.copyInstall')}</TooltipContent>
-            </Tooltip>
-            <Button variant="outline" size="sm" disabled={loading || saving || !runtimeReady} onClick={() => void restartDetection()}>
-              <TbRefresh aria-hidden />
-              {t('settings.mcp.refreshDetection')}
-            </Button>
-          </div>
+      {snapshotIsCurrent && snapshot.legacy ? (
+        <div className="space-y-2 rounded-lg border border-border p-3 text-caption">
+          <p>{t(snapshot.exists ? 'settings.mcp.migration.existing' : 'settings.mcp.migration.available')}</p>
+          <p className="break-all font-mono text-micro text-muted-foreground">{snapshot.legacy.path}</p>
+          {!snapshot.exists ? <Button variant="outline" size="sm" disabled={dirty || loading || saving} onClick={() => convertDraft(snapshot.legacy!.content)}>{t('settings.mcp.migration.import')}</Button> : null}
         </div>
-      )}
-      {copyFailed ? <p className="text-caption text-destructive" role="alert">{t('md.copyFailed')}</p> : null}
+      ) : null}
+      {snapshotIsCurrent && snapshot.legacyUnavailablePath ? <p className="break-words text-caption text-warning">{t('settings.mcp.migration.unreadable', { path: snapshot.legacyUnavailablePath })}</p> : null}
+      {!parsed.valid && snapshotIsCurrent ? <div className="space-y-2 text-caption text-muted-foreground"><p>{t('settings.mcp.migration.conversionHint')}</p><Button variant="outline" size="sm" disabled={loading || saving} onClick={() => convertDraft(draftText)}>{t('settings.mcp.migration.convert')}</Button></div> : null}
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 pb-3">
         <div className="flex min-w-0 flex-wrap items-center gap-2">

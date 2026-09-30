@@ -6,12 +6,12 @@ import type {
 } from '@/shared/mcp-config'
 import type { McpServerFormValue } from './McpServerFormDialog'
 import type { MessageKey } from '@/i18n'
+import { MCP_EXPOSURES } from '@/shared/mcp-config'
 
 /*
- * Pure form <-> JSONC-definition mapping helpers for the MCP single-draft
- * flow (design §9). The surface keeps one JSONC `draftText`; these helpers
- * convert between the structured form value and the contract definition so
- * the parser's comment-preserving transforms can produce the next draft.
+ * Pure form <-> native JSON definition mapping for the MCP single-draft flow.
+ * Unknown fields survive editing; legacy JSONC is converted explicitly before
+ * a document can be saved as native Pi configuration.
  */
 
 export function stringRecord(value: unknown): value is Record<string, string> {
@@ -31,7 +31,10 @@ export function structuredSupported(server: McpConfigServer) {
     presentSelectors[0] !== expectedSelector ||
     typeof definition[expectedSelector] !== 'string'
   ) return false
-  if (definition.disabled !== undefined && typeof definition.disabled !== 'boolean') return false
+  if (definition.disabled !== undefined || (definition.enabled !== undefined && typeof definition.enabled !== 'boolean')) return false
+  if (definition.type !== undefined && (server.transport === 'stdio'
+    ? definition.type !== 'stdio'
+    : !['http', 'streamable-http'].includes(String(definition.type)))) return false
   if (server.transport === 'stdio') {
     if (definition.args !== undefined && (!Array.isArray(definition.args) || definition.args.some((value) => typeof value !== 'string'))) return false
     if (definition.env !== undefined && !stringRecord(definition.env)) return false
@@ -64,7 +67,7 @@ export function rowsToRecord(rows: readonly KeyValueRow[]) {
   return Object.fromEntries(rows.map((row) => [row.key, row.value]))
 }
 
-export type McpFormErrorField = 'name' | 'command' | 'url' | 'env' | 'headers'
+export type McpFormErrorField = 'name' | 'command' | 'url' | 'env' | 'headers' | 'timeout'
 
 export function getMcpFormErrors(
   value: McpServerFormValue,
@@ -74,6 +77,7 @@ export function getMcpFormErrors(
   const errors: Partial<Record<McpFormErrorField, MessageKey>> = {}
   const name = value.name.trim().toLocaleLowerCase()
   if (!name) errors.name = 'mcp.form.name.required'
+  else if (!/^[A-Za-z0-9_-]{1,128}$/u.test(value.name.trim())) errors.name = 'mcp.form.name.invalid'
   else if (existingNames.some((existing) => {
     const candidate = existing.trim().toLocaleLowerCase()
     return candidate === name && candidate !== originalName?.trim().toLocaleLowerCase()
@@ -95,6 +99,7 @@ export function getMcpFormErrors(
   const keys = value[field].map((row) => field === 'headers' ? row.key.trim().toLocaleLowerCase() : row.key.trim())
   if (keys.some((key) => !key)) errors[field] = 'mcp.form.kv.emptyKey'
   else if (new Set(keys).size !== keys.length) errors[field] = 'settings.integrations.mcp.form.duplicateKey'
+  if (value.timeout?.trim() && (!Number.isFinite(Number(value.timeout)) || Number(value.timeout) <= 0)) errors.timeout = 'mcp.form.timeout.invalid'
   return errors
 }
 
@@ -116,7 +121,9 @@ export function formValueFromServer(server: McpConfigServer): McpServerFormValue
     cwd: typeof definition.cwd === 'string' ? definition.cwd : '',
     url: typeof definition.url === 'string' ? definition.url : '',
     headers: recordToRows(definition.headers),
-    enabled: definition.disabled !== true,
+    enabled: definition.enabled !== false,
+    exposure: MCP_EXPOSURES.find((value) => value === definition.exposure) ?? 'codemode',
+    timeout: typeof definition.timeout === 'number' ? String(definition.timeout) : '',
     description: typeof definition.description === 'string' ? definition.description : '',
   }
 }
@@ -131,7 +138,7 @@ export function definitionFromFormValue(
   existing?: McpConfigServer,
 ): Record<string, unknown> {
   const definition: Record<string, unknown> = existing ? { ...existing.definition } : {}
-  for (const field of ['command', 'url', 'socket', 'args', 'env', 'cwd', 'headers', 'disabled', 'description']) {
+  for (const field of ['command', 'url', 'socket', 'type', 'args', 'env', 'cwd', 'headers', 'enabled', 'description', 'exposure', 'timeout']) {
     delete definition[field]
   }
   if (value.transport === 'stdio') {
@@ -145,7 +152,9 @@ export function definitionFromFormValue(
     const headers = rowsToRecord(value.headers)
     if (Object.keys(headers).length > 0) definition.headers = headers
   }
-  if (!value.enabled) definition.disabled = true
+  if (!value.enabled) definition.enabled = false
+  if (value.exposure && value.exposure !== 'codemode') definition.exposure = value.exposure
+  if (value.timeout?.trim()) definition.timeout = Number(value.timeout)
   if (value.description.length > 0) definition.description = value.description
   return definition
 }

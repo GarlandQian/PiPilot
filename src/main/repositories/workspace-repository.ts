@@ -23,6 +23,7 @@ const persistedWorkspaceSchema = z
   .object({
     id: z.uuid(),
     name: z.string().min(1).max(256),
+    displayName: z.string().min(1).max(256).optional(),
     path: z.string().min(1).max(4_096).refine((value) => !value.includes('\0')),
     lastOpenedAt: z.iso.datetime(),
     pinned: z.boolean(),
@@ -156,7 +157,7 @@ export class WorkspaceRepository {
     let record = this.recent.find((workspace) => workspace.path === canonicalPath)
 
     if (record) {
-      record.name = workspaceName(canonicalPath)
+      record.name = record.displayName ?? workspaceName(canonicalPath)
       record.lastOpenedAt = openedAt
       record.available = true
     } else {
@@ -198,7 +199,7 @@ export class WorkspaceRepository {
     }
 
     record.path = canonicalPath
-    record.name = workspaceName(canonicalPath)
+    record.name = record.displayName ?? workspaceName(canonicalPath)
     record.lastOpenedAt = new Date(this.now()).toISOString()
     record.available = true
     this.currentId = record.id
@@ -216,6 +217,22 @@ export class WorkspaceRepository {
     record.pinned = pinned
     this.commit()
     return this.snapshot()
+  }
+
+  markUnavailable(workspaceId: string) {
+    const record = this.recent.find((workspace) => workspace.id === workspaceId)
+    if (!record) return
+    record.available = false
+    if (this.currentId === workspaceId) this.currentId = undefined
+    this.commit()
+  }
+
+  setDisplayName(workspaceId: string, name: string) {
+    const record = this.recent.find((workspace) => workspace.id === workspaceId)
+    if (!record) return
+    record.displayName = name.slice(0, 256)
+    record.name = record.displayName
+    this.commit()
   }
 
   remove(workspaceId: string) {
@@ -263,7 +280,7 @@ export class WorkspaceRepository {
     for (const record of this.recent) {
       try {
         const canonicalPath = await this.validateDirectory(record.path)
-        const name = workspaceName(canonicalPath)
+        const name = record.displayName ?? workspaceName(canonicalPath)
         if (!record.available || record.path !== canonicalPath || record.name !== name) {
           changed = true
         }

@@ -19,6 +19,7 @@ import {
 import type { ConversationScope } from '../../src/shared/conversation-scope'
 import { ConfigApplyCoordinator } from '../../src/main/config-apply/config-apply-coordinator'
 import { FakeConfigApplyRuntime } from './helpers/config-apply-runtime'
+import { convertMcpConfigToNativeJson } from '../../src/shared/mcp-config-parser'
 
 const workspaceId = '00000000-0000-4000-8000-000000000901'
 const roots: string[] = []
@@ -28,7 +29,7 @@ afterEach(async () => {
     rm(root, { recursive: true, force: true })))
 })
 
-async function fixture({ customAgentDirectory = false } = {}) {
+async function fixture({ customAgentDirectory = false, assertNativeConfigurationWritable }: { customAgentDirectory?: boolean; assertNativeConfigurationWritable?: (target: import('../../src/shared/mcp-config').McpConfigTarget) => Promise<void> } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'pipilot-mcp-config-'))
   roots.push(root)
   const home = join(root, 'home')
@@ -36,7 +37,7 @@ async function fixture({ customAgentDirectory = false } = {}) {
   const projectless = join(root, 'projectless')
   await Promise.all([
     mkdir(home, { recursive: true }),
-    mkdir(projectDirectory, { recursive: true }),
+    mkdir(join(projectDirectory, '.pi'), { recursive: true }),
     mkdir(projectless, { recursive: true }),
   ])
   const project = await realpath(projectDirectory)
@@ -53,6 +54,7 @@ async function fixture({ customAgentDirectory = false } = {}) {
     ...(customAgentDirectory ? { agentDirectory: join(root, 'custom-agent') } : {}),
     getActiveScope: () => activeScope,
     scopeResolver: resolver,
+    assertNativeConfigurationWritable,
   })
   return {
     home,
@@ -65,6 +67,46 @@ async function fixture({ customAgentDirectory = false } = {}) {
 }
 
 describe('McpConfigService', () => {
+  it('rejects writes when an active extension would interpret native fields differently', async () => {
+    const guard = vi.fn(async () => { throw new McpConfigError('MCP_CONFIG_EXTENSION_OVERRIDE', 'Disable the adapter before saving native configuration.') })
+    const { project, service } = await fixture({ assertNativeConfigurationWritable: guard })
+    const target = { kind: 'project' as const, workspaceId }
+    const initial = await service.load(target)
+    await expect(service.save(target, '{"mcpServers":{"disabledServer":{"command":"node","enabled":false}}}', initial.fingerprint))
+      .rejects.toMatchObject({ code: 'MCP_CONFIG_EXTENSION_OVERRIDE' })
+    expect(guard).toHaveBeenCalledWith(target)
+    await expect(readFile(join(project, '.pi', 'mcp.json'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('offers old project data without writing it and applies explicit imports to the project cwd', async () => {
+    const { project, service } = await fixture()
+    const target = { kind: 'project' as const, workspaceId }
+    const legacyPath = join(project, '.mcp.json')
+    const legacy = '// retained original\n{"mcpServers":{"docs":{"command":"node","disabled":true,"future":42}}}\n'
+    await writeFile(legacyPath, legacy)
+    const initial = await service.load(target)
+    expect(initial).toMatchObject({ exists: false, legacy: { path: legacyPath, content: legacy } })
+    await expect(readFile(initial.path, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    const runtime = new FakeConfigApplyRuntime()
+    const coordinator = new ConfigApplyCoordinator(runtime)
+    try {
+      const controller = new McpConfigController(service, coordinator, vi.fn())
+      await controller.save(target, convertMcpConfigToNativeJson(legacy), initial.fingerprint)
+      expect(runtime.applyConfiguration).toHaveBeenCalledWith(expect.objectContaining({ cwd: project }))
+      expect(JSON.parse(await readFile(initial.path, 'utf8')).mcpServers.docs).toEqual({ command: 'node', enabled: false, future: 42 })
+      await expect(readFile(legacyPath, 'utf8')).resolves.toBe(legacy)
+      expect(await service.load(target)).toMatchObject({ exists: true, legacy: { content: legacy } })
+      await expect(controller.save(target, '{"mcpServers":{}}', initial.fingerprint)).rejects.toMatchObject({ code: 'MCP_CONFIG_CONFLICT' })
+    } finally { coordinator.dispose() }
+  })
+
+  it('keeps native configuration usable if an old legacy path cannot be read', async () => {
+    const { project, service } = await fixture()
+    await mkdir(join(project, '.mcp.json'))
+    const snapshot = await service.load({ kind: 'project', workspaceId })
+    expect(snapshot).toMatchObject({ valid: true, legacyUnavailablePath: join(project, '.mcp.json') })
+  })
+
   it('uses the authoritative Agent directory without changing the project MCP path', async () => {
     const { home, project, service } = await fixture({ customAgentDirectory: true })
     const agentDirectory = join(home, '..', 'custom-agent')
@@ -79,7 +121,7 @@ describe('McpConfigService', () => {
     await expect(readFile(join(agentDirectory, 'mcp.json'), 'utf8')).resolves.toBe(content)
     await expect(readFile(join(defaultDirectory, 'mcp.json'), 'utf8')).resolves.toBe(defaultContent)
     await expect(service.load({ kind: 'project', workspaceId }))
-      .resolves.toMatchObject({ path: join(project, '.mcp.json'), exists: false })
+      .resolves.toMatchObject({ path: join(project, '.pi', 'mcp.json'), exists: false })
   })
 
   it('uses only the selected-project file and the exact Pi Agent global file', async () => {
@@ -94,7 +136,7 @@ describe('McpConfigService', () => {
 
     expect(projectSnapshot).toMatchObject({
       exists: false,
-      path: join(project, '.mcp.json'),
+      path: join(project, '.pi', 'mcp.json'),
       valid: true,
     })
     expect(globalSnapshot).toMatchObject({
@@ -110,7 +152,7 @@ describe('McpConfigService', () => {
       projectSnapshot.fingerprint,
     )
     expect(saved.exists).toBe(true)
-    await expect(readFile(join(project, '.mcp.json'), 'utf8')).resolves.toBe(content)
+    await expect(readFile(join(project, '.pi', 'mcp.json'), 'utf8')).resolves.toBe(content)
 
     const globalContent = '{\n  "mcpServers": { "global": { "command": "node" } }\n}\n'
     const savedGlobal = await service.save(
@@ -153,7 +195,7 @@ describe('McpConfigService', () => {
     await expect(service.load({ kind: 'project', workspaceId })).rejects.toMatchObject({
       code: 'MCP_CONFIG_SCOPE_UNAVAILABLE',
     } satisfies Partial<McpConfigError>)
-    await expect(readFile(join(canonicalProject, '.mcp.json'), 'utf8'))
+    await expect(readFile(join(canonicalProject, '.pi', 'mcp.json'), 'utf8'))
       .rejects.toMatchObject({ code: 'ENOENT' })
   })
 
@@ -200,7 +242,7 @@ describe('McpConfigService', () => {
     const target = { kind: 'project' as const, workspaceId }
     const initial = await service.load(target)
     const external = '{ "mcpServers": { "external": { "url": "https://example.test/mcp" } } }'
-    await writeFile(join(project, '.mcp.json'), external, 'utf8')
+    await writeFile(join(project, '.pi', 'mcp.json'), external, 'utf8')
 
     await expect(service.save(
       target,
@@ -209,7 +251,7 @@ describe('McpConfigService', () => {
     )).rejects.toMatchObject({
       code: 'MCP_CONFIG_CONFLICT',
     } satisfies Partial<McpConfigError>)
-    await expect(readFile(join(project, '.mcp.json'), 'utf8')).resolves.toBe(external)
+    await expect(readFile(join(project, '.pi', 'mcp.json'), 'utf8')).resolves.toBe(external)
   })
 
   it('leaves disk unchanged for invalid JSONC or an inactive project target', async () => {
@@ -221,7 +263,7 @@ describe('McpConfigService', () => {
       '{ "mcpServers": { "broken": { "url": "x", "command": "y" } } }',
       initial.fingerprint,
     )).rejects.toMatchObject({ code: 'MCP_CONFIG_INVALID' } satisfies Partial<McpConfigError>)
-    await expect(readFile(join(project, '.mcp.json'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(join(project, '.pi', 'mcp.json'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
 
     setActiveScope({ kind: 'projectless' })
     expect(service.isTargetActive(target)).toBe(false)

@@ -27,6 +27,7 @@ import { PIPILOT_VERSION } from '../../src/shared/build-info'
 import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from '../../src/shared/settings'
 import { createWindowsUserPathAdapter } from '../../src/main/external-control/launcher-service'
 import { startPiSdkFixture } from '../electron/pi-sdk-fixture'
+import { NATIVE_MCP_CANARY_TEXT, NATIVE_MCP_CANARY_TOOL, startNativeMcpFixture } from '../helpers/native-mcp-fixture'
 import { resolvePackagedExecutable as resolvePackagedTarget, verifyPackagedArchitecture } from './resolve-packaged-executable'
 
 const require = createRequire(import.meta.url)
@@ -205,6 +206,7 @@ function inspectPackagedApplication(executable: string) {
   const unpackedEntries = existsSync(unpackedPty)
     ? readdirSync(unpackedPty, { recursive: true }).map(String)
     : []
+  const unpacked = join(resourcesDirectory, 'app.asar.unpacked', 'node_modules')
   const rootOnlyExclusions = [
     '.codex',
     '.env',
@@ -231,6 +233,8 @@ function inspectPackagedApplication(executable: string) {
     hasTestArtifact: entries.some((entry) =>
       /(^|\/)(__tests__|tests?|coverage)(\/|$)|\.test\./i.test(entry)),
     hasNativePty: unpackedEntries.some((entry) => entry.endsWith('.node')),
+    hasCodemodeWorker: existsSync(join(unpacked, '@earendil-works', 'pi-codemode', 'dist', 'runtime', 'worker.js')),
+    hasQuickJsWasm: existsSync(join(unpacked, 'quickjs-wasi', 'quickjs.wasm')),
   }
 }
 
@@ -391,6 +395,8 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
     hasExcludedRoot: false,
     hasTestArtifact: false,
     hasNativePty: true,
+    hasCodemodeWorker: true,
+    hasQuickJsWasm: true,
   })
   const fuseWire = await getCurrentFuseWire(executable)
   expect(fuseWire[FuseV1Options.RunAsNode]).toBe(FuseState.ENABLE)
@@ -403,6 +409,8 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
   const workspacePath = await mkdtemp(join(packagedTemporaryDirectory, 'PiPilot 项目 (A) & Notes-'))
   const fixtureRoot = await mkdtemp(join(packagedTemporaryDirectory, 'pipilot-sdk-fixture-'))
   const agentDir = join(fixtureRoot, 'agent-data')
+  const mcpFixture = await startNativeMcpFixture()
+  const codemodePrompt = 'Packaged native MCP and codemode canary'
   const hostFailureMarker = join(fixtureRoot, 'host-failure.marker')
   const writeProjectionPrompt = 'Packaged official write result remains live'
   const writeProjectionFollowUp = 'Packaged prompt after official write result'
@@ -414,6 +422,9 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
   const piFixture = await startPiSdkFixture({
     agentDir,
     globalPackages: [globalPackagePath],
+    codemodeToolPrompts: {
+      [codemodePrompt]: `const result = await tools.mcp__packaged_canary__${NATIVE_MCP_CANARY_TOOL}({}); text(result.content[0].text);`,
+    },
     promptDelays: {
       'Packaged background session stays alive': 15_000,
     },
@@ -424,6 +435,11 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
       },
     },
   })
+  await writeFile(join(agentDir, 'mcp.json'), JSON.stringify({
+    mcpServers: {
+      packaged_canary: { url: mcpFixture.url, exposure: 'codemode' },
+    },
+  }), 'utf8')
   const canonicalWorkspacePath = await realpath(workspacePath)
   const selectedSessionDirectory = officialSessionDirectory(
     agentDir,
@@ -579,6 +595,7 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
       'applicationUpdate',
       'changes',
       'conversation',
+      'conversationSearch',
       'externalControl',
       'files',
       'localPi',
@@ -586,9 +603,12 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
       'modelsConfig',
       'notifications',
       'piIntegrations',
+      'projectWorkflows',
+      'scheduledTasks',
       'sessionCatalog',
       'settings',
       'shell',
+      'sideConversations',
       'terminal',
       'window',
       'workspace',
@@ -650,7 +670,7 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
       window.pipilot!.piIntegrations.load({ kind: 'global' })
     )), PACKAGED_RUNTIME_POLL_OPTIONS).toMatchObject({
       state: 'ready',
-      executable: { version: '0.85.1' },
+      executable: { version: '0.99.1' },
       packages: expect.arrayContaining([
         expect.objectContaining({
           displayName: 'packaged-fixture-package',
@@ -686,7 +706,7 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
       name: 'Integrations',
       exact: true,
     })).toBeVisible()
-    await expect(integrationsMain.getByText(/Pi 0\.85\.1/u)).toBeVisible()
+    await expect(integrationsMain.getByText(/Pi 0\.99\.1/u)).toBeVisible()
     await integrationsMain.getByRole('tab', {
       name: 'Packages',
       exact: true,
@@ -749,6 +769,19 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
     )
     await expect(staleResponse).toBeVisible()
     expect(piFixture.prompts).toContain('Packaged project menu session is ready')
+
+    // This runs the installed SDK's real Worker + QuickJS WASM and calls the
+    // native MCP endpoint. A canned final provider reply alone cannot pass.
+    await expect.poll(() => mcpFixture.calls.some((call) => call.method === 'tools/list'))
+      .toBe(true)
+    await composer.fill(codemodePrompt)
+    await page.getByRole('button', { name: 'Send', exact: true }).click()
+    await expect(page.getByText(`Fixture response: ${codemodePrompt}`, { exact: true }))
+      .toBeVisible({ timeout: 30_000 })
+    expect(piFixture.codemodeResults).toEqual([
+      expect.stringContaining(NATIVE_MCP_CANARY_TEXT),
+    ])
+    expect(mcpFixture.calls).toContainEqual({ method: 'tools/call', name: NATIVE_MCP_CANARY_TOOL })
 
     // The delayed-start Electron test owns frame-level loading continuity;
     // packaged hydration can settle before a renderer observer samples it.
@@ -969,6 +1002,7 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
   } finally {
     await stopPackagedApp(page, browser, appProcess)
     await piFixture.close()
+    await mcpFixture.close()
     await Promise.all([
       rm(userDataPath, {
         recursive: true,

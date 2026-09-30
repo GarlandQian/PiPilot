@@ -93,7 +93,7 @@ test('manages bundled Pi SDK integrations and MCP drafts across responsive Setti
       promptName: 'added-fixture-prompt',
     },
   )
-  const mcpPath = join(workspacePath, '.mcp.json')
+  const mcpPath = join(workspacePath, '.pi', 'mcp.json')
   await Promise.all([
     mkdir(userDataPath, { recursive: true }),
     mkdir(join(workspacePath, '.pi'), { recursive: true }),
@@ -104,16 +104,16 @@ test('manages bundled Pi SDK integrations and MCP drafts across responsive Setti
       packages: [projectPackagePath],
       retry: { enabled: false },
     }, null, 2)}\n`, 'utf8'),
-    writeFile(mcpPath, `// preserve this comment
-{
+    writeFile(mcpPath, `{
   "mcpServers": {
     "docs": {
       "command": "node",
       "args": ["server.js"],
-      "env": { "TOKEN": "!secret-command" },
+      "env": { "TOKEN": "fixture-only" },
+      "enabled": false,
       "future": { "keep": true }
     },
-    "mux": { "socket": "/tmp/fixture-mux.sock" }
+    "mux": { "url": "https://example.test/mcp", "enabled": false }
   },
   "futureTop": true
 }
@@ -127,11 +127,6 @@ test('manages bundled Pi SDK integrations and MCP drafts across responsive Setti
           locale: 'en-US',
         },
       }, null, 2)}\n`,
-      'utf8',
-    ),
-    writeFile(
-      join(userDataPath, 'pi-managed-packages.json'),
-      `${JSON.stringify({ version: 1, mcpOptedOut: true }, null, 2)}\n`,
       'utf8',
     ),
   ])
@@ -171,13 +166,19 @@ test('manages bundled Pi SDK integrations and MCP drafts across responsive Setti
       name: 'Current model Fake Chat, click to switch',
     })).toBeVisible({ timeout: 15_000 })
 
-    const snapshots = await page.evaluate(async (scope) => ({
-      global: await window.pipilot!.piIntegrations.load({ kind: 'global' }),
-      project: await window.pipilot!.piIntegrations.load(scope),
-    }), projectScope)
+    const snapshots = await page.evaluate(async (scope) => {
+      try {
+        return {
+          global: await window.pipilot!.piIntegrations.load({ kind: 'global' }),
+          project: await window.pipilot!.piIntegrations.load(scope),
+        }
+      } catch (error) {
+        throw new Error(JSON.stringify(error))
+      }
+    }, projectScope)
     expect(snapshots.global).toMatchObject({
       state: 'ready',
-      executable: { version: '0.85.1' },
+      executable: { version: '0.99.1' },
       packages: [expect.objectContaining({
         displayName: 'fixture-global-package',
         installedVersion: '1.2.3',
@@ -275,7 +276,7 @@ test('manages bundled Pi SDK integrations and MCP drafts across responsive Setti
     await settingsNavigation.getByRole('button', { name: 'Integrations', exact: true }).click()
     await page.getByRole('button', { name: 'Current project', exact: true }).click()
     await expect(page.getByRole('heading', { name: 'Integrations', exact: true })).toBeVisible()
-    await expect(page.getByText(/Pi 0\.85\.1/)).toBeVisible()
+    await expect(page.getByText(/Pi 0\.99\.1/)).toBeVisible()
     await expect(page.getByText(
       'Package changes are saved but not confirmed loaded. Apply changes to try again.',
     )).toHaveCount(0)
@@ -482,14 +483,14 @@ test('manages bundled Pi SDK integrations and MCP drafts across responsive Setti
     )).toBeVisible()
     await expect.poll(async () => readFile(mcpPath, 'utf8')).toContain('node-updated')
     const structuredSaved = await readFile(mcpPath, 'utf8')
-    expect(structuredSaved).toContain('// preserve this comment')
+    expect(JSON.parse(structuredSaved).mcpServers.docs.enabled).toBe(false)
     expect(structuredSaved).toMatch(/"future"\s*:\s*\{\s*"keep"\s*:\s*true\s*\}/u)
     expect(structuredSaved).toContain('"futureTop": true')
 
     await expect(page.getByRole('button', {
       name: 'Edit server mux',
       exact: true,
-    })).toBeDisabled()
+    })).toBeEnabled()
     await page.getByRole('button', { name: 'JSON', exact: true }).click()
     const rawEditor = page.locator('textarea').filter({ visible: true }).last()
     await page.screenshot({
@@ -521,7 +522,7 @@ test('manages bundled Pi SDK integrations and MCP drafts across responsive Setti
       runtimeSync: 'synchronized',
       snapshot: {
         state: 'ready',
-        executable: { version: '0.85.1' },
+        executable: { version: '0.99.1' },
         restartRequired: false,
       },
     })

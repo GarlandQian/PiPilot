@@ -25,11 +25,12 @@ import {
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { getMcpFormErrors, type McpFormErrorField } from './mcp-server-form-model'
+import { MCP_EXPOSURES, type McpExposure } from '@/shared/mcp-config'
 
 /**
  * Shared MCP server Add/Edit form dialog (design §9). One component serves
- * both flows; the consumer maps the submitted value onto the JSONC document
- * via the comment-preserving draft helpers. All strings come from the
+ * both flows; the consumer maps the submitted value onto the native JSON
+ * document without discarding unknown fields. All strings come from the
  * `mcp.form.*` i18n namespace.
  */
 
@@ -46,6 +47,8 @@ interface McpServerFormValue {
   headers: KeyValueRow[]
   enabled: boolean
   description: string
+  exposure?: McpExposure
+  timeout?: string
 }
 
 interface McpServerFormDialogProps {
@@ -74,6 +77,8 @@ const DEFAULT_VALUE: McpServerFormValue = {
   headers: [],
   enabled: true,
   description: '',
+  exposure: 'codemode',
+  timeout: '',
 }
 
 function cloneValue(value: McpServerFormValue): McpServerFormValue {
@@ -110,6 +115,8 @@ function McpServerFormDialog({
   const descriptionId = React.useId()
   const envId = React.useId()
   const headersId = React.useId()
+  const exposureId = React.useId()
+  const timeoutId = React.useId()
 
   // Re-initialize the draft once per dialog opening; `initial` is the
   // snapshot for that editing session and intentionally not a dependency.
@@ -155,9 +162,9 @@ function McpServerFormDialog({
     if (shutdownLocked) return false
     if (Object.keys(errors).length > 0) {
       setSubmitAttempted(true)
-      setTouched({ name: true, command: true, url: true, env: true, headers: true })
+      setTouched({ name: true, command: true, url: true, env: true, headers: true, timeout: true })
       const field = (Object.keys(errors) as ErrorField[])[0]
-      const id = field && ({ name: nameId, command: commandId, url: urlId, env: envId, headers: headersId })[field]
+      const id = field && ({ name: nameId, command: commandId, url: urlId, env: envId, headers: headersId, timeout: timeoutId })[field]
       requestAnimationFrame(() => {
         const target = id ? document.getElementById(id) : null
         if (target?.matches('input')) target.focus()
@@ -422,6 +429,15 @@ function McpServerFormDialog({
                     onCheckedChange={(enabled) => update({ enabled })}
                   />
                 </div>
+              </FormRow>
+
+              <FormRow label={t('mcp.form.exposure')} htmlFor={exposureId} hint={t('mcp.form.exposure.hint')}>
+                <select id={exposureId} value={draft.exposure ?? 'codemode'} onChange={(event) => update({ exposure: event.target.value as McpExposure })} className="h-[var(--control-h)] w-full rounded-md border border-input bg-background px-3 text-app outline-none focus-visible:focus-ring">
+                  {MCP_EXPOSURES.map((value) => <option key={value} value={value}>{t(`mcp.form.exposure.${value}`)}</option>)}
+                </select>
+              </FormRow>
+              <FormRow label={t('mcp.form.timeout')} htmlFor={timeoutId} error={fieldError('timeout', timeoutId)}>
+                <Input id={timeoutId} type="number" min="0.001" step="any" placeholder="60" value={draft.timeout ?? ''} onChange={(event) => update({ timeout: event.target.value })} onBlur={() => touch('timeout')} aria-invalid={showError('timeout') && Boolean(errors.timeout)} aria-describedby={showError('timeout') && errors.timeout ? `${timeoutId}-error` : undefined} />
               </FormRow>
 
               <FormRow

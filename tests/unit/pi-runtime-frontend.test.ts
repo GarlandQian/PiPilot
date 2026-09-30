@@ -17,6 +17,7 @@ import {
 } from '../../src/main/pi-host/project-host-pool'
 import { PiHostControllerError } from '../../src/main/pi-host/pi-host-controller'
 import { RuntimeMaintenanceGate, type RuntimeMaintenancePermit } from '../../src/main/pi-host/runtime-maintenance-gate'
+import { SideConversationService } from '../../src/main/conversations/side-conversation-service'
 import type { ConversationScope } from '../../src/shared/conversation-scope'
 import type {
   LocalPiDeliverySnapshot,
@@ -148,6 +149,15 @@ class FakeFrontendPool {
 
   getSnapshot(): ProjectHostPoolSnapshot {
     return structuredClone(this.snapshot)
+  }
+
+  getRuntimeIdentity(runtimeId: string) {
+    const host = this.snapshot.hosts.find((entry) => entry.runtimes.some((runtime) => runtime.runtimeId === runtimeId))
+    const runtime = host?.runtimes.find((entry) => entry.runtimeId === runtimeId)
+    return host && runtime ? structuredClone({
+      hostKey: host.hostKey, hostEpoch: host.controller.hostEpoch,
+      hostState: host.state, scope: host.scope, runtime,
+    }) : null
   }
 
   subscribeEvents(listener: (event: PiHostEventEnvelope) => void) {
@@ -298,6 +308,9 @@ class FakeFrontendPool {
     let response: LocalPiRpcResponse
     let sampledRuntime: ProjectRuntimeDescriptor | undefined
     switch (command.type) {
+      case 'get_messages':
+        response = { type: 'response', command: 'get_messages', success: true, data: { messages: [] } }
+        break
       case 'get_delivery_state':
         response = {
           type: 'response', command: 'get_delivery_state', success: true,
@@ -599,7 +612,7 @@ class FakeFrontendPool {
         hostEpoch: 1,
         pid: state === 'crashed' ? null : 1_001,
         cwd: scope.cwd,
-        sdkVersion: '0.85.1',
+        sdkVersion: '0.99.1',
         nodeVersion: '24.18.1',
         electronVersion: '44.2.0',
         capabilities: [],
@@ -648,6 +661,447 @@ function createHarness(options: PiRuntimeFrontendOptions = {}) {
   )
   return { frontend, pool }
 }
+
+describe('Runtime preparation and global retention', () => {
+  it('settles a closed side conversation when Host transcript reads publish unchanged idle snapshots', async () => {
+    const { frontend, pool } = createHarness({ isPersistedSessionFile: () => true })
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' })
+    const selected = frontend.getActiveRuntimeIdentity()!
+    const side = new SideConversationService(frontend)
+    const created = await side.create({ scope: projectScope, parentSessionId: selected.sessionId!, requestId: '22222222-2222-4222-8222-222222222222', question: 'Explain', reference: { id: 'quote', ownerKey: `project:${projectScope.workspaceId}:${selected.sessionId}`, kind: 'message', sourceId: 'answer', label: 'Answer', text: 'captured source' } })
+    await expect.poll(() => pool.externalSubmitCalls.length).toBe(1)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    const controlled = pool.runtime!
+    const release = vi.spyOn(frontend, 'releaseControlRuntime')
+    const command = pool.command.bind(pool)
+    let transcriptReads = 0
+    vi.spyOn(pool, 'command').mockImplementation(async (...args) => {
+      if (args[1].type === 'get_messages' && ++transcriptReads > 8) throw new Error('Recursive transcript refresh')
+      const response = await command(...args)
+      if (args[1].type === 'get_messages') pool.emitSnapshot(pool.getSnapshot())
+      return response
+    })
+    await side.release(created.sideId)
+    pool.emitEvent(runtimeEvent(controlled.runtimeId, controlled.generation, { type: 'agent_end', messages: [], willRetry: false }))
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(release).not.toHaveBeenCalled()
+    pool.emitEvent(runtimeEvent(controlled.runtimeId, controlled.generation, { type: 'agent_settled' }))
+    await expect.poll(() => release.mock.calls.length).toBe(1)
+    expect(transcriptReads).toBeLessThanOrEqual(3)
+    expect((await side.get(created.sideId)).status).toBe('completed')
+    expect(frontend.getActiveRuntimeIdentity()).toEqual(selected)
+    await side.dispose(); await frontend.dispose()
+  })
+  it('lets the side-conversation owner cancel a blocking startup dialog before bind completes', async () => {
+    const { frontend, pool } = createHarness({ isPersistedSessionFile: () => false })
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' })
+    const selected = frontend.getActiveRuntimeIdentity()!
+    const side = new SideConversationService(frontend)
+    pool.startupUiId = 'side-startup'; pool.waitForStartupUiResponse = true
+    const created = await side.create({ scope: projectScope, parentSessionId: selected.sessionId!, requestId: '11111111-1111-4111-8111-111111111111', question: 'Explain', reference: { id: 'quote', ownerKey: `project:${projectScope.workspaceId}:${selected.sessionId}`, kind: 'message', sourceId: 'answer', label: 'Answer', text: 'captured source' } })
+    await expect.poll(async () => (await side.get(created.sideId)).status).toBe('interaction_required')
+    await expect.poll(() => pool.disposeCalls.some((call) => call.runtimeId === 'rt_frontend_2')).toBe(true)
+    expect(pool.externalSubmitCalls).toEqual([])
+    expect(frontend.getActiveRuntimeIdentity()).toEqual(selected)
+    expect(pool.uiResponses).toContainEqual(expect.objectContaining({ runtimeId: 'rt_frontend_2', response: expect.objectContaining({ cancelled: true }) }))
+    await side.dispose(); await frontend.dispose()
+  })
+  it('only discards an empty unpersisted background runtime after its exact lease is released', async () => {
+    const { frontend, pool } = createHarness({ isPersistedSessionFile: () => false })
+    const lease = await frontend.acquireControlRuntime({ scope: projectScope })
+    expect(await frontend.getControlTranscript(lease)).toEqual({ messages: [] })
+    await frontend.discardUnpersistedControlRuntime(lease)
+    expect(pool.disposeCalls).toEqual([])
+    frontend.releaseControlRuntime(lease)
+    pool.setRuntimeSessionState(lease.runtimeId, { messageCount: 1 })
+    await frontend.discardUnpersistedControlRuntime(lease)
+    expect(pool.disposeCalls).toEqual([])
+    pool.setRuntimeSessionState(lease.runtimeId, { messageCount: 0 })
+    await frontend.discardUnpersistedControlRuntime(lease)
+    expect(pool.disposeCalls).toEqual([{ runtimeId: lease.runtimeId, generation: lease.generation }])
+    await expect(frontend.getControlTranscript(lease)).rejects.toThrow('replaced')
+    await frontend.dispose()
+  })
+  it('freezes acquisition while archiving a project and releases only its idle caches', async () => {
+    const { frontend, pool } = createHarness({ isPersistedSessionFile: () => true })
+    Object.assign(pool, {
+      getHost: () => pool.getSnapshot().hosts[0] ?? null,
+      stop: vi.fn(async () => null),
+    })
+    const lease = await frontend.acquireControlRuntime({ scope: projectScope, sessionFile: '/sessions/archive-idle.jsonl' })
+    frontend.releaseControlRuntime(lease)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    const gate = deferred(); const entered = deferred()
+    const archiving = frontend.withInactiveProject(projectCwd, async () => { entered.resolve(); await gate.promise; return 'moved' })
+    await entered.promise
+    await expect(frontend.acquireControlRuntime({ scope: projectScope, sessionFile: '/sessions/archive-idle.jsonl' })).rejects.toThrow('configuration')
+    expect(pool.disposeCalls).toContainEqual({ runtimeId: lease.runtimeId, generation: lease.generation })
+    gate.resolve(); expect(await archiving).toBe('moved')
+    const next = await frontend.acquireControlRuntime({ scope: projectScope, sessionFile: '/sessions/archive-idle.jsonl' })
+    frontend.releaseControlRuntime(next); await frontend.dispose()
+  })
+
+  it('does not archive selected or leased runtimes and reopens admission after a move failure', async () => {
+    const { frontend, pool } = createHarness({ isPersistedSessionFile: () => true })
+    Object.assign(pool, { getHost: () => pool.getSnapshot().hosts[0] ?? null, stop: vi.fn(async () => null) })
+    const operation = vi.fn(async () => undefined)
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/selected-archive.jsonl' })
+    await expect(frontend.withInactiveProject(projectCwd, operation)).rejects.toThrow('Switch')
+    await frontend.stop()
+    const lease = await frontend.acquireControlRuntime({ scope: projectScope, sessionFile: '/sessions/pinned-archive.jsonl' })
+    await expect(frontend.withInactiveProject(projectCwd, operation)).rejects.toThrow('Switch')
+    frontend.releaseControlRuntime(lease)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    await expect(frontend.withInactiveProject(projectCwd, async () => { throw new Error('move failed') })).rejects.toThrow('move failed')
+    expect(operation).not.toHaveBeenCalled()
+    const next = await frontend.acquireControlRuntime({ scope: projectScope, sessionFile: '/sessions/pinned-archive.jsonl' })
+    frontend.releaseControlRuntime(next); await frontend.dispose()
+  })
+  it('checks event identities without cloning the pool and projects each runtime once per publication', async () => {
+    const { frontend, pool } = createHarness()
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/one.jsonl' })
+    const background = await frontend.acquireControlRuntime({ scope: projectScope, sessionFile: '/sessions/two.jsonl' })
+    const snapshot = vi.spyOn(pool, 'getSnapshot')
+    const identity = vi.spyOn(pool, 'getRuntimeIdentity')
+    pool.emitEvent(runtimeEvent(background.runtimeId, background.generation, { type: 'agent_start' }))
+    expect(snapshot).not.toHaveBeenCalled()
+    // One event identity plus one lookup for each of the two projected runtimes.
+    expect(identity).toHaveBeenCalledTimes(3)
+    frontend.releaseControlRuntime(background)
+    await frontend.dispose()
+  })
+
+  it('switches to a cached session while another project is still preparing in the background', async () => {
+    const { frontend, pool } = createHarness()
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/one.jsonl' })
+    await frontend.replace({ scope: projectScope, sessionFile: '/sessions/two.jsonl' })
+    const gate = deferred()
+    const create = pool.createRuntime.bind(pool)
+    const entered = deferred()
+    vi.spyOn(pool, 'createRuntime').mockImplementation(async (scope, target) => {
+      if (target.sessionFile === '/sessions/cold.jsonl') {
+        entered.resolve()
+        await gate.promise
+      }
+      return create(scope, target)
+    })
+    const pending = frontend.acquireControlRuntime({ scope: { kind: 'projectless' }, sessionFile: '/sessions/cold.jsonl' })
+    await entered.promise
+    try {
+      await expect(frontend.replace({ scope: projectScope, sessionFile: '/sessions/one.jsonl' }))
+        .resolves.toMatchObject({ sessionFile: '/sessions/one.jsonl' })
+      expect(pool.runtimeForSession('/sessions/cold.jsonl')).toBeNull()
+    } finally {
+      gate.resolve()
+      frontend.releaseControlRuntime(await pending)
+      await frontend.dispose()
+    }
+  })
+
+  it.each(['foreground', 'background'] as const)('shares one preparation when %s requests the session first', async (first) => {
+    const { frontend, pool } = createHarness()
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' })
+    const gate = deferred()
+    const entered = deferred()
+    const create = pool.createRuntime.bind(pool)
+    const createSpy = vi.spyOn(pool, 'createRuntime').mockImplementation(async (scope, target) => {
+      entered.resolve()
+      await gate.promise
+      return create(scope, target)
+    })
+    const target = { scope: projectScope, sessionFile: '/sessions/shared.jsonl' }
+    const firstRequest = first === 'foreground' ? frontend.replace(target) : frontend.acquireControlRuntime(target)
+    await entered.promise
+    const control = frontend.acquireControlRuntime(target)
+    const selection = first === 'background' ? frontend.replace(target) : null
+    gate.resolve()
+    const [firstResult, lease] = await Promise.all([firstRequest, control])
+    if (selection) await selection
+    expect(createSpy).toHaveBeenCalledTimes(1)
+    expect(frontend.getActiveRuntimeIdentity()?.runtimeId).toBe(lease.runtimeId)
+    if ('leaseId' in firstResult) {
+      expect(firstResult.leaseId).not.toBe(lease.leaseId)
+      expect(frontend.releaseControlRuntime(firstResult)).toBe(true)
+    }
+    expect(frontend.releaseControlRuntime(lease)).toBe(true)
+    await frontend.dispose()
+  })
+
+  it.each(['creating', 'binding'] as const)('lets a foreground join answer startup UI while the background preparation is %s', async (phase) => {
+    const { frontend, pool } = createHarness()
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' })
+    pool.startupUiId = 'joined-startup'
+    pool.waitForStartupUiResponse = true
+    const gate = deferred()
+    const entered = deferred()
+    const create = pool.createRuntime.bind(pool)
+    vi.spyOn(pool, 'createRuntime').mockImplementation(async (scope, target) => {
+      entered.resolve()
+      if (phase === 'creating') await gate.promise
+      return create(scope, target)
+    })
+    const target = { scope: projectScope, sessionFile: '/sessions/startup.jsonl' }
+    const acquisition = frontend.acquireControlRuntime(target)
+    await entered.promise
+    if (phase === 'binding') await vi.waitFor(() => expect(pool.acknowledgedEvents).toHaveLength(1))
+    const observed: string[] = []
+    frontend.subscribeUiRequests(async (envelope) => {
+      observed.push(envelope.request.id)
+      expect(frontend.getSnapshot()).toMatchObject({ state: 'starting', sessionFile: target.sessionFile })
+      await frontend.respondToExtensionUi({ type: 'extension_ui_response', id: envelope.request.id, confirmed: true }, envelope.runtimeGeneration)
+    })
+    const selected = frontend.replace(target)
+    gate.resolve()
+    const [lease, snapshot] = await Promise.all([acquisition, selected])
+    expect(snapshot).toMatchObject({ state: 'ready', sessionFile: target.sessionFile })
+    expect(observed).toEqual(['joined-startup'])
+    expect(pool.createCount).toBe(2)
+    expect(pool.acknowledgedEvents).toHaveLength(1)
+    frontend.releaseControlRuntime(lease)
+    await frontend.dispose()
+  })
+
+  it.each(['sessionFile', 'forkSessionFile'] as const)('waits for a cold %s preparation and blocks acquisition throughout file deletion', async (field) => {
+    const { frontend, pool } = createHarness()
+    const entered = deferred()
+    const gate = deferred()
+    const mutate = deferred()
+    const mutationStarted = deferred()
+    const create = pool.createRuntime.bind(pool)
+    vi.spyOn(pool, 'createRuntime').mockImplementation(async (scope, target) => {
+      entered.resolve()
+      await gate.promise
+      return create(scope, target)
+    })
+    const target = { scope: projectScope, [field]: '/sessions/deleting.jsonl' }
+    const acquisition = frontend.acquireControlRuntime(target)
+    const rejected = expect(acquisition).rejects.toMatchObject({ code: 'PI_RUNTIME_OPERATION_FAILED' })
+    await entered.promise
+    let released = false
+    const deletion = frontend.releaseSession('/sessions/nested/../deleting.jsonl', async () => {
+      expect(pool.runtimeCount).toBe(0)
+      mutationStarted.resolve()
+      await mutate.promise
+    }).then((result) => { released = true; return result })
+    await expect(frontend.acquireControlRuntime(target)).rejects.toMatchObject({ code: 'PI_RUNTIME_OPERATION_FAILED' })
+    expect(released).toBe(false)
+    gate.resolve()
+    await rejected
+    await mutationStarted.promise
+    await expect(frontend.acquireControlRuntime(target)).rejects.toMatchObject({ code: 'PI_RUNTIME_OPERATION_FAILED' })
+    expect(released).toBe(false)
+    mutate.resolve()
+    await expect(deletion).resolves.toBe(true)
+    expect(pool.runtimeCount).toBe(0)
+    await frontend.dispose()
+  })
+
+  it('cancels a background preparation dialog before releasing its Session', async () => {
+    const { frontend, pool } = createHarness()
+    pool.startupUiId = 'delete-startup'
+    pool.waitForStartupUiResponse = true
+    const acquisition = frontend.acquireControlRuntime({ scope: projectScope, sessionFile: '/sessions/deleting.jsonl' })
+    const rejected = expect(acquisition).rejects.toMatchObject({ code: 'PI_RUNTIME_OPERATION_FAILED' })
+    await vi.waitFor(() => expect(pool.acknowledgedEvents).toHaveLength(1))
+    await frontend.releaseSession('/sessions/deleting.jsonl')
+    await rejected
+    expect(pool.uiResponses).toEqual([expect.objectContaining({ response: { type: 'extension_ui_response', id: 'delete-startup', cancelled: true } })])
+    expect(pool.runtimeCount).toBe(0)
+    await frontend.dispose()
+  })
+
+  it('reopens Session admission after filesystem deletion fails', async () => {
+    const { frontend, pool } = createHarness()
+    const target = { scope: projectScope, sessionFile: '/sessions/retained.jsonl' }
+    const lease = await frontend.acquireControlRuntime(target)
+    frontend.releaseControlRuntime(lease)
+    await expect(frontend.releaseSession(target.sessionFile, async () => { throw new Error('trash unavailable') }))
+      .rejects.toThrow('trash unavailable')
+    const restored = await frontend.acquireControlRuntime(target)
+    expect(restored.runtimeId).not.toBe(lease.runtimeId)
+    expect(pool.runtimeCount).toBe(1)
+    frontend.releaseControlRuntime(restored)
+    await frontend.dispose()
+  })
+
+  it('does not mutate a Session file when cancelled preparation cleanup cannot release its pool lease', async () => {
+    const { frontend, pool } = createHarness()
+    const entered = deferred()
+    const gate = deferred()
+    const create = pool.createRuntime.bind(pool)
+    vi.spyOn(pool, 'createRuntime').mockImplementation(async (scope, target) => {
+      entered.resolve()
+      await gate.promise
+      return create(scope, target)
+    })
+    const dispose = vi.spyOn(pool, 'disposeRuntime').mockRejectedValue(new Error('disposal failed'))
+    const acquisition = frontend.acquireControlRuntime({ scope: projectScope, sessionFile: '/sessions/protected.jsonl' })
+    const rejected = expect(acquisition).rejects.toMatchObject({ code: 'PI_RUNTIME_OPERATION_FAILED' })
+    await entered.promise
+    const mutate = vi.fn(async () => undefined)
+    const deletion = frontend.releaseSession('/sessions/protected.jsonl', mutate)
+    const deletionRejected = expect(deletion).rejects.toMatchObject({ code: 'PI_RUNTIME_OPERATION_FAILED' })
+    gate.resolve()
+    await Promise.all([rejected, deletionRejected])
+    expect(mutate).not.toHaveBeenCalled()
+    expect(pool.runtimeCount).toBe(1)
+    dispose.mockRestore()
+    await frontend.releaseSession('/sessions/protected.jsonl')
+    expect(pool.runtimeCount).toBe(0)
+    await frontend.dispose()
+  })
+
+  it('preserves a running cached Session when selection hydration transiently fails', async () => {
+    const { frontend, pool } = createHarness()
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' })
+    const target = { scope: projectScope, sessionFile: '/sessions/running.jsonl' }
+    const background = await frontend.acquireControlRuntime(target)
+    await frontend.submitControlPrompt(background, 'Keep working', 'prompt')
+    frontend.releaseControlRuntime(background)
+    pool.failNextHydration = true
+    await expect(frontend.replace(target)).resolves.toMatchObject({ state: 'ready', sessionFile: target.sessionFile })
+    expect(frontend.getActiveRuntimeIdentity()?.runtimeId).toBe(background.runtimeId)
+    expect(pool.createCount).toBe(2)
+    expect(pool.disposeCalls).toEqual([])
+    await frontend.dispose()
+  })
+
+  it('retires a preparation completed after disposal instead of registering a new live runtime', async () => {
+    const { frontend, pool } = createHarness()
+    const entered = deferred()
+    const gate = deferred()
+    const create = pool.createRuntime.bind(pool)
+    vi.spyOn(pool, 'createRuntime').mockImplementation(async (scope, target) => {
+      entered.resolve()
+      await gate.promise
+      return create(scope, target)
+    })
+    const pending = frontend.acquireControlRuntime({ scope: projectScope, sessionFile: '/sessions/late.jsonl' })
+    const rejected = expect(pending).rejects.toMatchObject({ code: 'PI_RUNTIME_DISPOSED' })
+    await entered.promise
+    const disposal = frontend.dispose()
+    gate.resolve()
+    await Promise.all([rejected, disposal])
+    expect(pool.runtimeCount).toBe(0)
+    expect(pool.disposeCalls).toHaveLength(1)
+  })
+
+  it('retries selection against the current generation when a background session changes during hydration', async () => {
+    const { frontend, pool } = createHarness()
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' })
+    const target = { scope: projectScope, sessionFile: '/sessions/background.jsonl' }
+    const background = await frontend.acquireControlRuntime(target)
+    frontend.releaseControlRuntime(background)
+    const sampled = deferred()
+    const release = deferred()
+    pool.nextStateReadGate = { sampled: sampled.resolve, release: release.promise }
+    const selection = frontend.replace(target)
+    await sampled.promise
+    await pool.reloadRuntime(background.runtimeId, background.generation)
+    release.resolve()
+    await expect(selection).resolves.toMatchObject({ generation: 2, sessionFile: target.sessionFile })
+    expect(pool.createCount).toBe(2)
+    expect(pool.disposeCalls).toEqual([])
+    await frontend.dispose()
+  })
+
+  it('does not globally reclaim running, queued, interactive, or unpersisted sessions', async () => {
+    const { frontend, pool } = createHarness({ maxRetainedIdleRuntimes: 0, isPersistedSessionFile: (file) => !file.includes('unpersisted') })
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' })
+    const running = await frontend.acquireControlRuntime({ scope: projectScope, sessionFile: '/sessions/running.jsonl' })
+    pool.emitEvent(runtimeEvent(running.runtimeId, running.generation, { type: 'agent_start' }))
+    const queued = await frontend.acquireControlRuntime({ scope: projectScope, sessionFile: '/sessions/queued.jsonl' })
+    pool.emitEvent(runtimeEvent(queued.runtimeId, queued.generation, { type: 'queue_update', steering: [], followUp: ['queued'] }))
+    const interactive = await frontend.acquireControlRuntime({ scope: projectScope, sessionFile: '/sessions/interactive.jsonl' })
+    pool.emitUiRequest({
+      kind: 'ui_request', protocolVersion: PI_HOST_PROTOCOL_VERSION, hostEpoch: 1,
+      runtimeId: interactive.runtimeId, runtimeGeneration: interactive.generation, sequence: 1,
+      request: { type: 'extension_ui_request', id: 'protected-dialog', method: 'confirm', title: 'Continue?', message: 'Continue?' },
+    })
+    const unpersisted = await frontend.acquireControlRuntime({ scope: projectScope, sessionFile: '/sessions/unpersisted.jsonl' })
+    for (const lease of [running, queued, interactive, unpersisted]) frontend.releaseControlRuntime(lease)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    await frontend.replace({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' })
+    expect(pool.runtimeCount).toBe(5)
+    expect(pool.disposeCalls).toEqual([])
+    await frontend.dispose()
+  })
+
+  it('abandons an idle eviction if a concurrent background acquisition pins the sampled runtime', async () => {
+    const { frontend, pool } = createHarness({ maxRetainedIdleRuntimes: 0, isPersistedSessionFile: () => true })
+    const target = { scope: projectScope, sessionFile: '/sessions/reacquired.jsonl' }
+    const original = await frontend.acquireControlRuntime(target)
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    const sampled = deferred()
+    const release = deferred()
+    pool.nextStateReadGate = { sampled: sampled.resolve, release: release.promise }
+    frontend.releaseControlRuntime(original)
+    await sampled.promise
+    const reacquired = await frontend.acquireControlRuntime(target)
+    release.resolve()
+    await frontend.replace({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' })
+    expect(pool.runtimeForSession(target.sessionFile)).not.toBeNull()
+    expect(pool.disposeCalls).toEqual([])
+    frontend.releaseControlRuntime(reacquired)
+    await vi.waitFor(() => expect(pool.runtimeForSession(target.sessionFile)).toBeNull())
+    await frontend.dispose()
+  })
+
+  it('waits for an idle disposal already in progress and acquires one replacement session', async () => {
+    const { frontend, pool } = createHarness({ maxRetainedIdleRuntimes: 0, isPersistedSessionFile: () => true })
+    const target = { scope: projectScope, sessionFile: '/sessions/retiring.jsonl' }
+    const old = await frontend.acquireControlRuntime(target)
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    const entered = deferred()
+    const gate = deferred()
+    const dispose = pool.disposeRuntime.bind(pool)
+    vi.spyOn(pool, 'disposeRuntime').mockImplementation(async (id, generation) => {
+      if (id === old.runtimeId) {
+        entered.resolve()
+        await gate.promise
+      }
+      return dispose(id, generation)
+    })
+    frontend.releaseControlRuntime(old)
+    await entered.promise
+    const first = frontend.acquireControlRuntime(target)
+    const second = frontend.acquireControlRuntime(target)
+    gate.resolve()
+    const [one, two] = await Promise.all([first, second])
+    expect(one.runtimeId).not.toBe(old.runtimeId)
+    expect(two.runtimeId).toBe(one.runtimeId)
+    expect(one.leaseId).not.toBe(two.leaseId)
+    expect(pool.createCount).toBe(3)
+    frontend.releaseControlRuntime(one)
+    frontend.releaseControlRuntime(two)
+    await frontend.dispose()
+  })
+
+  it('evicts the oldest idle session across projects while preserving control leases and the current selection', async () => {
+    let now = 0
+    const pool = new FakeFrontendPool()
+    const frontend = new PiRuntimeFrontend(pool as unknown as ProjectHostPool, {
+      prepare: async (scope) => ({ scope, cwd: scope.kind === 'project' ? `/projects/${scope.workspaceId}` : '/projects/projectless', label: 'Project' }),
+    }, { maxRetainedIdleRuntimes: 1, now: () => ++now, isPersistedSessionFile: () => true })
+    const scopeA = projectScope
+    const scopeB = { kind: 'project', workspaceId: '00000000-0000-4000-8000-000000000302' } as const
+    const scopeC = { kind: 'project', workspaceId: '00000000-0000-4000-8000-000000000303' } as const
+    const pinned = await frontend.acquireControlRuntime({ scope: { kind: 'projectless' }, sessionFile: '/sessions/pinned.jsonl' })
+    await frontend.start({ scope: scopeA, sessionFile: '/sessions/oldest.jsonl' })
+    await frontend.replace({ scope: scopeB, sessionFile: '/sessions/recent.jsonl' })
+    await frontend.replace({ scope: scopeC, sessionFile: '/sessions/selected.jsonl' })
+    await vi.waitFor(() => expect(pool.runtimeForSession('/sessions/oldest.jsonl')).toBeNull())
+    expect(pool.runtimeForSession('/sessions/recent.jsonl')).not.toBeNull()
+    expect(pool.runtimeForSession('/sessions/selected.jsonl')).not.toBeNull()
+    expect(pool.runtimeForSession('/sessions/pinned.jsonl')).not.toBeNull()
+    frontend.releaseControlRuntime(pinned)
+    await vi.waitFor(() => expect(pool.runtimeCount).toBe(2))
+    expect(frontend.getSnapshot().sessionFile).toBe('/sessions/selected.jsonl')
+    await frontend.dispose()
+  })
+})
 
 const configurationAttempt = (cwd?: string) => ({
   ...(cwd === undefined ? {} : { cwd }),

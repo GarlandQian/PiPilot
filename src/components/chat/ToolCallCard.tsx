@@ -17,6 +17,7 @@ import { cn } from '@/lib/utils'
 import { projectPlainText } from '@/renderer/pi-rpc/structured-value'
 import { toolCallCopyText } from '@/renderer/pi-rpc/tool-presenters'
 import { useSettings } from '@/store/settings'
+import { toolMatchesSearch, type ToolSearchRequest } from '@/renderer/conversation-text-search'
 import type {
   StructuredValueNode,
   StructuredValueProjection,
@@ -140,7 +141,7 @@ function ToolValueEvidence({
 
 export { SubagentDetails } from './SubagentConversation'
 
-export function ToolCallCard({ call, onOpenCommand }: { call: ToolCall; onOpenCommand?: (toolCallId: string) => void }) {
+export function ToolCallCard({ call, onOpenCommand, searchRequest }: { call: ToolCall; onOpenCommand?: (toolCallId: string) => void; searchRequest?: ToolSearchRequest }) {
   const t = useT()
   const { appearance } = useSettings()
   const [open, setOpen] = React.useState(!appearance.compactToolCards || call.status === 'failed')
@@ -150,6 +151,8 @@ export function ToolCallCard({ call, onOpenCommand }: { call: ToolCall; onOpenCo
   const copyFeedbackTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const contentId = React.useId()
   const sourceContentId = React.useId()
+  const searchMatched = toolMatchesSearch(call, searchRequest)
+  React.useLayoutEffect(() => { if (searchMatched) setOpen(true) }, [searchMatched, searchRequest?.sequence])
   const Icon = kindIcon[call.kind]
   const details = {
     arguments: call.kind === 'shell'

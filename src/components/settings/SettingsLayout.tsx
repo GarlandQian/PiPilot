@@ -1,19 +1,22 @@
 import * as React from 'react'
 import { TbAlertTriangle, TbArrowLeft, TbCheck, TbLoader2 } from 'react-icons/tb'
 import { Button } from '@/components/ui/button'
-import { GeneralSettings } from './GeneralSettings'
-import { AppearanceSettings } from './AppearanceSettings'
-import { LanguageSettings } from './LanguageSettings'
-import { ModelsSettings } from './ModelsSettings'
-import { IntegrationsSettings, type IntegrationsTabId } from './IntegrationsSettings'
-import { TerminalSettings } from './TerminalSettings'
-import { AboutSettings } from './AboutSettings'
+import type { IntegrationsTabId } from './IntegrationsSettings'
 import { SETTINGS_SECTIONS, type SettingsSectionId } from './settings-navigation'
 import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { usePiRpcActions, usePiRuntime } from '@/store/pi-rpc'
 import { useSettingsSaveStatus } from '@/store/settings'
 import { SETTINGS_ROUTE_IDS } from '@/renderer/layout-preferences'
+
+const GeneralSettings = React.lazy(() => import('./GeneralSettings').then((module) => ({ default: module.GeneralSettings })))
+const AppearanceSettings = React.lazy(() => import('./AppearanceSettings').then((module) => ({ default: module.AppearanceSettings })))
+const LanguageSettings = React.lazy(() => import('./LanguageSettings').then((module) => ({ default: module.LanguageSettings })))
+const ModelsSettings = React.lazy(() => import('./ModelsSettings').then((module) => ({ default: module.ModelsSettings })))
+const IntegrationsSettings = React.lazy(() => import('./IntegrationsSettings').then((module) => ({ default: module.IntegrationsSettings })))
+const TerminalSettings = React.lazy(() => import('./TerminalSettings').then((module) => ({ default: module.TerminalSettings })))
+const AboutSettings = React.lazy(() => import('./AboutSettings').then((module) => ({ default: module.AboutSettings })))
+const ScheduledTasksSettings = React.lazy(() => import('./ScheduledTasksSettings').then((module) => ({ default: module.ScheduledTasksSettings })))
 
 export { SETTINGS_GROUPS, SETTINGS_SECTIONS, isSettingsSectionId } from './settings-navigation'
 export type { SettingsSectionId, SettingsGroupId, SettingsSectionMeta, SettingsGroupMeta } from './settings-navigation'
@@ -94,17 +97,18 @@ export function SettingsLayout({
       case 'integrations': return <IntegrationsSettings tab={integrationsTab} onTab={onIntegrationsTab} active={!hidden && detailVisible && section === 'integrations'} />
       case 'terminal': return <TerminalSettings />
       case 'about': return <AboutSettings />
+      case 'scheduled-tasks': return <ScheduledTasksSettings />
     }
   }
 
   const metadata = SETTINGS_SECTIONS.find((item) => item.id === section)!
-  const showSaveStatus = section !== 'models' && section !== 'integrations' && section !== 'about'
+  const showSaveStatus = section !== 'models' && section !== 'integrations' && section !== 'about' && section !== 'scheduled-tasks'
 
   return (
     <main
       hidden={hidden || !detailVisible}
       className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-surface"
-      aria-label={t(`settings.nav.${section}`)}
+      aria-label={t(metadata.labelKey)}
     >
       <header className="flex shrink-0 items-start gap-3 border-b border-border/60 px-6 py-5 @min-[880px]/frame:px-10">
         {compact && onBack ? (
@@ -141,7 +145,9 @@ export function SettingsLayout({
             '@container/settings-workspace mx-auto w-full px-6 py-7 @min-[880px]/frame:px-10',
             id === 'integrations' || id === 'models' ? 'max-w-6xl' : 'max-w-4xl',
           )}>
-            {content(id)}
+            <React.Suspense fallback={<div className="flex min-h-40 items-center justify-center gap-2 text-sm text-muted-foreground" role="status"><TbLoader2 className="size-4 animate-spin" aria-hidden />{t('settings.loadingPage')}</div>}>
+              {content(id)}
+            </React.Suspense>
           </div>
         </div>
       ) : null)}

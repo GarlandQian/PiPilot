@@ -42,13 +42,13 @@ describe('Pi Host envelope protocol', () => {
     const bootstrap = piHostBootstrapEnvelopeSchema.parse({
       kind: 'bootstrap',
       ...requestMetadata,
-      expectedSdkVersion: '0.85.1',
+      expectedSdkVersion: '0.99.1',
     })
     const ready = piHostHandshakeEnvelopeSchema.parse({
       kind: 'handshake',
       ...requestMetadata,
       ok: true,
-      sdkVersion: '0.85.1',
+      sdkVersion: '0.99.1',
       nodeVersion: '24.14.0',
       electronVersion: '44.2.0',
       capabilities: ['message-port', 'runtime'],

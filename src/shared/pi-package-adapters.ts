@@ -4,20 +4,18 @@ import type {
   PiResourceCounts,
 } from './pi-integrations'
 
-export const PI_MCP_ADAPTER_PACKAGE = 'pi-mcp-adapter' as const
-export const PI_MCP_ADAPTER_SOURCE = 'npm:pi-mcp-adapter' as const
 export const PI_SUBAGENTS_PACKAGE = 'pi-subagents' as const
 export const PI_PLAN_MODE_PACKAGE = '@narumitw/pi-plan-mode' as const
 export const PI_PLAN_MODE_VERSION = '0.50.1' as const
 export const PI_GOAL_PACKAGE = '@narumitw/pi-goal' as const
 export const PI_GOAL_VERSION = '0.52.2' as const
 
-export type PiPackageAdapterId = 'mcp' | 'subagents' | 'plan-mode' | 'goal'
+export type PiPackageAdapterId = 'subagents' | 'plan-mode' | 'goal'
 
 export interface PiPackageAdapterDefinition {
   id: PiPackageAdapterId
   packageName: string
-  installPolicy: 'automatic-global' | 'user-managed'
+  installPolicy: 'user-managed'
   compatibility: PiCompatibilityLabel
   exactVersion?: string
 }
@@ -30,12 +28,6 @@ export interface PiPackageAdapterDefinition {
  * optional rich presentation. Unknown packages remain on the generic bridge.
  */
 export const PI_PACKAGE_ADAPTERS: readonly PiPackageAdapterDefinition[] = [
-  {
-    id: 'mcp',
-    packageName: PI_MCP_ADAPTER_PACKAGE,
-    installPolicy: 'automatic-global',
-    compatibility: 'rich-adapter',
-  },
   {
     id: 'subagents',
     packageName: PI_SUBAGENTS_PACKAGE,
@@ -90,10 +82,6 @@ export function packageAdapterForSummary(
     summary.installedVersion !== adapter.exactVersion
   ) return null
   return adapter
-}
-
-export function isManagedMcpPackageSource(source: string): boolean {
-  return npmPackageNameForSource(source) === PI_MCP_ADAPTER_PACKAGE
 }
 
 export function compatibilityForPackage(

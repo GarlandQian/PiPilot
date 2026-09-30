@@ -11,9 +11,9 @@ import { readNavigationPreferences, taskOrganizationKey, taskScopeKey, updateTas
 import type { OfficialPiSessionSummary } from '@/shared/conversation-scope'
 import type { WorkspaceSummary } from '@/shared/schemas/workspace'
 import { usePiExtensionUi, usePiRuntime } from '@/store/pi-rpc'
-import { useWorkspaceStore } from '@/store/workspace'
+import { conversationScopeKey, useWorkspaceStore } from '@/store/workspace'
 import { useTaskNotifications } from '@/store/task-notifications'
-import { deriveSessionActivityState, isOfficialSessionActiveRow, runtimeStateForOfficialSession, sameConversationScope } from '@/store/workspace-state'
+import { createOfficialSessionLookup, deriveSessionActivityState } from '@/store/workspace-state'
 import { ConversationList, ProjectNavigationGroup, RecentChatGroup, type ConversationListActions, type SidebarConversationItem, type SidebarProjectNavigation } from '@/components/layout/SessionList'
 import { isSidebarSessionRunning, preferredProjectSession, presentPrioritySessions, presentSidebarSessions, sortSidebarProjects, type SidebarSessionFilter, type SidebarSessionSort } from '@/components/layout/session-navigation'
 import { projectlessCatalogNeedsDiscovery, sessionCatalogLoadTargets } from './session-catalog-search'
@@ -28,6 +28,7 @@ interface PendingProjectNavigation {
 }
 
 export interface SessionsPanelProps {
+  onSearchAll?: () => void
   hidden?: boolean
   conversationReady: boolean
   navigationRevision: number
@@ -48,6 +49,7 @@ export interface SessionsPanelProps {
 }
 
 export function SessionsPanel({
+  onSearchAll,
   hidden = false, conversationReady, navigationRevision, renamingSelectionToken, deletingSelectionToken, isOpeningSessionRow,
   onSelect, onNewPrimary, onNewProjectless, onRenameStart, onRenameCommit, onDuplicate,
   onDelete, onStartProjectTask, onChooseWorkspace, onPinWorkspace, onRemoveWorkspace,
@@ -156,24 +158,32 @@ export function SessionsPanel({
 
   const allItems = React.useMemo(() => {
     const items: SidebarConversationItem[] = []
+    const projects = new Map(workspace.recentProjects.map((project) => [project.id, project]))
+    const unreadCatalogs = new Set<string>()
+    const unreadSessions = new Set<string>()
+    const identity = (scope: OfficialPiSessionSummary['scope'], id: string) => JSON.stringify([conversationScopeKey(scope), id])
+    for (const notice of notifications.items) {
+      if (notice.read) continue
+      if (notice.catalogId) unreadCatalogs.add(identity(notice.scope, notice.catalogId))
+      else unreadSessions.add(identity(notice.scope, notice.sessionId))
+    }
     for (const catalog of Object.values(workspace.sessionCatalogs)) {
+      const lookup = createOfficialSessionLookup(catalog.rows, runtimeSessionStatuses)
       for (const summary of catalog.rows) {
         const project = summary.scope.kind === 'project'
-          ? workspace.recentProjects.find((project) => summary.scope.kind === 'project' && project.id === summary.scope.workspaceId)
+          ? projects.get(summary.scope.workspaceId)
           : undefined
         if (summary.scope.kind === 'project' && !project) continue
-        const runtime = runtimeStateForOfficialSession(summary, runtimeSessionStatuses, catalog.rows)
-        const active = isOfficialSessionActiveRow(summary, catalog.rows, workspace.activeScope, workspace.activeSessionId, runtime?.selected === true)
+        const runtime = lookup.runtime(summary)
+        const active = lookup.active(summary, workspace.activeScope, workspace.activeSessionId, runtime?.selected === true)
         const status = runtime?.status ?? (active ? pi.status : undefined)
         const opening = isOpeningSessionRow(summary, catalog.rows)
         const organizationKey = taskOrganizationKey(summary)
         items.push({
           summary, organizationKey, ...preferences.tasks[organizationKey],
           // Main owns unread state across background work and renderer reloads.
-          unread: notifications.items.some((notice) =>
-            !notice.read && sameConversationScope(notice.scope, summary.scope) &&
-            (notice.catalogId ? notice.catalogId === summary.catalogId :
-              notice.sessionId === summary.sessionId && catalog.rows.filter((row) => row.sessionId === summary.sessionId).length === 1)),
+          unread: Boolean(summary.catalogId && unreadCatalogs.has(identity(summary.scope, summary.catalogId))) ||
+            (lookup.isUnique(summary) && unreadSessions.has(identity(summary.scope, summary.sessionId))),
           scopeLabel: project?.name ?? t('nav.redesign.general'),
           loading: opening,
           disabled: opening || summary.selectionToken === deletingSelectionToken || project?.available === false,
@@ -319,6 +329,9 @@ export function SessionsPanel({
           </Button>
         )}
       </div>
+      {onSearchAll ? <Button variant="ghost" size="xs" className="mb-2 w-full justify-start gap-2 text-muted-foreground" onClick={onSearchAll}>
+        <TbSearch className="size-3.5" aria-hidden />{t('conversationSearch.fullHistory')}
+      </Button> : null}
       <div className="mb-3 flex items-center justify-between gap-0.5">
         <div role="group" aria-label={t('sidebar.sessions.filter')} className="flex min-w-0 gap-0.5">
           {(['all', 'running', 'attention'] as const).map((filter) => (

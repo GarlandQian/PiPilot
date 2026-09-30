@@ -8,7 +8,6 @@ import {
   RICH_ADAPTER_IDS,
 } from '../../src/renderer/pi-rpc/adapters'
 import {
-  PI_MCP_ADAPTER_SOURCE,
   PI_PACKAGE_ADAPTERS,
   compatibilityForPackage,
 } from '../../src/shared/pi-package-adapters'
@@ -70,7 +69,6 @@ describe('rich Pi adapter registry', () => {
   it('keeps the reviewed rich renderer adapters explicit', () => {
     expect(RICH_ADAPTER_IDS).toEqual(['plan-mode', 'goal'])
     expect(PI_PACKAGE_ADAPTERS.map((adapter) => adapter.id)).toEqual([
-      'mcp',
       'subagents',
       'plan-mode',
       'goal',
@@ -137,13 +135,13 @@ describe('rich Pi adapter registry', () => {
     }).goal).toBeNull()
   })
 
-  it('classifies MCP and Subagents from the shared Main/Renderer registry', () => {
+  it('treats legacy MCP extensions as generic while preserving the Subagents adapter', () => {
     expect(compatibilityForPackage({
       sourceType: 'npm',
-      source: PI_MCP_ADAPTER_SOURCE,
+      source: 'npm:pi-mcp-adapter',
       displayName: 'pi-mcp-adapter',
       installedVersion: '2.26.0',
-    }, { extension: 1, skill: 0, prompt: 0, theme: 0 })).toBe('rich-adapter')
+    }, { extension: 1, skill: 0, prompt: 0, theme: 0 })).toBe('partial')
     expect(compatibilityForPackage({
       sourceType: 'npm',
       source: 'npm:pi-subagents',

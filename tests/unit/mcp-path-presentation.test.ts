@@ -19,7 +19,7 @@ describe('MCP config path presentation', () => {
   })
 
   it('keeps the resolved absolute path for a project config', () => {
-    const resolvedPath = '/Volumes/Workspace/PiPilot/.mcp.json'
+    const resolvedPath = '/Volumes/Workspace/PiPilot/.pi/mcp.json'
 
     expect(displayMcpConfigPath({
       kind: 'project',

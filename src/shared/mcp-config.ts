@@ -4,6 +4,8 @@ import { configApplyStatusSchema } from './config-apply'
 export const MCP_CONFIG_CONTENT_LIMIT = 1024 * 1024
 export const MCP_CONFIG_SERVER_LIMIT = 500
 export const MCP_CONFIG_DIAGNOSTIC_LIMIT = 2_000
+export const MCP_EXPOSURES = ['codemode', 'codemode-deferred', 'deferred', 'direct', 'hidden'] as const
+export type McpExposure = typeof MCP_EXPOSURES[number]
 
 export const mcpConfigTargetSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('global') }).strict(),
@@ -55,6 +57,11 @@ export const mcpConfigSnapshotSchema = mcpConfigDocumentSchema
     content: z.string().max(MCP_CONFIG_CONTENT_LIMIT),
     fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
     applyStatus: configApplyStatusSchema.optional(),
+    legacy: z.object({
+      path: z.string().min(1).max(16_384),
+      content: z.string().max(MCP_CONFIG_CONTENT_LIMIT),
+    }).strict().optional(),
+    legacyUnavailablePath: z.string().min(1).max(16_384).optional(),
   })
   .strict()
 

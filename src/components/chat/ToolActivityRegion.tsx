@@ -17,6 +17,7 @@ import type {
 } from '@/types/chat'
 import { ToolCallCard } from './ToolCallCard'
 import { ToolCallStatus } from './ToolCallStatus'
+import { toolMatchesSearch, type ToolSearchRequest } from '@/renderer/conversation-text-search'
 
 interface ToolActivityRegionProps {
   run: ToolActivityRun
@@ -24,6 +25,7 @@ interface ToolActivityRegionProps {
   visible?: boolean
   selectedSubagentId?: string | null
   focusRequest?: SubagentInspectorFocusRequest | null
+  searchRequest?: ToolSearchRequest
   onOpenSubagent?: (toolCallId: string) => void
   onOpenCommand?: (toolCallId: string) => void
 }
@@ -116,6 +118,7 @@ function ActivityItem({
   onFocusReturned,
   onOpenSubagent,
   onOpenCommand,
+  searchRequest,
 }: Omit<ToolActivityRegionProps, 'run'> & { call: ToolCall; onFocusReturned(sequence: number): void }) {
   if (call.subagent) {
     return (
@@ -130,7 +133,7 @@ function ActivityItem({
       />
     )
   }
-  return <ToolCallCard call={call} onOpenCommand={onOpenCommand} />
+  return <ToolCallCard call={call} onOpenCommand={onOpenCommand} searchRequest={searchRequest} />
 }
 
 function ActivitySection({
@@ -153,6 +156,8 @@ function ActivitySection({
   }, [])
 
   const { focusRequest, sessionKey } = props
+  const containsSearchTarget = section.items.some(({ call }) => toolMatchesSearch(call, props.searchRequest))
+  React.useLayoutEffect(() => { if (containsSearchTarget) setOpen(true) }, [containsSearchTarget, props.searchRequest?.sequence])
   const pendingFocusRequest = focusRequest?.sequence === returnedFocusSequenceRef.current
     ? null : focusRequest
   const containsFocusTarget = focusRequest?.sessionKey === sessionKey &&

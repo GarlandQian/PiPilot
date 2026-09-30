@@ -96,6 +96,7 @@ interface ExternalSettingsManager {
     enabled: boolean
     maxRetries: number
     baseDelayMs: number
+    maxAgentDelayMs: number
   }
   setRetryEnabled(enabled: boolean): void
   setDefaultModelAndProvider(provider: string, modelId: string): void

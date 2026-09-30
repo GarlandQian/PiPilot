@@ -24,6 +24,8 @@ asarUnpack:
   - node_modules/node-pty/build/Release/**/*
   - node_modules/node-pty/prebuilds/**/*
   - node_modules/@earendil-works/pi-coding-agent/dist/utils/image-resize-worker.js
+  - node_modules/@earendil-works/pi-codemode/**/*
+  - node_modules/quickjs-wasi/**/*
   - node_modules/@earendil-works/pi-tui/native/**/prebuilds/**/*
   - node_modules/@mariozechner/clipboard-*/**/*.node
   - node_modules/@silvia-odwyer/photon-node/**/*.wasm

@@ -24,6 +24,7 @@ import {
 } from '../repositories/workspace-repository'
 import type { ApplicationUrlPolicy } from '../security/url-policy'
 import type { TerminalService } from '../terminal/terminal-service'
+import { ProjectWorkflowError } from '../project-actions/workflow-storage'
 import {
   WorkspaceContentError,
   type WorkspaceContentService,
@@ -41,9 +42,13 @@ interface RegisterWorkspaceIpcOptions {
   contentService: WorkspaceContentService
   contextService: Pick<ConversationContextService, 'getSnapshot' | 'newConversation'>
   terminalService: Pick<TerminalService, 'disposeScope'>
+  withRemovableProject?<T>(workspaceId: string, operation: () => Promise<T>): Promise<T>
 }
 
 function mapWorkspaceError(error: unknown): never {
+  if (error instanceof ProjectWorkflowError) {
+    throw new MainProcessError(error.code, error.message)
+  }
   if (error instanceof WorkspaceRepositoryError) {
     throw new MainProcessError(error.code, error.message)
   }
@@ -79,6 +84,7 @@ export function registerWorkspaceIpc({
   contentService,
   contextService,
   terminalService,
+  withRemovableProject,
 }: RegisterWorkspaceIpcOptions) {
   const isTrustedSender = createTrustedSenderValidator(policy, getMainWindow)
 
@@ -138,24 +144,29 @@ export function registerWorkspaceIpc({
           )
         }
 
-        const activeScope = contextService.getSnapshot().activeScope
-        if (activeScope.kind === 'project' && activeScope.workspaceId === workspaceId) {
-          const activation = await contextService.newConversation({ kind: 'projectless' })
+        const remove = async () => {
+          const activeScope = contextService.getSnapshot().activeScope
+          if (activeScope.kind === 'project' && activeScope.workspaceId === workspaceId) {
+            const activation = await contextService.newConversation({ kind: 'projectless' })
+            await terminalService.disposeScope({ kind: 'project', workspaceId })
+            return {
+              activeRemoved: true as const,
+              workspaceId,
+              snapshot: repository.remove(workspaceId),
+              activation,
+            }
+          }
+
           await terminalService.disposeScope({ kind: 'project', workspaceId })
           return {
-            activeRemoved: true as const,
+            activeRemoved: false as const,
             workspaceId,
             snapshot: repository.remove(workspaceId),
-            activation,
           }
         }
-
-        await terminalService.disposeScope({ kind: 'project', workspaceId })
-        return {
-          activeRemoved: false as const,
-          workspaceId,
-          snapshot: repository.remove(workspaceId),
-        }
+        // Hold action admission across activation and terminal teardown so a
+        // late command cannot become unreachable when this workspace ID leaves.
+        return await (withRemovableProject ? withRemovableProject(workspaceId, remove) : remove())
       } catch (error) {
         mapWorkspaceError(error)
       }

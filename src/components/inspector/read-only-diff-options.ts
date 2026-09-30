@@ -19,9 +19,9 @@ export type ReadOnlyDiffStyle = CSSProperties & {
   '--diffs-font-features': string
 }
 
-export function createReadOnlyDiffOptions(
+export function createReadOnlyDiffOptions<Annotation = undefined>(
   preferences: Pick<ReadOnlyDiffPreferences, 'themeType' | 'wordWrap' | 'showLineNumbers'>,
-): NonNullable<PatchDiffProps<undefined, undefined>['options']> {
+): NonNullable<PatchDiffProps<Annotation, undefined>['options']> {
   return {
     diffStyle: 'unified',
     theme: {

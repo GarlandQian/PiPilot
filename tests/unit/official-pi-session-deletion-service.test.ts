@@ -18,6 +18,11 @@ const scope: ConversationScope = {
 const token = `sel_${'d'.repeat(32)}`
 const temporaryDirectories: string[] = []
 
+async function releaseWithoutRuntime(_sessionFile: string, afterRelease?: () => Promise<void>) {
+  await afterRelease?.()
+  return false
+}
+
 afterEach(async () => {
   await Promise.all(
     temporaryDirectories.splice(0).map((directory) =>
@@ -88,7 +93,7 @@ describe('OfficialPiSessionDeletionService', () => {
       },
       runtimeHost: {
         isActiveSession: () => true,
-        releaseSession: vi.fn(async () => false),
+        releaseSession: vi.fn(releaseWithoutRuntime),
       },
       trashItem: async (path) => {
         order.push('trash')
@@ -125,7 +130,7 @@ describe('OfficialPiSessionDeletionService', () => {
       catalog,
       runtimeHost: {
         isActiveSession: () => false,
-        releaseSession: vi.fn(async () => false),
+        releaseSession: vi.fn(releaseWithoutRuntime),
       },
       trashItem,
     })
@@ -145,7 +150,7 @@ describe('OfficialPiSessionDeletionService', () => {
       },
       runtimeHost: {
         isActiveSession: () => false,
-        releaseSession: vi.fn(async () => false),
+        releaseSession: vi.fn(releaseWithoutRuntime),
       },
       trashItem: async (path) => unlink(path),
     })
@@ -170,7 +175,7 @@ describe('OfficialPiSessionDeletionService', () => {
       },
       runtimeHost: {
         isActiveSession: () => false,
-        releaseSession: vi.fn(async () => false),
+        releaseSession: vi.fn(releaseWithoutRuntime),
       },
       trashItem: vi.fn(async () => undefined),
       unlink: fallbackUnlink,
@@ -197,7 +202,7 @@ describe('OfficialPiSessionDeletionService', () => {
       },
       runtimeHost: {
         isActiveSession: () => true,
-        releaseSession: vi.fn(async () => false),
+        releaseSession: vi.fn(releaseWithoutRuntime),
       },
       trashItem: vi.fn(async () => {
         throw new Error('trash unavailable')
@@ -232,7 +237,7 @@ describe('OfficialPiSessionDeletionService', () => {
       },
       runtimeHost: {
         isActiveSession: () => true,
-        releaseSession: vi.fn(async () => false),
+        releaseSession: vi.fn(releaseWithoutRuntime),
       },
       trashItem,
     })
@@ -246,8 +251,9 @@ describe('OfficialPiSessionDeletionService', () => {
   it('releases an inactive cached runtime before mutating its session file', async () => {
     const fixture = await createTarget()
     const order: string[] = []
-    const releaseSession = vi.fn(async (sessionFile: string) => {
+    const releaseSession = vi.fn(async (sessionFile: string, afterRelease?: () => Promise<void>) => {
       order.push(`release:${sessionFile}`)
+      await afterRelease?.()
       return true
     })
     const service = new OfficialPiSessionDeletionService({
@@ -276,7 +282,7 @@ describe('OfficialPiSessionDeletionService', () => {
       activeDeleted: false,
       disposition: 'trash',
     })
-    expect(releaseSession).toHaveBeenCalledWith(fixture.sessionFile)
+    expect(releaseSession).toHaveBeenCalledWith(fixture.sessionFile, expect.any(Function))
     expect(order).toEqual([
       `release:${fixture.sessionFile}`,
       'revalidate',

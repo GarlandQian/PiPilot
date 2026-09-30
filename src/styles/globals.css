@@ -1,5 +1,10 @@
 @import 'tailwindcss' source(none);
 
+::highlight(pipilot-search) {
+  background-color: color-mix(in srgb, var(--color-ring) 28%, transparent);
+  color: var(--color-foreground);
+}
+
 @source '../';
 @source '../../index.html';
 

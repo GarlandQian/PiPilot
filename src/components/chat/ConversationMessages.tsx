@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { QuoteSelection } from '@/components/precision/PrecisionReferences'
 import { TbAlertTriangle, TbBrain, TbChevronRight, TbCheck, TbCopy, TbGitFork, TbInfoCircle, TbLoader2, TbDeviceFloppy, TbDownload, TbEye, TbFileDescription, TbFlag, TbLogout, TbPencil, TbPlayerPlay } from 'react-icons/tb'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -9,7 +10,7 @@ import { UserMessageContent } from './UserMessageContent'
 import { MarkdownContent } from './markdown/MarkdownContent'
 import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
-import { nextTypewriterText, shouldStartTypewriterFromEmpty, thinkingDisclosureAfterPhaseChange } from '@/renderer/pi-rpc/live-typewriter'
+import { nextTypewriterText, shouldStartTypewriterFromEmpty, thinkingDisclosureAfterPhaseChange, transientTurnAnimationKey } from '@/renderer/pi-rpc/live-typewriter'
 import { parsePromptSkillEnvelope } from '@/renderer/pi-rpc/prompt-presentation'
 import { useSettings } from '@/store/settings'
 import type { Turn } from '@/types/chat'
@@ -33,7 +34,9 @@ export const UserMessage = React.memo(function UserMessage({ turn }: { turn: Ext
     <div className="group/question ml-auto w-fit min-w-0 max-w-[90%]" data-conversation-question>
       <div className="min-w-0 rounded-2xl rounded-tr-md border border-border/40 bg-surface-inset px-4 py-3">
         <div id={questionId} className={cn('conversation-question-content min-w-0 text-foreground', longQuestion && !expanded && '[&_[data-prompt-message]]:max-h-40 [&_[data-prompt-message]]:overflow-hidden')}>
-          <UserMessageContent text={turn.text} />
+          <QuoteSelection source={{ kind: 'message', sourceId: turn.anchorEntryId ?? turn.id, label: t('precision.userMessage') }}>
+            <UserMessageContent text={turn.text} />
+          </QuoteSelection>
         </div>
         {longQuestion ? <Button variant="ghost" size="sm" className="mt-2 -ml-2 text-caption text-muted-foreground" aria-expanded={expanded} aria-controls={questionId} onClick={() => setExpanded((value) => !value)}>{t(expanded ? 'chat.question.collapse' : 'chat.question.expand')}</Button> : null}
         {turn.images?.length ? <div className="mt-3"><UserMessageContent text="" images={turn.images} /></div> : null}
@@ -170,7 +173,9 @@ export const AgentMessage = React.memo(function AgentMessage({
 
   return (
     <div className="conversation-answer-content min-w-0">
-      <MarkdownContent markdown={markdown} streaming={!settled} />
+      <QuoteSelection source={{ kind: 'message', sourceId: `${turn.anchorEntryId ?? ''}/${turn.id}`, label: t('precision.assistantMessage') }}>
+        <MarkdownContent markdown={markdown} streaming={!settled} />
+      </QuoteSelection>
       {settled && (turn.state === 'aborted' || turn.state === 'error') ? (
         <div className="mt-1 flex items-center gap-1.5 text-caption text-muted-foreground" role="status">
           <TbAlertTriangle className="size-3.5" aria-hidden />
@@ -186,16 +191,7 @@ export interface ThinkingDurationRegistry {
   completed: Map<string, number>
 }
 
-export function transientTurnAnimationKey(turnId: string) {
-  return turnId.replace(
-    /:(?:stream|message):(\d+):[^:]+:/,
-    ':message:$1:',
-  )
-}
-
-export function agentAnimationKey(turn: Extract<Turn, { kind: 'agent' }>) {
-  return transientTurnAnimationKey(turn.id)
-}
+export { transientTurnAnimationKey, agentAnimationKey } from '@/renderer/pi-rpc/live-typewriter'
 
 export const ThinkingMessage = React.memo(function ThinkingMessage({
   turn,

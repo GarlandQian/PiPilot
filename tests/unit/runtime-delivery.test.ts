@@ -24,13 +24,15 @@ async function fixture(streaming = true) {
     agent: { steer(message: NativeMessage) { nativeMessages.push(message) } },
     getSteeringMessages: () => steering,
     getFollowUpMessages: () => followUp,
-    steer: vi.fn(async (message: string, images?: readonly LocalPiImageContent[]) => {
+    steer: vi.fn(async (message: string, images?: readonly LocalPiImageContent[]): Promise<'queued' | 'handled'> => {
+      await Promise.resolve()
       steering.push(message)
       session.agent.steer({ role: 'user', content: [{ type: 'text', text: message }, ...images ?? []], timestamp: 1 })
+      return 'queued'
     }),
     followUp: vi.fn(async (message: string, _images?: readonly LocalPiImageContent[]) => { followUp.push(message) }),
-    prompt: vi.fn(async (_message: string, options: { preflightResult?(accepted: boolean): void }) => {
-      options.preflightResult?.(true)
+    prompt: vi.fn(async (_message: string, options: { preflightResult?(disposition: 'handled' | 'queued' | 'started'): void }) => {
+      options.preflightResult?.('started')
       session.isStreaming = true
     }),
     clearQueue: vi.fn(() => {
@@ -55,6 +57,50 @@ async function fixture(streaming = true) {
 }
 
 describe('durable runtime delivery', () => {
+  it('consumes an async input hook handled disposition without native queueing or replay', async () => {
+    const { delivery, session } = await fixture()
+    session.steer.mockImplementation(async () => { await Promise.resolve(); return 'handled' })
+    const command = { type: 'submit_message' as const, submissionId: 'handled', message: 'Handled by an extension', mode: 'steer' as const }
+    expect((await delivery.submit(command)).receipt.status).toBe('consumed')
+    expect(delivery.snapshot().items).toEqual([])
+    expect(session.getSteeringMessages()).toEqual([])
+    expect((await delivery.submit(command)).receipt.status).toBe('consumed')
+    expect(session.steer).toHaveBeenCalledOnce()
+  })
+
+  it('keeps image attachments while an async hook promotes and transforms a queued message', async () => {
+    const { delivery, session, consume } = await fixture()
+    const images = [{ type: 'image' as const, data: 'fixture-image', mimeType: 'image/png' }]
+    const queued = await delivery.submit({ type: 'submit_message', submissionId: 'promoted-async', message: 'original', images, mode: 'auto' })
+    const enqueue = session.steer.getMockImplementation()!
+    session.steer.mockImplementation(async (text, attachments) => {
+      await Promise.resolve()
+      const disposition = await enqueue(`transformed: ${text}`, attachments)
+      consume(`transformed: ${text}`)
+      return disposition
+    })
+    await delivery.mutate({ type: 'mutate_delivery', itemId: queued.receipt.itemId!, revision: delivery.snapshot().revision, action: 'promote' })
+    expect(session.steer).toHaveBeenCalledWith('original', images, { source: 'rpc' })
+    expect(delivery.snapshot()).toMatchObject({ items: [], receipts: [{ status: 'consumed', acceptedMode: 'steer' }] })
+  })
+
+  it('blocks delayed steering enqueue after Stop without losing the original attachment', async () => {
+    const { delivery, session } = await fixture()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const enqueue = session.steer.getMockImplementation()!
+    session.steer.mockImplementation(async (text, images) => { await gate; return enqueue(text, images) })
+    const images = [{ type: 'image' as const, data: 'fixture-image', mimeType: 'image/png' }]
+    const pending = delivery.submit({ type: 'submit_message', submissionId: 'stop-during-input', message: 'wait', images, mode: 'steer' })
+    await delivery.pauseAndAbort()
+    release()
+    await expect(pending).rejects.toThrow('Stopped before')
+    expect(delivery.snapshot()).toMatchObject({ paused: true, items: [{ message: 'wait', images, status: 'frozen' }] })
+    await delivery.resume(delivery.snapshot().revision)
+    expect(session.prompt).toHaveBeenCalledWith('wait', expect.objectContaining({ images }))
+    expect(delivery.snapshot().items).toEqual([])
+  })
+
   it('persists a managed follow-up without native enqueue and deduplicates its submission ID', async () => {
     const { delivery, session, directory, submit } = await fixture()
     const first = await submit('once')
@@ -71,7 +117,7 @@ describe('durable runtime delivery', () => {
   it('routes from authoritative execution state and acknowledges preflight without waiting for generation', async () => {
     const { submit, session } = await fixture(false)
     session.prompt.mockImplementation((_message, options) => {
-      options.preflightResult?.(true)
+      options.preflightResult?.('started')
       return new Promise(() => undefined)
     })
     expect((await submit('idle')).receipt.acceptedMode).toBe('prompt')
@@ -122,7 +168,7 @@ describe('durable runtime delivery', () => {
     const gate = new Promise<void>((resolve) => { release = resolve })
     session.prompt.mockImplementation(async (_message, options) => {
       await gate
-      options.preflightResult?.(true)
+      options.preflightResult?.('started')
       session.isStreaming = true
     })
     const pending = submit('slow-auth')
@@ -217,7 +263,7 @@ describe('durable runtime delivery', () => {
 
   it('returns an exact old receipt outside the bounded presentation window', async () => {
     const { delivery, submit, session } = await fixture(false)
-    session.prompt.mockImplementation(async (_message, options) => { options.preflightResult?.(true) })
+    session.prompt.mockImplementation(async (_message, options) => { options.preflightResult?.('started') })
     for (let index = 0; index < 202; index += 1) await submit(`receipt-${index}`)
     expect(delivery.snapshot().receipts).toHaveLength(200)
     expect(delivery.snapshot().receipts.some((receipt) => receipt.submissionId === 'receipt-0')).toBe(false)
@@ -315,7 +361,7 @@ describe('durable runtime delivery', () => {
   it('does not turn an accepted prompt into a retry after its acknowledgement write fails', async () => {
     const { delivery, directory, submit, session, runtime } = await fixture(false)
     session.prompt.mockImplementation(async (_message, options) => {
-      options.preflightResult?.(true)
+      options.preflightResult?.('started')
       Reflect.set(delivery, 'path', join(directory, 'missing-parent', 'journal.json'))
     })
     await expect(submit('accepted-but-unsaved')).rejects.toThrow('Message storage failed')

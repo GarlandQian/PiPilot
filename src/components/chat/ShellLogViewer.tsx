@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { QuoteSelection, type QuoteSource } from '@/components/precision/PrecisionReferences'
 import { TbArrowDown, TbArrowUp, TbCheck, TbCopy, TbSearch, TbTextWrap } from 'react-icons/tb'
 import { Button } from '@/components/ui/button'
 import { useT } from '@/i18n'
@@ -8,6 +9,7 @@ import { MarkdownContent } from './markdown/MarkdownContent'
 import { useFollowingViewport } from './useFollowingViewport'
 
 interface ShellLogViewerProps {
+  quoteSource?: Omit<QuoteSource, 'literal'>
   label: string
   source: string
   sourceTruncated?: boolean
@@ -23,7 +25,7 @@ const sgrColorClass: Record<ShellLogColor, string> = {
 }
 
 /** A bounded output viewport with explicit reading/following intent. */
-export function ShellLogViewer({ label, source, sourceTruncated, tone, live = false, allowMarkdown = false }: ShellLogViewerProps) {
+export function ShellLogViewer({ label, source, sourceTruncated, tone, live = false, allowMarkdown = false, quoteSource }: ShellLogViewerProps) {
   const t = useT()
   const ownerKey = React.useId()
   const initiallyLive = React.useRef(live)
@@ -143,10 +145,12 @@ export function ShellLogViewer({ label, source, sourceTruncated, tone, live = fa
       onPointerDown={(event) => { if (initiallyLive.current) scrollProps.onPointerDown?.(event) }}
       className="scroll-slim relative max-h-[min(20rem,42vh)] min-w-0 overflow-auto px-3 py-2 outline-none focus-visible:focus-ring" data-shell-log-output>
       <div ref={contentRef} className="min-w-0">
+        <QuoteSelection enabled={Boolean(quoteSource)} source={quoteSource ? { ...quoteSource, literal: !formatted && !output.truncated && !sourceTruncated ? output.text : undefined } : { kind: 'command', sourceId: label, label }}>
         {formatted ? <MarkdownContent markdown={output.text} streaming={live} /> : <pre className={cn(
           'm-0 min-w-0 font-mono text-caption leading-relaxed text-foreground/85',
           wrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre', tone === 'error' && 'text-destructive',
         )}><code>{highlighted}</code></pre>}
+        </QuoteSelection>
       </div>
     </div>
     {(!following || output.truncated || sourceTruncated || copyState === 'failed') ? <footer className="flex min-w-0 items-center gap-2 border-t border-border/60 px-2.5 py-1">

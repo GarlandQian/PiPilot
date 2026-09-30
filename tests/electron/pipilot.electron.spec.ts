@@ -22,6 +22,7 @@ import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from '../../src/shared/sett
 import { startPiSdkFixture } from './pi-sdk-fixture'
 import { selectInspectorView } from './select-inspector-view'
 import { inspectorDetailsSessionEntries } from './inspector-details-fixture'
+import { PNG_FIXTURE_BASE64 } from '../helpers/image-fixture'
 
 const execFileAsync = promisify(execFile)
 
@@ -236,7 +237,7 @@ test('supports real clipboard editing in Composer and standard text inputs', asy
   const userDataPath = testInfo.outputPath('user-data')
   const fakeAgentDir = testInfo.outputPath('pi-agent')
   const pixelPng = Buffer.from(
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nWQAAAAASUVORK5CYII=',
+    PNG_FIXTURE_BASE64,
     'base64',
   )
   await mkdir(userDataPath, { recursive: true })
@@ -629,7 +630,7 @@ test('keeps rich-editor text and images visible across default queueing, editing
     'Final pending instruction: preserve all text and image content.',
   ].join('\n')
   const pixelPng = Buffer.from(
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nWQAAAAASUVORK5CYII=',
+    PNG_FIXTURE_BASE64,
     'base64',
   )
   await mkdir(userDataPath, { recursive: true })
@@ -894,7 +895,7 @@ test('clears a captured draft before acknowledgement and preserves a new draft a
   const captured = 'Accepted while its composer is remounted'
   const nextDraft = 'A newer unsent draft in source A'
   const otherDraft = 'An unrelated unsent draft in B'
-  const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nWQAAAAASUVORK5CYII=', 'base64')
+  const image = Buffer.from(PNG_FIXTURE_BASE64, 'base64')
   let gate: Awaited<ReturnType<typeof holdCommandAcknowledgements>> | undefined
   try {
     const composer = page.getByRole('textbox', { name: 'Message input', exact: true })
@@ -2237,7 +2238,7 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
   const workspacePath = testInfo.outputPath('workspace')
   const agentDir = testInfo.outputPath('pi-agent')
   const pixelPng = Buffer.from(
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nWQAAAAASUVORK5CYII=',
+    PNG_FIXTURE_BASE64,
     'base64',
   )
   const sourceViewerFixture = [

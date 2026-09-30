@@ -892,6 +892,19 @@ export class OfficialPiSessionCatalog {
     }
   }
 
+  /** Main-only read targets. Recovery tokens are never consumed by search. */
+  async listSearchTargets(scope: ConversationScope) {
+    const result = await this.list(scope)
+    const cache = this.caches.get(conversationScopeKey(scope))
+    if (result.status !== 'ready' || !cache) return { targets: [], unavailable: 1 }
+    return {
+      targets: cache.rows.filter((row) => row.selectionMode === 'open').map((row) => ({
+        summary: structuredClone(row.summary), target: this.controlTargetFor(cache, row),
+      })),
+      unavailable: cache.rows.filter((row) => row.selectionMode !== 'open').length + result.diagnostics.reduce((sum, issue) => sum + issue.count, 0),
+    }
+  }
+
   /** Revalidate a Main-owned control target immediately before mutation. */
   async revalidateControlTarget(
     target: OfficialPiSessionControlTarget,

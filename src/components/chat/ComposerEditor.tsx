@@ -36,6 +36,8 @@ import {
 } from '@/renderer/composer/composer-mentions'
 import { normalizeComposerClipboard } from '@/renderer/composer/composer-clipboard'
 import { composerSlashQuery } from '@/renderer/composer/skill-commands'
+import { PrecisionReferenceNode } from '@/components/precision/PrecisionReferenceNode'
+import { isPrecisionReference, PRECISION_REFERENCE_NODE, type PrecisionReference } from '@/renderer/composer/precision-reference'
 
 const mentionPluginKey = new PluginKey('composerMentionSuggestion')
 
@@ -64,6 +66,7 @@ export interface ComposerEditorHandle {
     validateDocument?: (document: JSONContent) => boolean,
   ): boolean
   removeMentions(): boolean
+  insertReferences(references: readonly PrecisionReference[]): boolean
   replaceSlashArgumentCompletion(
     query: ComposerSlashArgumentQuery,
     value: string,
@@ -404,6 +407,7 @@ export const ComposerEditor = React.forwardRef<ComposerEditorHandle, ComposerEdi
       }
 
       return [
+        PrecisionReferenceNode,
         StarterKit.configure({
           blockquote: false,
           bold: false,
@@ -659,6 +663,26 @@ export const ComposerEditor = React.forwardRef<ComposerEditorHandle, ComposerEdi
         const removed = removeAllMentions(editor)
         resetEditorPluginState(editor)
         return removed
+      },
+      insertReferences(references) {
+        if (!editor.isEditable || !references.length || !references.every(isPrecisionReference)) return false
+        exitSuggestion(editor.view, mentionPluginKey)
+        const existing = new Map<string, number>()
+        editor.state.doc.descendants((node, position) => {
+          if (node.type.name === PRECISION_REFERENCE_NODE && isPrecisionReference(node.attrs.reference)) existing.set(node.attrs.reference.id, position)
+        })
+        const chain = editor.chain().focus('end').command(({ tr }) => {
+          for (const reference of references) {
+            const position = existing.get(reference.id)
+            if (position !== undefined) tr.setNodeMarkup(position, undefined, { reference })
+          }
+          return true
+        })
+        const added = references.filter((reference) => !existing.has(reference.id))
+        if (!added.length) return chain.run()
+        return chain.insertContent(added.map((reference) => ({
+          type: 'paragraph', content: [{ type: PRECISION_REFERENCE_NODE, attrs: { reference } }, { type: 'text', text: ' ' }],
+        }))).run()
       },
       replaceSlashArgumentCompletion(query, value) {
         if (revision.current !== query.documentRevision) return false

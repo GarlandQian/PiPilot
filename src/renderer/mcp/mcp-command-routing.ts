@@ -1,8 +1,5 @@
 const MCP_SETTINGS_COMMANDS = new Set([
   '/mcp',
-  '/mcp setup',
-  '/mcp status',
-  '/mcp-auth',
 ])
 
 export function opensMcpSettings(text: string) {

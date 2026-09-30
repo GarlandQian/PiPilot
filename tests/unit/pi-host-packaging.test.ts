@@ -13,7 +13,7 @@ describe('embedded Pi host packaging', () => {
       devDependencies?: Record<string, string>
     }
 
-    expect(manifest.dependencies?.['@earendil-works/pi-coding-agent']).toBe('0.85.1')
+    expect(manifest.dependencies?.['@earendil-works/pi-coding-agent']).toBe('0.99.1')
     expect(manifest.devDependencies?.['@earendil-works/pi-coding-agent']).toBeUndefined()
   })
 
@@ -27,6 +27,10 @@ describe('embedded Pi host packaging', () => {
     expect(builderConfig).toContain(
       'node_modules/@earendil-works/pi-coding-agent/dist/utils/image-resize-worker.js',
     )
+    // Worker threads load their ESM entry, sibling modules and QuickJS runtime
+    // from disk. Keep the complete two packages together outside the archive.
+    expect(builderConfig).toContain('node_modules/@earendil-works/pi-codemode/**/*')
+    expect(builderConfig).toContain('node_modules/quickjs-wasi/**/*')
     expect(builderConfig).toContain(
       'node_modules/@earendil-works/pi-tui/native/**/prebuilds/**/*',
     )

@@ -8,7 +8,7 @@ interface ResolvePiAgentDirectoryOptions {
   isolatedTest?: boolean
 }
 
-// Match Pi 0.85.1 getAgentDir/normalizePath without loading the SDK into Main.
+// Match Pi getAgentDir/normalizePath without loading the SDK into Main.
 export function resolvePiAgentDirectory({
   homeDirectory,
   environment = process.env,

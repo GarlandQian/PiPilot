@@ -5,6 +5,8 @@ import { createConversationResponseProjector } from '../../src/renderer/pi-rpc/r
 import type { LocalPiAgentMessage, LocalPiAssistantMessage } from '../../src/shared/local-pi'
 import type { Turn } from '../../src/types/chat'
 import { createTranscriptStore } from '../../src/renderer/pi-rpc/transcript-store'
+import { recordTurnChanges } from '../../src/renderer/pi-rpc/turn-changes'
+import { createTranscriptActivityProjector } from '../../src/renderer/pi-rpc/transcript-activity'
 
 const assistant = (text: string, timestamp: number): LocalPiAssistantMessage => ({
   role: 'assistant', content: [{ type: 'text', text }], timestamp,
@@ -14,6 +16,43 @@ const assistant = (text: string, timestamp: number): LocalPiAssistantMessage => 
 })
 
 describe('incremental transcript projection', () => {
+  it('retains outline and activity selectors when long live text does not change their visible meaning', () => {
+    const outline = createConversationOutlineProjector()
+    const activity = createTranscriptActivityProjector()
+    const user: Turn = { kind: 'user', id: 'u', text: 'Question', time: '', anchorEntryId: 'anchor' }
+    const live: Extract<Turn, { kind: 'agent' }> = { kind: 'agent', id: 'live', markdown: 'x'.repeat(200), state: 'streaming', anchorEntryId: 'anchor' }
+    let turns: Turn[] = [user, live]
+    const initialOutline = outline(turns)
+    const initialActivity = activity(turns, 'running')
+    for (let chunk = 0; chunk < 100; chunk += 1) {
+      const next = [user, { ...live, markdown: `${live.markdown} ${chunk}` }]
+      recordTurnChanges(turns, next, [{ index: 1, before: turns[1], after: next[1] }])
+      turns = next
+      expect(outline(turns)).toBe(initialOutline)
+      expect(activity(turns, 'running')).toBe(initialActivity)
+    }
+    const settled: Turn[] = [user, { ...live, state: 'complete' }]
+    recordTurnChanges(turns, settled, [{ index: 1, before: turns[1], after: settled[1] }])
+    expect(outline(settled)[0]?.status).toBe('complete')
+    expect(activity(settled, 'idle').streamingKeys.size).toBe(0)
+  })
+
+  it('rebuilds missed projections and removals without leaving stale tools or outline anchors', () => {
+    const user: Turn = { kind: 'user', id: 'u', text: 'Question', time: '', anchorEntryId: 'anchor' }
+    const tool: Turn = { kind: 'tool', id: 't', anchorEntryId: 'anchor', call: { id: 'call', kind: 'shell', title: 'bash', status: 'success', body: 'pwd' } }
+    const initial = [user, tool]
+    const outline = createConversationOutlineProjector()
+    const store = createTranscriptStore({ turns: initial, outline: outline(initial), loading: false, revision: 0 })
+    const intermediate = [user]
+    recordTurnChanges(initial, intermediate, [{ index: 1, before: tool, after: undefined }])
+    const final: Turn[] = []
+    recordTurnChanges(intermediate, final, [{ index: 0, before: user, after: undefined }])
+    // The renderer can skip publications while React batches commits.
+    store.publish({ turns: final, outline: outline(final), loading: false, revision: 2 })
+    expect(store.getToolCall('call')).toBeNull()
+    expect(store.getOutline()).toEqual([])
+  })
+
   it('builds 1,000 completed replies once while 100 live chunks keep history objects and response projections', () => {
     const messages: LocalPiAgentMessage[] = []
     for (let index = 0; index < 1000; index += 1) {

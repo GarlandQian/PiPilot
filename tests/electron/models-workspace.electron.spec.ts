@@ -14,7 +14,6 @@ test('edits and tests models through the provider workspace without losing the a
     version: SETTINGS_SCHEMA_VERSION,
     settings: { ...DEFAULT_SETTINGS, locale: 'en-US', appearance: { ...DEFAULT_SETTINGS.appearance, theme: 'light', reducedMotion: true } },
   }))
-  await writeFile(join(userData, 'pi-managed-packages.json'), JSON.stringify({ version: 1, mcpOptedOut: true }))
   const fixture = await startPiSdkFixture({ agentDir, includeReasoningModel: true })
   const modelPath = join(agentDir, 'models.json')
   const initial = JSON.parse(await readFile(modelPath, 'utf8'))

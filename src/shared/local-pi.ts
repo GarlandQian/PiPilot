@@ -4,7 +4,7 @@ import {
   sessionCatalogSelectionTokenSchema,
 } from './conversation-scope'
 
-export const SUPPORTED_PI_VERSION = '0.85.1' as const
+export const SUPPORTED_PI_VERSION = '0.99.1' as const
 export const LOCAL_PI_RUNTIME_EVENT_PROJECTION_FAILED_CODE =
   'RUNTIME_EVENT_PROJECTION_FAILED' as const
 export const LOCAL_PI_RUNTIME_SESSION_PENDING_MAX = 10_000
@@ -123,6 +123,7 @@ export const localPiToolCallSchema = z
     name: z.string().min(1),
     arguments: z.record(z.string(), z.unknown()),
     thoughtSignature: z.string().optional(),
+    namespace: z.string().optional(),
   })
   .strict()
 
@@ -180,6 +181,40 @@ const localPiDeferredHandleSchema = z
   })
   .strict()
 
+const localPiSystemToolSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  parameters: z.record(z.string(), z.unknown()),
+  constrainedSampling: z.union([
+    z.literal(false),
+    z.object({ type: z.literal('json_schema'), strict: z.enum(['prefer', 'require']) }).strict(),
+    z.object({ type: z.literal('grammar'), variants: z.object({
+      openai_lark: z.string().optional(), openai_regex: z.string().optional(),
+    }).strict() }).strict(),
+  ]).optional(),
+}).strict()
+
+export const localPiSystemMessageSchema = z.object({
+  role: z.literal('system'),
+  content: z.union([z.string(), z.array(localPiTextContentSchema)]),
+  sections: z.record(z.string(), z.string().nullable()).optional(),
+  toolsAdded: z.array(localPiSystemToolSchema).optional(),
+  toolsRemoved: z.array(z.object({ name: z.string() }).strict()).optional(),
+  timestamp: z.number().int().nonnegative(),
+}).strict()
+
+const localPiNestedToolCallsSchema = z.object({
+  calls: z.array(z.object({
+    id: z.string(), name: z.string(),
+    arguments: z.record(z.string(), z.unknown()).optional(),
+    argumentsBytes: z.number().nonnegative().optional(),
+    status: z.enum(['ok', 'error', 'unfinished']),
+    durationMs: z.number().nonnegative().optional(),
+    error: z.string().optional(),
+  }).strict()),
+  complete: z.boolean(),
+}).strict()
+
 export const localPiUserMessageSchema = z
   .object({
     role: z.literal('user'),
@@ -204,6 +239,8 @@ export const localPiAssistantMessageSchema = z
     model: z.string().min(1),
     responseModel: z.string().optional(),
     responseId: z.string().optional(),
+    providerThinkingLevel: z.string().optional(),
+    thinkingLevel: localPiThinkingLevelSchema.optional(),
     diagnostics: z.array(localPiAssistantDiagnosticSchema).optional(),
     usage: localPiUsageSchema,
     stopReason: z.enum([
@@ -218,6 +255,7 @@ export const localPiAssistantMessageSchema = z
     deferred: localPiDeferredHandleSchema.optional(),
     errorMessage: z.string().optional(),
     rawStopReason: z.string().optional(),
+    endTurn: z.boolean().optional(),
     timestamp: z.number().int().nonnegative(),
   })
   .strict()
@@ -231,6 +269,7 @@ export const localPiToolResultMessageSchema = z
     details: z.unknown().optional(),
     usage: localPiUsageSchema.optional(),
     addedToolNames: z.array(z.string()).optional(),
+    nestedCalls: localPiNestedToolCallsSchema.optional(),
     isError: z.boolean(),
     timestamp: z.number().int().nonnegative(),
   })
@@ -268,7 +307,7 @@ export const localPiBranchSummaryMessageSchema = z
   .object({
     role: z.literal('branchSummary'),
     summary: z.string(),
-    fromId: z.string().min(1),
+    fromId: z.string().min(1).nullable(),
     timestamp: z.number().int().nonnegative(),
   })
   .strict()
@@ -283,6 +322,7 @@ export const localPiCompactionSummaryMessageSchema = z
   .strict()
 
 export const localPiAgentMessageSchema = z.discriminatedUnion('role', [
+  localPiSystemMessageSchema,
   localPiUserMessageSchema,
   localPiAssistantMessageSchema,
   localPiToolResultMessageSchema,
@@ -305,6 +345,7 @@ export type LocalPiToolResultMessage = Extract<
 
 export const localPiModelSchema = z
   .object({
+    type: z.literal('chat').optional(),
     id: z.string().min(1),
     name: z.string(),
     api: z.string().min(1),
@@ -324,6 +365,23 @@ export const localPiModelSchema = z
       .strict()
       .optional(),
     input: z.array(z.enum(['text', 'image'])),
+    inputLimits: z.object({
+      maxRequestBytes: z.number().nonnegative().optional(),
+      images: z.object({
+        resize: z.object({
+          maxWidth: z.number().nonnegative().optional(),
+          maxHeight: z.number().nonnegative().optional(),
+          maxBytes: z.number().nonnegative().optional(),
+          jpegQuality: z.number().nonnegative().optional(),
+        }).strict().optional(),
+        maxPerMessage: z.number().nonnegative().optional(),
+        maxPerRequest: z.number().nonnegative().optional(),
+      }).strict().optional(),
+    }).strict().optional(),
+    promptCache: z.object({
+      short: z.number().nonnegative().optional(),
+      long: z.number().nonnegative().optional(),
+    }).strict().optional(),
     cost: z
       .object({
         input: z.number().nonnegative(),
@@ -579,6 +637,8 @@ export const localPiToolResultSchema = z
   .object({
     content: z.array(z.union([localPiTextContentSchema, localPiImageContentSchema])),
     details: z.unknown().optional(),
+    structuredContent: z.unknown().optional(),
+    isError: z.boolean().optional(),
     usage: localPiUsageSchema.optional(),
     addedToolNames: z.array(z.string()).optional(),
     terminate: z.boolean().optional(),
@@ -609,7 +669,9 @@ export const localPiSessionEntrySchema = z.discriminatedUnion('type', [
   z.object({ ...localPiSessionEntryBase, type: z.literal('message'), message: localPiAgentMessageSchema }).strict(),
   z.object({ ...localPiSessionEntryBase, type: z.literal('thinking_level_change'), thinkingLevel: z.string() }).strict(),
   z.object({ ...localPiSessionEntryBase, type: z.literal('model_change'), provider: z.string(), modelId: z.string() }).strict(),
-  z.object({ ...localPiSessionEntryBase, type: z.literal('compaction'), summary: z.string(), firstKeptEntryId: z.string(), tokensBefore: z.number().int().nonnegative(), details: z.unknown().optional(), usage: localPiUsageSchema.optional(), fromHook: z.boolean().optional() }).strict(),
+  z.object({ ...localPiSessionEntryBase, type: z.literal('compaction'), summary: z.string(), firstKeptEntryId: z.string(), tokensBefore: z.number().int().nonnegative(), details: z.unknown().optional(), usage: localPiUsageSchema.optional(), fromHook: z.boolean().optional(), systemMessage: localPiSystemMessageSchema.optional() }).strict(),
+  z.object({ ...localPiSessionEntryBase, type: z.literal('usage'), kind: z.string(), provider: z.string(), model: z.string(), usage: localPiUsageSchema, note: z.string().optional() }).strict(),
+  z.object({ ...localPiSessionEntryBase, type: z.literal('context_edit'), targetId: z.string(), replacement: z.object({ content: z.union([z.string(), z.array(z.union([localPiTextContentSchema, localPiImageContentSchema, localPiThinkingContentSchema, localPiToolCallSchema]))]) }).strict().nullable() }).strict(),
   z.object({ ...localPiSessionEntryBase, type: z.literal('branch_summary'), fromId: z.string(), summary: z.string(), details: z.unknown().optional(), usage: localPiUsageSchema.optional(), fromHook: z.boolean().optional() }).strict(),
   z.object({ ...localPiSessionEntryBase, type: z.literal('custom'), customType: z.string(), data: z.unknown().optional() }).strict(),
   z.object({ ...localPiSessionEntryBase, type: z.literal('custom_message'), customType: z.string(), content: z.union([z.string(), z.array(z.union([localPiTextContentSchema, localPiImageContentSchema]))]), details: z.unknown().optional(), display: z.boolean() }).strict(),
@@ -1008,9 +1070,9 @@ export const localPiRpcEventSchema = z.union([
   }).strict(),
   z.object({ type: z.literal('message_end'), message: localPiAgentMessageSchema }).strict(),
   z.object({ type: z.literal('bash_execution_update'), id: z.string().optional(), delta: z.string() }).strict(),
-  z.object({ type: z.literal('tool_execution_start'), toolCallId: z.string().min(1), toolName: z.string().min(1), args: z.unknown().nonoptional() }).strict(),
-  z.object({ type: z.literal('tool_execution_update'), toolCallId: z.string().min(1), toolName: z.string().min(1), args: z.unknown().nonoptional(), partialResult: localPiToolResultSchema }).strict(),
-  z.object({ type: z.literal('tool_execution_end'), toolCallId: z.string().min(1), toolName: z.string().min(1), result: localPiToolResultSchema, isError: z.boolean() }).strict(),
+  z.object({ type: z.literal('tool_execution_start'), toolCallId: z.string().min(1), parentToolCallId: z.string().min(1).optional(), toolName: z.string().min(1), args: z.unknown().nonoptional() }).strict(),
+  z.object({ type: z.literal('tool_execution_update'), toolCallId: z.string().min(1), parentToolCallId: z.string().min(1).optional(), toolName: z.string().min(1), args: z.unknown().nonoptional(), partialResult: localPiToolResultSchema }).strict(),
+  z.object({ type: z.literal('tool_execution_end'), toolCallId: z.string().min(1), parentToolCallId: z.string().min(1).optional(), toolName: z.string().min(1), result: localPiToolResultSchema, isError: z.boolean() }).strict(),
   z.object({ type: z.literal('queue_update'), steering: z.array(z.string()), followUp: z.array(z.string()) }).strict(),
   z.object({ type: z.literal('compaction_start'), reason: z.enum(['manual', 'threshold', 'overflow']) }).strict(),
   z.object({ type: z.literal('compaction_end'), reason: z.enum(['manual', 'threshold', 'overflow']), result: localPiCompactionResultSchema.optional(), aborted: z.boolean(), willRetry: z.boolean(), errorMessage: z.string().optional() }).strict(),

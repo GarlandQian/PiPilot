@@ -11,6 +11,9 @@ import { createConversationResponseProjector, type ResponsePresentation, type Re
 import { ConversationResponse } from './ConversationResponse'
 import { MarkdownContent } from './markdown/MarkdownContent'
 import { useConversationOperationFeedback } from '@/renderer/composer/use-operation-feedback'
+import { createTranscriptActivityProjector } from '@/renderer/pi-rpc/transcript-activity'
+import { highlightSearchText, type ToolSearchRequest } from '@/renderer/conversation-text-search'
+import type { ConversationSearchMatch } from '@/shared/conversation-search'
 import { useSettings } from '@/store/settings'
 import type { PiConversationPresentation } from '@/store/pi-rpc'
 import type { AgentStatus, SubagentInspectorFocusRequest, Turn } from '@/types/chat'
@@ -39,6 +42,8 @@ export interface ConversationJumpRequest {
   sessionKey: string
   entryId: string
   sequence: number
+  query?: string
+  match?: ConversationSearchMatch
 }
 
 const NO_TURN_KEYS: ReadonlySet<string> = new Set()
@@ -48,11 +53,12 @@ const renderPrompt = (turn: Extract<Turn, { kind: 'user' }>) => <UserMessage tur
 const ConversationRow = React.memo(function ConversationRow({ response, anchorNodes, highlighted,
   sessionKey, selectedSubagentId, subagentFocusRequest, onOpenSubagent, onOpenCommand, onPlanAction,
   animateAgentKeys, streamingAgentKeys, hiddenResponseActionIds, motionEnabled,
-  onTypingChange, thinkingDurations, forkBusy, forkingId, onFork, canFork,
+  onTypingChange, thinkingDurations, forkBusy, forkingId, onFork, canFork, searchRequest,
 }: Pick<MessageListProps, 'sessionKey' | 'selectedSubagentId' | 'subagentFocusRequest' | 'onOpenSubagent' | 'onOpenCommand' | 'onPlanAction'> & {
   response: ResponsePresentation
   anchorNodes: Map<string, HTMLDivElement>
   highlighted: boolean
+  searchRequest?: ConversationJumpRequest
   animateAgentKeys: ReadonlySet<string>
   streamingAgentKeys: ReadonlySet<string>
   hiddenResponseActionIds: ReadonlySet<string>
@@ -64,6 +70,9 @@ const ConversationRow = React.memo(function ConversationRow({ response, anchorNo
   onFork(turn: Extract<Turn, { kind: 'response-actions' }>): void
   canFork: boolean
 }) {
+  const t = useT()
+  const toolSearch = React.useMemo<ToolSearchRequest | undefined>(() => searchRequest?.query && searchRequest.match?.role === 'toolResult'
+    ? { sequence: searchRequest.sequence, query: searchRequest.query, toolCallId: searchRequest.match.toolCallId } : undefined, [searchRequest])
   const anchorRef = React.useCallback((node: HTMLDivElement | null) => {
     if (!response.anchorEntryId) return
     if (node) anchorNodes.set(response.anchorEntryId, node)
@@ -71,7 +80,7 @@ const ConversationRow = React.memo(function ConversationRow({ response, anchorNo
   }, [anchorNodes, response.anchorEntryId])
   const renderSegment = (item: ResponsePresentationSegment, visible: boolean): React.ReactNode => {
     if (item.kind === 'activity-run') return <ToolActivityRegion run={item.run} visible={visible}
-      sessionKey={sessionKey} selectedSubagentId={selectedSubagentId} focusRequest={subagentFocusRequest} onOpenSubagent={onOpenSubagent} onOpenCommand={onOpenCommand} />
+      sessionKey={sessionKey} selectedSubagentId={selectedSubagentId} focusRequest={subagentFocusRequest} searchRequest={toolSearch} onOpenSubagent={onOpenSubagent} onOpenCommand={onOpenCommand} />
     const turn = item.turn
     switch (turn.kind) {
       case 'user': return <UserMessage turn={turn} />
@@ -89,8 +98,13 @@ const ConversationRow = React.memo(function ConversationRow({ response, anchorNo
       default: return null
     }
   }
+  const match = toolSearch ? searchRequest?.match : undefined
   return <ConversationResponse response={response} sessionKey={sessionKey} focusRequest={subagentFocusRequest}
-    highlighted={highlighted} anchorRef={anchorRef} renderPrompt={renderPrompt} renderSegment={renderSegment} />
+    highlighted={highlighted} anchorRef={anchorRef} renderPrompt={renderPrompt} renderSegment={renderSegment}
+    searchPreview={match ? <aside data-conversation-search-result className="mb-4 space-y-1 rounded-md border border-border bg-accent/30 p-3 text-caption">
+      <p className="text-muted-foreground">{t('conversationSearch.toolContext')}</p>
+      <pre className="whitespace-pre-wrap break-words font-mono">{match.snippet.slice(0, match.matchStart)}<mark className="rounded-sm bg-primary/20 text-foreground">{match.snippet.slice(match.matchStart, match.matchStart + match.matchLength)}</mark>{match.snippet.slice(match.matchStart + match.matchLength)}</pre>
+    </aside> : undefined} />
 })
 
 export function MessageList({
@@ -126,15 +140,16 @@ export function MessageList({
   }), [sessionKey])
   const highlightTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const forkFeedback = useConversationOperationFeedback(sessionKey ?? 'unavailable')
+  const activityProjector = React.useMemo(createTranscriptActivityProjector, [sessionKey])
+  const activity = React.useMemo(() => activityProjector(turns, status), [activityProjector, turns, status])
   const knownAgentTurnsRef = React.useRef<{
     sessionKey: string | null
     ready: boolean
-    keys: Set<string>
+    keys: ReadonlySet<string>
   }>({
     sessionKey,
     ready: presentation.status === 'ready',
-    keys: new Set(turns.flatMap((turn) =>
-      turn.kind === 'agent' ? [agentAnimationKey(turn)] : [])),
+    keys: activity.agentKeys,
   })
   const [highlightedEntryId, setHighlightedEntryId] = React.useState<string | null>(null)
   const [typingAgentKeys, setTypingAgentKeys] = React.useState<ReadonlySet<string>>(
@@ -147,42 +162,22 @@ export function MessageList({
     knownAgentTurnsRef.current = {
       sessionKey,
       ready,
-      keys: new Set(turns.flatMap((turn) =>
-        turn.kind === 'agent' ? [agentAnimationKey(turn)] : [])),
+      keys: activity.agentKeys,
     }
   } else {
     knownAgentTurnsRef.current.ready = ready
   }
-  const latestAgentId = [...turns].reverse().find((turn) => turn.kind === 'agent')?.id
-  const streamingAgentKeys = new Set(turns.flatMap((turn) => (
-    turn.kind === 'agent' && (
-      turn.state === 'streaming' || (
-        turn.state === undefined &&
-        status === 'running' &&
-        turn.id === latestAgentId
-      )
-    )
-      ? [agentAnimationKey(turn)]
-      : []
-  )))
-  const animateAgentKeys = new Set(
+  const streamingAgentKeys = activity.streamingKeys
+  const animateAgentKeys = React.useMemo(() => new Set(
     motionEnabled && ready
-      ? turns.flatMap((turn) => {
-          if (turn.kind !== 'agent') return []
-          const key = agentAnimationKey(turn)
-          return streamingAgentKeys.has(key) &&
-            !knownAgentTurnsRef.current.keys.has(key)
-            ? [key]
-            : []
-        })
+      ? [...streamingAgentKeys].filter((key) => !knownAgentTurnsRef.current.keys.has(key))
       : [],
-  )
+  ), [motionEnabled, ready, streamingAgentKeys])
 
   React.useEffect(() => {
     if (knownAgentTurnsRef.current.sessionKey !== sessionKey || !ready) return
-    knownAgentTurnsRef.current.keys = new Set(turns.flatMap((turn) =>
-      turn.kind === 'agent' ? [agentAnimationKey(turn)] : []))
-  }, [ready, sessionKey, turns])
+    knownAgentTurnsRef.current.keys = activity.agentKeys
+  }, [activity.agentKeys, ready, sessionKey])
 
   React.useEffect(() => {
     setTypingAgentKeys(new Set())
@@ -200,24 +195,11 @@ export function MessageList({
 
   const hiddenResponseActionIds = React.useMemo(() => {
     const hidden = new Set<string>()
-    let typingResponse = false
-    for (const turn of turns) {
-      if (turn.kind === 'user') typingResponse = false
-      else if (
-        turn.kind === 'agent' &&
-        (
-          animateAgentKeys.has(agentAnimationKey(turn)) ||
-          streamingAgentKeys.has(agentAnimationKey(turn)) ||
-          typingAgentKeys.has(agentAnimationKey(turn))
-        )
-      ) typingResponse = true
-      else if (turn.kind === 'response-actions' && typingResponse) {
-        hidden.add(turn.id)
-        typingResponse = false
-      }
+    for (const [id, keys] of activity.responseAgents) {
+      if (keys.some((key) => animateAgentKeys.has(key) || streamingAgentKeys.has(key) || typingAgentKeys.has(key))) hidden.add(id)
     }
     return hidden
-  }, [animateAgentKeys, streamingAgentKeys, turns, typingAgentKeys])
+  }, [activity.responseAgents, animateAgentKeys, streamingAgentKeys, typingAgentKeys])
 
   React.useEffect(() => {
     setHighlightedEntryId(null)
@@ -253,6 +235,7 @@ export function MessageList({
         current === jumpRequest.entryId ? null : current)
       highlightTimerRef.current = null
     }, 1_600)
+    return jumpRequest.query ? highlightSearchText(target, jumpRequest.query) : undefined
   }, [anchorNodes, jumpRequest, ready, sessionKey, motionEnabled, pauseFollowing])
 
   const fork = React.useCallback((
@@ -312,6 +295,7 @@ export function MessageList({
               sessionKey={sessionKey}
               subagentFocusRequest={subagentFocusRequest}
               highlighted={Boolean(response.anchorEntryId && highlightedEntryId === response.anchorEntryId)}
+              searchRequest={jumpRequest?.sessionKey === sessionKey && jumpRequest.entryId === response.anchorEntryId ? jumpRequest : undefined}
               anchorNodes={anchorNodes}
               selectedSubagentId={selectedSubagentId}
               onOpenSubagent={onOpenSubagent}

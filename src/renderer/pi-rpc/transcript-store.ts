@@ -1,4 +1,5 @@
 import type { ConversationOutlineItem, ToolCall, Turn } from '@/types/chat'
+import { adjacentTurnChanges } from './turn-changes'
 
 export interface PiTranscriptSnapshot {
   turns: readonly Turn[]
@@ -15,6 +16,7 @@ export function createTranscriptStore(initial: PiTranscriptSnapshot) {
   return {
     getSnapshot: () => snapshot,
     getLoading: () => snapshot.loading,
+    getOutline: () => snapshot.outline,
     getToolCall: (id: string | null) => id ? tools.get(id) ?? null : null,
     subscribe(listener: () => void) {
       listeners.add(listener)
@@ -22,7 +24,12 @@ export function createTranscriptStore(initial: PiTranscriptSnapshot) {
     },
     publish(next: PiTranscriptSnapshot) {
       if (snapshot === next) return
-      if (snapshot.turns !== next.turns) tools = indexTools(next.turns)
+      if (snapshot.turns !== next.turns) {
+        const changes = adjacentTurnChanges(snapshot.turns, next.turns)
+        // Text deltas cannot affect a tool selector. Rebuild on actual tool
+        // changes to preserve last-occurrence semantics for duplicate call ids.
+        if (!changes || changes.some(({ before, after }) => before?.kind === 'tool' || after?.kind === 'tool')) tools = indexTools(next.turns)
+      }
       snapshot = next
       for (const listener of listeners) listener()
     },

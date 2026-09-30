@@ -1,5 +1,5 @@
 import type * as React from 'react'
-import { TbAdjustmentsHorizontal, TbCpu, TbInfoCircle, TbLanguage, TbPackages, TbPalette, TbTerminal2 } from 'react-icons/tb'
+import { TbAdjustmentsHorizontal, TbClock, TbCpu, TbInfoCircle, TbLanguage, TbPackages, TbPalette, TbTerminal2 } from 'react-icons/tb'
 import type { MessageKey } from '@/i18n'
 import { SETTINGS_ROUTE_IDS, type SettingsRouteId } from '@/renderer/layout-preferences'
 
@@ -27,6 +27,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroupMeta[] = [
   { id: 'agent', labelKey: 'settings.redesign.agentGroup', sections: [
     { id: 'models', labelKey: 'settings.nav.models', descriptionKey: 'settings.redesign.models', icon: TbCpu, searchTerms: 'provider API endpoint key token model 供应商 模型 接口 密钥' },
     { id: 'integrations', labelKey: 'settings.nav.integrations', descriptionKey: 'settings.redesign.integrations', icon: TbPackages, searchTerms: 'package skill extension MCP plugin external control launcher 插件 扩展 技能 包 控制 启动器' },
+    { id: 'scheduled-tasks', labelKey: 'scheduledTasks.title', descriptionKey: 'scheduledTasks.description', icon: TbClock, searchTerms: 'schedule automation recurring 定时 计划 自动 重复 任务' },
   ] },
   { id: 'application', labelKey: 'settings.redesign.applicationGroup', sections: [
     { id: 'about', labelKey: 'settings.nav.about', descriptionKey: 'settings.redesign.about', icon: TbInfoCircle, searchTerms: 'version updates release download 版本 更新 发布 下载' },

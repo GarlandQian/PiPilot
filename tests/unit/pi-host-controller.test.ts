@@ -15,6 +15,7 @@ import {
   piHostFailureEnvelopeSchema,
   piHostRequestEnvelopeSchema,
   type PiHostDto,
+  type PiHostCommand,
   type PiHostRequestEnvelope,
 } from '../../src/shared/pi-host-protocol'
 
@@ -159,7 +160,7 @@ function createHarness(options: {
   const channels: ReturnType<typeof createFakeChannel>[] = []
   const forkUtility = vi.fn(() => {
     utility = new FakeUtilityProcess(
-      options.sdkVersion ?? '0.85.1',
+      options.sdkVersion ?? '0.99.1',
       options.onRequest,
     )
     return utility as unknown as UtilityProcess
@@ -218,7 +219,7 @@ describe('PiHostController', () => {
       state: 'ready',
       hostEpoch: 1,
       pid: 4_242,
-      sdkVersion: '0.85.1',
+      sdkVersion: '0.99.1',
       nodeVersion: '24.18.1',
       electronVersion: '44.2.0',
       capabilities: ['ping', 'shutdown'],
@@ -235,7 +236,7 @@ describe('PiHostController', () => {
     )
     expect(piHostBootstrapEnvelopeSchema.parse(harness.utility.bootstrap)).toMatchObject({
       hostEpoch: 1,
-      expectedSdkVersion: '0.85.1',
+      expectedSdkVersion: '0.99.1',
     })
 
     await expect(harness.controller.request({ type: 'ping' })).resolves.toEqual({
@@ -306,6 +307,124 @@ describe('PiHostController', () => {
         generation: 1,
       },
     })
+  })
+
+  describe.each([
+    {
+      name: 'background prompt submission',
+      command: {
+        type: 'runtime.external_submit',
+        message: 'Continue the background task.',
+        mode: 'prompt',
+      } satisfies PiHostCommand,
+      target: { runtimeId: 'rt_background', runtimeGeneration: 3 },
+    },
+    {
+      name: 'inactive session rename',
+      command: {
+        type: 'session.rename',
+        sessionFile: resolve('sessions/inactive.jsonl'),
+        name: 'Renamed session',
+      } satisfies PiHostCommand,
+      target: undefined,
+    },
+  ])('$name response identity', ({ command, target }) => {
+    it.each([true, false])('preserves the ready Host for a valid response (ok=%s)', async (ok) => {
+      const harness = createHarness({
+        onRequest: (request, utility): PiHostDto | undefined => {
+          if (request.command.type === 'shutdown') return { stopped: true }
+          if (request.command.type === 'ping') return { pong: true }
+          utility.hostPort!.postMessage({
+            kind: 'response',
+            protocolVersion: PI_HOST_PROTOCOL_VERSION,
+            hostEpoch: request.hostEpoch,
+            requestId: request.requestId,
+            ...target,
+            ...(ok
+              ? { ok: true, result: { accepted: true } }
+              : {
+                  ok: false,
+                  error: {
+                    name: 'Error',
+                    message: 'The operation was rejected.',
+                    code: 'OPERATION_REJECTED',
+                  },
+                }),
+          })
+          return undefined
+        },
+      })
+      controllers.add(harness.controller)
+      await harness.controller.start()
+
+      const result = harness.controller.request(command, target)
+      if (ok) await expect(result).resolves.toEqual({ accepted: true })
+      else await expect(result).rejects.toMatchObject({
+        code: 'REQUEST_FAILED',
+        diagnostic: { code: 'OPERATION_REJECTED' },
+      })
+
+      await expect(harness.controller.request({ type: 'ping' })).resolves.toEqual({ pong: true })
+      expect(harness.controller.getSnapshot().state).toBe('ready')
+      expect(harness.utility.killed).toBe(false)
+    })
+  })
+
+  it.each([
+    { name: 'another Runtime', responseTarget: { runtimeId: 'rt_other', runtimeGeneration: 3 } },
+    { name: 'an older generation', responseTarget: { runtimeId: 'rt_background', runtimeGeneration: 2 } },
+    { name: 'missing Runtime identity', responseTarget: {} },
+  ])('rejects external submission responses for $name', async ({ responseTarget }) => {
+    const harness = createHarness({
+      onRequest: (request, utility) => {
+        utility.hostPort!.postMessage({
+          kind: 'response',
+          protocolVersion: PI_HOST_PROTOCOL_VERSION,
+          hostEpoch: request.hostEpoch,
+          requestId: request.requestId,
+          ...responseTarget,
+          ok: true,
+          result: { acceptedMode: 'prompt' },
+        })
+        return undefined
+      },
+    })
+    controllers.add(harness.controller)
+    await harness.controller.start()
+
+    await expect(harness.controller.request(
+      { type: 'runtime.external_submit', message: 'Continue.', mode: 'prompt' },
+      { runtimeId: 'rt_background', runtimeGeneration: 3 },
+    )).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+    expect(harness.controller.getSnapshot().state).toBe('failed')
+    expect(harness.utility.killed).toBe(true)
+  })
+
+  it('rejects Runtime-scoped responses to a host-scoped session rename', async () => {
+    const harness = createHarness({
+      onRequest: (request, utility) => {
+        utility.hostPort!.postMessage({
+          kind: 'response',
+          protocolVersion: PI_HOST_PROTOCOL_VERSION,
+          hostEpoch: request.hostEpoch,
+          requestId: request.requestId,
+          runtimeId: 'rt_background',
+          runtimeGeneration: 3,
+          ok: false,
+          error: { name: 'Error', message: 'Invalid response target.' },
+        })
+        return undefined
+      },
+    })
+    controllers.add(harness.controller)
+    await harness.controller.start()
+
+    await expect(harness.controller.request({
+      type: 'session.rename',
+      sessionFile: resolve('sessions/inactive.jsonl'),
+      name: 'Renamed session',
+    })).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' })
+    expect(harness.utility.killed).toBe(true)
   })
 
   it('bounds pending requests and rejects them exactly once when the port closes', async () => {

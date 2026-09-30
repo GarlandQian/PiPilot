@@ -3,14 +3,14 @@
 **English** | [简体中文](README.zh-CN.md)
 
 PiPilot is an Electron desktop client for the official [Pi coding
-agent](https://github.com/earendil-works/pi). It runs the pinned Pi SDK (0.85.1) in isolated
+agent](https://github.com/earendil-works/pi). It runs the pinned Pi SDK (0.99.1) in isolated
 Electron utility processes and adds a desktop workspace for conversations, projects, files,
 terminals, models, and Pi extensions.
 
 Pi continues to own its sessions, configuration, and resources. PiPilot provides the desktop
 experience and does not create a parallel agent runtime or migrate Pi data into a private format.
 
-**Source version:** 0.0.9 · [Download releases](https://github.com/GarlandQian/PiPilot/releases)
+**Source version:** 0.1.0 · [Download releases](https://github.com/GarlandQian/PiPilot/releases)
 
 [![CI](https://github.com/GarlandQian/PiPilot/actions/workflows/ci.yml/badge.svg)](https://github.com/GarlandQian/PiPilot/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2f3437.svg)](LICENSE)
@@ -22,8 +22,27 @@ experience and does not create a parallel agent runtime or migrate Pi data into 
 - **Conversation workspace** — follow messages and tool activity in one timeline; queue, edit, or
   steer follow-up messages; use Commands, Skills, file references, model selection, and Thinking
   controls.
+- **Local drafts** — restore unsent text, references, and images after restarting. Drafts stay in
+  PiPilot's local application storage; sending or clearing input removes its saved draft, and
+  deleting a conversation removes its draft. Shutdown waits for pending draft writes.
 - **Project tools** — inspect files and diffs, search command output, review subagent activity, and
   use per-project terminal tabs.
+- **References and review** — quote selected message, file or command text with its source snapshot;
+  comment on selected diff lines, then collect the comments into your draft before sending.
+- **Conversation search** — search current message content with Cmd/Ctrl+F, or all registered
+  projects with Cmd/Ctrl+Shift+F. Results jump to the matching response; saved sessions use their
+  current branch. Very large or unavailable sessions are reported as omitted, not silently indexed.
+- **Side questions** — ask about selected text in an independent, saved Pi conversation in the
+  inspector. Closing its view keeps it running and preserves its official session. Use Stop to
+  request cancellation; completed, cancelled and failed turns have distinct states.
+- **Working copies and project actions** — create local Git worktrees from a project's menu;
+  save setup/test/dev commands with platform overrides, run them explicitly, and inspect logs.
+  Creation can also run a saved setup action that you select and confirm. Archiving moves the
+  complete worktree into local storage, retaining staged, unstaged, untracked and ignored files
+  without freeing disk space. Switch to another project and stop its terminals and actions first;
+  active, queued, interactive or leased conversations also prevent archiving. Restore returns to
+  the original path and refuses to overwrite an occupied location. Pi session files stay in their
+  official location. No commits, merges or pushes run automatically.
 - **Pi configuration** — manage models and providers, Packages, Resources, Extensions, Skills,
   Prompts, Themes, and global or project MCP settings.
 - **Desktop preferences** — use light or dark appearance, English or Simplified Chinese, keyboard
@@ -32,6 +51,10 @@ experience and does not create a parallel agent runtime or migrate Pi data into 
   control. It is disabled by default; see [External Control](#external-control).
 
 PiPilot is an Electron desktop application; it does not provide a web version.
+
+Background conversations keep running while you switch projects. Idle runtime caches have a
+global budget, and empty project Hosts retire after a grace period; executing, queued, interactive,
+or leased work is protected. Reclaiming a cache never removes a conversation from the sidebar.
 
 ## Download and installation
 
@@ -62,7 +85,7 @@ replacing assets under the same release version does not trigger an update.
 
 - macOS, Windows, or Linux
 - Node.js 24.18.0
-- pnpm 12.3.4 (declared in `package.json`)
+- pnpm 12.8.1 (declared in `package.json`)
 
 Packaged users do not need Node.js, pnpm, or a separate Pi executable. Development uses the Pi SDK
 version pinned in `package.json` and `pnpm-lock.yaml`.
@@ -91,6 +114,11 @@ the complete Electron suite on macOS. Provider contract cases use the installed 
 HTTP/SSE fixtures; they cover OpenAI Chat Completions, OpenAI Responses, Anthropic Messages, and
 Google Generative AI without real provider accounts or personal Pi data.
 
+`tests/electron/renderer-performance.electron.spec.ts` measures input responsiveness, frame gaps,
+and conversation switching with 1,000 historical replies and a 32 KB streaming Markdown response.
+It saves JSON metrics and a Chromium CPU profile, and verifies tables, late reference definitions,
+complete copying, and navigation. Timing is reported without machine-dependent pass thresholds.
+
 ### Package locally
 
 ~~~sh
@@ -114,7 +142,14 @@ PIPILOT_PACKAGED_ARCH=x64 pnpm test:packaged
 
 The smoke checks verify the selected app architecture and fail if that build is missing; they do not
 substitute the other architecture. Intel builds on Apple Silicon require Rosetta. Packaged smoke
-checks exercise the unpacked app, not the complete DMG, NSIS, or DEB installation flow.
+checks normally exercise the unpacked app. The release workflow also runs guarded installation
+canaries on disposable runners: Windows installs and updates NSIS; Linux launches a real AppImage,
+updates an isolated version 0.0.0 fixture to the exact candidate, observes the automatic restart,
+and verifies preserved settings, Pi configuration, projects and sessions with image content. It
+also installs the candidate DEB with dpkg, launches its registered executable, checks its manual
+update policy, and uninstalls it. Both Linux checks gate candidate upload and retain logs and
+screenshots. They reject existing installations and isolate user data and caches; they are skipped
+outside their prepared CI environment. The full macOS DMG installation flow is not covered.
 
 ## Architecture
 
@@ -133,9 +168,10 @@ contracts and allowlisted IPC.
 
 ## Pi configuration and data
 
-PiPilot does not scan the disk for projects or treat the home directory as a project. A project is
-selected with the native folder picker. Projectless chats use an application-private working
-directory while sessions remain in Pi's official session storage.
+PiPilot does not scan the disk for projects or treat the home directory as a project. Add an existing
+project with the native folder picker, or create a managed local Git working copy from a project's
+menu. Projectless chats use an application-private working directory while sessions remain in Pi's
+official session storage.
 
 The default Pi Agent directory is `~/.pi/agent`. Set `PI_CODING_AGENT_DIR` to use another directory;
 the Pi runtime, package manager, model editor, and global MCP editor use that same location.
@@ -148,11 +184,47 @@ the Pi runtime, package manager, model editor, and global MCP editor use that sa
 | `~/.pi/agent/mcp.json` | Global MCP configuration |
 | `~/.pi/agent/sessions/` | Official Pi sessions |
 | `<project>/.pi/settings.json` | Project Pi settings |
-| `<project>/.mcp.json` | Project MCP configuration |
+| `<project>/.pi/mcp.json` | Project MCP configuration |
 
-MCP configuration follows PiPilot's extension convention; Pi core does not define an MCP
-configuration format. Appearance, navigation, and window preferences are stored separately in
-Electron's application data directory. Do not commit API keys, tokens, or real session content.
+MCP connections use Pi's native support and standard JSON configuration. The built-in runtime
+supports stdio and Streamable HTTP servers; no MCP adapter package is required or automatically
+installed. Existing user-installed extensions remain under your control. Pi gives an enabled
+`pi-mcp-adapter` precedence over its native integration. After checking the native configuration,
+remove the old adapter from **Settings > Integrations > Packages** and reload the runtime to use
+native MCP; PiPilot does not uninstall personal extensions automatically.
+
+The bundled Pi runtime does not require a separate Node.js installation. A stdio MCP server may
+still require its own runtime, such as `node`, `npx`, or `uvx`. That command must be available to
+the application process, or configured with an absolute executable path. On macOS, an application
+opened from Finder may have a different PATH from your terminal. Project MCP configuration runs
+with the project resources when you open a conversation, so only add projects you trust.
+
+The MCP editor can import the old project `.mcp.json` into a draft for `.pi/mcp.json`, translating
+`disabled` to `enabled`. Import does not write files until you save and keeps the original file.
+Unsupported socket or SSE-only configurations show validation errors instead of being silently
+discarded. Appearance, navigation, and window preferences are stored separately in Electron's
+application data directory. Do not commit API keys, tokens, or real session content.
+
+## Scheduled tasks
+
+**Settings > Scheduled tasks** runs saved prompts in an existing, saved Pi conversation. Choose a
+one-time date, daily wall time with an IANA time zone, or an interval. PiPilot must be running;
+there is no operating-system background daemon. Tasks run without changing the selected
+conversation and work independently of the External Control switch.
+
+Missed occurrences default to one catch-up run; the alternative skips occurrences more than a
+minute late. Overlapping runs are skipped. Daily daylight-saving gaps skip that day and repeated
+wall times run once. Pause affects future runs. A task can be edited or deleted after its current
+run ends; deleting keeps the conversation and retained history. Run now is an explicit additional
+attempt and does not replace its schedule.
+
+The private `scheduled-tasks/ledger.json` in Electron user data holds up to 100 tasks and the latest
+500 attempts. Dispatch is reserved and synced to disk before sending. After a restart, an attempt
+without a confirmed terminal outcome is marked **Outcome unknown** and its task is paused: it is
+never automatically replayed or reported as complete. Inspect that conversation before resuming.
+Deleted/replaced targets and requests for interactive input also pause the task; PiPilot never
+approves those requests automatically. Completion/failure alerts follow the desktop-notification
+preference. A malformed or unwritable ledger stops scheduling rather than discarding its records.
 
 ## External Control
 

@@ -34,7 +34,7 @@ const result = {
   updates: [],
   retry: {
     globalEnabled: true,
-    effective: { enabled: true, maxRetries: 3, baseDelayMs: 1000 },
+    effective: { enabled: true, maxRetries: 3, baseDelayMs: 1000, maxAgentDelayMs: 60_000 },
   },
   diagnostics: [],
 }

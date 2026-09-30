@@ -1,4 +1,7 @@
-import rawMaterialIconTheme from 'material-icon-theme/dist/material-icons.json?raw'
+// Named JSON exports let Vite omit unused language associations and compile the
+// metadata at build time; avoid shipping/parsing the pretty-printed raw JSON.
+import { file, folder, folderExpanded, iconDefinitions, fileNames, fileExtensions,
+  folderNames, folderNamesExpanded, light } from 'material-icon-theme/dist/material-icons.json'
 
 type IconAssociations = Record<string, string>
 
@@ -41,7 +44,10 @@ export interface MaterialFileIconNames {
   light: string
 }
 
-const materialIconTheme = JSON.parse(rawMaterialIconTheme) as MaterialIconTheme
+const materialIconTheme: MaterialIconTheme = {
+  file, folder, folderExpanded, iconDefinitions, fileNames, fileExtensions,
+  folderNames, folderNamesExpanded, light,
+}
 
 function mergeAssociations(
   base: IconAssociations | undefined,

@@ -48,7 +48,6 @@ export class FollowingViewportIntent {
 export function useFollowingViewport({
   ownerKey,
   ready = true,
-  revision,
   smooth,
 }: {
   ownerKey: string | null
@@ -90,7 +89,9 @@ export function useFollowingViewport({
     setFollowing(intent.following)
     if (ready && intent.following) scrollToLatest(false)
     else measureMoreBelow()
-  }, [intent, measureMoreBelow, ready, revision, scrollToLatest])
+    // Subsequent content follows ResizeObserver's post-layout notification.
+    // A token revision need not force layout before deferred Markdown commits.
+  }, [intent, measureMoreBelow, ready, scrollToLatest])
 
   React.useEffect(() => {
     const content = contentRef.current

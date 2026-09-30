@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net'
 import { join } from 'node:path'
 import {
   createFixtureStreamWriter,
+  FIXTURE_CODEMODE_CALL_ID,
   fixtureRequestPath,
   readFixtureRequest,
   type FixtureProviderProtocol,
@@ -22,11 +23,17 @@ interface PiSdkFixtureOptions {
   completionGates?: Readonly<Record<string, Promise<void>>>
   reasoningDelays?: Readonly<Record<string, number>>
   reasoningGates?: Readonly<Record<string, Promise<void>>>
+  /** Deterministic live Markdown chunks for real renderer performance checks. */
+  responseChunks?: Readonly<Record<string, { chunks: readonly string[]; intervalMs: number }>>
   retryEnabled?: boolean
+  /** Fail the actual provider request without replacing the SDK or runtime. */
+  providerErrors?: Readonly<Record<string, string>>
   writeToolPrompts?: Readonly<Record<string, {
     path: string
     content: string
   }>>
+  /** Exercise the actual codemode Worker and native MCP from packaged apps. */
+  codemodeToolPrompts?: Readonly<Record<string, string>>
   /** Emit observable assistant commentary before the real SDK write call. */
   writeToolCommentary?: Readonly<Record<string, {
     text: string
@@ -38,6 +45,7 @@ export interface PiSdkFixture {
   env: NodeJS.ProcessEnv
   prompts: string[]
   requests: { protocol: FixtureProviderProtocol; prompt: string; hasWriteResult: boolean }[]
+  codemodeResults: string[]
   close(): Promise<void>
 }
 
@@ -66,7 +74,11 @@ export async function startPiSdkFixture(
 ): Promise<PiSdkFixture> {
   const prompts: string[] = []
   const requests: PiSdkFixture['requests'] = []
+  const codemodeResults: string[] = []
   const protocol = options.protocol ?? 'openai-completions'
+  if (options.codemodeToolPrompts && protocol !== 'openai-completions') {
+    throw new Error('Codemode fixture calls currently require OpenAI Chat Completions.')
+  }
   const server = createServer((request, response) => {
     if (request.method !== 'POST' || !fixtureRequestPath(protocol, request.url ?? '')) {
       response.writeHead(404, { 'content-type': 'application/json' }).end(JSON.stringify({
@@ -82,11 +94,29 @@ export async function startPiSdkFixture(
         const { prompt, model, hasWriteResult } = readFixtureRequest(protocol, body)
         prompts.push(prompt)
         requests.push({ protocol, prompt, hasWriteResult })
+        const providerError = options.providerErrors?.[prompt]
+        if (providerError) {
+          response.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { message: providerError, type: 'invalid_request_error' } }))
+          return
+        }
         await options.promptGates?.[prompt]
         const promptDelay = options.promptDelays?.[prompt] ?? 0
         if (promptDelay > 0) await delay(promptDelay)
         const content = `Fixture response: ${prompt}`
         const stream = createFixtureStreamWriter(protocol, response, model)
+        const codemode = options.codemodeToolPrompts?.[prompt]
+        if (codemode) {
+          const raw = body as { messages?: Array<{ role?: string; tool_call_id?: string; content?: unknown }> }
+          const result = raw.messages?.find((message) =>
+            message.role === 'tool' && message.tool_call_id === FIXTURE_CODEMODE_CALL_ID)
+          if (!result) {
+            stream.codemodeTool!(codemode)
+            stream.finish(true)
+            return
+          }
+          codemodeResults.push(typeof result.content === 'string'
+            ? result.content : JSON.stringify(result.content))
+        }
         const writeTool = options.writeToolPrompts?.[prompt]
         if (writeTool && !hasWriteResult) {
           const commentary = options.writeToolCommentary?.[prompt]
@@ -104,7 +134,13 @@ export async function startPiSdkFixture(
           if (reasoningDelay > 0) await delay(reasoningDelay)
           await options.reasoningGates?.[prompt]
         }
-        stream.text(content)
+        const responseChunks = options.responseChunks?.[prompt]
+        if (responseChunks) {
+          for (const chunk of responseChunks.chunks) {
+            stream.text(chunk)
+            if (responseChunks.intervalMs > 0) await delay(responseChunks.intervalMs)
+          }
+        } else stream.text(content)
         const completionDelay = options.completionDelays?.[prompt] ?? 0
         if (completionDelay > 0) await delay(completionDelay)
         await options.completionGates?.[prompt]
@@ -274,6 +310,7 @@ export default function pipilotE2eExtension(pi) {
       PI_TELEMETRY: '0',
     },
     prompts,
+    codemodeResults,
     requests,
     close: () => closeServer(server),
   }

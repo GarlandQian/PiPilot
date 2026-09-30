@@ -58,7 +58,6 @@ async function launchTerminalFixture(testInfo: TestInfo) {
     locale: 'en-US',
     appearance: { ...DEFAULT_SETTINGS.appearance, theme: 'light', reducedMotion: true },
   } }))
-  await writeFile(join(userData, 'pi-managed-packages.json'), JSON.stringify({ version: 1, mcpOptedOut: true }))
   const fixture = await startPiSdkFixture({ agentDir: testInfo.outputPath('pi-agent') })
   let app: ElectronApplication
   try {

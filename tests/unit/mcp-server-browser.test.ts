@@ -10,7 +10,7 @@ vi.mock('@/i18n', () => ({ useT: () => (key: string) => key }))
 const document = `{
   "mcpServers": {
     "docs": { "command": "node", "args": ["server.js"], "env": { "TOKEN": "hidden-token-value" }, "description": "Project documentation", "future": { "keep": true } },
-    "remote": { "url": "https://example.test/tools", "headers": { "Authorization": "hidden-header-value" }, "disabled": true },
+    "remote": { "url": "https://example.test/tools", "headers": { "Authorization": "hidden-header-value" }, "enabled": false },
     "mux": { "socket": "/fixture/mcp.sock" }
   }
 }`
@@ -33,7 +33,7 @@ describe('MCP server browser', () => {
     ['documentation', ['docs']],
     ['example.test', ['remote']],
     ['http', ['remote']],
-    ['socket', ['mux']],
+    ['invalid', ['mux']],
     ['missing', []],
   ])('finds servers by readable metadata: %s', (query, expected) => {
     const result = filterMcpServers(servers, query)
