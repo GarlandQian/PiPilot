@@ -9,6 +9,13 @@ import { ProjectWorkflowError, readWorkflowFile, writeWorkflowFile } from '../pr
 
 const execute = promisify(execFile)
 const documentSchema = z.object({ version: z.literal(1), worktrees: z.array(worktreeSchema).max(500) }).strict()
+const samePath = (left: string, right: string) => {
+  const resolvedLeft = resolve(left)
+  const resolvedRight = resolve(right)
+  return process.platform === 'win32'
+    ? resolvedLeft.toLowerCase() === resolvedRight.toLowerCase()
+    : resolvedLeft === resolvedRight
+}
 export interface WorktreeServiceOptions {
   directory: string
   location(workspaceId: string): { path: string; name: string } | undefined
@@ -37,7 +44,7 @@ export class WorktreeService {
   async initialize() {
     for (const path of [this.options.directory, this.activeDirectory, this.archiveDirectory, this.hooksDirectory]) {
       await mkdir(path, { recursive: true, mode: 0o700 })
-      if ((await lstat(path)).isSymbolicLink() || await realpath(path) !== resolve(path)) throw new ProjectWorkflowError('The managed worktree directory changed identity.')
+      if ((await lstat(path)).isSymbolicLink() || !samePath(await realpath(path), path)) throw new ProjectWorkflowError('The managed worktree directory changed identity.')
     }
     this.records = (await readWorkflowFile(this.file, documentSchema, { version: 1, worktrees: [] })).worktrees
     for (const record of this.records) {
@@ -168,9 +175,9 @@ export class WorktreeService {
   }
   private async verify(record: ManagedWorktree, path: string) {
     this.assertOwned(record)
-    if ((await lstat(path)).isSymbolicLink() || await realpath(path) !== path ||
-        await this.commonDirectory(path) !== record.commonDirectory ||
-        (await this.git(path, ['rev-parse', '--show-toplevel'])).trim() !== path ||
+    if ((await lstat(path)).isSymbolicLink() || !samePath(await realpath(path), path) ||
+        !samePath(await this.commonDirectory(path), record.commonDirectory) ||
+        !samePath((await this.git(path, ['rev-parse', '--show-toplevel'])).trim(), path) ||
         !(await lstat(join(path, '.git'))).isFile()) {
       throw new ProjectWorkflowError('The managed working copy changed identity. No files were moved.')
     }

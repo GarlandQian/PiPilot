@@ -10,6 +10,14 @@ const documentSchema = z.object({ version: z.literal(1), revision: z.number().in
   projects: z.record(z.string(), z.array(projectActionSchema).max(30)), runs: z.array(projectActionRunSchema).max(100) }).strict()
 interface RunningAction { child: ChildProcess; finished: Promise<void>; killTimer?: ReturnType<typeof setTimeout>; logTimer?: ReturnType<typeof setTimeout> }
 
+function samePath(left: string, right: string) {
+  const resolvedLeft = resolve(left)
+  const resolvedRight = resolve(right)
+  return process.platform === 'win32'
+    ? resolvedLeft.toLowerCase() === resolvedRight.toLowerCase()
+    : resolvedLeft === resolvedRight
+}
+
 export interface ProjectActionServiceOptions {
   filePath: string
   location(workspaceId: string): { path: string } | undefined
@@ -99,7 +107,7 @@ export class ProjectActionService {
     try {
       const location = this.options.location(workspaceId)!
       const root = await realpath(location.path)
-      if (root !== location.path) throw new ProjectWorkflowError('The project directory changed identity. Reopen it before running commands.')
+      if (!samePath(root, location.path)) throw new ProjectWorkflowError('The project directory changed identity. Reopen it before running commands.')
       const cwd = await realpath(resolve(root, this.relativeDirectory(action.cwd)))
       const distance = relative(root, cwd)
       if (distance === '..' || distance.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) || isAbsolute(distance) || !(await stat(cwd)).isDirectory()) {
@@ -120,7 +128,7 @@ export class ProjectActionService {
       })
       this.assertActive(workspaceId)
       const child = this.platform === 'win32'
-        ? spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', command], { cwd, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
+        ? spawn(command, { cwd, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], shell: true })
         : spawn('/bin/sh', ['-c', command], { cwd, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
       let complete!: () => void
       const finished = new Promise<void>((resolve) => { complete = resolve })
