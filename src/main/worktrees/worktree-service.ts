@@ -191,7 +191,10 @@ export class WorktreeService {
   private async commonDirectory(path: string) { return realpath(resolve(path, (await this.git(path, ['rev-parse', '--git-common-dir'])).trim())) }
   private async lock(_record: ManagedWorktree, path: string) {
     const listing = await this.git(path, ['worktree', 'list', '--porcelain', '-z'])
-    const section = listing.split('\0\0').find((entry) => entry.startsWith(`worktree ${path}\0`))
+    const section = listing.split('\0\0').find((entry) => {
+      const worktree = entry.split('\0', 1)[0] ?? ''
+      return worktree.startsWith('worktree ') && samePath(worktree.slice('worktree '.length), path)
+    })
     if (section?.split('\0').some((line) => line === 'locked' || line.startsWith('locked '))) return
     await this.git(path, ['worktree', 'lock', '--reason', 'PiPilot archived working copy', path])
   }
