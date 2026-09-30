@@ -3832,7 +3832,7 @@ test('launches a sandboxed shell with a narrow validated bridge', { tag: '@integ
     expect(appInfo).toMatchObject({
       name: 'PiPilot',
       version: PIPILOT_VERSION,
-      electronVersion: '44.2.0',
+      electronVersion: '44.5.0',
       mode: 'development',
     })
     const nativeWindowMode = await electronApp.evaluate(({ BrowserWindow }) => {
