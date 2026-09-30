@@ -288,10 +288,10 @@ function McpDocumentSettings({ scope, active = true, onDirtyChange, onManagePack
         <span>{t(nativeWritesBlocked ? 'settings.mcp.extensionOverride' : isNativeMcpCommand(mcpCommand) ? 'settings.mcp.nativeDescription' : 'settings.mcp.nativeConfigured')}</span>
         <Button variant="ghost" size="sm" disabled={!runtimeReady || !mcpCommand || loading || saving} onClick={() => void showRuntimeStatus()}>{t('settings.mcp.runtimeStatus')}</Button>
       </div>
-      {nativeWritesBlocked ? <div className="space-y-2 rounded-lg border border-warning/30 bg-warning/5 p-3 text-caption" role="alert"><p>{t('settings.mcp.extensionMigrationBlocked')}</p>{onManagePackages ? <Button variant="outline" size="sm" onClick={onManagePackages}>{t('settings.mcp.managePackages')}</Button> : null}</div> : null}
+      {nativeWritesBlocked ? <div className="space-y-2 rounded-lg bg-warning/10 p-3.5 text-caption" role="alert"><p>{t('settings.mcp.extensionMigrationBlocked')}</p>{onManagePackages ? <Button variant="outline" size="sm" onClick={onManagePackages}>{t('settings.mcp.managePackages')}</Button> : null}</div> : null}
 
       {snapshotIsCurrent && snapshot.legacy ? (
-        <div className="space-y-2 rounded-lg border border-border p-3 text-caption">
+        <div className="mac-box space-y-2 p-3.5 text-caption">
           <p>{t(snapshot.exists ? 'settings.mcp.migration.existing' : 'settings.mcp.migration.available')}</p>
           <p className="break-all font-mono text-micro text-muted-foreground">{snapshot.legacy.path}</p>
           {!snapshot.exists ? <Button variant="outline" size="sm" disabled={dirty || loading || saving} onClick={() => convertDraft(snapshot.legacy!.content)}>{t('settings.mcp.migration.import')}</Button> : null}
@@ -302,7 +302,7 @@ function McpDocumentSettings({ scope, active = true, onDirtyChange, onManagePack
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 pb-3">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <div className="inline-flex rounded-md bg-muted p-0.5" role="group" aria-label={t('settings.mcp.editMode')}>
+          <div className="mac-segmented" role="group" aria-label={t('settings.mcp.editMode')}>
             {(['form', 'json'] as const).map((candidate) => (
               <button
                 key={candidate}
@@ -355,13 +355,13 @@ function McpDocumentSettings({ scope, active = true, onDirtyChange, onManagePack
             aria-describedby={parsed.diagnostics.length > 0 ? diagnosticsId : undefined}
             aria-label={t('settings.mcp.mode.json')}
             disabled={loading || saving || !snapshotIsCurrent}
-            className="min-h-[28rem] resize-y rounded-lg bg-muted/20 px-4 py-3 font-mono text-caption leading-relaxed"
+            className="min-h-[28rem] resize-y rounded-lg bg-surface-inset px-4 py-3 font-mono text-caption leading-relaxed dark:bg-black/20"
           />
         </div>
       )}
 
       {parsed.diagnostics.length > 0 && (
-        <div id={diagnosticsId} className="mt-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2" role="alert">
+        <div id={diagnosticsId} className="mt-2 rounded-lg bg-destructive/8 px-3 py-2" role="alert">
           {parsed.diagnostics.slice(0, 5).map((diagnostic, index) => (
             <p key={`${diagnostic.code}:${diagnostic.offset}:${index}`} className="text-micro text-destructive">
               {t('settings.mcp.diagnostic', {

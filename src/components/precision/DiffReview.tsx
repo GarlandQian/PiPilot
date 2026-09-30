@@ -76,7 +76,7 @@ export function ReviewCommentCard({ reference }: { reference: PrecisionReference
   const [text, setText] = React.useState(reference.comment ?? '')
   React.useEffect(() => { setText(reference.comment ?? ''); setEditing(false) }, [reference])
   if (!review) return null
-  return <div className="my-2 rounded-md border border-border bg-background p-2 text-caption" data-review-comment={reference.id}>
+  return <div className="glass my-2 rounded-[12px] p-2.5 text-caption" data-review-comment={reference.id}>
     <div className="flex items-center gap-1"><p className="min-w-0 flex-1 truncate font-mono text-micro">{precisionReferenceLabel(reference)} · {t(reference.side === 'deletions' ? 'precision.oldSide' : 'precision.newSide')}</p>
       <Button variant="ghost" size="icon-xs" aria-label={t('precision.editComment')} disabled={review.pending} onClick={() => setEditing((value) => !value)}><TbPencil aria-hidden /></Button>
       <Button variant="ghost" size="icon-xs" aria-label={t('precision.deleteComment')} disabled={review.pending} onClick={() => void review.remove(reference.id)}><TbTrash aria-hidden /></Button>
@@ -84,7 +84,7 @@ export function ReviewCommentCard({ reference }: { reference: PrecisionReference
     {review.freshness(reference) !== 'current' ? <p className="my-1 text-warning" role="status">{t(review.freshness(reference) === 'stale' ? 'precision.stale' : 'precision.verifying')}</p> : null}
     <details className="my-1 text-micro text-muted-foreground"><summary className="cursor-pointer">{t('precision.snapshot')}</summary><pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words font-mono">{reference.text}</pre></details>
     {editing ? <form onSubmit={(event) => { event.preventDefault(); void review.save({ ...reference, comment: text.trim() }).then((saved) => { if (saved) setEditing(false) }) }}>
-      <textarea autoFocus aria-label={t('precision.comment')} value={text} maxLength={MAX_REVIEW_COMMENT} onChange={(event) => setText(event.target.value)} className="my-1 min-h-20 w-full rounded border border-input bg-background p-2 outline-none focus-visible:focus-ring" />
+      <textarea autoFocus aria-label={t('precision.comment')} value={text} maxLength={MAX_REVIEW_COMMENT} onChange={(event) => setText(event.target.value)} className="my-1 min-h-20 w-full rounded-md bg-control p-2 shadow-[0_0_0_0.5px_var(--color-input),inset_0_0.5px_1px_rgb(0_0_0/0.06)] outline-none focus-visible:shadow-[0_0_0_0.5px_var(--color-ring),0_0_0_3.5px_color-mix(in_srgb,var(--color-ring)_45%,transparent)] dark:bg-white/5" />
       <Button size="xs" type="submit" disabled={!text.trim() || review.pending}>{t('precision.saveComment')}</Button>
     </form> : <p className="whitespace-pre-wrap break-words">{reference.comment}</p>}
   </div>
@@ -130,7 +130,7 @@ export function SelectedDiffComment({ file, selection, text, onTextChange, onClo
   const selected = selectedDiffText(file.patch ?? '', selection)
   if (!review?.ready || !selected) return <p role="alert" className="p-2 text-caption text-warning">{t('precision.invalidDiffSelection')}</p>
   const freshness = review.freshness({ sourceId: file.id, revision: file.revision })
-  return <form className="my-2 rounded-md border border-ring bg-background p-3 text-caption" data-review-new-comment onSubmit={(event) => {
+  return <form className="glass my-2 rounded-[14px] p-3 text-caption shadow-[var(--glass-shadow),0_0_0_1.5px_var(--color-ring)]" data-review-new-comment onSubmit={(event) => {
     event.preventDefault()
     if (!text.trim() || file.refreshing || file.errorCode) return
     void review.save({ id: crypto.randomUUID(), ownerKey: review.ownerKey, kind: 'diff', sourceId: file.id,
@@ -139,7 +139,7 @@ export function SelectedDiffComment({ file, selection, text, onTextChange, onClo
     <p className="mb-2 font-mono text-micro">{file.path}:{selected.startLine}–{selected.endLine} · {t(selected.side === 'deletions' ? 'precision.oldSide' : 'precision.newSide')}</p>
     {freshness !== 'current' ? <p className="my-2 text-warning" role="status">{t(freshness === 'stale' ? 'precision.stale' : 'precision.verifying')}</p> : null}
     <textarea autoFocus aria-label={t('precision.comment')} placeholder={t('precision.commentPlaceholder')} value={text} onChange={(event) => onTextChange(event.target.value)} maxLength={MAX_REVIEW_COMMENT}
-      className="min-h-20 w-full rounded border border-input bg-background p-2 outline-none focus-visible:focus-ring" />
+      className="min-h-20 w-full rounded-md bg-control p-2 shadow-[0_0_0_0.5px_var(--color-input),inset_0_0.5px_1px_rgb(0_0_0/0.06)] outline-none focus-visible:shadow-[0_0_0_0.5px_var(--color-ring),0_0_0_3.5px_color-mix(in_srgb,var(--color-ring)_45%,transparent)] dark:bg-white/5" />
     <div className="mt-2 flex gap-2"><Button size="xs" type="submit" disabled={!text.trim() || review.pending || Boolean(file.refreshing || file.errorCode)}>{t('precision.saveComment')}</Button>
       <Button size="xs" variant="ghost" type="button" onClick={onClose}>{t('common.cancel')}</Button></div>
   </form>

@@ -32,7 +32,7 @@ export const UserMessage = React.memo(function UserMessage({ turn }: { turn: Ext
         .format(turn.timestamp)
   return (
     <div className="group/question ml-auto w-fit min-w-0 max-w-[90%]" data-conversation-question>
-      <div className="min-w-0 rounded-2xl rounded-tr-md border border-border/40 bg-surface-inset px-4 py-3">
+      <div className="min-w-0 rounded-[18px] bg-[#e9e9eb] px-3.5 py-2 dark:bg-[#3a3a3c]">
         <div id={questionId} className={cn('conversation-question-content min-w-0 text-foreground', longQuestion && !expanded && '[&_[data-prompt-message]]:max-h-40 [&_[data-prompt-message]]:overflow-hidden')}>
           <QuoteSelection source={{ kind: 'message', sourceId: turn.anchorEntryId ?? turn.id, label: t('precision.userMessage') }}>
             <UserMessageContent text={turn.text} />
@@ -265,7 +265,7 @@ export const ThinkingMessage = React.memo(function ThinkingMessage({
           type="button"
           aria-expanded={open}
           aria-controls={contentId}
-          className="flex w-full min-w-0 cursor-pointer items-center gap-1.5 rounded-sm px-0.5 py-1 text-left text-caption outline-none transition-colors duration-(--duration-fast) hover:bg-accent/20 focus-visible:focus-ring motion-reduce:transition-none"
+          className="flex w-fit min-w-0 items-center gap-1.5 rounded-full py-1 pr-2.5 pl-1.5 text-left text-caption outline-none transition-colors duration-(--duration-fast) hover:bg-fill focus-visible:focus-ring motion-reduce:transition-none"
         >
           <TbChevronRight
             className={cn(
@@ -281,7 +281,7 @@ export const ThinkingMessage = React.memo(function ThinkingMessage({
         </button>
       </CollapsibleTrigger>
       <CollapsibleContent id={contentId}>
-        <div className="mb-2 ml-2 mt-2 border-l-2 border-border/70 py-1 pl-4 text-caption leading-relaxed text-muted-foreground">
+        <div className="mac-box mt-1.5 mb-2 px-4 py-3 text-caption leading-relaxed text-muted-foreground">
           <MarkdownContent markdown={turn.text} streaming={streaming} />
         </div>
       </CollapsibleContent>
@@ -378,21 +378,21 @@ export const PlanModeMessage = React.memo(function PlanModeMessage({
   return (
     <section
       aria-label={t('plan.title')}
-      className="overflow-hidden rounded-md border border-border bg-card"
+      className="overflow-hidden rounded-[16px] bg-surface-raised shadow-[var(--glass-shadow)] dark:bg-white/[0.04]"
     >
-      <header className="flex min-h-9 items-center gap-2 border-b border-border bg-muted/35 px-3 py-1.5">
-        <TbFileDescription className="size-4 shrink-0 text-sage" aria-hidden />
-        <h3 className="min-w-0 flex-1 text-caption font-medium text-foreground">
+      <header className="flex min-h-11 items-center gap-2.5 border-b border-border px-3.5 py-2">
+        <span className="grid size-6 shrink-0 place-items-center rounded-[6px] bg-primary bg-[linear-gradient(to_bottom,rgb(255_255_255/0.2),transparent)] text-white" aria-hidden><TbFileDescription className="size-3.5" /></span>
+        <h3 className="min-w-0 flex-1 text-app font-semibold text-foreground">
           {t('plan.title')}
         </h3>
-        <span className="shrink-0 text-micro text-muted-foreground">
+        <span className="shrink-0 rounded-full bg-fill-strong px-2 py-px text-micro font-medium text-muted-foreground">
           {t(planLifecycleKeys[revisionSent ? 'planning' : turn.lifecycle])}
         </span>
       </header>
-      <div className="max-h-[50vh] overflow-y-auto px-3 py-2.5">
+      <div className="max-h-[50vh] overflow-y-auto px-4 py-3">
         <MarkdownContent markdown={turn.markdown} />
       </div>
-      <footer className="flex min-h-10 flex-wrap items-center gap-1 border-t border-border px-2 py-1.5">
+      <footer className="flex min-h-11 flex-wrap items-center gap-1.5 border-t border-border bg-fill/50 px-3 py-2">
         {turn.actions.map((action) => {
           const Icon = planActionIcons[action]
           return (
@@ -508,7 +508,7 @@ export const ResponseActions = React.memo(function ResponseActions({
             aria-label={copyLabel}
           >
             {copyState === 'copied'
-              ? <TbCheck className="text-sage" aria-hidden />
+              ? <TbCheck className="text-success" aria-hidden />
               : <TbCopy aria-hidden />}
           </Button>
         </TooltipTrigger>

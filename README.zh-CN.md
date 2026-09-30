@@ -6,14 +6,14 @@ PiPilot 是基于官方 [Pi coding agent](https://github.com/earendil-works/pi) 
 
 Pi 继续管理自己的 Session、配置和资源。PiPilot 负责桌面体验，不维护另一套 Agent Runtime，也不把 Pi 数据迁移到私有格式中。
 
-**源码版本：**0.1.0 · [下载发布版本](https://github.com/GarlandQian/PiPilot/releases)
+**源码版本：**0.2.0 · [下载发布版本](https://github.com/GarlandQian/PiPilot/releases)
 
 [![CI](https://github.com/GarlandQian/PiPilot/actions/workflows/ci.yml/badge.svg)](https://github.com/GarlandQian/PiPilot/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2f3437.svg)](LICENSE)
 
 ## 主要功能
 
-- **项目与对话**：由用户明确选择项目目录，也可发起无项目聊天；浏览、搜索、整理和管理 Pi Session。
+- **项目与对话**：由用户明确选择项目目录，也可发起无项目聊天；浏览、搜索、整理和管理 Pi Session。可按活动状态筛选、按最近活动或名称排序，并在侧栏「显示选项」中切换归档任务。
 - **对话工作区**：在同一时间线查看消息与工具活动；排队、编辑或调整后续消息；使用 Commands、Skills、文件引用、模型选择和 Thinking 控制。
 - **本机草稿**：重启后恢复未发送的文字、引用和图片。草稿保存在 PiPilot 本机应用数据中；发送或清空输入后移除对应草稿，删除会话时同步清理，退出前等待未完成的草稿写入。
 - **项目工具**：查看文件和 diff、搜索命令输出、检查子代理活动，并使用按项目组织的终端标签页。
@@ -22,12 +22,16 @@ Pi 继续管理自己的 Session、配置和资源。PiPilot 负责桌面体验�
 - **侧边追问**：围绕所选文字，在右侧使用独立的官方 Pi 会话提问。关闭视图不会停止任务，也不会删除已保存的会话；点击「停止追问」请求取消，完成、取消和失败分别显示状态。
 - **工作副本与项目动作**：从项目菜单创建本地 Git worktree，保存带平台覆盖的安装、测试、开发命令，明确点击运行并查看日志。创建时也可选择并确认一个已保存的 setup 动作。归档将完整工作副本移入本机保存目录，保留暂存、未暂存、未跟踪和忽略文件，不释放磁盘空间。归档前请切换到其他项目，并停止本项目终端与动作；执行中、排队中、等待交互或持有租约的会话也会阻止归档。恢复时返回原路径，路径已被占用则拒绝覆盖；Pi 会话文件保持官方原位置。不自动提交、合并或推送。
 - **Pi 配置**：管理模型与 Provider、Packages、Resources、Extensions、Skills、Prompts、Themes，以及全局或项目级 MCP 设置。
-- **桌面偏好**：支持浅色和深色主题、英文和简体中文、键盘操作及可配置的终端字体。
+- **桌面偏好**：支持系统、浅色和深色主题；可将 Liquid Glass 表面从透明调到着色，并配置语言、键盘操作和终端字体。
 - **External Control**：可选的本地 MCP 接口，用于查看对话状态和控制 Prompt。默认关闭，详见 [External Control](#external-control)。
 
 PiPilot 是 Electron 桌面应用，不提供 Web 版本。
 
 切换项目不会停止后台会话。闲置 Runtime 缓存使用全局预算，空项目 Host 在宽限期后退出；执行中、排队中、等待交互或持有租约的工作受到保护。回收缓存不会移除左侧的会话记录。
+
+## 桌面偏好
+
+在 **设置 > 外观** 中选择系统、浅色或深色主题，并用 Liquid Glass 滑块调整玻璃表面的透明/着色程度。新增该偏好时会保留已有外观设置。会话侧栏始终显示「全部」「运行中」「需关注」筛选；「显示选项」可更改排序方式或显示归档任务。
 
 ## 下载与安装
 

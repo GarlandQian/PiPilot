@@ -1,7 +1,7 @@
 @import 'tailwindcss' source(none);
 
 ::highlight(pipilot-search) {
-  background-color: color-mix(in srgb, var(--color-ring) 28%, transparent);
+  background-color: color-mix(in srgb, #ffd60a 55%, transparent);
   color: var(--color-foreground);
 }
 
@@ -9,117 +9,200 @@
 @source '../../index.html';
 
 @custom-variant dark (&:is(.dark *));
+/* Only when running with native macOS chrome (see public/theme-bootstrap.js). */
+@custom-variant mac (&:where([data-platform='darwin'] *));
+@custom-variant not-mac (&:where(:root:not([data-platform='darwin']) *));
 
-/* ============ design tokens ============ */
+/* ==================================================================
+   macOS design tokens
+   Light values follow the macOS system palette (labelColor, separator,
+   controlAccentColor = systemBlue). Dark values follow the dark
+   appearance. The sidebar ("source list") is transparent on macOS so
+   the native NSVisualEffectView vibrancy shows through.
+   ================================================================== */
 :root,
 .light {
   color-scheme: light;
-  --color-background: #fcfcfd;
-  --color-foreground: #27303d;
-  --color-surface: #fcfcfd;
+  --color-window: var(--color-background);
+  --source-list-solid: #ececee;
+  --color-source-list: var(--source-list-solid);
+  --color-source-list-selected: rgb(0 0 0 / 0.085);
+  --color-toolbar: #ffffff;
+  --color-background: #ffffff;
+  --color-foreground: #1d1d1f;
+  --color-surface: #ffffff;
   --color-surface-raised: #ffffff;
-  --color-surface-inset: #f1f3f6;
-  --color-sidebar: #f1f3f6;
-  --color-selected: #dfe6ef;
+  --color-surface-inset: #f5f5f7;
+  --color-sidebar: #f6f6f8;
+  --color-selected: rgb(0 0 0 / 0.07);
   --color-composer: #ffffff;
-  --color-card: hsl(0 0% 100%);
+  --color-card: #ffffff;
   --color-card-foreground: var(--color-foreground);
-  --color-popover: hsl(0 0% 100%);
+  --color-popover: #f6f6f8;
   --color-popover-foreground: var(--color-foreground);
-  --color-primary: #34465d;
-  --color-primary-foreground: hsl(220 14% 97%);
-  --color-secondary: #e8ecf2;
-  --color-secondary-foreground: #34465d;
-  --color-muted: #f0f2f5;
-  --color-muted-foreground: #687486;
-  --color-accent: #e5ecf5;
-  --color-accent-foreground: #27303d;
-  --color-border: #e0e5ec;
-  --color-input: #c9d1dc;
-  --color-ring: #4e749e;
-  --color-sage: #4e749e;
-  --color-sage-foreground: hsl(220 14% 97%);
-  --color-success: #287548;
-  --color-warning: #946414;
-  --color-scrollbar: hsl(220 8% 78%);
-  --color-scrollbar-hover: hsl(220 8% 68%);
-  --color-warning-foreground: hsl(220 14% 97%);
-  --color-destructive: #b13e4b;
+  --color-primary: #007aff;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: rgb(0 0 0 / 0.05);
+  --color-secondary-foreground: #1d1d1f;
+  --color-muted: #f2f2f4;
+  --color-muted-foreground: #6e6e73;
+  --color-accent: rgb(0 0 0 / 0.05);
+  --color-accent-foreground: #1d1d1f;
+  --color-border: rgb(0 0 0 / 0.1);
+  --color-input: rgb(0 0 0 / 0.15);
+  --color-ring: #007aff;
+  --color-sage: #007aff;
+  --color-sage-foreground: #ffffff;
+  --color-success: #1f8f3a;
+  --color-warning: #b86200;
+  --color-warning-foreground: #ffffff;
+  --color-destructive: #e0352b;
   --color-error: var(--color-destructive);
-  --color-destructive-foreground: hsl(220 14% 97%);
-  --color-info: #396f9a;
+  --color-destructive-foreground: #ffffff;
+  --color-info: #007aff;
+  --color-scrollbar: rgb(0 0 0 / 0.24);
+  --color-scrollbar-hover: rgb(0 0 0 / 0.42);
+  /* fills: quaternary/tertiary system fills for borderless controls */
+  --color-fill: rgb(0 0 0 / 0.05);
+  --color-fill-strong: rgb(0 0 0 / 0.09);
+  /* grouped form boxes (System Settings style) */
+  --color-group: rgb(0 0 0 / 0.028);
+  --color-group-border: rgb(0 0 0 / 0.06);
+  /* push buttons, text fields */
+  --color-control: #ffffff;
 
-  /* radius scale (rounded-* utilities resolve through @theme inline refs) */
+  /* radius scale — macOS 27 uses larger, concentric corners */
+  --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 8px;
-  --radius-lg: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 14px;
+  --radius-2xl: 20px;
   --radius: var(--radius-md); /* legacy alias */
-  --radius-composer: 12px;
-  --conversation-width: 880px;
-  --shadow-composer: 0 5px 24px rgb(55 40 20 / 5%);
+  --radius-composer: 22px;
+  --conversation-width: 780px;
 
-  /* motion */
+  /* Liquid Glass (macOS 27): translucent fill, darkened rim, bright specular edge.
+     --glass-tint (0 clear … 1 tinted) is the user's Liquid Glass preference. */
+  --glass-tint: 0.5;
+  --glass-fill: rgb(255 255 255 / calc(0.3 + var(--glass-tint) * 0.66));
+  --glass-shadow: inset 0 1px 0.5px rgb(255 255 255 / 0.95), inset 0 -0.5px 0.5px rgb(255 255 255 / 0.5),
+    0 0 0 0.5px rgb(0 0 0 / 0.16), 0 2px 10px -2px rgb(0 0 0 / 0.14);
+  --glass-hover: rgb(0 0 0 / 0.06);
+  /* frosted unified toolbar and menu materials */
+  --toolbar-material: color-mix(in srgb, var(--color-toolbar) calc(40% + var(--glass-tint) * 58%), transparent);
+  --material-mix: calc(62% + var(--glass-tint) * 36%);
+  --material-thick-mix: calc(70% + var(--glass-tint) * 28%);
+
+  /* elevation */
+  --shadow-control: 0 0 0 0.5px rgb(0 0 0 / 0.14), 0 0.5px 1.5px rgb(0 0 0 / 0.12);
+  --shadow-popover: 0 0 0 0.5px rgb(0 0 0 / 0.12), 0 12px 32px -6px rgb(0 0 0 / 0.22),
+    0 3px 8px rgb(0 0 0 / 0.07);
+  --shadow-window: 0 0 0 0.5px rgb(0 0 0 / 0.14), 0 28px 70px -10px rgb(0 0 0 / 0.32),
+    0 8px 20px rgb(0 0 0 / 0.1);
+  --shadow-composer: 0 0 0 0.5px rgb(0 0 0 / 0.09), 0 8px 28px -8px rgb(0 0 0 / 0.16),
+    0 1px 3px rgb(0 0 0 / 0.05);
+
+  /* motion: macOS uses short, gently decelerating curves */
   --duration-fast: 120ms;
-  --duration-base: 180ms;
-  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --duration-base: 200ms;
+  --ease-standard: cubic-bezier(0.25, 0.1, 0.25, 1);
+  --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
 
   /* Dynamic, set by AppSettingsApplier (settings store) */
-  --app-font-size: 14px;
+  --app-font-size: 13px;
   --app-caption-size: 12px;
-  --app-title-size: 16px;
-  --code-font-size: 13px;
-  --font-sans: Inter, 'SF Pro Text', 'SF Pro Display', 'Segoe UI', 'PingFang SC',
-    'Microsoft YaHei', system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', SFMono-Regular, 'Cascadia Code', 'Fira Code', Consolas, monospace;
-  --control-h: 32px;
-  --row-h: 34px;
-  --frame-header-h: 48px;
-  --tool-row-h: 38px;
-  --tree-row-h: 30px;
+  --app-title-size: 15px;
+  --code-font-size: 12px;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI Variable Text',
+    'Segoe UI', Inter, 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-mono: 'SF Mono', SFMono-Regular, ui-monospace, Menlo, 'JetBrains Mono', 'Cascadia Code',
+    Consolas, monospace;
+  --control-h: 28px;
+  --row-h: 28px;
+  --frame-header-h: 52px;
+  --tool-row-h: 32px;
+  --tree-row-h: 24px;
   --space-2x: 2px;
   --space-3x: 3px;
   --vsession-gap: 10px;
+  /* width reserved for the inset traffic lights (x=18, three 12px lights) */
+  --traffic-light-gutter: 0px;
 }
 
 .dark {
   color-scheme: dark;
-  --color-background: #191c22;
-  --color-foreground: #e4e9f1;
-  --color-surface: #191c22;
-  --color-surface-raised: #282e38;
-  --color-surface-inset: #13161c;
-  --color-sidebar: #13161c;
-  --color-selected: #2b3545;
-  --color-composer: #222730;
-  --color-card: #222730;
+  --source-list-solid: #28282a;
+  --color-source-list-selected: rgb(255 255 255 / 0.1);
+  --color-toolbar: #1e1e1f;
+  --color-background: #1e1e1f;
+  --color-foreground: #e8e8ec;
+  --color-surface: #1e1e1f;
+  --color-surface-raised: #2a2a2c;
+  --color-surface-inset: #262628;
+  --color-sidebar: #232325;
+  --color-selected: rgb(255 255 255 / 0.09);
+  --color-composer: #28282a;
+  --color-card: #262628;
   --color-card-foreground: var(--color-foreground);
-  --color-popover: #282e38;
+  --color-popover: #2c2c2e;
   --color-popover-foreground: var(--color-foreground);
-  --color-primary: hsl(240 6% 93%);
-  --color-primary-foreground: hsl(240 6% 9%);
-  --color-secondary: #303847;
-  --color-secondary-foreground: #e4e9f1;
-  --color-muted: #252b35;
-  --color-muted-foreground: #9ca9ba;
-  --color-accent: #2d3a4e;
-  --color-accent-foreground: #e4e9f1;
-  --color-border: #303744;
-  --color-input: #414e62;
-  --shadow-composer: 0 3px 16px rgb(0 0 0 / 16%), 0 1px 3px rgb(0 0 0 / 10%);
-  --color-ring: #91b2de;
-  --color-sage: #91b2de;
-  --color-sage-foreground: #172232;
-  --color-success: #88c69e;
-  --color-warning: #ddba73;
-  --color-warning-foreground: hsl(40 60% 12%);
-  --color-destructive: #ee919a;
-  --color-destructive-foreground: #30171d;
-  --color-scrollbar: hsl(240 5% 26%);
-  --color-scrollbar-hover: hsl(240 5% 34%);
-  --color-info: #8bb8dd;
+  --color-primary: #0a84ff;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: rgb(255 255 255 / 0.08);
+  --color-secondary-foreground: #e8e8ec;
+  --color-muted: #2a2a2c;
+  --color-muted-foreground: #98989f;
+  --color-accent: rgb(255 255 255 / 0.07);
+  --color-accent-foreground: #e8e8ec;
+  --color-border: rgb(255 255 255 / 0.1);
+  --color-input: rgb(255 255 255 / 0.14);
+  --color-ring: #0a84ff;
+  --color-sage: #0a84ff;
+  --color-sage-foreground: #ffffff;
+  --color-success: #32d74b;
+  --color-warning: #ff9f0a;
+  --color-warning-foreground: #2a1a00;
+  --color-destructive: #ff453a;
+  --color-destructive-foreground: #ffffff;
+  --color-info: #409cff;
+  --color-scrollbar: rgb(255 255 255 / 0.26);
+  --color-scrollbar-hover: rgb(255 255 255 / 0.42);
+  --color-fill: rgb(255 255 255 / 0.07);
+  --color-fill-strong: rgb(255 255 255 / 0.12);
+  --color-group: rgb(255 255 255 / 0.04);
+  --color-group-border: rgb(255 255 255 / 0.07);
+  --color-control: rgb(255 255 255 / 0.13);
+
+  --glass-fill: rgb(58 58 62 / calc(0.3 + var(--glass-tint) * 0.58));
+  --glass-shadow: inset 0 1px 0.5px rgb(255 255 255 / 0.24), inset 0 0 0 0.5px rgb(255 255 255 / 0.07),
+    0 0 0 0.5px rgb(0 0 0 / 0.7), 0 3px 12px -2px rgb(0 0 0 / 0.5);
+  --glass-hover: rgb(255 255 255 / 0.08);
+
+  --shadow-control: 0 0 0 0.5px rgb(0 0 0 / 0.5), inset 0 0.5px 0 rgb(255 255 255 / 0.1),
+    0 1px 1.5px rgb(0 0 0 / 0.25);
+  --shadow-popover: inset 0 0 0 0.5px rgb(255 255 255 / 0.12), 0 0 0 0.5px rgb(0 0 0 / 0.6),
+    0 14px 36px -6px rgb(0 0 0 / 0.55);
+  --shadow-window: inset 0 0 0 0.5px rgb(255 255 255 / 0.1), 0 0 0 0.5px rgb(0 0 0 / 0.7),
+    0 30px 80px -10px rgb(0 0 0 / 0.65);
+  --shadow-composer: inset 0 0 0 0.5px rgb(255 255 255 / 0.08), 0 0 0 0.5px rgb(0 0 0 / 0.5),
+    0 10px 30px -8px rgb(0 0 0 / 0.5);
+}
+
+/* macOS: native window chrome + vibrancy. Everything that is not the sidebar
+   paints its own opaque surface; the window and sidebar stay transparent. */
+:root[data-platform='darwin'] {
+  --color-window: transparent;
+  /* Native vibrancy by default; the tinted half of Liquid Glass frosts it over. */
+  --color-source-list: color-mix(in srgb, var(--source-list-solid) max(0%, calc((var(--glass-tint) - 0.5) * 170%)), transparent);
+  --traffic-light-gutter: 76px;
 }
 
 @theme inline {
+  --color-window: var(--color-window);
+  --color-source-list: var(--color-source-list);
+  --color-source-list-selected: var(--color-source-list-selected);
+  --color-toolbar: var(--color-toolbar);
   --color-background: var(--color-background);
   --color-foreground: var(--color-foreground);
   --color-surface: var(--color-surface);
@@ -154,21 +237,79 @@
   --color-scrollbar: var(--color-scrollbar);
   --color-scrollbar-hover: var(--color-scrollbar-hover);
   --color-info: var(--color-info);
+  --color-fill: var(--color-fill);
+  --color-fill-strong: var(--color-fill-strong);
+  --color-group: var(--color-group);
+  --color-group-border: var(--color-group-border);
+  --color-control: var(--color-control);
 
-  --radius-lg: var(--radius-lg);
-  --radius-md: var(--radius-md);
+  --radius-xs: var(--radius-xs);
   --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+  --radius-2xl: var(--radius-2xl);
+
+  --shadow-control: var(--shadow-control);
+  --shadow-popover: var(--shadow-popover);
+  --shadow-window: var(--shadow-window);
 
   --ease-standard: var(--ease-standard);
+  --ease-spring: var(--ease-spring);
 
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
 }
 
-/* Shared focus ring: 2px ring color with 1px offset. Apply as `focus-visible:focus-ring`. */
+/* macOS focus ring: a soft accent halo hugging the control. */
 @utility focus-ring {
-  outline: 2px solid var(--color-ring);
-  outline-offset: 1px;
+  outline: 3px solid color-mix(in srgb, var(--color-ring) 50%, transparent);
+  outline-offset: 0;
+}
+
+/* Translucent menu / popover material (NSVisualEffectView .menu look). */
+@utility material {
+  background-color: color-mix(in srgb, var(--color-popover) var(--material-mix), transparent);
+  -webkit-backdrop-filter: blur(28px) saturate(1.9);
+  backdrop-filter: blur(28px) saturate(1.9);
+}
+
+/* Liquid Glass capsule: toolbar item groups, floating controls. */
+@utility glass {
+  background-color: var(--glass-fill);
+  -webkit-backdrop-filter: blur(14px) saturate(1.8);
+  backdrop-filter: blur(14px) saturate(1.8);
+  box-shadow: var(--glass-shadow);
+}
+
+/* macOS 27 frosted unified toolbar: content scrolls beneath it. */
+@utility toolbar-material {
+  background-color: var(--toolbar-material);
+  -webkit-backdrop-filter: blur(22px) saturate(1.8);
+  backdrop-filter: blur(22px) saturate(1.8);
+  box-shadow: 0 0.5px 0 var(--color-border);
+}
+
+/* Heavier material for Spotlight-like surfaces. */
+@utility material-thick {
+  background-color: color-mix(in srgb, var(--color-popover) var(--material-thick-mix), transparent);
+  -webkit-backdrop-filter: blur(40px) saturate(2);
+  backdrop-filter: blur(40px) saturate(2);
+}
+
+/* Title-bar drag regions. Interactive descendants opt back out. */
+@utility app-drag {
+  -webkit-app-region: drag;
+  -webkit-user-select: none;
+  user-select: none;
+}
+@utility app-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* Leaves room for the inset traffic lights on macOS. */
+@utility traffic-light-gutter {
+  padding-left: var(--traffic-light-gutter);
 }
 
 @layer base {
@@ -191,18 +332,62 @@
   body {
     font-family: var(--font-sans);
     font-size: 1rem; /* = var(--app-font-size) */
-    line-height: 1.55;
-    background: var(--color-background);
+    line-height: 1.45;
+    background: var(--color-window);
     color: var(--color-foreground);
-    font-feature-settings: 'cv02', 'cv11';
-    letter-spacing: 0;
+    letter-spacing: -0.003em;
+    /* macOS apps do not show the pointing hand on controls */
+    cursor: default;
+  }
+  button,
+  [role='button'],
+  [role='tab'],
+  [role='menuitem'],
+  [role='option'],
+  summary,
+  label {
+    cursor: default;
+  }
+  a[href] {
+    cursor: pointer;
+  }
+  .app-drag :is(button, a, input, select, textarea, [role='button'], [role='tab'], [role='combobox'], [role='separator'], [contenteditable='true'], [data-app-no-drag]) {
+    -webkit-app-region: no-drag;
   }
   :focus-visible {
-    outline: 2px solid var(--color-ring);
-    outline-offset: 2px;
+    outline: 3px solid color-mix(in srgb, var(--color-ring) 50%, transparent);
+    outline-offset: 0;
+  }
+  /* macOS disclosure triangles: a small chevron that rotates when open. */
+  summary {
+    list-style: none;
+  }
+  summary::-webkit-details-marker {
+    display: none;
+  }
+  summary::before {
+    content: '';
+    display: inline-block;
+    width: 5px;
+    height: 5px;
+    margin: 0 8px 1px 2px;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    opacity: 0.55;
+    transform: rotate(-45deg);
+    transition: transform var(--duration-fast) var(--ease-standard);
+  }
+  details[open] > summary::before {
+    transform: rotate(45deg);
+  }
+  /* Terminal.app draws no focus ring around the terminal surface. */
+  [role='application']:focus-visible,
+  .xterm:focus-visible,
+  .xterm :focus-visible {
+    outline: none;
   }
   ::selection {
-    background: color-mix(in srgb, var(--color-ring) 24%, transparent);
+    background: color-mix(in srgb, var(--color-ring) 28%, transparent);
   }
   input, textarea, [contenteditable='true'] { caret-color: var(--color-ring); }
 
@@ -211,22 +396,23 @@
   .text-body,
   .text-md-body {
     font-size: var(--app-font-size);
-    line-height: 1.55;
+    line-height: 1.45;
   }
   .text-title {
     font-size: var(--app-title-size);
     line-height: 1.3;
     font-weight: 600;
+    letter-spacing: -0.01em;
   }
   .text-caption,
   .text-secondary,
   .text-helper {
-    font-size: var(--app-caption-size, calc(var(--app-font-size) - 2px));
-    line-height: 1.45;
+    font-size: var(--app-caption-size, calc(var(--app-font-size) - 1px));
+    line-height: 1.4;
   }
   .text-micro {
-    font-size: calc(var(--app-caption-size, calc(var(--app-font-size) - 2px)) - 1px);
-    line-height: 1.4;
+    font-size: calc(var(--app-caption-size, calc(var(--app-font-size) - 1px)) - 1px);
+    line-height: 1.35;
   }
   .text-code,
   .code-body,
@@ -254,6 +440,39 @@
   }
   [data-slot='collapsible-content'][data-state='closed'] {
     animation: collapsible-up var(--duration-fast) var(--ease-standard);
+  }
+
+  /* ============ popover / sheet entrance (macOS-like) ============ */
+  @keyframes mac-pop-in {
+    from { opacity: 0; transform: scale(0.97); }
+    to { opacity: 1; transform: scale(1); }
+  }
+  @keyframes mac-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  /* Tailwind positions sheets with the `translate` property, so only scale here. */
+  @keyframes mac-sheet-in {
+    from { opacity: 0; transform: scale(0.96); }
+    to { opacity: 1; transform: scale(1); }
+  }
+  [data-slot='dropdown-menu-content'][data-state='open'],
+  [data-slot='dropdown-menu-sub-content'][data-state='open'],
+  [data-slot='context-menu-content'][data-state='open'],
+  [data-slot='popover-content'][data-state='open'],
+  [data-slot='select-content'][data-state='open'] {
+    animation: mac-pop-in 140ms var(--ease-spring);
+  }
+  [data-slot='tooltip-content'] {
+    animation: mac-fade-in 120ms ease-out;
+  }
+  [data-slot='dialog-overlay'][data-state='open'],
+  [data-slot='alert-dialog-overlay'][data-state='open'] {
+    animation: mac-fade-in var(--duration-base) ease-out;
+  }
+  [data-slot='dialog-content'][data-state='open'].mac-centered:not(.translate-x-0),
+  [data-slot='alert-dialog-content'][data-state='open'] {
+    animation: mac-sheet-in 240ms var(--ease-spring);
   }
 
   /* ============ thinking shimmer ============ */
@@ -318,33 +537,30 @@
     font-feature-settings: 'liga' off, 'calt' off;
   }
 
-  /* ============ slim scrollbars ============ */
-  .scroll-slim,
-  .scroll-slim * {
-    scrollbar-width: thin;
-    scrollbar-color: var(--color-scrollbar) transparent;
-  }
-  .scroll-slim ::-webkit-scrollbar,
-  .scroll-slim::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-  }
-  .scroll-slim ::-webkit-scrollbar-track,
-  .scroll-slim::-webkit-scrollbar-track {
+  /* ============ scrollbars ============
+     macOS keeps the native overlay scrollbars (they fade out and follow the
+     system "Show scroll bars" preference). Other platforms get slim, rounded
+     overlay-style thumbs that imitate them. */
+  :root:not([data-platform='darwin']) ::-webkit-scrollbar {
+    width: 11px;
+    height: 11px;
     background: transparent;
   }
-  .scroll-slim ::-webkit-scrollbar-thumb,
-  .scroll-slim::-webkit-scrollbar-thumb {
+  :root:not([data-platform='darwin']) ::-webkit-scrollbar-track,
+  :root:not([data-platform='darwin']) ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  :root:not([data-platform='darwin']) ::-webkit-scrollbar-thumb {
     background: var(--color-scrollbar);
-    border-radius: 3px;
+    background-clip: padding-box;
+    border: 3px solid transparent;
+    border-radius: 999px;
+    min-height: 32px;
   }
-  .scroll-slim ::-webkit-scrollbar-thumb:hover,
-  .scroll-slim::-webkit-scrollbar-thumb:hover {
+  :root:not([data-platform='darwin']) ::-webkit-scrollbar-thumb:hover {
     background: var(--color-scrollbar-hover);
-  }
-  .scroll-slim ::-webkit-scrollbar-thumb:active,
-  .scroll-slim::-webkit-scrollbar-thumb:active {
-    background: color-mix(in srgb, var(--color-sage) 55%, transparent);
+    background-clip: padding-box;
+    border-width: 2px;
   }
 
   /* ============ density hooks ============ */
@@ -361,30 +577,170 @@
     height: calc(var(--control-h) * 0.64);
     width: calc(var(--control-h) * 0.64);
   }
+
+  /* Range sliders: macOS knob on a thin accent track. */
+  input[type='range'] {
+    accent-color: var(--color-primary);
+  }
+}
+
+/* ==================================================================
+   System Settings–style grouped form boxes
+   ================================================================== */
+.mac-group {
+  border-radius: var(--radius-lg);
+  background: var(--color-group);
+  box-shadow: inset 0 0 0 0.5px var(--color-group-border);
+}
+.mac-group > * + * {
+  border-top: 0.5px solid var(--color-border);
+}
+.mac-group > * {
+  padding-inline: 14px;
+}
+.mac-group > :where(p, div:not([data-setting-row]):not(.mac-group-raw)) {
+  padding-block: 10px;
+}
+.mac-group > .mac-group-raw {
+  padding: 0;
+}
+.mac-group > :empty {
+  display: none;
+}
+
+/* Native <select> drawn as a macOS 27 pop-up button (capsule + accent chevron disc). */
+.mac-select {
+  appearance: none;
+  -webkit-appearance: none;
+  height: var(--control-h);
+  max-width: 100%;
+  min-width: 0;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 32px 0 12px;
+  font: inherit;
+  font-size: var(--app-font-size);
+  color: var(--color-foreground);
+  background-color: var(--color-control);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Ccircle cx='10' cy='10' r='10' fill='%23007aff'/%3E%3Cpath d='M7 8.5 10 5.5l3 3M7 11.5l3 3 3-3' fill='none' stroke='white' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 4px center;
+  background-size: 20px 20px;
+  box-shadow: inset 0 1px 0.5px rgb(255 255 255 / 0.9), 0 0 0 0.5px rgb(0 0 0 / 0.15),
+    0 1px 2.5px rgb(0 0 0 / 0.1);
+  text-overflow: ellipsis;
+}
+.dark .mac-select {
+  background-color: rgb(255 255 255 / 0.13);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Ccircle cx='10' cy='10' r='10' fill='%230a84ff'/%3E%3Cpath d='M7 8.5 10 5.5l3 3M7 11.5l3 3 3-3' fill='none' stroke='white' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  box-shadow: inset 0 1px 0.5px rgb(255 255 255 / 0.16), 0 0 0 0.5px rgb(0 0 0 / 0.6);
+}
+/* Borderless jump-bar variant (Xcode path pop-up). */
+.mac-select.mac-select-plain,
+.dark .mac-select.mac-select-plain {
+  background-color: transparent;
+  box-shadow: none;
+  border-radius: var(--radius-sm);
+  padding-left: 6px;
+  background-size: 16px 16px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M7 8.5 10 5.5l3 3M7 11.5l3 3 3-3' fill='none' stroke='%238e8e93' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+.mac-select.mac-select-plain:hover {
+  background-color: var(--color-fill);
+}
+.mac-select:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--color-ring) 50%, transparent);
+  outline-offset: 0;
+}
+.mac-select:disabled {
+  opacity: 0.45;
+}
+
+/* A single inset box (no row separators). */
+.mac-box {
+  border-radius: var(--radius-lg);
+  background: var(--color-group);
+  box-shadow: inset 0 0 0 0.5px var(--color-group-border);
+}
+
+.mac-box:is(button, a):hover {
+  background: var(--color-fill-strong);
+}
+
+/* Selected row inside an inset list (raised, like a selected source-list cell). */
+.mac-selected-row,
+.mac-selected-row:hover {
+  background: var(--color-control);
+  box-shadow: inset 0 1px 0.5px rgb(255 255 255 / 0.9), 0 0 0 0.5px rgb(0 0 0 / 0.08),
+    0 1px 2px rgb(0 0 0 / 0.08);
+}
+.dark .mac-selected-row,
+.dark .mac-selected-row:hover {
+  background: rgb(255 255 255 / 0.12);
+  box-shadow: none;
+}
+
+/* Capsule segmented control built from plain aria-pressed / role=tab buttons. */
+.mac-segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  border-radius: 999px;
+  background: var(--color-fill);
+  padding: 2px;
+}
+.mac-segmented > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  min-height: 0;
+  border-radius: 999px;
+  padding: 0 12px;
+  font-size: var(--app-caption-size);
+  font-weight: 500;
+  color: color-mix(in srgb, var(--color-foreground) 72%, transparent);
+  background: transparent;
+}
+.mac-segmented > button:hover {
+  color: var(--color-foreground);
+}
+.mac-segmented > button:is([aria-pressed='true'], [aria-selected='true'], [data-state='active']) {
+  background: var(--color-control);
+  color: var(--color-foreground);
+  box-shadow: inset 0 1px 0.5px rgb(255 255 255 / 0.9), 0 0 0 0.5px rgb(0 0 0 / 0.1),
+    0 1px 3px rgb(0 0 0 / 0.14);
+}
+.dark .mac-segmented > button:is([aria-pressed='true'], [aria-selected='true'], [data-state='active']) {
+  background: rgb(255 255 255 / 0.22);
+  box-shadow: inset 0 1px 0.5px rgb(255 255 255 / 0.18), 0 0 0 0.5px rgb(0 0 0 / 0.5);
+}
+.mac-segmented > button:disabled {
+  opacity: 0.4;
 }
 
 /* Chronological transcript: prose is the primary surface, tools are compact
    interleaved evidence. New events never change earlier prose typography. */
 .conversation-flow > * + * { margin-top: 18px; }
 .conversation-flow > [data-response-segment='tools'],
-.conversation-flow > [data-response-segment='thinking'] { margin-top: 12px; }
-.conversation-flow > [data-response-segment='response-actions'] { margin-top: 8px; }
+.conversation-flow > [data-response-segment='thinking'] { margin-top: 10px; }
+.conversation-flow > [data-response-segment='response-actions'] { margin-top: 6px; }
 
 /* ================= Markdown body (agent prose) ================= */
 .conversation-question-content .md-body {
   font-size: var(--app-font-size);
-  line-height: 1.7;
+  line-height: 1.55;
 }
 .conversation-answer-content .md-body {
   font-size: calc(var(--app-font-size) + 1px);
-  line-height: 1.8;
+  line-height: 1.65;
 }
 .md-body {
   min-width: 0;
   max-width: 100%;
   overflow-wrap: anywhere;
   font-size: var(--app-font-size);
-  line-height: 1.6;
+  line-height: 1.55;
   color: var(--color-foreground);
 }
 .md-body > *:first-child {
@@ -399,7 +755,7 @@
 .md-body ul,
 .md-body ol {
   margin: 8px 0;
-  padding-left: 20px;
+  padding-left: 22px;
 }
 .md-body ul { list-style: disc; }
 .md-body ol { list-style: decimal; }
@@ -411,38 +767,49 @@
 .md-body h2,
 .md-body h3,
 .md-body h4 {
-  font-weight: 600;
-  margin: 14px 0 6px;
+  font-weight: 650;
+  letter-spacing: -0.012em;
+  margin: 16px 0 6px;
   color: var(--color-foreground);
 }
-.md-body h1 { font-size: calc(var(--app-title-size, calc(var(--app-font-size) + 2px)) + 1px); }
-.md-body h2 { font-size: var(--app-title-size, calc(var(--app-font-size) + 2px)); }
-.md-body h3 { font-size: calc(var(--app-font-size) + 1px); }
-.md-body h4 { font-size: var(--app-font-size); }
+.md-body h1 { font-size: calc(var(--app-title-size, calc(var(--app-font-size) + 2px)) + 4px); }
+.md-body h2 { font-size: calc(var(--app-title-size, calc(var(--app-font-size) + 2px)) + 1px); }
+.md-body h3 { font-size: calc(var(--app-font-size) + 2px); }
+.md-body h4 { font-size: calc(var(--app-font-size) + 1px); }
 .md-body code:not(pre code) {
   font-family: var(--font-mono);
-  font-size: calc(var(--code-font-size) - 1px);
-  background: color-mix(in srgb, var(--color-muted) 80%, transparent);
-  border: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent);
-  border-radius: 5px;
+  font-size: 0.9em;
+  background: var(--color-fill);
+  border-radius: 4px;
   padding: 1px 5px;
 }
 .md-body strong { font-weight: 600; color: var(--color-foreground); }
 .md-body a {
-  color: var(--color-ring);
+  color: var(--color-primary);
+  text-decoration: none;
+}
+.md-body a:hover {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
 .md-body blockquote {
-  border-left: 2px solid var(--color-border);
-  padding-left: 12px;
+  position: relative;
+  padding-left: 14px;
   color: var(--color-muted-foreground);
   margin: 10px 0;
 }
+.md-body blockquote::before {
+  content: '';
+  position: absolute;
+  inset: 2px auto 2px 0;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--color-fill-strong);
+}
 .md-body hr {
   border: none;
-  border-top: 1px solid var(--color-border);
-  margin: 14px 0;
+  border-top: 0.5px solid var(--color-border);
+  margin: 16px 0;
 }
 
 /* ============ word wrap toggle ============ */
@@ -464,10 +831,10 @@
 .diff-line-no {
   display: inline-block;
   width: 3ch;
-  margin-right: 1ch;
+  margin-right: 1.25ch;
   text-align: right;
   color: var(--color-muted-foreground);
-  opacity: 0.6;
+  opacity: 0.55;
   user-select: none;
 }
 [data-line-numbers='false'] .code-line-no,
@@ -487,16 +854,19 @@
   font-weight: 600;
   text-align: left;
   color: var(--color-foreground);
-  background: var(--color-muted);
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--color-border);
+  background: var(--color-group);
+  padding: 6px 12px;
+  border-bottom: 0.5px solid var(--color-border);
   white-space: nowrap;
 }
 .md-body table td {
-  padding: 6px 10px;
-  border-top: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
+  padding: 6px 12px;
+  border-top: 0.5px solid var(--color-border);
   vertical-align: top;
   word-break: break-word;
+}
+.md-body table tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--color-fill) 60%, transparent);
 }
 .md-body table tr:first-child td {
   border-top: none;
@@ -504,69 +874,67 @@
 .md-body table td code,
 .md-body table th code {
   font-family: var(--font-mono);
-  font-size: calc(var(--code-font-size) - 1px);
+  font-size: 0.9em;
 }
 .code-line-no {
   color: var(--color-muted-foreground);
-  opacity: 0.55;
+  opacity: 0.5;
 }
 :root:not([data-line-numbers='true']) .code-line-no {
   display: none;
 }
 
-/* ============ hljs token palette: low saturation, theme-aware ============ */
+/* ============ syntax highlighting: Xcode "Default" themes ============ */
 .hljs {
   color: var(--color-foreground);
 }
-/* comments */
 .hljs-comment,
 .hljs-quote {
-  color: var(--color-muted-foreground);
-  font-style: italic;
+  color: #5d6c79;
 }
-/* keywords / tags */
 .hljs-keyword,
 .hljs-selector-tag,
 .hljs-tag,
 .hljs-doctag,
-.hljs-template-tag {
-  color: hsl(265 25% 60%);
+.hljs-template-tag,
+.hljs-literal {
+  color: #9b2393;
+  font-weight: 600;
 }
-/* strings / attribute values */
 .hljs-string,
 .hljs-regexp,
 .hljs-meta .hljs-string {
-  color: hsl(95 25% 45%);
+  color: #c41a16;
 }
-/* numbers / literals / constants */
 .hljs-number,
-.hljs-literal,
-.hljs-built_in,
-.hljs-attr,
-.hljs-attribute,
-.hljs-variable,
-.hljs-template-variable,
-.hljs-type {
-  color: hsl(28 40% 50%);
+.hljs-symbol,
+.hljs-bullet {
+  color: #1c00cf;
 }
-/* function names / titles */
+.hljs-built_in,
+.hljs-type,
+.hljs-title.class_,
+.hljs-selector-class,
+.hljs-selector-id {
+  color: #0b4f79;
+}
 .hljs-title,
 .hljs-title.function_,
 .hljs-section,
 .hljs-name {
-  color: hsl(210 35% 55%);
+  color: #0f68a0;
 }
-/* classes / params kept neutral */
-.hljs-title.class_,
-.hljs-params,
-.hljs-selector-class,
-.hljs-selector-id,
-.hljs-symbol,
-.hljs-bullet,
-.hljs-link {
-  color: hsl(172 26% 42%);
+.hljs-attr,
+.hljs-attribute,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-params {
+  color: #326d74;
 }
 .hljs-meta,
+.hljs-link {
+  color: #643820;
+}
 .hljs-operator,
 .hljs-punctuation {
   color: var(--color-muted-foreground);
@@ -578,46 +946,55 @@
   font-weight: 600;
 }
 .hljs-addition {
-  color: var(--color-sage);
+  color: var(--color-success);
 }
 .hljs-deletion {
   color: var(--color-destructive);
 }
 
+.dark .hljs-comment,
+.dark .hljs-quote {
+  color: #7f8c98;
+}
 .dark .hljs-keyword,
 .dark .hljs-selector-tag,
 .dark .hljs-tag,
 .dark .hljs-doctag,
-.dark .hljs-template-tag {
-  color: hsl(265 32% 74%);
+.dark .hljs-template-tag,
+.dark .hljs-literal {
+  color: #fc5fa3;
 }
 .dark .hljs-string,
 .dark .hljs-regexp,
 .dark .hljs-meta .hljs-string {
-  color: hsl(95 28% 66%);
+  color: #fc6a5d;
 }
 .dark .hljs-number,
-.dark .hljs-literal,
+.dark .hljs-symbol,
+.dark .hljs-bullet {
+  color: #d0bf69;
+}
 .dark .hljs-built_in,
-.dark .hljs-attr,
-.dark .hljs-attribute,
-.dark .hljs-variable,
-.dark .hljs-template-variable,
-.dark .hljs-type {
-  color: hsl(28 48% 68%);
+.dark .hljs-type,
+.dark .hljs-title.class_,
+.dark .hljs-selector-class,
+.dark .hljs-selector-id {
+  color: #5dd8ff;
 }
 .dark .hljs-title,
 .dark .hljs-title.function_,
 .dark .hljs-section,
 .dark .hljs-name {
-  color: hsl(210 42% 72%);
+  color: #67b7a4;
 }
-.dark .hljs-title.class_,
-.dark .hljs-params,
-.dark .hljs-selector-class,
-.dark .hljs-selector-id,
-.dark .hljs-symbol,
-.dark .hljs-bullet,
+.dark .hljs-attr,
+.dark .hljs-attribute,
+.dark .hljs-variable,
+.dark .hljs-template-variable,
+.dark .hljs-params {
+  color: #a167e6;
+}
+.dark .hljs-meta,
 .dark .hljs-link {
-  color: hsl(172 28% 66%);
+  color: #fd8f3f;
 }

@@ -141,7 +141,7 @@ function StandardEvidence({
           onClick={() => void copy()}
           aria-label={copied ? t('tool.copied') : t('tool.copy')}
         >
-          {copied ? <TbCheck className="text-sage" aria-hidden /> : <TbCopy aria-hidden />}
+          {copied ? <TbCheck className="text-success" aria-hidden /> : <TbCopy aria-hidden />}
         </Button>
       </header>
       <QuoteSelection enabled={Boolean(quoteSource)} source={quoteSource ? { ...quoteSource, literal: view === 'raw' && !evidence.truncated && !sourceTruncated ? evidence.source : undefined } : { kind: 'command', sourceId: label, label }}>

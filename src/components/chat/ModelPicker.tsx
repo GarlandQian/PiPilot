@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { TbBrain, TbCheck, TbChevronDown, TbLoader2 } from 'react-icons/tb'
+import { TbBrain, TbCheck, TbLoader2, TbSelector } from 'react-icons/tb'
 import { Button } from '@/components/ui/button'
 import { MarkdownContent } from './markdown/MarkdownContent'
 import {
@@ -105,9 +105,9 @@ export function ModelPicker({
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
-          variant="ghost"
+          variant="secondary"
           size="sm"
-          className="min-w-0 max-w-72 shrink gap-1.5 px-2 text-caption"
+          className="h-7 min-w-0 max-w-72 shrink gap-1.5 rounded-full px-3 text-caption font-medium"
           data-model-thinking-trigger
           aria-label={thinkingLabel
             ? t('composer.modelThinkingSwitcher', {
@@ -125,7 +125,7 @@ export function ModelPicker({
           ) : null}
           {selecting
             ? <TbLoader2 className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" aria-hidden />
-            : <TbChevronDown className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />}
+            : <TbSelector className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />}
         </Button>
       </PopoverTrigger>
       <PopoverContent

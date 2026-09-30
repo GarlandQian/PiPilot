@@ -3926,7 +3926,7 @@ test('launches a sandboxed shell with a narrow validated bridge', { tag: '@integ
       monoFont: expect.stringContaining('Fira Code'),
       uiSize: '18px',
       codeSize: '18px',
-      controlHeight: '36px',
+      controlHeight: '32px',
       density: 'comfortable',
       reducedMotion: 'true',
     })

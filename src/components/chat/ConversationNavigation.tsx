@@ -109,7 +109,7 @@ function SessionConversationNavigation({ items, onNavigate }: Omit<ConversationN
               key={item.entryId}
               value={item.entryId}
               data-conversation-navigation-entry={item.entryId}
-              className="items-start gap-3 rounded-md px-3 py-3"
+              className="items-start gap-3 rounded-[10px] px-3 py-2.5"
               onSelect={() => navigate(item.entryId)}
             >
               <span className="min-w-0 flex-1">

@@ -3,7 +3,7 @@ import { TbAlertTriangle, TbCheck, TbDownload, TbExternalLink, TbLoader2, TbRefr
 import { Button } from '@/components/ui/button'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Progress } from '@/components/ui/progress'
-import { PiLogo } from '@/components/PiLogo'
+import { AppIcon } from '@/components/AppIcon'
 import { SettingSection } from './common'
 import { type MessageKey, useT } from '@/i18n'
 import type { AppInfo } from '@/shared/ipc/contracts'
@@ -114,34 +114,38 @@ export function AboutSettings() {
 
   return (
     <>
-      <div className="flex items-center gap-4 border-b border-border/70 pb-6">
-        <div className="flex size-14 shrink-0 items-center justify-center rounded-md border border-border bg-surface-inset"><PiLogo className="size-10 text-foreground" /></div>
-        <div className="min-w-0"><h2 className="text-xl font-semibold">{t('app.name')}</h2><p className="mt-1 text-caption text-muted-foreground">{info ? `${t('settings.about.version')} ${info.version}` : infoFailed ? t('settings.redesign.infoUnavailable') : t('settings.about.loading')}</p></div>
-        {infoFailed ? <Button variant="outline" size="sm" className="ml-auto" onClick={retryInfo}><TbRefresh aria-hidden />{t('applicationUpdate.retry')}</Button> : null}
+      {/* "About This Mac"-style hero */}
+      <div className="flex flex-col items-center gap-1 pt-2 pb-8 text-center">
+        <AppIcon className="mb-3 size-24" />
+        <h2 className="text-[26px] leading-tight font-bold tracking-[-0.02em]">{t('app.name')}</h2>
+        <p className="text-caption text-muted-foreground">{info ? `${t('settings.about.version')} ${info.version}` : infoFailed ? t('settings.redesign.infoUnavailable') : t('settings.about.loading')}</p>
+        {infoFailed ? <Button variant="outline" size="sm" className="mt-2" onClick={retryInfo}><TbRefresh aria-hidden />{t('applicationUpdate.retry')}</Button> : null}
       </div>
       <SettingSection title={t('settings.redesign.systemInfo')}>
-        <dl className="flex flex-col gap-4">
-        <div className="flex flex-wrap gap-x-6 gap-y-1">
-          <dt className="w-28 shrink-0 text-caption text-muted-foreground">{t('settings.about.piRuntime')}</dt>
-          <dd className="break-all font-mono text-caption text-foreground">
+        <dl className="mac-group-raw flex flex-col divide-y divide-border">
+        <div className="flex min-h-10 flex-wrap items-center justify-between gap-x-6 gap-y-1 px-3.5 py-2">
+          <dt className="shrink-0 text-app text-foreground">{t('settings.about.piRuntime')}</dt>
+          <dd className="break-all font-mono text-caption text-muted-foreground">
                 {t('settings.about.piVersion', { version: SUPPORTED_PI_VERSION })}
           </dd>
         </div>
-        <div className="flex flex-wrap gap-x-6 gap-y-1">
-          <dt className="w-28 shrink-0 text-caption text-muted-foreground">{t('settings.about.platform')}</dt>
-          <dd className="text-caption text-foreground">
+        <div className="flex min-h-10 flex-wrap items-center justify-between gap-x-6 gap-y-1 px-3.5 py-2">
+          <dt className="shrink-0 text-app text-foreground">{t('settings.about.platform')}</dt>
+          <dd className="text-caption text-muted-foreground">
             {info
               ? `${platformName(info.platform)} · ${info.arch} · Electron ${info.electronVersion}`
               : t(infoFailed ? 'settings.redesign.infoUnavailable' : 'settings.about.loading')}
           </dd>
         </div>
-        <div className="flex flex-wrap gap-x-6 gap-y-1">
-          <dt className="w-28 shrink-0 text-caption text-muted-foreground">{t('settings.about.issues')}</dt>
-          <dd className="break-all text-caption text-foreground">github.com/GarlandQian/PiPilot</dd>
+        <div className="flex min-h-10 flex-wrap items-center justify-between gap-x-6 gap-y-1 px-3.5 py-2">
+          <dt className="shrink-0 text-app text-foreground">{t('settings.about.issues')}</dt>
+          <dd className="break-all text-caption text-muted-foreground">github.com/GarlandQian/PiPilot</dd>
         </div>
         </dl>
-        <p className="pt-3 text-micro text-muted-foreground">{t('settings.about.copyright')}</p>
-        <p className="text-micro text-muted-foreground">{t('settings.about.madeWith')}</p>
+        <div className="space-y-0.5">
+          <p className="text-micro text-muted-foreground">{t('settings.about.copyright')}</p>
+          <p className="text-micro text-muted-foreground">{t('settings.about.madeWith')}</p>
+        </div>
       </SettingSection>
       <SettingSection
         title={t('applicationUpdate.settings.title')}
@@ -167,7 +171,7 @@ export function AboutSettings() {
         )}
         {trustNotice && (
           <div
-            className="flex items-start gap-2 border-l-2 border-warning/50 py-2 pl-3 text-caption text-muted-foreground"
+            className="flex items-start gap-2 rounded-lg bg-warning/10 px-3 py-2 text-caption text-muted-foreground"
             role="note"
           >
             <TbAlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />

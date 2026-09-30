@@ -79,7 +79,7 @@ function TimelineEntry({ event }: { event: SubagentTimelineEvent }) {
   const literal = event.kind === 'tool' || (event.source === 'tool' && /^(bash|shell)$/iu.test(event.toolName ?? ''))
   return (
     <li className="min-w-0" data-subagent-event={event.id} data-subagent-event-kind={event.kind}>
-      <article className="min-w-0 border-l-2 border-border pl-3">
+      <article className="min-w-0 rounded-[12px] bg-fill px-3 py-2.5">
         <header className="mb-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-micro text-muted-foreground">
           <Icon className="size-3.5 shrink-0" aria-hidden />
           <span className="font-medium">{label}</span>
@@ -106,7 +106,7 @@ function TaskInstructions({ task, disclosure }: { task: SubagentTaskPresentation
   const [open, setOpen] = React.useState(!disclosure)
   const contentId = React.useId()
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className="min-w-0 rounded-lg border border-border bg-background/40">
+    <Collapsible open={open} onOpenChange={setOpen} className="mac-box min-w-0 overflow-hidden">
       <CollapsibleTrigger asChild>
         <button type="button" className="flex min-h-10 w-full items-center gap-2 px-3 text-left text-caption outline-none focus-visible:focus-ring" aria-controls={contentId}>
           <TbChevronRight className={cn('size-3.5 shrink-0 transition-transform motion-reduce:transition-none', open && 'rotate-90')} aria-hidden />
@@ -175,7 +175,7 @@ export function SubagentConversation({ presentation, status, scrollable = true, 
       {views.length > 1 ? (
         <label className="flex min-w-0 flex-col gap-1.5 text-micro text-muted-foreground">
           {t('inspector.subagent.redesign.selectAgent')}
-          <select aria-label={t('inspector.subagent.redesign.selectAgent')} value={active?.id} onChange={(event) => select(event.target.value)} className="min-h-9 w-full min-w-0 rounded-md border border-input bg-background px-2 text-caption text-foreground outline-none focus-visible:focus-ring">
+          <select aria-label={t('inspector.subagent.redesign.selectAgent')} value={active?.id} onChange={(event) => select(event.target.value)} className="mac-select w-full">
             {views.map((view, index) => <option key={view.id} value={view.id}>{labelFor(view, index)}</option>)}
           </select>
         </label>

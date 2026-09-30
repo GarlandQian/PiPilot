@@ -1,9 +1,10 @@
 import * as React from 'react'
-import { TbAlertTriangle, TbLoader2, TbPencil, TbPlus, TbRefresh, TbTerminal2, TbTrash } from 'react-icons/tb'
+import { TbAlertTriangle, TbCheck, TbLoader2, TbPencil, TbPlus, TbRefresh, TbTerminal2, TbTrash } from 'react-icons/tb'
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useT } from '@/i18n'
+import { cn } from '@/lib/utils'
 import type { TerminalCustomProfile, TerminalShellProfile } from '@/shared/terminal-profiles'
 import { useSettings, useSettingsSaveStatus, useUpdateSettings } from '@/store/settings'
 import { SettingRow, SettingSection } from './common'
@@ -127,41 +128,44 @@ export function TerminalProfilesSettings() {
         </Select>
       </SettingRow>
       {terminal.defaultProfileId === null && automaticProfile && !loading && !busy && !loadFailed ? <p className="text-caption text-muted-foreground">{t('settings.terminal.profiles.automaticResolved', { name: automaticProfile.label })}</p> : null}
-      {defaultUnavailable ? <div id={`${selectionId}-warning`} role="alert" className="flex min-w-0 flex-wrap items-center gap-3 rounded-md border border-warning/35 bg-warning/5 p-3">
+      {defaultUnavailable ? <div id={`${selectionId}-warning`} role="alert" className="flex min-w-0 flex-wrap items-center gap-3 bg-warning/8">
         <TbAlertTriangle className="size-4 shrink-0 text-warning" aria-hidden />
         <p className="min-w-0 flex-1 text-caption text-foreground">{t('settings.terminal.profiles.defaultUnavailable')}</p>
         <Button variant="outline" size="sm" disabled={busy} onClick={() => { void updateTerminal({ defaultProfileId: null }) }}>{t('settings.terminal.profiles.useAutomatic')}</Button>
       </div> : null}
-      <div className="mt-3 flex min-w-0 flex-wrap items-center justify-between gap-2">
-        <h3 className="text-app font-medium">{t('settings.terminal.profiles.listTitle')}</h3>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="ghost" size="sm" disabled={loading || busy} onClick={() => void refresh()}><TbRefresh aria-hidden className={loading ? 'animate-spin' : undefined} />{t('settings.terminal.profiles.refresh')}</Button>
-          <Button variant="outline" size="sm" disabled={busy || terminal.profiles.length >= 64} onClick={add}><TbPlus aria-hidden />{t('settings.terminal.profiles.add')}</Button>
-        </div>
-      </div>
-      {loading ? <p role="status" className="flex items-center gap-2 py-2 text-caption text-muted-foreground"><TbLoader2 aria-hidden className="size-3.5 animate-spin" />{t('settings.terminal.profiles.loading')}</p> : null}
-      {loadFailed ? <p role="alert" className="py-2 text-caption text-destructive">{t('settings.terminal.profiles.loadFailed')}</p> : null}
-      <ul className="min-w-0 divide-y divide-border overflow-hidden rounded-md border border-border" aria-label={t('settings.terminal.profiles.listTitle')}>
+    </SettingSection>
+    {/* Available profiles: a grouped list whose section header carries its actions. */}
+    <section className="min-w-0 pb-6" aria-label={t('settings.terminal.profiles.listTitle')}>
+      <header className="mb-2 flex min-w-0 flex-wrap items-center gap-2 px-1">
+        <h2 className="min-w-0 flex-1 text-app font-semibold">{t('settings.terminal.profiles.listTitle')}</h2>
+        <Button variant="ghost" size="sm" className="text-foreground/75" disabled={loading || busy} onClick={() => void refresh()}><TbRefresh aria-hidden className={loading ? 'animate-spin' : undefined} />{t('settings.terminal.profiles.refresh')}</Button>
+        <Button variant="outline" size="sm" disabled={busy || terminal.profiles.length >= 64} onClick={add}><TbPlus aria-hidden />{t('settings.terminal.profiles.add')}</Button>
+      </header>
+      {loading ? <p role="status" className="flex items-center gap-2 px-1 pb-2 text-caption text-muted-foreground"><TbLoader2 aria-hidden className="size-3.5 animate-spin" />{t('settings.terminal.profiles.loading')}</p> : null}
+      {loadFailed ? <p role="alert" className="px-1 pb-2 text-caption text-destructive">{t('settings.terminal.profiles.loadFailed')}</p> : null}
+      <ul className="mac-group min-w-0 overflow-hidden" aria-label={t('settings.terminal.profiles.listTitle')}>
         {mergedProfiles.map((profile) => {
           const custom = terminal.profiles.find(({ id }) => id === profile.id)
           const isSelected = terminal.defaultProfileId === profile.id
-          return <li key={profile.id} data-terminal-profile-id={profile.id} className="flex min-w-0 items-start gap-3 bg-surface px-3 py-3">
-            <TbTerminal2 className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
+          return <li key={profile.id} data-terminal-profile-id={profile.id} className="group/profile flex min-w-0 items-center gap-3 py-2.5">
+            <span className={cn('grid size-7 shrink-0 place-items-center rounded-[7px] bg-[linear-gradient(to_bottom,rgb(255_255_255/0.16),transparent)] text-white shadow-[0_0.5px_1px_rgb(0_0_0/0.2)]', profile.available ? 'bg-[#2c2c2e]' : 'bg-[#8e8e93]')} aria-hidden>
+              <TbTerminal2 className="size-4" />
+            </span>
             <div className="min-w-0 flex-1">
-              <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1"><span className="min-w-0 break-words text-app font-medium">{profile.label}</span><span className="text-micro text-muted-foreground">{t(profile.source === 'custom' ? 'settings.terminal.profiles.sourceCustom' : profile.source === 'wsl' ? 'settings.terminal.profiles.sourceWsl' : 'settings.terminal.profiles.sourceDetected')}</span>{isSelected ? <span className="rounded bg-sage/10 px-1.5 py-0.5 text-micro text-sage">{t('settings.terminal.profiles.selected')}</span> : null}</div>
-              <p className="mt-1 break-all font-mono text-micro text-muted-foreground">{profile.executable}</p>
-              {!profile.available ? <p className="mt-1 text-caption text-destructive">{t(profile.unavailableReason === 'distribution-unavailable' ? 'settings.terminal.profiles.distributionUnavailable' : 'settings.terminal.profiles.executableUnavailable')}</p> : null}
+              <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5"><span className="min-w-0 break-words text-app font-medium">{profile.label}</span><span className="text-micro text-muted-foreground">{t(profile.source === 'custom' ? 'settings.terminal.profiles.sourceCustom' : profile.source === 'wsl' ? 'settings.terminal.profiles.sourceWsl' : 'settings.terminal.profiles.sourceDetected')}</span>{isSelected ? <span className="inline-flex items-center gap-0.5 rounded-full bg-primary/12 px-2 py-px text-micro font-medium text-primary"><TbCheck className="size-3" aria-hidden />{t('settings.terminal.profiles.selected')}</span> : null}</div>
+              <p className="mt-0.5 break-all font-mono text-micro text-muted-foreground">{profile.executable}</p>
+              {!profile.available ? <p className="mt-0.5 text-caption text-destructive">{t(profile.unavailableReason === 'distribution-unavailable' ? 'settings.terminal.profiles.distributionUnavailable' : 'settings.terminal.profiles.executableUnavailable')}</p> : null}
             </div>
-            {custom ? <div className="flex shrink-0 items-center gap-1">
+            {custom ? <div className="flex shrink-0 items-center gap-0.5 opacity-60 group-hover/profile:opacity-100 focus-within:opacity-100">
               <Button variant="ghost" size="icon-sm" disabled={busy} aria-label={t('settings.terminal.profiles.editNamed', { name: profile.label })} title={t('settings.terminal.profiles.editNamed', { name: profile.label })} onClick={() => setEditing({ mode: 'edit', profile: custom })}><TbPencil aria-hidden /></Button>
-              <Button variant="ghost" size="icon-sm" disabled={busy} aria-label={t('settings.terminal.profiles.removeNamed', { name: profile.label })} title={t('settings.terminal.profiles.removeNamed', { name: profile.label })} onClick={() => { setRemoveFailed(false); setRemoving(custom) }}><TbTrash aria-hidden /></Button>
+              <Button variant="ghost" size="icon-sm" className="hover:text-destructive" disabled={busy} aria-label={t('settings.terminal.profiles.removeNamed', { name: profile.label })} title={t('settings.terminal.profiles.removeNamed', { name: profile.label })} onClick={() => { setRemoveFailed(false); setRemoving(custom) }}><TbTrash aria-hidden /></Button>
             </div> : null}
           </li>
         })}
-        {!loading && mergedProfiles.length === 0 ? <li className="p-4 text-caption text-muted-foreground">{t('settings.terminal.profiles.empty')}</li> : null}
+        {!loading && mergedProfiles.length === 0 ? <li className="py-6 text-center text-caption text-muted-foreground">{t('settings.terminal.profiles.empty')}</li> : null}
       </ul>
-      {terminal.profiles.length >= 64 ? <p className="text-caption text-muted-foreground">{t('settings.terminal.profiles.limit')}</p> : null}
-    </SettingSection>
+      {terminal.profiles.length >= 64 ? <p className="px-1 pt-2 text-caption text-muted-foreground">{t('settings.terminal.profiles.limit')}</p> : null}
+    </section>
     {editing ? <TerminalProfileFormDialog key={editing.profile.id} initial={editing.profile} mode={editing.mode} saveBlocked={busy} onClose={() => setEditing(null)} onSave={saveProfile} /> : null}
     <AlertDialog open={Boolean(removing)} onOpenChange={(open) => { if (!open && !removeBusyRef.current) setRemoving(null) }}>
       <AlertDialogContent>

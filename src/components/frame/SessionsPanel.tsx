@@ -1,7 +1,8 @@
 import * as React from 'react'
-import { TbArchive, TbArrowsSort, TbLoader2, TbMessagePlus, TbPlus, TbSearch, TbX } from 'react-icons/tb'
+import { createPortal } from 'react-dom'
+import { TbArchive, TbEdit, TbFilter, TbLoader2, TbSearch, TbTextScan2, TbX } from 'react-icons/tb'
 import { Button } from '@/components/ui/button'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useT } from '@/i18n'
@@ -14,7 +15,7 @@ import { usePiExtensionUi, usePiRuntime } from '@/store/pi-rpc'
 import { conversationScopeKey, useWorkspaceStore } from '@/store/workspace'
 import { useTaskNotifications } from '@/store/task-notifications'
 import { createOfficialSessionLookup, deriveSessionActivityState } from '@/store/workspace-state'
-import { ConversationList, ProjectNavigationGroup, RecentChatGroup, type ConversationListActions, type SidebarConversationItem, type SidebarProjectNavigation } from '@/components/layout/SessionList'
+import { ConversationList, ProjectNavigationGroup, RecentChatGroup, SidebarSectionHeader, type ConversationListActions, type SidebarConversationItem, type SidebarProjectNavigation } from '@/components/layout/SessionList'
 import { isSidebarSessionRunning, preferredProjectSession, presentPrioritySessions, presentSidebarSessions, sortSidebarProjects, type SidebarSessionFilter, type SidebarSessionSort } from '@/components/layout/session-navigation'
 import { projectlessCatalogNeedsDiscovery, sessionCatalogLoadTargets } from './session-catalog-search'
 
@@ -28,6 +29,8 @@ interface PendingProjectNavigation {
 }
 
 export interface SessionsPanelProps {
+  /** Sidebar title-bar slot for the compose action. */
+  headerActionSlot?: HTMLElement | null
   onSearchAll?: () => void
   hidden?: boolean
   conversationReady: boolean
@@ -49,6 +52,7 @@ export interface SessionsPanelProps {
 }
 
 export function SessionsPanel({
+  headerActionSlot,
   onSearchAll,
   hidden = false, conversationReady, navigationRevision, renamingSelectionToken, deletingSelectionToken, isOpeningSessionRow,
   onSelect, onNewPrimary, onNewProjectless, onRenameStart, onRenameCommit, onDuplicate,
@@ -292,26 +296,26 @@ export function SessionsPanel({
   const searching = filtering && projects.some(({ catalog }) => catalog.status === 'loading')
   const activeProject = workspace.activeScope.kind === 'project' ? workspace.recentProjects.find((project) => workspace.activeScope.kind === 'project' && project.id === workspace.activeScope.workspaceId) : undefined
   const archivedCount = allItems.filter((item) => item.archived).length
+  const newProjectless = () => { setPendingProject(null); onNewProjectless() }
 
   return (
-    <div hidden={hidden} className="min-w-0 px-2.5 pb-5 pt-3" data-navigation="tasks">
-      <div className="mb-3 flex items-center gap-1.5">
-        <Button variant="secondary" className="h-9 min-w-0 flex-1 justify-start gap-2 rounded-lg text-caption font-medium" disabled={workspace.activeScope.kind === 'project' && !activeProject?.available} onClick={() => { setPendingProject(null); onNewPrimary() }}>
-          <TbPlus className="size-4" aria-hidden />{t('nav.redesign.newTask')}
-        </Button>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon" className="size-9 shrink-0 text-muted-foreground"
-              aria-label={t('sidebar.newProjectless')}
-              onClick={() => { setPendingProject(null); onNewProjectless() }}>
-              <TbMessagePlus className="size-4" aria-hidden />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{t('sidebar.newProjectless')}</TooltipContent>
-        </Tooltip>
-      </div>
+    <div hidden={hidden} className="min-w-0 px-2.5 pb-4 pt-0.5" data-navigation="tasks">
+      {/* Compose lives in the sidebar title bar, like Notes and Mail. */}
+      {headerActionSlot && !hidden ? createPortal(<Tooltip>
+        <TooltipTrigger asChild>
+          <Button variant="ghost" size="icon-sm" className="text-foreground/75"
+            aria-label={t('nav.redesign.newTask')}
+            disabled={workspace.activeScope.kind === 'project' && !activeProject?.available}
+            onClick={() => { setPendingProject(null); onNewPrimary() }}>
+            <TbEdit className="size-[18px]" aria-hidden />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">{t('nav.redesign.newTask')}</TooltipContent>
+      </Tooltip>, headerActionSlot) : null}
+
+      {/* One search field; its trailing button widens the search to full conversation history. */}
       <div className="relative mb-2">
-        <TbSearch className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />
+        <TbSearch className="pointer-events-none absolute left-2 top-1/2 z-10 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />
         <Input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === 'Escape') { setQuery(''); event.currentTarget.blur() }
@@ -319,60 +323,62 @@ export function SessionsPanel({
           placeholder={t('nav.redesign.searchPlaceholder')}
           aria-label={t('sidebar.sessions.search')}
           title={t('nav.redesign.searchHint')} autoComplete="off"
-          className="h-8 rounded-md border-transparent bg-accent/35 pl-8 pr-7 text-caption shadow-none focus-visible:bg-surface" />
-        {query && (
+          className="h-7 rounded-full bg-fill pl-7 pr-7 text-app shadow-none dark:bg-fill focus-visible:bg-control" />
+        {query ? (
           <Button variant="ghost" size="icon-xs"
-            className="absolute right-0.5 top-1/2 size-6 -translate-y-1/2"
+            className="absolute right-1 top-1/2 size-5 -translate-y-1/2"
             aria-label={t('sidebar.sessions.clearSearch')}
             onClick={() => { setQuery(''); searchRef.current?.focus() }}>
-            <TbX className="size-3.5" aria-hidden />
+            <TbX className="size-3" aria-hidden />
           </Button>
-        )}
-      </div>
-      {onSearchAll ? <Button variant="ghost" size="xs" className="mb-2 w-full justify-start gap-2 text-muted-foreground" onClick={onSearchAll}>
-        <TbSearch className="size-3.5" aria-hidden />{t('conversationSearch.fullHistory')}
-      </Button> : null}
-      <div className="mb-3 flex items-center justify-between gap-0.5">
-        <div role="group" aria-label={t('sidebar.sessions.filter')} className="flex min-w-0 gap-0.5">
-          {(['all', 'running', 'attention'] as const).map((filter) => (
-            <Button key={filter} variant="ghost" size="xs"
-              className={cn('h-7 px-1.5 text-micro font-normal', sessionFilter === filter
-                ? 'bg-selected font-medium text-foreground' : 'text-muted-foreground')}
-              aria-pressed={sessionFilter === filter} onClick={() => setSessionFilter(filter)}>
-              {t(filter === 'all' ? 'nav.redesign.tasks'
-                : filter === 'running' ? 'nav.redesign.running' : 'nav.redesign.attention')}
-            </Button>
-          ))}
-        </div>
-        <div className="flex shrink-0">
+        ) : onSearchAll ? (
           <Tooltip>
             <TooltipTrigger asChild>
               <Button variant="ghost" size="icon-xs"
-                className={cn('size-7 text-muted-foreground', sessionFilter === 'archived' && 'bg-selected text-foreground')}
-                aria-label={t('nav.redesign.archived')} aria-pressed={sessionFilter === 'archived'}
-                onClick={() => setSessionFilter((current) => current === 'archived' ? 'all' : 'archived')}>
-                <TbArchive className="size-3.5" aria-hidden />
+                className="absolute right-1 top-1/2 size-5 -translate-y-1/2 text-muted-foreground"
+                aria-label={t('conversationSearch.fullHistory')}
+                onClick={onSearchAll}>
+                <TbTextScan2 className="size-3.5" aria-hidden />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>{t('nav.redesign.archived')}</TooltipContent>
+            <TooltipContent side="bottom">{t('conversationSearch.fullHistory')}</TooltipContent>
           </Tooltip>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon-xs" className="size-7 text-muted-foreground"
-                aria-label={t('sidebar.sessions.sort')}>
-                <TbArrowsSort className="size-3.5" aria-hidden />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuRadioGroup value={sessionSort} onValueChange={(value) => {
-                if (value === 'recent' || value === 'name') setSessionSort(value)
-              }}>
-                <DropdownMenuRadioItem value="recent">{t('sidebar.sessions.sortRecent')}</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="name">{t('sidebar.sessions.sortName')}</DropdownMenuRadioItem>
-              </DropdownMenuRadioGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
+        ) : null}
+      </div>
+      <div className="mb-3 flex items-center gap-1">
+        <div role="group" aria-label={t('sidebar.sessions.filter')} className="mac-segmented min-w-0 flex-1 [&>button]:flex-1 [&>button]:justify-center [&>button]:px-1.5 [&>button]:text-micro">
+          {(['all', 'running', 'attention'] as const).map((filter) => (
+            <button key={filter} type="button" className="min-w-0 truncate outline-none focus-visible:focus-ring"
+              aria-pressed={sessionFilter === filter} onClick={() => setSessionFilter(filter)}>
+              {t(filter === 'all' ? 'nav.redesign.tasks'
+                : filter === 'running' ? 'nav.redesign.running' : 'nav.redesign.attention')}
+            </button>
+          ))}
         </div>
+        {/* View options: sort order and archived tasks share one menu. */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon-xs"
+              className={cn('size-7 shrink-0 text-muted-foreground', (sessionFilter === 'archived' || sessionSort !== 'recent') && 'text-primary')}
+              aria-label={t('sidebar.sessions.viewOptions')} title={t('sidebar.sessions.viewOptions')}>
+              <TbFilter className="size-4" aria-hidden />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-52">
+            <DropdownMenuLabel>{t('sidebar.sessions.sort')}</DropdownMenuLabel>
+            <DropdownMenuRadioGroup value={sessionSort} onValueChange={(value) => {
+              if (value === 'recent' || value === 'name') setSessionSort(value)
+            }}>
+              <DropdownMenuRadioItem value="recent">{t('sidebar.sessions.sortRecent')}</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="name">{t('sidebar.sessions.sortName')}</DropdownMenuRadioItem>
+            </DropdownMenuRadioGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuCheckboxItem checked={sessionFilter === 'archived'}
+              onCheckedChange={(checked) => setSessionFilter(checked ? 'archived' : 'all')}>
+              <TbArchive aria-hidden />{t('nav.redesign.archived')}
+            </DropdownMenuCheckboxItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
       {sessionFilter === 'archived' && <p className="mb-3 px-2 text-micro text-muted-foreground">{t('nav.redesign.archiveHint', { count: archivedCount })}</p>}
       {normalizedQuery && <p className="mb-2 px-2 text-micro text-muted-foreground">{t('nav.redesign.searchHint')}</p>}
@@ -383,8 +389,8 @@ export function SessionsPanel({
         </p>
       )}
       {!filtering && focusItems.length > 0 && (
-        <section className="mb-4 rounded-lg border border-border/55 bg-surface/45 px-1 py-1.5" aria-labelledby="navigation-focus-heading">
-          <h2 id="navigation-focus-heading" className="mb-1 px-2 py-1 text-micro font-medium text-muted-foreground">
+        <section className="mb-3" aria-labelledby="navigation-focus-heading">
+          <h2 id="navigation-focus-heading" className="mb-0.5 flex min-h-6 items-center px-2 text-micro font-semibold text-muted-foreground/90">
             {t('nav.redesign.focus')}
           </h2>
           <ConversationList {...actions} items={focusItems} activeSessionId={workspace.activeSessionId} variant="focus" />
@@ -414,9 +420,9 @@ export function SessionsPanel({
               onPinProject={onPinWorkspace} onRemoveProject={onRemoveWorkspace} />
           )}
           {showRecentState ? (
-            <section className="mt-4 px-2" aria-label={t('sidebar.generalChats')}>
-              <h2 className="mb-2 text-micro font-medium text-muted-foreground">{t('sidebar.generalChats')}</h2>
-              <div role={recentPending ? 'status' : 'alert'} className="flex items-center gap-2 text-caption text-muted-foreground">
+            <section className="mt-4" aria-label={t('sidebar.generalChats')}>
+              <SidebarSectionHeader title={t('sidebar.generalChats')} addLabel={t('sidebar.newProjectless')} onAdd={newProjectless} />
+              <div role={recentPending ? 'status' : 'alert'} className="flex items-center gap-2 px-2 text-caption text-muted-foreground">
                 {recentPending && <TbLoader2 className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" aria-hidden />}
                 <span className="min-w-0 flex-1">
                   {t(recentPending ? 'workbenchReview.sessions.loading'
@@ -430,7 +436,7 @@ export function SessionsPanel({
               </div>
             </section>
           ) : (!filtering || recentChats.length > 0) && (
-            <RecentChatGroup {...actions} items={recentChats}
+            <RecentChatGroup {...actions} items={recentChats} onNew={newProjectless}
               activeSessionId={workspace.activeScope.kind === 'projectless' ? workspace.activeSessionId : ''} />
           )}
         </>

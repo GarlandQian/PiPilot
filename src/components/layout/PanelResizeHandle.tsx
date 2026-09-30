@@ -1,5 +1,4 @@
 import * as React from 'react'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
 interface PanelResizeHandleProps {
@@ -50,34 +49,32 @@ export function PanelResizeHandle({ width, min, max, defaultWidth, label, onChan
     }
   }
 
+  // macOS split views have no visible grabber: the panes' own hairline border
+  // is the divider and a slim invisible hit area straddles it.
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <div
-          role="separator"
-          aria-orientation="vertical"
-          aria-label={label}
-          aria-valuenow={width}
-          aria-valuemin={min}
-          aria-valuemax={max}
-          tabIndex={0}
-          onPointerDown={onPointerDown}
-          onKeyDown={onKeyDown}
-          onDoubleClick={() => onChange(defaultWidth)}
-          data-dragging={dragging || undefined}
-          className="group relative w-1 shrink-0 cursor-col-resize outline-none"
-        >
-          <span
-            aria-hidden
-            className={cn(
-              'absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border transition-colors duration-(--duration-fast)',
-              'group-hover:bg-ring/60 group-focus-visible:bg-ring/60',
-              'group-data-[dragging]:bg-sage',
-            )}
-          />
-        </div>
-      </TooltipTrigger>
-      <TooltipContent side="left">{label}</TooltipContent>
-    </Tooltip>
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={label}
+      title={label}
+      aria-valuenow={width}
+      aria-valuemin={min}
+      aria-valuemax={max}
+      tabIndex={0}
+      onPointerDown={onPointerDown}
+      onKeyDown={onKeyDown}
+      onDoubleClick={() => onChange(defaultWidth)}
+      data-dragging={dragging || undefined}
+      className="group relative z-20 w-0 shrink-0 cursor-col-resize outline-none"
+    >
+      <span
+        aria-hidden
+        className={cn(
+          'absolute inset-y-0 -left-[3px] w-[6px] cursor-col-resize',
+          'after:absolute after:inset-y-0 after:left-[2.5px] after:w-px after:bg-transparent after:transition-colors after:duration-(--duration-fast)',
+          'group-focus-visible:after:bg-ring group-data-[dragging]:after:bg-ring/70',
+        )}
+      />
+    </div>
   )
 }

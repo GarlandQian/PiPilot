@@ -61,7 +61,7 @@ function PendingImages({ item, expanded }: { item: PendingRailItem; expanded: bo
           src={`data:${image.mimeType};base64,${image.data}`}
           alt={t('composer.queueImageAlt', { index: index + 1 })}
           className={cn(
-            'shrink-0 rounded-md border border-border bg-background object-contain',
+            'shrink-0 rounded-[8px] bg-surface-raised object-contain shadow-[0_0_0_0.5px_var(--color-border)]',
             expanded ? 'max-h-60 max-w-full self-start' : 'size-12',
           )}
           data-queue-image
@@ -231,13 +231,13 @@ export function PendingMessageRail({
       onOpenChange={setExpanded}
       data-pending-message-rail
       aria-busy={Boolean(busyAction)}
-      className="min-w-0 overflow-hidden rounded-t-(--radius-composer) border border-b-0 border-border/70 bg-muted/60"
+      className="min-w-0 overflow-hidden rounded-t-(--radius-composer) bg-fill shadow-[inset_0_0_0_0.5px_var(--color-border)]"
     >
       <div className="flex min-h-11 min-w-0 items-center gap-1 px-3">
         <CollapsibleTrigger asChild>
           <button
             type="button"
-            className="flex min-h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 text-left outline-none transition-colors duration-(--duration-fast) hover:bg-accent/40 focus-visible:focus-ring motion-reduce:transition-none"
+            className="flex min-h-8 min-w-0 flex-1 items-center gap-2 rounded-full px-2 text-left outline-none transition-colors duration-(--duration-fast) hover:bg-fill-strong focus-visible:focus-ring motion-reduce:transition-none"
             aria-label={expanded ? t('composer.pendingCollapse') : t('composer.pendingExpand')}
           >
             {busyAction

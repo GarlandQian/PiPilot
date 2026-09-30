@@ -12,6 +12,9 @@ import {
   type WindowStateRepository,
 } from './window-state'
 
+/** Keep in sync with the traffic-light gutter in `src/styles/globals.css`. */
+const MAC_TRAFFIC_LIGHT_POSITION = { x: 18, y: 19 }
+
 interface CreateMainWindowOptions {
   developmentUrl?: string
   mainOutputDirectory: string
@@ -51,7 +54,17 @@ export async function createMainWindow({
     minHeight: Math.min(MIN_WINDOW_SIZE.height, primaryDisplay.workArea.height),
     show: false,
     title: 'PiPilot',
-    backgroundColor: '#17181c',
+    ...(process.platform === 'darwin'
+      ? {
+          // Native macOS chrome: inset traffic lights over a vibrant sidebar.
+          // The renderer leaves the sidebar transparent so the material shows through.
+          titleBarStyle: 'hiddenInset' as const,
+          trafficLightPosition: MAC_TRAFFIC_LIGHT_POSITION,
+          vibrancy: 'sidebar' as const,
+          visualEffectState: 'followWindow' as const,
+          backgroundColor: '#00000000',
+        }
+      : { backgroundColor: '#1e1e1f' }),
     webPreferences: {
       allowRunningInsecureContent: false,
       contextIsolation: true,

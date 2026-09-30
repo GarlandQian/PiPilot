@@ -39,7 +39,7 @@ async function expectInsideConversationColumn(
 ) {
   const [mainBox, headerBox, notificationBox] = await Promise.all([
     page.locator('main').boundingBox(),
-    page.locator('main > header').boundingBox(),
+    page.locator('main > [data-toolbar-overlay] > header').boundingBox(),
     notification.boundingBox(),
   ])
   expect(mainBox).not.toBeNull()

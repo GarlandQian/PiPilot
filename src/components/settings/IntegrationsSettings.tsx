@@ -95,22 +95,38 @@ export function IntegrationsSettings({ tab, onTab, active = true }: Integrations
       onValueChange={(value) => { if (TABS.some((id) => id === value)) onTab(value as IntegrationsTabId) }}
       className="@container/integrations min-w-0 gap-0"
     >
-      <TabsList variant="line" className="scroll-slim mb-5 h-11 w-full max-w-full justify-start gap-1 overflow-x-auto overflow-y-hidden border-b border-border p-0" aria-label={t('settings.integrations.title')}>
+      <TabsList className="scroll-slim mx-auto mb-6 max-w-full overflow-x-auto overflow-y-hidden" aria-label={t('settings.integrations.title')}>
         {TABS.map((id) => (
-          <TabsTrigger key={id} value={id} className="h-full flex-none px-3 text-caption after:bottom-0 after:bg-primary">
+          <TabsTrigger key={id} value={id} className="flex-none px-3.5">
             {t(`settings.integrations.tab.${id}`)}
           </TabsTrigger>
         ))}
       </TabsList>
       <header className="flex flex-col gap-3 pb-5" data-integrations-toolbar>
-        <div className="flex min-w-0 flex-wrap items-start gap-3">
-          <div className="min-w-0 flex-1">
+        {/* Scope control leads (like a Finder scope bar); context follows; actions trail. */}
+        <div className="flex min-w-0 flex-wrap items-center gap-2.5">
+          {tab !== 'external-control' ? <div className="mac-segmented" role="group" aria-label={t('settings.integrations.scope')}>
+            {(['global', 'project'] as const).map((kind) => (
+              <button
+                key={kind}
+                type="button"
+                disabled={kind === 'project' && !projectScope}
+                aria-pressed={integrations.scope.kind === kind}
+                className="outline-none focus-visible:focus-ring disabled:pointer-events-none"
+                onClick={() => changeScope(kind)}
+              >
+                {t(`settings.integrations.scope.${kind}`)}
+              </button>
+            ))}
+          </div> : null}
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            {tab !== 'external-control' && projectName ? <p className="min-w-0 truncate text-caption font-medium text-foreground" title={projectName}>{projectName}</p> : null}
             <p
               className={cn(
               'text-caption text-muted-foreground',
               tab === 'external-control'
                 ? 'max-w-2xl'
-                : 'truncate font-mono',
+                : 'shrink-0 rounded-full bg-fill px-2 py-px font-mono text-micro',
             )}>
               {tab === 'external-control'
                 ? t('settings.externalControl.localOnly')
@@ -118,23 +134,8 @@ export function IntegrationsSettings({ tab, onTab, active = true }: Integrations
                 ? `Pi ${snapshot.executable.version}`
                 : t(loading ? 'settings.integrations.loading' : 'settings.integrations.executableUnavailable')}
             </p>
-            {tab !== 'external-control' && projectName ? <p className="mt-1 truncate text-caption text-foreground" title={projectName}>{projectName}</p> : null}
           </div>
           {tab !== 'external-control' ? <div className="flex flex-wrap items-center gap-2">
-            <div className="inline-flex rounded-lg bg-muted/60 p-1" role="group" aria-label={t('settings.integrations.scope')}>
-              {(['global', 'project'] as const).map((kind) => (
-                <button
-                  key={kind}
-                  type="button"
-                  disabled={kind === 'project' && !projectScope}
-                  aria-pressed={integrations.scope.kind === kind}
-                  className="h-8 rounded-md px-3 text-caption text-muted-foreground outline-none hover:text-foreground focus-visible:focus-ring disabled:pointer-events-none disabled:opacity-40 aria-pressed:bg-background aria-pressed:text-foreground aria-pressed:shadow-sm"
-                  onClick={() => changeScope(kind)}
-                >
-                  {t(`settings.integrations.scope.${kind}`)}
-                </button>
-              ))}
-            </div>
             {tab !== 'mcp' ? <Button variant="ghost" size="icon-sm" aria-label={t('common.refresh')} title={t('common.refresh')} disabled={busy || loading} onClick={() => void integrations.refresh()}><TbRefresh className={loading ? 'animate-spin' : undefined} aria-hidden /></Button> : null}
             {tab === 'packages' ? <Button variant="outline" size="sm" disabled={snapshot?.state !== 'ready' || busy || loading} onClick={() => void integrations.checkUpdates()}>
               <TbDownload aria-hidden />{t('settings.integrations.checkUpdates')}
@@ -147,7 +148,7 @@ export function IntegrationsSettings({ tab, onTab, active = true }: Integrations
         </div>
 
         {tab !== 'external-control' && snapshot?.restartRequired && (
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-warning/30 bg-warning/5 px-3 py-2" role="status">
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-warning/10 px-3.5 py-2.5" role="status">
             <span className="text-caption text-foreground">{t('settings.integrations.restartRequired')}</span>
             <Button size="sm" disabled={busy} onClick={() => void integrations.restart()}>
               <TbRefresh className={busy ? 'animate-spin' : ''} aria-hidden />
@@ -182,7 +183,7 @@ export function IntegrationsSettings({ tab, onTab, active = true }: Integrations
           <EmptyState>{t('settings.integrations.loading')}</EmptyState>
         )}
         {snapshot?.state === 'unavailable' && (
-          <div className="border-y border-border px-2 py-5">
+          <div className="mac-box px-4 py-5">
             <div className="flex items-start gap-3">
               <TbServer className="mt-0.5 shrink-0 text-muted-foreground" aria-hidden />
               <div>
@@ -213,7 +214,7 @@ export function IntegrationsSettings({ tab, onTab, active = true }: Integrations
             <DialogTitle>{t('settings.integrations.addPackage')}</DialogTitle>
             <DialogDescription>{t('settings.integrations.addPackageDesc')}</DialogDescription>
           </DialogHeader>
-          <p className="rounded-md bg-muted/60 px-3 py-2 text-caption text-muted-foreground">
+          <p className="rounded-lg bg-fill px-3 py-2 text-caption text-muted-foreground">
             {t('settings.integrations.installTarget', { scope: projectName || t(`settings.integrations.scope.${selectedScope.kind}`) })}
           </p>
           <label>

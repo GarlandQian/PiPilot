@@ -432,7 +432,7 @@ function McpServerFormDialog({
               </FormRow>
 
               <FormRow label={t('mcp.form.exposure')} htmlFor={exposureId} hint={t('mcp.form.exposure.hint')}>
-                <select id={exposureId} value={draft.exposure ?? 'codemode'} onChange={(event) => update({ exposure: event.target.value as McpExposure })} className="h-[var(--control-h)] w-full rounded-md border border-input bg-background px-3 text-app outline-none focus-visible:focus-ring">
+                <select id={exposureId} value={draft.exposure ?? 'codemode'} onChange={(event) => update({ exposure: event.target.value as McpExposure })} className="mac-select w-fit">
                   {MCP_EXPOSURES.map((value) => <option key={value} value={value}>{t(`mcp.form.exposure.${value}`)}</option>)}
                 </select>
               </FormRow>

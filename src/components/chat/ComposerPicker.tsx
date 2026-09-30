@@ -62,7 +62,7 @@ export function ComposerPicker({
       }}
       aria-label={ariaLabel}
       className={cn(
-        'z-50 w-full min-w-0 max-w-[calc(100vw-24px)] overflow-hidden rounded-lg border border-input bg-popover text-popover-foreground shadow-sm',
+        'material z-50 w-full min-w-0 max-w-[calc(100vw-24px)] overflow-hidden rounded-[14px] text-popover-foreground shadow-popover',
         className,
       )}
     >
@@ -71,7 +71,7 @@ export function ComposerPicker({
           if (element) element.id = listboxId
         }}
         id={listboxId}
-        className="scroll-slim max-h-72 p-1"
+        className="scroll-slim max-h-72 p-1.5"
       >
         {rows.map((row) => {
           if (row.kind === 'heading') {
@@ -79,7 +79,7 @@ export function ComposerPicker({
               <div
                 key={row.id}
                 role="presentation"
-                className="flex h-6 items-end px-2 pb-1 text-micro font-medium text-muted-foreground"
+                className="flex h-6 items-end px-2 pb-1 text-micro font-semibold text-muted-foreground"
               >
                 {row.label}
               </div>
@@ -111,7 +111,7 @@ export function ComposerPicker({
               value={row.id}
               disabled={row.disabled}
               data-composer-picker-group={row.group}
-              className="min-h-10 items-center rounded-md py-1.5"
+              className="min-h-9 items-center rounded-[8px] py-1.5"
               title={row.title}
               onMouseDown={(event) => event.preventDefault()}
               onMouseMove={() => {

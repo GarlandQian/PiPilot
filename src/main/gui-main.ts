@@ -16,6 +16,7 @@ import {
   dialog,
   Menu,
   nativeImage,
+  nativeTheme,
   session,
   shell,
   Tray,
@@ -538,6 +539,12 @@ if (!hasSingleInstanceLock) {
 
       configureSessionSecurity(session.defaultSession, policy, () => mainWindow)
       settingsRepository.initialize()
+      // Native materials (sidebar vibrancy, menus) follow the in-app theme choice.
+      const syncNativeTheme = () => {
+        nativeTheme.themeSource = settingsRepository.get().settings.appearance.theme
+      }
+      syncNativeTheme()
+      settingsRepository.subscribe(syncNativeTheme)
       await workspaceRepository.initialize()
       conversationNavigationRepository.initialize()
       await observedPiSessionDirectories.initialize()

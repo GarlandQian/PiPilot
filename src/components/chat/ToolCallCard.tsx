@@ -211,11 +211,11 @@ export function ToolCallCard({ call, onOpenCommand, searchRequest }: { call: Too
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <div className="group/tool min-w-0" data-tool-kind={call.kind} data-tool-id={call.id}>
-        <div className="flex min-w-0 items-center gap-0.5 rounded-sm hover:bg-accent/35">
+        <div className="flex min-w-0 items-center gap-0.5 rounded-[10px] hover:bg-fill">
           <CollapsibleTrigger asChild>
             <button
               type="button"
-              className="flex min-h-[var(--tool-row-h)] min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-sm px-1.5 py-1 text-left outline-none transition-colors duration-(--duration-fast) focus-visible:focus-ring motion-reduce:transition-none"
+              className="flex min-h-[var(--tool-row-h)] min-w-0 flex-1 items-center gap-2 rounded-[10px] px-2 py-1 text-left outline-none transition-colors duration-(--duration-fast) focus-visible:focus-ring motion-reduce:transition-none"
               aria-expanded={open}
               aria-controls={contentId}
             >
@@ -236,7 +236,7 @@ export function ToolCallCard({ call, onOpenCommand, searchRequest }: { call: Too
               ) : <span className="min-w-0 flex-1" />}
               {call.diff && (
                 <span className="shrink-0 text-micro tabular-nums">
-                  <span className="text-sage">+{call.diff.added}</span>
+                  <span className="text-success">+{call.diff.added}</span>
                   {' / '}
                   <span className="text-destructive">-{call.diff.deleted}</span>
                 </span>

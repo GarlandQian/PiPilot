@@ -51,11 +51,17 @@ export function TerminalSettings() {
         title={t('settings.terminal.title')}
         desc={t('settings.terminal.description')}
       >
-        <figure className="min-w-0 overflow-hidden rounded-md border border-border bg-surface-inset" data-terminal-font-preview data-terminal-font-family={terminal.fontFamily || 'system'} data-terminal-effective-font-family={effectiveStack}>
-          <figcaption className="flex items-center gap-2 border-b border-border/60 px-4 py-2 text-micro text-muted-foreground"><TbTerminal2 className="size-3.5" aria-hidden />{t('settings.terminal.preview')}</figcaption>
-          <div className="px-4 py-5" style={{ fontFamily: effectiveStack, fontSize: terminal.fontSize }}>
+        {/* Terminal.app-style preview window */}
+        <figure className="mac-group-raw min-w-0 p-3.5!" data-terminal-font-preview data-terminal-font-family={terminal.fontFamily || 'system'} data-terminal-effective-font-family={effectiveStack}>
+          <div className="overflow-hidden rounded-[10px] bg-sidebar shadow-[0_0_0_0.5px_var(--color-border),0_4px_14px_-4px_rgb(0_0_0/0.18)]">
+          <figcaption className="relative flex h-7 items-center justify-center border-b border-border/70 text-micro font-medium text-muted-foreground">
+            <span className="absolute left-2.5 flex gap-1.5" aria-hidden><span className="size-2.5 rounded-full bg-[#ff5f57]" /><span className="size-2.5 rounded-full bg-[#febc2e]" /><span className="size-2.5 rounded-full bg-[#28c840]" /></span>
+            <span className="flex items-center gap-1.5"><TbTerminal2 className="size-3.5" aria-hidden />{t('settings.terminal.preview')}</span>
+          </figcaption>
+          <div className="px-4 py-4" style={{ fontFamily: effectiveStack, fontSize: terminal.fontSize }}>
             <p className="break-words leading-relaxed text-foreground">{t('settings.terminal.previewText')}</p>
             <p className="mt-2 flex items-center gap-2 text-success" aria-hidden><span>$</span><span className="h-4 w-2 bg-foreground/60" /></p>
+          </div>
           </div>
         </figure>
         <SettingRow
@@ -132,7 +138,7 @@ export function TerminalSettings() {
           </span>
         </SettingRow>
 
-        <details className="pt-2 text-caption text-muted-foreground"><summary className="w-fit cursor-pointer rounded-sm focus-visible:focus-ring">{t('settings.redesign.effectiveFonts')}</summary><code className="mt-3 block break-words text-micro leading-relaxed">{effectiveStack}</code></details>
+        <details className="text-caption text-muted-foreground"><summary className="w-fit rounded-sm text-primary focus-visible:focus-ring">{t('settings.redesign.effectiveFonts')}</summary><code className="mt-3 block break-words text-micro leading-relaxed">{effectiveStack}</code></details>
       </SettingSection>
 
       <SettingSection

@@ -35,7 +35,7 @@ export function PendingMessageEditor({ text, images, busy, saveLabel, onSave, on
     />
     {keptImages.length > 0 ? <div className="flex flex-wrap gap-2">
       {keptImages.map((image, index) => <div key={index} className="relative">
-        <img className="size-14 rounded-md border border-border object-contain" src={`data:${image.mimeType};base64,${image.data}`} alt={t('composer.queueImageAlt', { index: index + 1 })} />
+        <img className="size-14 rounded-[10px] object-contain shadow-[0_0_0_0.5px_var(--color-border)]" src={`data:${image.mimeType};base64,${image.data}`} alt={t('composer.queueImageAlt', { index: index + 1 })} />
         <Button type="button" variant="secondary" size="icon-xs" className="absolute -right-1 -top-1" disabled={busy} aria-label={t('composer.removePendingImage', { index: index + 1 })} onClick={() => setKeptImages((current) => current.filter((_, i) => i !== index))}><TbX aria-hidden /></Button>
       </div>)}
     </div> : null}

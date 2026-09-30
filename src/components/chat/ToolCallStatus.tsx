@@ -40,7 +40,7 @@ export function ToolCallStatus({
       className={cn(
         'flex shrink-0 items-center gap-1 text-micro text-muted-foreground',
         status === 'failed' && 'text-destructive',
-        status === 'success' && 'text-sage',
+        status === 'success' && 'text-success',
       )}
       role={live ? 'status' : undefined}
       aria-live={live ? 'polite' : undefined}

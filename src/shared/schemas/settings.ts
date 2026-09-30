@@ -1,6 +1,8 @@
 import { z } from 'zod'
 import { terminalCustomProfilesSchema, terminalShellProfileIdSchema } from '../terminal-profiles'
 import {
+  GLASS_TINT_MAX,
+  GLASS_TINT_MIN,
   SETTINGS_SCHEMA_VERSION,
   TERMINAL_FONT_FAMILY_LIMIT,
   TERMINAL_FONT_SIZE_MAX,
@@ -25,6 +27,7 @@ export const appearanceSettingsSchema = z
     wordWrap: z.boolean(),
     showLineNumbers: z.boolean(),
     compactToolCards: z.boolean(),
+    glassTint: z.number().int().min(GLASS_TINT_MIN).max(GLASS_TINT_MAX),
   })
   .strict()
 

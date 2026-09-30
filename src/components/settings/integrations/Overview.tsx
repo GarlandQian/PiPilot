@@ -69,7 +69,7 @@ export function Overview({ onTab }: { onTab(tab: IntegrationsTabId): void }) {
         <div className="grid gap-3 @min-[520px]/integrations:grid-cols-2">
           <button
             type="button"
-            className="group flex min-w-0 items-center justify-between gap-4 rounded-lg bg-muted/60 px-5 py-5 text-left outline-none transition-colors duration-(--duration-fast) hover:bg-muted focus-visible:focus-ring"
+            className="mac-box group flex min-w-0 items-center justify-between gap-4 px-4 py-4 text-left outline-none focus-visible:focus-ring"
             onClick={() => onTab('packages')}
           >
             <span className="min-w-0 space-y-2 text-caption font-medium text-foreground">
@@ -86,7 +86,7 @@ export function Overview({ onTab }: { onTab(tab: IntegrationsTabId): void }) {
           </button>
           <button
             type="button"
-            className="group flex min-w-0 items-center justify-between gap-4 rounded-lg bg-muted/60 px-5 py-5 text-left outline-none transition-colors duration-(--duration-fast) hover:bg-muted focus-visible:focus-ring"
+            className="mac-box group flex min-w-0 items-center justify-between gap-4 px-4 py-4 text-left outline-none focus-visible:focus-ring"
             onClick={() => onTab('resources')}
           >
             <span className="min-w-0 space-y-2 text-caption font-medium text-foreground">
@@ -146,7 +146,7 @@ export function Overview({ onTab }: { onTab(tab: IntegrationsTabId): void }) {
         </div>
         {runtimeProblems.length === 0 ? (
           <p className="mt-3 flex items-start gap-2 text-caption text-muted-foreground">
-            <TbCheck className="mt-0.5 size-4 shrink-0 text-sage" aria-hidden />
+            <TbCheck className="mt-0.5 size-4 shrink-0 text-success" aria-hidden />
             {t('settings.integrations.runtimeSupport.ok')}
           </p>
         ) : (
@@ -154,7 +154,7 @@ export function Overview({ onTab }: { onTab(tab: IntegrationsTabId): void }) {
             <p className="mt-1 text-caption text-muted-foreground">
               {t('settings.integrations.runtimeSupport.problems', { count: runtimeProblems.length })}
             </p>
-            <ul className="scroll-slim mt-3 max-h-48 space-y-2 overflow-y-auto rounded-lg bg-muted/50 p-3 text-caption text-muted-foreground">
+            <ul className="mac-box scroll-slim mt-3 max-h-48 space-y-2 overflow-y-auto p-3 text-caption text-muted-foreground">
               {runtimeProblems.map((message, index) => (
                 <li key={`${message}-${index}`} className="break-words">
                   <MarkdownContent markdown={message} />
@@ -175,7 +175,7 @@ export function Overview({ onTab }: { onTab(tab: IntegrationsTabId): void }) {
               <p className="mt-1 text-caption text-muted-foreground">
                 {t('settings.integrations.retry.globalDesc')}
               </p>
-              <label className="mt-4 flex max-w-xl items-center justify-between gap-4 rounded-lg bg-muted/50 px-3 py-3">
+              <label className="mac-box mt-4 flex max-w-xl items-center justify-between gap-4 px-3.5 py-3">
                 <span className="min-w-0">
                   <span className="block text-caption font-medium">
                     {t('settings.integrations.retry.globalLabel')}
@@ -210,7 +210,7 @@ export function Overview({ onTab }: { onTab(tab: IntegrationsTabId): void }) {
                 </p>
               )}
             </div>
-            <div className="min-w-0 border-l-2 border-border pl-4">
+            <div className="mac-box min-w-0 p-4">
               <h4 className="text-caption font-medium">
                 {t('settings.integrations.retry.effectiveTitle', {
                   scope: t(`settings.integrations.scope.${integrations.scope.kind}`),

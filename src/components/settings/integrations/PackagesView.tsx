@@ -34,7 +34,7 @@ function PackageDetail({
   ] as const
 
   return (
-    <section className="min-w-0 py-1 @min-[880px]/integrations:pl-7" aria-label={pkg.displayName}>
+    <section className="mac-box min-w-0 p-4" aria-label={pkg.displayName}>
       <div className="flex min-w-0 items-start gap-2">
         <Button className="@min-[880px]/integrations:hidden" variant="ghost" size="icon-sm" aria-label={t('common.back')} title={t('common.back')} onClick={onBack}>
           <TbArrowLeft aria-hidden />
@@ -82,7 +82,7 @@ function PackageDetail({
         </dd>
       </dl>
 
-      <div className="mt-6 rounded-lg bg-muted/45 p-4">
+      <div className="mt-6 rounded-lg bg-fill p-3.5">
         <p className="text-caption font-medium text-foreground">
           {t('settings.integrations.compatibility.title')}
         </p>
@@ -115,18 +115,18 @@ export function PackagesView({ active = true, onOpenResources }: { active?: bool
   return (
     <>
       <p className="mb-4 max-w-2xl text-caption text-muted-foreground">{t('settings.integrations.packages.description')}</p>
-      <div className="grid min-h-[28rem] gap-5 @min-[880px]/integrations:grid-cols-[minmax(15rem,0.8fr)_minmax(0,1.2fr)] @min-[880px]/integrations:gap-0" data-integration-catalog="packages">
+      <div className="grid min-h-[28rem] gap-5 @min-[880px]/integrations:grid-cols-[minmax(15rem,0.8fr)_minmax(0,1.2fr)] @min-[880px]/integrations:gap-4" data-integration-catalog="packages">
         <div className={cn(
-          'min-w-0 border-border @min-[880px]/integrations:border-r @min-[880px]/integrations:pr-5',
+          'mac-box min-w-0 self-start p-2.5',
           selected && 'hidden @min-[880px]/integrations:block',
         )}>
           <div className="flex items-center gap-2">
             <SearchField value={query} onChange={setQuery} onBrowse={() => focusCatalogRow(collectionRef.current)} />
           </div>
-          <div className="flex flex-wrap items-center gap-1 border-b border-border pb-3 pt-2">
-            {[false, true].map((updates) => <button key={String(updates)} type="button" aria-pressed={updatesOnly === updates} onClick={() => setUpdatesOnly(updates)} className="rounded-md px-2 py-1.5 text-micro text-muted-foreground outline-none hover:text-foreground focus-visible:focus-ring aria-pressed:bg-muted aria-pressed:text-foreground">
+          <div className="flex flex-wrap items-center gap-2 px-0.5 pb-1 pt-2.5">
+            <span className="mac-segmented">{[false, true].map((updates) => <button key={String(updates)} type="button" aria-pressed={updatesOnly === updates} onClick={() => setUpdatesOnly(updates)} className="outline-none focus-visible:focus-ring">
               {t(updates ? 'settings.integrations.catalog.updates' : 'settings.integrations.catalog.allPackages')}
-            </button>)}
+            </button>)}</span>
             <span className="ml-auto text-micro tabular-nums text-muted-foreground">{t('settings.integrations.catalog.matches', { count: filtered.length, total: packages.length })}</span>
           </div>
           <CatalogCollection ref={collectionRef} label={t('settings.integrations.overview.packages')}>
@@ -137,8 +137,8 @@ export function PackagesView({ active = true, onOpenResources }: { active?: bool
                 data-integration-row={pkg.id}
                 aria-current={selected?.id === pkg.id ? 'true' : undefined}
                 className={cn(
-                  'grid min-h-16 w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-lg px-3 py-3 text-left outline-none hover:bg-muted/70 focus-visible:focus-ring',
-                  selected?.id === pkg.id && 'bg-primary/8 ring-1 ring-inset ring-primary/20',
+                  'grid min-h-14 w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-[10px] px-3 py-2.5 text-left outline-none hover:bg-fill focus-visible:focus-ring',
+                  selected?.id === pkg.id && 'mac-selected-row',
                 )}
                 onClick={() => setSelectedId(pkg.id)}
               >

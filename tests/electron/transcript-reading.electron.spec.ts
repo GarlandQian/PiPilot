@@ -221,14 +221,14 @@ test('updates the live terminal with resolved native system theme without replac
       }
     })
     const light = await colors()
-    expect(light.background).toBe('rgb(241, 243, 246)')
-    expect(light.foreground).toBe('rgb(39, 48, 61)')
+    expect(light.background).toBe('rgb(246, 246, 248)')
+    expect(light.foreground).toBe('rgb(29, 29, 31)')
     for (const theme of ['dark', 'light'] as const) {
       await electronApp.evaluate(({ nativeTheme }, nextTheme) => { nativeTheme.themeSource = nextTheme }, theme)
       await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains('dark')))
         .toBe(theme === 'dark')
       await expect.poll(colors).toEqual(theme === 'dark'
-        ? { background: 'rgb(19, 22, 28)', foreground: 'rgb(228, 233, 241)' }
+        ? { background: 'rgb(35, 35, 37)', foreground: 'rgb(232, 232, 236)' }
         : light)
       expect(await xterm.evaluate((element) => element.isConnected && element === document.querySelector('[data-terminal-status] .xterm'))).toBe(true)
       const current = await page.evaluate(async ({ scope, terminalId }) => {

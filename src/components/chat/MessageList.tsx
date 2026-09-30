@@ -101,7 +101,7 @@ const ConversationRow = React.memo(function ConversationRow({ response, anchorNo
   const match = toolSearch ? searchRequest?.match : undefined
   return <ConversationResponse response={response} sessionKey={sessionKey} focusRequest={subagentFocusRequest}
     highlighted={highlighted} anchorRef={anchorRef} renderPrompt={renderPrompt} renderSegment={renderSegment}
-    searchPreview={match ? <aside data-conversation-search-result className="mb-4 space-y-1 rounded-md border border-border bg-accent/30 p-3 text-caption">
+    searchPreview={match ? <aside data-conversation-search-result className="mac-box mb-4 space-y-1 p-3 text-caption">
       <p className="text-muted-foreground">{t('conversationSearch.toolContext')}</p>
       <pre className="whitespace-pre-wrap break-words font-mono">{match.snippet.slice(0, match.matchStart)}<mark className="rounded-sm bg-primary/20 text-foreground">{match.snippet.slice(match.matchStart, match.matchStart + match.matchLength)}</mark>{match.snippet.slice(match.matchStart + match.matchLength)}</pre>
     </aside> : undefined} />
@@ -264,7 +264,7 @@ export function MessageList({
       }}
     >
       {!ready ? (
-        <div className="flex h-full w-full items-center justify-center px-4 text-caption text-muted-foreground">
+        <div className="flex h-full w-full items-center justify-center px-4 pt-[var(--toolbar-inset,0px)] text-caption text-muted-foreground">
           {presentation.status === 'loading' ? (
             <div className="flex items-center gap-2" role="status">
               <TbLoader2 className="size-4 animate-spin motion-reduce:animate-none" aria-hidden />
@@ -280,8 +280,8 @@ export function MessageList({
           )}
         </div>
       ) : (
-        <div ref={scrollRef} {...scrollProps} tabIndex={0} className="scroll-slim h-full min-w-0 overflow-x-hidden overflow-y-auto outline-none focus-visible:focus-ring">
-          <div ref={contentRef} className={cn('mx-auto flex w-full min-w-0 max-w-(--conversation-width) flex-col gap-10 px-6 py-8', turns.length === 0 && 'min-h-full justify-center')}>
+        <div ref={scrollRef} {...scrollProps} tabIndex={0} className="scroll-slim h-full min-w-0 scroll-pt-[calc(var(--toolbar-inset,0px)+12px)] overflow-x-hidden overflow-y-auto outline-none focus-visible:focus-ring">
+          <div ref={contentRef} className={cn('mx-auto flex w-full min-w-0 max-w-(--conversation-width) flex-col gap-10 px-6 pt-[calc(var(--toolbar-inset,0px)+2rem)] pb-8', turns.length === 0 && 'min-h-full justify-center')}>
             {turns.length === 0 && status !== 'running' && status !== 'planning' ? emptyState : null}
             {historyTruncated && (
               <div className="flex items-center gap-1.5 text-caption text-muted-foreground" role="status">
@@ -333,7 +333,7 @@ export function MessageList({
           variant="secondary"
           size="sm"
           onClick={() => scrollToLatest()}
-          className={cn('absolute bottom-3 left-1/2 -translate-x-1/2 border border-border')}
+          className={cn('glass absolute bottom-3 left-1/2 -translate-x-1/2 text-foreground hover:bg-(--glass-fill) hover:brightness-[0.97]')}
           aria-label={t('chat.jumpToLatest')}
         >
           <TbArrowDown aria-hidden />

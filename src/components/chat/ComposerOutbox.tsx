@@ -40,7 +40,7 @@ function OutboxMessage({ item, connected, onCheck, onRetry, onRemove }: {
       onSave={(text, images) => { void run(() => onRetry(item, text, images)) }}
     /> : <>
       <div className="scroll-slim max-h-40 min-w-0 overflow-y-auto text-caption"><PromptMarkdown text={item.text || t('composer.pendingImagesOnly')} /></div>
-      {item.images.length ? <div className="mt-2 flex flex-wrap gap-2">{item.images.map((image, index) => <img key={index} src={`data:${image.mimeType};base64,${image.data}`} alt={t('composer.queueImageAlt', { index: index + 1 })} className="size-12 rounded-md border border-border object-contain" />)}</div> : null}
+      {item.images.length ? <div className="mt-2 flex flex-wrap gap-2">{item.images.map((image, index) => <img key={index} src={`data:${image.mimeType};base64,${image.data}`} alt={t('composer.queueImageAlt', { index: index + 1 })} className="size-12 rounded-[10px] object-contain shadow-[0_0_0_0.5px_var(--color-border)]" />)}</div> : null}
       {item.error || item.status === 'unknown' ? <p className="mt-2 break-words text-caption text-muted-foreground [overflow-wrap:anywhere]">{item.status === 'unknown' ? t('composer.outboxUnconfirmedHint') : item.error}</p> : null}
       {!sending ? <div className="mt-2 flex flex-wrap items-center gap-1">
         {item.status === 'unknown' ? <Button type="button" variant="outline" size="xs" disabled={busy || !connected} onClick={() => void run(() => onCheck(item))}><TbRefresh aria-hidden />{t('composer.outboxCheck')}</Button> : <>
@@ -64,7 +64,7 @@ export function ComposerOutbox({ items, storageError, ...actions }: {
 }) {
   const t = useT()
   if (!items.length && !storageError) return null
-  return <section className="mb-2 min-w-0 rounded-lg border border-border bg-muted/40 px-3" aria-label={t('composer.outboxLabel')} data-composer-outbox>
+  return <section className="mac-box mb-2 min-w-0 rounded-[16px] px-3.5" aria-label={t('composer.outboxLabel')} data-composer-outbox>
     <ol className="scroll-slim max-h-[min(280px,32vh)] divide-y divide-border overflow-y-auto">{items.map((item) => <OutboxMessage key={item.id} item={item} {...actions} />)}</ol>
     {storageError ? <p className="py-2 text-caption text-destructive" role="alert">{storageError}</p> : null}
   </section>

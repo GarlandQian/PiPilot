@@ -50,8 +50,9 @@ function terminalTheme() {
     foreground: token('--color-foreground', dark ? '#e3e3e5' : '#252529'),
     cursor: token('--color-sage', '#83b7ac'),
     cursorAccent: token('--color-sidebar', dark ? '#111113' : '#fafafa'),
-    selectionBackground: dark ? '#465668' : '#c2d8ec',
-    selectionInactiveBackground: dark ? '#353d49' : '#d8e2ec',
+    // macOS selectedTextBackgroundColor / unemphasized selection
+    selectionBackground: dark ? '#3f638b' : '#b3d7ff',
+    selectionInactiveBackground: dark ? '#464649' : '#dcdcdc',
     // ANSI categories remain distinct from the app's semantic accent palette.
     black: dark ? '#34343b' : '#282c34',
     red: dark ? '#e88388' : '#ad2535',

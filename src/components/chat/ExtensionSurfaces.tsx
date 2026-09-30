@@ -228,7 +228,7 @@ export function ResponseActivityRow({ activity }: { activity: ResponseActivity }
         <CollapsibleTrigger asChild>
           <button
             type="button"
-            className="flex min-h-7 w-full items-center gap-2 rounded-sm px-1.5 text-left outline-none transition-colors duration-(--duration-fast) hover:bg-accent/30 focus-visible:focus-ring motion-reduce:transition-none"
+            className="flex min-h-7 w-full items-center gap-2 rounded-[8px] px-1.5 text-left outline-none transition-colors duration-(--duration-fast) hover:bg-fill focus-visible:focus-ring motion-reduce:transition-none"
           >
             {content}
           </button>
@@ -420,11 +420,11 @@ export function ActiveControlBar({
 
   return (
     <section
-      className="shrink-0 bg-background px-3 pt-2"
+      className="shrink-0 bg-surface px-6 pt-2"
       aria-label={title}
       role={actionError ? 'alert' : 'status'}
     >
-      <div className="mx-auto flex min-h-10 w-full max-w-[920px] items-center gap-2 rounded-lg border border-border bg-card px-2 py-1">
+      <div className="glass mx-auto flex min-h-10 w-full max-w-(--conversation-width) items-center gap-2 rounded-full py-1 pr-1.5 pl-3.5">
         <CurrentIcon
           className={cn(
             'size-3.5 shrink-0 text-muted-foreground',

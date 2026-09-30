@@ -91,7 +91,7 @@ function UpdateNotification({
       <li className="border-b border-border/60 px-3 py-2.5 last:border-b-0">
         <div className="flex items-start gap-2">
           {snapshot.state === 'downloaded'
-            ? <TbCheck className="mt-0.5 size-3.5 shrink-0 text-sage" aria-hidden />
+            ? <TbCheck className="mt-0.5 size-3.5 shrink-0 text-success" aria-hidden />
             : snapshot.state === 'downloading'
               ? <TbLoader2 className="mt-0.5 size-3.5 shrink-0 animate-spin text-muted-foreground motion-reduce:animate-none" aria-hidden />
               : snapshot.state === 'error'
@@ -301,14 +301,14 @@ export function GlobalNotifications({ onOpenAbout, onOpenNotification }: {
                 : t('rail.notifications')}
               className="relative text-muted-foreground hover:text-foreground"
             >
-              <TbBell className="size-4.5" aria-hidden />
+              <TbBell className="size-[18px]" aria-hidden />
               {count > 0 ? (
                 <span
                   aria-hidden
-                  className={cn('absolute -right-0.5 -top-0.5 flex min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-semibold leading-4 text-white ring-2 ring-sidebar', unread.some((item) => item.kind === 'failed') ? 'bg-destructive' : 'bg-sage')}
+                  className={cn('absolute -right-1 -top-1 flex min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold leading-4 text-white shadow-[0_0.5px_1.5px_rgb(0_0_0/0.3)]', unread.some((item) => item.kind === 'failed') ? 'bg-destructive' : 'bg-[#ff3b30]')}
                 >{count > 99 ? '99+' : count}</span>
               ) : null}
-              {updateSnapshot ? <span aria-hidden className={cn('absolute bottom-1 right-1 size-1.5 rounded-full ring-2 ring-sidebar', updateSnapshot.state === 'error' ? 'bg-destructive' : 'bg-sage')} /> : null}
+              {updateSnapshot ? <span aria-hidden className={cn('absolute bottom-1 right-1 size-1.5 rounded-full shadow-[0_0_0_1.5px_var(--color-surface)]', updateSnapshot.state === 'error' ? 'bg-destructive' : 'bg-primary')} /> : null}
             </Button>
           </PopoverTrigger>
         </TooltipTrigger>
@@ -321,8 +321,8 @@ export function GlobalNotifications({ onOpenAbout, onOpenNotification }: {
         className="flex w-[min(22rem,calc(100vw-2rem))] max-h-(--radix-popover-content-available-height) flex-col overflow-hidden p-0"
         aria-label={t('rail.notifications')}
       >
-        <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
-          <h2 className="text-caption font-medium text-foreground">
+        <div className="flex shrink-0 items-center gap-2 border-b border-border px-3.5 py-2.5">
+          <h2 className="text-app font-semibold text-foreground">
             {t('rail.notifications')}
           </h2>
           <span className="text-micro tabular-nums text-muted-foreground">{t('notifications.unreadTotal', { count })}</span>

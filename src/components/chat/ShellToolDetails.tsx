@@ -29,7 +29,7 @@ export function ShellToolDetails({ call, onOpenCommand }: { call: ToolCall; onOp
           <TbExternalLink className="shrink-0" aria-hidden />{t('tool.redesign.openOutput')}
         </Button> : null}
       </header>
-      {call.body ? <pre className="scroll-slim max-h-32 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 px-3 py-2 font-mono text-caption text-foreground/90"><code>{call.body}</code></pre> : null}
+      {call.body ? <pre className="scroll-slim max-h-32 overflow-auto whitespace-pre-wrap break-words rounded-[10px] bg-surface-inset px-3 py-2 font-mono text-caption shadow-[inset_0_0_0_0.5px_var(--color-border)] text-foreground/90"><code>{call.body}</code></pre> : null}
     </section> : null}
     {output !== undefined && output.length > 0 ? <ShellEvidence
       quoteSource={{ kind: 'command', sourceId: call.id, label: (call.body ?? call.title).slice(0, 256) }}

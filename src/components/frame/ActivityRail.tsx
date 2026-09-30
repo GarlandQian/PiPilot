@@ -1,7 +1,6 @@
 import type * as React from 'react'
 import {
-  TbLayoutSidebarLeftCollapse,
-  TbLayoutSidebarLeftExpand,
+  TbLayoutSidebar,
   TbMessages,
   TbSearch,
   TbSettings,
@@ -26,6 +25,8 @@ export interface ActivityRailProps {
   onOpenAbout: () => void
   onOpenNotification: (id: string) => Promise<void>
   width?: number
+  /** Receives the title-bar slot where the active sidebar page renders its actions (e.g. compose). */
+  actionSlotRef?: React.Ref<HTMLDivElement>
   children?: React.ReactNode
 }
 
@@ -42,7 +43,7 @@ function RailButton({
   shortcut?: string
   active?: boolean
   expanded?: boolean
-  side?: 'right' | 'top'
+  side?: 'right' | 'top' | 'bottom'
   onClick: () => void
   children: React.ReactNode
 }) {
@@ -58,7 +59,7 @@ function RailButton({
           onClick={onClick}
           className={cn(
             'text-muted-foreground hover:text-foreground',
-            active && 'bg-accent text-accent-foreground',
+            active && 'bg-source-list-selected text-primary hover:bg-source-list-selected hover:text-primary',
           )}
         >
           {children}
@@ -72,6 +73,11 @@ function RailButton({
   )
 }
 
+/**
+ * macOS source-list sidebar. On macOS the window's native sidebar vibrancy
+ * shows through (`bg-source-list` is transparent there) and the header leaves
+ * room for the inset traffic lights; it doubles as the title-bar drag region.
+ */
 export function ActivityRail({
   rail,
   onRailChange,
@@ -81,53 +87,47 @@ export function ActivityRail({
   onOpenAbout,
   onOpenNotification,
   width,
+  actionSlotRef,
   children,
 }: ActivityRailProps) {
   const t = useT()
   const expanded = contextPanelOpen && children !== undefined
+  const toggle = (
+    <RailButton
+      label={t('rail.togglePanel')}
+      shortcut={primaryShortcut('B')}
+      expanded={contextPanelOpen}
+      side="bottom"
+      onClick={onToggleContextPanel}
+    >
+      <TbLayoutSidebar className="size-[18px]" aria-hidden />
+    </RailButton>
+  )
   return (
     <aside
       data-navigation-layout={expanded ? 'sidebar' : 'rail'}
       style={expanded && width !== undefined ? { width } : undefined}
       className={cn(
-        'flex h-full shrink-0 flex-col border-r border-border bg-sidebar',
-        expanded ? 'w-60' : 'w-12 items-center',
+        'flex h-full shrink-0 flex-col border-r border-border bg-source-list mac:border-black/10 dark:mac:border-black/50',
+        expanded ? 'w-60' : 'w-12 items-center mac:w-[76px]',
       )}
     >
+      {/* Title bar: traffic lights, sidebar toggle, then the page's own actions (Notes/Mail layout). */}
       <header className={cn(
-        'flex w-full shrink-0 items-center',
-        expanded ? 'h-(--frame-header-h) gap-2 px-3' : 'flex-col gap-3 py-3',
+        'app-drag flex w-full shrink-0',
+        expanded
+          ? 'h-(--frame-header-h) items-center gap-1 pr-2.5 pl-3.5 mac:pl-(--traffic-light-gutter)'
+          : 'flex-col items-center gap-2 pt-3 pb-2 mac:pt-[46px]',
       )}>
-        {expanded ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                aria-label={t('rail.sessions')}
-                aria-current={rail === 'sessions' ? 'page' : undefined}
-                onClick={() => onRailChange('sessions')}
-                className="h-8 min-w-0 flex-1 justify-start gap-2 px-1 text-foreground"
-              >
-                <PiLogo className="size-5 shrink-0 text-foreground" />
-                <span className="truncate text-title font-semibold">{t('app.name')}</span>
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" className="flex items-center gap-2">
-              {t('rail.sessions')}
-              <Kbd>{primaryShortcut('1')}</Kbd>
-            </TooltipContent>
-          </Tooltip>
-        ) : <PiLogo className="size-5 text-foreground" />}
-        <RailButton
-          label={t('rail.togglePanel')}
-          shortcut={primaryShortcut('B')}
-          expanded={contextPanelOpen}
-          onClick={onToggleContextPanel}
-        >
-          {contextPanelOpen
-            ? <TbLayoutSidebarLeftCollapse className="size-4.5" aria-hidden />
-            : <TbLayoutSidebarLeftExpand className="size-4.5" aria-hidden />}
-        </RailButton>
+        <span className={cn('flex min-w-0 items-center gap-2 mac:hidden', expanded && 'flex-1')}>
+          <PiLogo className="size-5 shrink-0 text-foreground" />
+          {expanded ? <span className="truncate text-title">{t('app.name')}</span> : null}
+        </span>
+        {toggle}
+        {expanded ? <>
+          <span className="hidden flex-1 mac:block" />
+          <div ref={actionSlotRef} className="flex items-center gap-0.5" data-sidebar-actions />
+        </> : null}
       </header>
 
       <div hidden={!expanded} className="flex min-h-0 flex-1 flex-col">
@@ -137,22 +137,21 @@ export function ActivityRail({
       <nav
         aria-label={t('rail.nav')}
         className={cn(
-          'mt-auto flex items-center gap-1',
+          'mt-auto flex items-center gap-0.5',
           expanded
-            ? 'mx-3 shrink-0 border-t border-border/60 py-2'
-            : 'w-full flex-1 flex-col px-2 pb-2',
+            ? 'shrink-0 border-t border-border/70 px-2.5 py-2 mac:border-black/[0.07] dark:mac:border-white/[0.06]'
+            : 'w-full flex-1 flex-col px-2 pb-2.5',
         )}
       >
-        {!expanded && (
-          <RailButton
-            label={t('rail.sessions')}
-            shortcut={primaryShortcut('1')}
-            active={rail === 'sessions'}
-            onClick={() => onRailChange('sessions')}
-          >
-            <TbMessages className="size-4.5" aria-hidden />
-          </RailButton>
-        )}
+        <RailButton
+          label={t('rail.sessions')}
+          shortcut={primaryShortcut('1')}
+          active={rail === 'sessions'}
+          side={expanded ? 'top' : 'right'}
+          onClick={() => onRailChange('sessions')}
+        >
+          <TbMessages className="size-[18px]" aria-hidden />
+        </RailButton>
         <div className={expanded ? undefined : 'mt-auto pt-2'}>
           <RailButton
             label={t('rail.settings')}
@@ -161,7 +160,7 @@ export function ActivityRail({
             side={expanded ? 'top' : 'right'}
             onClick={() => onRailChange('settings')}
           >
-            <TbSettings className="size-4.5" aria-hidden />
+            <TbSettings className="size-[18px]" aria-hidden />
           </RailButton>
         </div>
         <GlobalNotifications onOpenAbout={onOpenAbout} onOpenNotification={onOpenNotification} />
@@ -172,7 +171,7 @@ export function ActivityRail({
             side={expanded ? 'top' : 'right'}
             onClick={onOpenPalette}
           >
-            <TbSearch className="size-4.5" aria-hidden />
+            <TbSearch className="size-[18px]" aria-hidden />
           </RailButton>
         </div>
       </nav>

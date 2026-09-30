@@ -1,7 +1,6 @@
 "use client"
 
 import * as React from "react"
-import { TbCircleFilled } from "react-icons/tb"
 import { RadioGroup as RadioGroupPrimitive } from "radix-ui"
 
 import { cn } from "@/lib/utils"
@@ -27,16 +26,16 @@ function RadioGroupItem({
     <RadioGroupPrimitive.Item
       data-slot="radio-group-item"
       className={cn(
-        "aspect-square size-4 shrink-0 rounded-full border border-input text-primary transition-colors duration-(--duration-fast) outline-none focus-visible:focus-ring disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive dark:bg-input/30",
+        "group/radio inline-flex aspect-square size-[15px] shrink-0 items-center justify-center rounded-full bg-control shadow-[0_0_0_0.5px_var(--color-input),0_0.5px_1px_rgb(0_0_0/0.1)] transition-[background-color,box-shadow] duration-(--duration-fast) outline-none focus-visible:focus-ring disabled:cursor-not-allowed disabled:opacity-45 aria-invalid:shadow-[0_0_0_1px_var(--color-destructive)] data-[state=checked]:bg-primary data-[state=checked]:shadow-[inset_0_0.5px_0_rgb(255_255_255/0.25),0_0_0_0.5px_rgb(0_0_0/0.1)] dark:data-[state=unchecked]:bg-white/8",
         className
       )}
       {...props}
     >
       <RadioGroupPrimitive.Indicator
         data-slot="radio-group-indicator"
-        className="relative flex items-center justify-center"
+        className="flex items-center justify-center"
       >
-        <TbCircleFilled className="absolute top-1/2 left-1/2 size-2 -translate-x-1/2 -translate-y-1/2 fill-primary" />
+        <span className="size-1.5 rounded-full bg-white" />
       </RadioGroupPrimitive.Indicator>
     </RadioGroupPrimitive.Item>
   )

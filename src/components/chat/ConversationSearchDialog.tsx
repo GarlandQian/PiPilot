@@ -1,7 +1,6 @@
 import * as React from 'react'
-import { TbArrowDown, TbArrowUp, TbLoader2 } from 'react-icons/tb'
+import { TbArrowDown, TbArrowUp, TbLoader2, TbSearch } from 'react-icons/tb'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { useT } from '@/i18n'
 import { usePiTranscript } from '@/store/pi-rpc'
@@ -20,7 +19,9 @@ export function ConversationSearchDialog({ open, onOpenChange, ...props }: Searc
   open: boolean; onOpenChange(open: boolean): void
 }) {
   return <Dialog open={open} onOpenChange={onOpenChange}>
-    <DialogContent className="flex max-h-[80vh] flex-col sm:max-w-2xl">
+    {/* Spotlight-style: floating translucent panel with a large search field. */}
+    <DialogContent showCloseButton={false} overlayClassName="bg-transparent dark:bg-transparent"
+      className="top-[14%] flex max-h-[76vh] translate-y-0 flex-col gap-0 overflow-hidden rounded-[26px] bg-[color-mix(in_srgb,var(--color-popover)_var(--material-thick-mix),transparent)] p-0 backdrop-blur-[40px] backdrop-saturate-200 sm:max-w-2xl">
       {open ? <SearchContent {...props} onClose={() => onOpenChange(false)} /> : null}
     </DialogContent>
   </Dialog>
@@ -96,37 +97,44 @@ function SearchContent({ initialScope = 'current', onClose, onNavigate, onOpenRe
     resultNodes.current.get(next)?.scrollIntoView({ block: 'nearest' })
   }
   return <>
-    <DialogHeader><DialogTitle>{t('conversationSearch.title')}</DialogTitle><DialogDescription>{t('conversationSearch.description')}</DialogDescription></DialogHeader>
-    <div className="flex flex-wrap items-center gap-1" role="group" aria-label={t('conversationSearch.scope')}>
-      {(['current', 'project', 'all'] as const).map((value) => <Button key={value} variant={scope === value ? 'secondary' : 'ghost'} size="xs" aria-pressed={scope === value} onClick={() => setScope(value)}>{t(`conversationSearch.${value}`)}</Button>)}
-    </div>
-    <div className="flex items-center gap-1">
-      <Input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} aria-label={t('conversationSearch.query')} placeholder={t('conversationSearch.query')} maxLength={256}
+    <DialogHeader className="sr-only"><DialogTitle>{t('conversationSearch.title')}</DialogTitle><DialogDescription>{t('conversationSearch.description')}</DialogDescription></DialogHeader>
+    <div className="flex h-14 shrink-0 items-center gap-3 border-b border-border px-4">
+      <TbSearch className="size-5 shrink-0 text-muted-foreground" aria-hidden />
+      <input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} aria-label={t('conversationSearch.query')} placeholder={t('conversationSearch.query')} maxLength={256}
+        className="h-full min-w-0 flex-1 bg-transparent text-[20px] font-light tracking-[-0.01em] outline-none placeholder:text-muted-foreground/70 focus-visible:outline-none"
         onKeyDown={(event) => {
           if (event.nativeEvent.isComposing) return
           if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); move(event.key === 'ArrowDown' ? 1 : -1) }
           if (event.key === 'Enter') { event.preventDefault(); choose(active) }
         }} />
-      <Button variant="ghost" size="icon-sm" disabled={!hits.length} onClick={() => move(-1)} aria-label={t('conversationSearch.previous')}><TbArrowUp aria-hidden /></Button>
-      <Button variant="ghost" size="icon-sm" disabled={!hits.length} onClick={() => move(1)} aria-label={t('conversationSearch.next')}><TbArrowDown aria-hidden /></Button>
+      {loading ? <TbLoader2 className="size-4 shrink-0 animate-spin text-muted-foreground motion-reduce:animate-none" aria-hidden /> : null}
     </div>
-    <div role="status" className="flex items-center gap-2 text-caption text-muted-foreground">
+    <div className="flex shrink-0 flex-wrap items-center gap-2 px-4 pt-3 pb-2">
+      <div className="mac-segmented" role="group" aria-label={t('conversationSearch.scope')}>
+        {(['current', 'project', 'all'] as const).map((value) => <button key={value} type="button" className="outline-none focus-visible:focus-ring" aria-pressed={scope === value} onClick={() => setScope(value)}>{t(`conversationSearch.${value}`)}</button>)}
+      </div>
+      <div className="ml-auto flex items-center gap-0.5">
+        <Button variant="ghost" size="icon-xs" disabled={!hits.length} onClick={() => move(-1)} aria-label={t('conversationSearch.previous')}><TbArrowUp aria-hidden /></Button>
+        <Button variant="ghost" size="icon-xs" disabled={!hits.length} onClick={() => move(1)} aria-label={t('conversationSearch.next')}><TbArrowDown aria-hidden /></Button>
+      </div>
+    </div>
+    <div role="status" className="flex shrink-0 items-center gap-2 px-5 pb-1.5 text-micro text-muted-foreground">
       {loading ? <TbLoader2 className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden /> : null}
       {t('conversationSearch.count', { count: hits.length })}
       {progress ? <span>{t('conversationSearch.progress', { scanned: progress.scanned, total: progress.total })}</span> : null}
     </div>
-    {error ? <div role="alert" className="flex items-center gap-2 text-caption text-destructive">{t('conversationSearch.error')}<Button size="xs" variant="ghost" onClick={() => setRetry((value) => value + 1)}>{t('common.retry')}</Button></div> : null}
-    {(scope === 'current' ? current.limited : progress?.limited || progress?.skipped) ? <p className="text-caption text-muted-foreground">{t('conversationSearch.limited')}</p> : null}
-    <div className="scroll-slim min-h-0 space-y-1 overflow-auto" aria-label={t('conversationSearch.results')}>
+    {error ? <div role="alert" className="flex items-center gap-2 px-5 pb-2 text-caption text-destructive">{t('conversationSearch.error')}<Button size="xs" variant="ghost" onClick={() => setRetry((value) => value + 1)}>{t('common.retry')}</Button></div> : null}
+    {(scope === 'current' ? current.limited : progress?.limited || progress?.skipped) ? <p className="px-5 pb-2 text-caption text-muted-foreground">{t('conversationSearch.limited')}</p> : null}
+    <div className="scroll-slim min-h-0 flex-1 space-y-0.5 overflow-auto px-2.5 pb-2.5" aria-label={t('conversationSearch.results')}>
       {hits.map((hit, index) => <button key={'session' in hit ? `${hit.session.catalogId ?? hit.session.selectionToken}:${hit.entryId}:${index}` : hit.id}
         ref={(node) => { if (node) resultNodes.current.set(index, node); else resultNodes.current.delete(index) }}
-        className={`block w-full rounded-md border px-3 py-2 text-left focus-visible:outline-2 focus-visible:outline-ring ${index === active ? 'border-border bg-accent' : 'border-transparent hover:bg-accent/50'}`}
+        className={`group/hit block w-full rounded-[12px] px-3 py-2 text-left outline-none focus-visible:focus-ring ${index === active ? 'bg-primary text-primary-foreground' : 'hover:bg-fill'}`}
         aria-current={index === active || undefined} onFocus={() => setSelected(index)} onClick={() => choose(index)}>
-        <span className="mb-1 block truncate text-micro text-muted-foreground">{'session' in hit ? hit.session.name || hit.session.preview || t('sidebar.session.untitled') : t(`conversationSearch.role.${hit.kind}`)}</span>
-        <span className="whitespace-pre-wrap break-words text-caption">{hit.snippet.slice(0, hit.matchStart)}<mark className="rounded-sm bg-primary/20 text-foreground">{hit.snippet.slice(hit.matchStart, hit.matchStart + hit.matchLength)}</mark>{hit.snippet.slice(hit.matchStart + hit.matchLength)}</span>
+        <span className={`mb-0.5 block truncate text-micro ${index === active ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>{'session' in hit ? hit.session.name || hit.session.preview || t('sidebar.session.untitled') : t(`conversationSearch.role.${hit.kind}`)}</span>
+        <span className="whitespace-pre-wrap break-words text-caption">{hit.snippet.slice(0, hit.matchStart)}<mark className={`rounded-sm font-semibold ${index === active ? 'bg-white/25 text-primary-foreground' : 'bg-[#ffd60a]/60 text-foreground'}`}>{hit.snippet.slice(hit.matchStart, hit.matchStart + hit.matchLength)}</mark>{hit.snippet.slice(hit.matchStart + hit.matchLength)}</span>
       </button>)}
       {deferred && !loading && !error && !hits.length ? <p className="py-8 text-center text-caption text-muted-foreground">{t('conversationSearch.empty')}</p> : null}
     </div>
-    {scope !== 'current' && nextPage ? <Button variant="secondary" size="sm" onClick={() => setPageRequest(nextPage)}>{t('conversationSearch.nextPage')}</Button> : null}
+    {scope !== 'current' && nextPage ? <div className="flex shrink-0 justify-center border-t border-border py-2"><Button variant="ghost" size="sm" className="text-primary" onClick={() => setPageRequest(nextPage)}>{t('conversationSearch.nextPage')}</Button></div> : null}
   </>
 }

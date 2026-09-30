@@ -241,7 +241,7 @@ export function TerminalWorkspace({ terminalApi, scope, name, visible, maximized
   return <div hidden={!visible} className="flex h-full min-h-0 min-w-0 flex-col" data-terminal-workspace>
     <div className="flex min-h-10 shrink-0 items-center gap-1 border-b border-border px-2">
       <span className="min-w-0 max-w-32 shrink truncate px-1 text-caption text-muted-foreground" title={name}>{name}</span>
-      <div ref={tabsRef} role="tablist" aria-label={t('terminal.drawer.tabs')} className="scroll-slim flex min-w-0 flex-1 self-stretch overflow-x-auto" onKeyDown={(event) => {
+      <div ref={tabsRef} role="tablist" aria-label={t('terminal.drawer.tabs')} className="scroll-slim flex min-w-0 flex-1 gap-1 self-stretch overflow-x-auto" onKeyDown={(event) => {
         if (!(event.target instanceof HTMLElement) || event.target.getAttribute('role') !== 'tab') return
         if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key) || !sessions.length) return
         event.preventDefault()
@@ -252,7 +252,7 @@ export function TerminalWorkspace({ terminalApi, scope, name, visible, maximized
         {sessions.map((item) => <div
           key={item.terminalId}
           role="presentation"
-          className={cn('flex max-w-48 shrink-0 items-center border-b-2 pr-1 text-caption', selectedId === item.terminalId ? 'border-foreground bg-surface text-foreground' : 'border-transparent text-muted-foreground hover:bg-accent')}
+          className={cn('my-1.5 flex max-w-48 shrink-0 items-center rounded-full pr-1 text-caption', selectedId === item.terminalId ? 'bg-control text-foreground shadow-[inset_0_1px_0.5px_rgb(255_255_255/0.9),0_0_0_0.5px_rgb(0_0_0/0.1),0_1px_2px_rgb(0_0_0/0.1)] dark:bg-white/16 dark:shadow-[inset_0_1px_0.5px_rgb(255_255_255/0.14),0_0_0_0.5px_rgb(0_0_0/0.5)]' : 'text-muted-foreground hover:bg-fill')}
         >
           <button
             id={`${idPrefix}-tab-${item.terminalId}`}
@@ -264,7 +264,7 @@ export function TerminalWorkspace({ terminalApi, scope, name, visible, maximized
             tabIndex={selectedId === item.terminalId ? 0 : -1}
             data-tab-terminal-id={item.terminalId}
             title={`${item.title} · ${t(item.status === 'running' ? 'workbenchReview.terminal.running' : 'workbenchReview.terminal.exited')}`}
-            className="flex min-w-0 flex-1 items-center gap-1.5 self-stretch px-2 outline-none focus-visible:focus-ring"
+            className="flex min-w-0 flex-1 items-center gap-1.5 self-stretch rounded-full px-2.5 outline-none focus-visible:focus-ring"
             onClick={() => select(item.terminalId)}
             onDoubleClick={() => beginRename(item)}
           >

@@ -133,7 +133,9 @@ test('restores an existing project task and persists pin/archive without deletin
     await expect(page.getByRole('menuitem', { name: 'Restore task', exact: true })).toBeVisible()
     await page.keyboard.press('Escape')
     await page.getByRole('textbox', { name: 'Search sessions', exact: true }).fill('')
-    await page.getByRole('button', { name: 'Archived tasks', exact: true }).click()
+    // Archived tasks is a checkbox item in the sidebar's View Options menu.
+    await page.getByRole('button', { name: 'View Options', exact: true }).click()
+    await page.getByRole('menuitemcheckbox', { name: 'Archived tasks', exact: true }).click()
     await expect(taskRow(page, 'Remembered task')).toBeVisible()
     await taskRow(page, 'Remembered task').click()
     await expect.poll(async () => (await page.evaluate(() => window.pipilot!.localPi.runtime.status()))
@@ -141,7 +143,9 @@ test('restores an existing project task and persists pin/archive without deletin
     await taskMenu(page, 'Remembered task')
     await page.getByRole('menuitem', { name: 'Restore task', exact: true }).click()
     await expect(taskRow(page, 'Remembered task')).toHaveCount(0)
-    await page.getByRole('button', { name: 'Archived tasks', exact: true }).click()
+    // Archived tasks is a checkbox item in the sidebar's View Options menu.
+    await page.getByRole('button', { name: 'View Options', exact: true }).click()
+    await page.getByRole('menuitemcheckbox', { name: 'Archived tasks', exact: true }).click()
     await expect(taskRow(page, 'Remembered task')).toHaveAttribute('aria-current', 'page')
 
     // The task occurs in both Focus and its project, but rename owns one input.

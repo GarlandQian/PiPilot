@@ -23,7 +23,7 @@ function ResourceDetail({ resource, onBack }: { resource: PiResourceSummary; onB
   const [copyFailed, setCopyFailed] = React.useState(false)
   React.useEffect(() => { setCopied(false); setCopyFailed(false) }, [resource.id])
   return (
-    <section className="min-w-0 py-1 @min-[880px]/integrations:pl-7" aria-label={resource.label}>
+    <section className="mac-box min-w-0 p-4" aria-label={resource.label}>
       <div className="flex min-w-0 items-start gap-2">
         <Button className="@min-[880px]/integrations:hidden" variant="ghost" size="icon-sm" aria-label={t('common.back')} title={t('common.back')} onClick={onBack}>
           <TbArrowLeft aria-hidden />
@@ -38,7 +38,7 @@ function ResourceDetail({ resource, onBack }: { resource: PiResourceSummary; onB
         </div>
       </div>
       {resource.description && <div className="mt-4 text-caption text-muted-foreground"><MarkdownContent markdown={resource.description} /></div>}
-      {resource.invocation ? <div className="mt-5 flex min-w-0 items-center gap-2 rounded-lg bg-muted/60 px-3 py-2">
+      {resource.invocation ? <div className="mt-5 flex min-w-0 items-center gap-2 rounded-lg bg-fill px-3 py-2">
         <code className="min-w-0 flex-1 break-all font-mono text-caption">{resource.invocation}</code>
         <Button variant="ghost" size="icon-sm" aria-label={t('settings.integrations.resource.copyInvocation')} title={t('settings.integrations.resource.copyInvocation')} onClick={() => {
           void navigator.clipboard.writeText(resource.invocation!).then(() => { setCopied(true); setCopyFailed(false) }).catch(() => setCopyFailed(true))
@@ -53,7 +53,7 @@ function ResourceDetail({ resource, onBack }: { resource: PiResourceSummary; onB
         <dt className="text-caption text-muted-foreground">{t('settings.integrations.resource.state')}</dt>
         <dd className="text-caption">{t(`settings.integrations.resource.state.${resource.effectiveState}`)}</dd>
       </dl>
-      <div className="mt-6 space-y-2 rounded-lg bg-muted/45 p-4">
+      <div className="mt-6 space-y-2 rounded-lg bg-fill p-3.5">
         <CompatibilityBadge value={resource.compatibility} />
         <p className="mt-2 text-caption text-muted-foreground">
           {resource.kind === 'theme'
@@ -96,24 +96,24 @@ export function ResourcesView({ focus, onClearFocus }: {
   return (
     <div>
       <p className="mb-4 max-w-2xl text-caption text-muted-foreground">{t('settings.integrations.resources.description')}</p>
-      {focus ? <div className="mb-4 flex min-w-0 items-center gap-2 rounded-lg bg-muted/60 px-3 py-2 text-caption">
+      {focus ? <div className="mb-4 flex min-w-0 items-center gap-2 rounded-lg bg-fill px-3 py-2 text-caption">
         <span className="min-w-0 flex-1 truncate">{t('settings.integrations.catalog.packageResources', { name: focusedPackage?.displayName ?? t('settings.integrations.unknown') })}</span>
         <Button variant="ghost" size="xs" onClick={() => { onClearFocus(); setKind('all'); setQuery('') }}><TbX aria-hidden />{t('settings.integrations.catalog.clearPackage')}</Button>
       </div> : null}
-    <div className="grid min-h-[28rem] gap-5 @min-[880px]/integrations:grid-cols-[minmax(15rem,0.8fr)_minmax(0,1.2fr)] @min-[880px]/integrations:gap-0" data-integration-catalog="resources">
+    <div className="grid min-h-[28rem] gap-5 @min-[880px]/integrations:grid-cols-[minmax(15rem,0.8fr)_minmax(0,1.2fr)] @min-[880px]/integrations:gap-4" data-integration-catalog="resources">
       <div className={cn(
-        'min-w-0 border-border @min-[880px]/integrations:border-r @min-[880px]/integrations:pr-5',
+        'mac-box min-w-0 self-start p-2.5',
         selected && 'hidden @min-[880px]/integrations:block',
       )}>
-        <div className="border-b border-border pb-3">
+        <div className="px-0.5 pb-1">
           <SearchField value={query} onChange={setQuery} onBrowse={() => focusCatalogRow(collectionRef.current)} />
-          <div className="mt-2 flex flex-wrap items-center gap-1" role="group" aria-label={t('settings.integrations.resources.filter')}>
+          <div className="mt-2.5 flex flex-wrap items-center gap-2" role="group" aria-label={t('settings.integrations.resources.filter')}>
             {RESOURCE_KINDS.map((candidate) => (
               <button
                 key={candidate}
                 type="button"
                 aria-pressed={kind === candidate}
-                className="rounded-md px-2 py-1.5 text-micro text-muted-foreground outline-none hover:text-foreground focus-visible:focus-ring aria-pressed:bg-muted aria-pressed:text-foreground"
+                className="rounded-full px-2.5 py-1 text-micro font-medium text-muted-foreground outline-none hover:bg-fill hover:text-foreground focus-visible:focus-ring aria-pressed:bg-primary aria-pressed:text-primary-foreground"
                 onClick={() => setKind(candidate)}
               >
                 {t(`settings.integrations.resource.${candidate}`)}
@@ -130,8 +130,8 @@ export function ResourcesView({ focus, onClearFocus }: {
               data-integration-row={resource.id}
               aria-current={selected?.id === resource.id ? 'true' : undefined}
               className={cn(
-                'grid min-h-16 w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-lg px-3 py-3 text-left outline-none hover:bg-muted/70 focus-visible:focus-ring',
-                selected?.id === resource.id && 'bg-primary/8 ring-1 ring-inset ring-primary/20',
+                'grid min-h-14 w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-[10px] px-3 py-2.5 text-left outline-none hover:bg-fill focus-visible:focus-ring',
+                selected?.id === resource.id && 'mac-selected-row',
               )}
               onClick={() => setSelectedId(resource.id)}
             >

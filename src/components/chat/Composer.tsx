@@ -1332,7 +1332,7 @@ function SessionComposer({
     : submitMode.kind === 'steer' ? TbRoute : TbArrowUp
 
   return (
-    <div data-composer-root data-draft-storage={draftStorageState} className="shrink-0 bg-background px-6 pb-4 pt-3">
+    <div data-composer-root data-draft-storage={draftStorageState} className="shrink-0 bg-surface px-6 pb-3 pt-2">
       <div className="mx-auto min-w-0 w-full max-w-(--conversation-width)">
         {draftStorageState === 'error' && <div role="alert" className="mb-2 flex items-center gap-2 text-caption text-destructive">
           <span>{t('composer.draftSaveFailed')}</span>
@@ -1362,9 +1362,10 @@ function SessionComposer({
           data-composer-mode={isStreaming ? 'running' : 'idle'}
           aria-busy={submitting}
           className={cn(
-            'min-w-0 border border-input/70 bg-composer shadow-(--shadow-composer) transition-colors duration-(--duration-fast) focus-within:border-ring/70 motion-reduce:transition-none',
+            // Liquid Glass field: specular rim + darkened edge over an opaque, legible fill.
+            'min-w-0 bg-composer shadow-[var(--glass-shadow),var(--shadow-composer)] transition-shadow duration-(--duration-base) focus-within:shadow-[inset_0_1px_0.5px_rgb(255_255_255/0.6),0_0_0_0.5px_color-mix(in_srgb,var(--color-ring)_70%,transparent),0_0_0_4px_color-mix(in_srgb,var(--color-ring)_20%,transparent),0_10px_30px_-8px_rgb(0_0_0/0.18)] motion-reduce:transition-none',
             queue.pendingCount > 0 || queue.paused ? 'rounded-b-(--radius-composer) rounded-t-none' : 'rounded-(--radius-composer)',
-            dragging && 'border-sage bg-sage/5',
+            dragging && 'bg-primary/5 shadow-[0_0_0_2px_var(--color-primary)]',
           )}
           onDragEnter={(event) => {
             if (event.dataTransfer.types.includes('Files')) {
@@ -1392,7 +1393,7 @@ function SessionComposer({
               {attachments.map((attachment) => (
                 <div
                   key={attachment.id}
-                  className="group/image relative flex h-14 min-w-0 overflow-hidden rounded-md border border-border bg-muted/70"
+                  className="group/image relative flex h-14 min-w-0 overflow-hidden rounded-[12px] bg-fill shadow-[inset_0_0_0_0.5px_var(--color-border)]"
                 >
                   <img
                     src={attachment.previewUrl}
@@ -1501,7 +1502,7 @@ function SessionComposer({
           />
           <div
             data-composer-toolbar
-            className="flex min-h-11 min-w-0 items-center gap-1 px-3 pb-2.5 pt-1"
+            className="flex min-h-11 min-w-0 items-center gap-1 px-2.5 pb-2.5 pt-0.5 [&_[data-slot=button]]:rounded-full"
           >
             <input
               ref={fileInput}
@@ -1609,7 +1610,7 @@ function SessionComposer({
             <MarkdownContent markdown={availabilityError} />
           </div>
         ) : null}
-        <p className="mt-1.5 px-2 text-center text-micro text-muted-foreground">
+        <p className="mt-2 px-2 text-center text-micro text-muted-foreground/80">
           {t('composer.disclaimer')}
         </p>
       </div>

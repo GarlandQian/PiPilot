@@ -2,8 +2,7 @@ import {
   TbArrowsMinimize,
   TbDots,
   TbGitBranch,
-  TbLayoutSidebarRightCollapse,
-  TbLayoutSidebarRightExpand,
+  TbLayoutSidebarRight,
   TbMessagePlus,
   TbFileDiff,
   TbLoader2,
@@ -28,6 +27,7 @@ import {
   formatTokenKilounits,
 } from '@/renderer/pi-rpc/session-stats-format'
 import type { PiSessionStats } from '@/store/pi-rpc'
+import { cn } from '@/lib/utils'
 
 export interface ChatHeaderProps {
   ownerKey?: string | null
@@ -83,24 +83,25 @@ export function ChatHeader({
   const hasDetails = Boolean(branch || contextLabel || costLabel)
 
   return (
-    <header className="flex min-h-18 min-w-0 shrink-0 items-center gap-3 border-b border-border/45 bg-background px-6 py-3">
+    <header className="app-drag toolbar-material flex h-(--frame-header-h) min-w-0 shrink-0 items-center gap-2.5 pr-3 pl-5">
       <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-2 text-micro text-muted-foreground">
+        <h1 className="truncate text-[calc(var(--app-font-size)+2px)] leading-tight font-bold text-foreground">{title}</h1>
+        <div className="flex min-w-0 items-center gap-1.5 text-micro leading-tight text-muted-foreground">
           <span className="truncate">{projectName || t('conversation.projectless')}</span>
-          {branch ? <span className="flex min-w-0 items-center gap-1 truncate"><TbGitBranch className="size-3 shrink-0" aria-hidden />{branch}</span> : null}
+          {branch ? <span className="flex min-w-0 items-center gap-0.5 truncate"><TbGitBranch className="size-3 shrink-0" aria-hidden />{branch}</span> : null}
         </div>
-        <h1 className="mt-1 truncate text-title font-medium text-foreground">{title}</h1>
       </div>
-      {sessionVisible && status && status !== 'idle' ? <span className="flex shrink-0 items-center gap-1.5 text-caption text-muted-foreground" role="status" data-conversation-status={status}>
-        {(status === 'running' || status === 'planning') ? <TbLoader2 className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden /> : null}
+      {sessionVisible && status && status !== 'idle' ? <span className="glass flex h-7 shrink-0 items-center gap-1.5 rounded-full px-3 text-caption text-muted-foreground" role="status" data-conversation-status={status}>
+        {(status === 'running' || status === 'planning') ? <TbLoader2 className="size-3.5 animate-spin text-primary motion-reduce:animate-none" aria-hidden /> : null}
         {t(`agent.status.${status}`)}
       </span> : null}
 
-      <div className="flex shrink-0 items-center gap-0.5">
+      {/* macOS 27 toolbar: related items share one Liquid Glass capsule. */}
+      <div className="glass flex shrink-0 items-center gap-0.5 rounded-full p-[3px] [&_[data-slot=button]]:rounded-full [&_[data-slot=button]]:text-foreground/80 [&_[data-slot=button]:hover]:bg-(--glass-hover) [&_[data-slot=button]:hover]:text-foreground">
         {onSearch ? <Button variant="ghost" size="icon-sm" onClick={onSearch} aria-label={t('conversationSearch.title')} title={t('conversationSearch.title')}><TbSearch aria-hidden /></Button> : null}
         {onNavigate ? <ConversationNavigation ownerKey={ownerKey} items={outline} onNavigate={onNavigate} /> : null}
         {onShowChanges ? <Button variant="ghost" size="icon-sm" onClick={onShowChanges} aria-label={t('header.showChanges')} title={t('header.showChanges')}><TbFileDiff aria-hidden /></Button> : null}
-        {onToggleTerminal ? <Button variant={terminalOpen ? 'secondary' : 'ghost'} size="icon-sm" onClick={onToggleTerminal} aria-label={t('terminal.drawer.title')} title={t('terminal.drawer.title')} aria-expanded={terminalOpen} aria-controls="workspace-terminal-drawer"><TbTerminal2 aria-hidden /></Button> : null}
+        {onToggleTerminal ? <Button variant="ghost" size="icon-sm" className={terminalOpen ? 'bg-fill-strong text-primary!' : undefined} onClick={onToggleTerminal} aria-label={t('terminal.drawer.title')} title={t('terminal.drawer.title')} aria-expanded={terminalOpen} aria-controls="workspace-terminal-drawer"><TbTerminal2 aria-hidden /></Button> : null}
         {sessionVisible && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -112,10 +113,11 @@ export function ChatHeader({
               {onNewConversation ? <DropdownMenuItem onSelect={onNewConversation}><TbMessagePlus aria-hidden />{t('header.newConversation')}</DropdownMenuItem> : null}
               {hasDetails ? (
                 <>
-                  <DropdownMenuLabel className="px-2 py-1.5 text-caption font-medium text-muted-foreground">
+                  {onNewConversation ? <DropdownMenuSeparator /> : null}
+                  <DropdownMenuLabel>
                     {t('header.sessionDetails')}
                   </DropdownMenuLabel>
-                  <div className="space-y-1 px-2 pb-1.5 text-caption">
+                  <div className="space-y-1 px-2 pt-0.5 pb-1.5 text-caption">
                     {branch ? (
                       <div className="flex min-w-0 items-center gap-2">
                         <TbGitBranch className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
@@ -145,24 +147,23 @@ export function ChatHeader({
             </DropdownMenuContent>
           </DropdownMenu>
         )}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label={inspectorOpen ? t('header.collapsePanel') : t('header.expandPanel')}
-              onClick={onToggleInspector}
-            >
-              {inspectorOpen
-                ? <TbLayoutSidebarRightCollapse aria-hidden />
-                : <TbLayoutSidebarRightExpand aria-hidden />}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="left">
-            {inspectorOpen ? t('header.collapsePanel') : t('header.expandPanel')}
-          </TooltipContent>
-        </Tooltip>
       </div>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={inspectorOpen ? t('header.collapsePanel') : t('header.expandPanel')}
+            onClick={onToggleInspector}
+            className={cn('glass size-[34px] hover:bg-(--glass-fill) hover:brightness-[0.97] dark:hover:brightness-125', inspectorOpen ? 'text-primary hover:text-primary' : 'text-foreground/80')}
+          >
+            <TbLayoutSidebarRight className="size-[18px]" aria-hidden />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">
+          {inspectorOpen ? t('header.collapsePanel') : t('header.expandPanel')}
+        </TooltipContent>
+      </Tooltip>
     </header>
   )
 }

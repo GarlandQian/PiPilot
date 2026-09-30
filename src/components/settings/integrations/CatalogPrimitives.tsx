@@ -53,11 +53,11 @@ export function SearchField({
   const inputRef = React.useRef<HTMLInputElement>(null)
   return (
     <div className="relative min-w-0 flex-1">
-      <TbSearch className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" aria-hidden />
+      <TbSearch className="pointer-events-none absolute left-2.5 top-1/2 z-10 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />
       <Input
         ref={inputRef}
         type="search"
-        className="pl-8 pr-9 [&::-webkit-search-cancel-button]:appearance-none"
+        className="h-7 rounded-full bg-fill pl-7.5 pr-8 shadow-none dark:bg-fill focus-visible:bg-control [&::-webkit-search-cancel-button]:appearance-none"
         value={value}
         aria-label={label ?? t('settings.integrations.search')}
         placeholder={placeholder ?? label ?? t('settings.integrations.search')}
@@ -77,7 +77,7 @@ export function SearchField({
       {value ? <Button
         variant="ghost"
         size="icon-xs"
-        className="absolute right-1.5 top-1/2 -translate-y-1/2"
+        className="absolute right-1 top-1/2 size-5 -translate-y-1/2"
         aria-label={t('settings.integrations.catalog.clearSearch')}
         title={t('settings.integrations.catalog.clearSearch')}
         onClick={() => { onChange(''); inputRef.current?.focus() }}
@@ -115,7 +115,7 @@ export function CatalogCollection({ label, children, ref }: {
   return <nav
     ref={ref}
     aria-label={label}
-    className="scroll-slim max-h-[min(38rem,64vh)] space-y-1 overflow-y-auto py-2 pr-1"
+    className="scroll-slim max-h-[min(38rem,64vh)] space-y-0.5 overflow-y-auto pt-1.5"
     onKeyDown={handleCatalogKeyDown}
   >{children}</nav>
 }

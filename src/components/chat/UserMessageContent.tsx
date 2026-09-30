@@ -49,7 +49,7 @@ export const UserMessageContent = React.memo(function UserMessageContent({
             return (
               <div
                 key={image.id}
-                className="flex min-h-12 min-w-12 max-w-full items-center justify-center overflow-hidden rounded-md border border-border/80 bg-background/60"
+                className="flex min-h-12 min-w-12 max-w-full items-center justify-center overflow-hidden rounded-[12px] bg-surface-raised shadow-[0_0_0_0.5px_var(--color-border)]"
               >
                 {src ? (
                   <img

@@ -57,9 +57,9 @@ export function CodeBlock({
   }
 
   return (
-    <figure className="group/code my-2 overflow-hidden rounded-md border border-border bg-muted/40">
-      <figcaption className="flex h-8 items-center gap-1 border-b border-border bg-muted/60 px-2">
-        <span className="min-w-0 flex-1 truncate font-mono text-micro text-muted-foreground" title={filePath ?? language}>
+    <figure className="group/code my-2.5 overflow-hidden rounded-lg bg-surface-inset shadow-[inset_0_0_0_0.5px_var(--color-border)] [&_[data-slot=button]]:size-6 [&_[data-slot=button]]:rounded-[5px] [&_[data-slot=button]]:text-muted-foreground [&_[data-slot=button]_svg]:size-3.5">
+      <figcaption className="flex h-8 items-center gap-0.5 border-b border-border/70 pr-1.5 pl-3">
+        <span className="min-w-0 flex-1 truncate text-micro font-medium text-muted-foreground" title={filePath ?? language}>
           {filePath ?? language ?? 'text'}
           {filePath && language ? <span className="text-muted-foreground/60"> · {language}</span> : null}
         </span>
@@ -96,7 +96,7 @@ export function CodeBlock({
         <Tooltip>
           <TooltipTrigger asChild>
             <Button variant="ghost" size="icon-sm" onClick={copy} aria-label={t('md.copy')}>
-              {copied ? <TbCheck className="text-sage" aria-hidden /> : <TbCopy aria-hidden />}
+              {copied ? <TbCheck className="text-success" aria-hidden /> : <TbCopy aria-hidden />}
             </Button>
           </TooltipTrigger>
           <TooltipContent>{failed ? t('md.copyFailed') : copied ? t('md.copied') : t('md.copy')}</TooltipContent>
@@ -105,7 +105,7 @@ export function CodeBlock({
 
       <div className="scroll-slim overflow-x-auto" style={collapsedStyle}>
         {lineNumbers ? (
-          <pre className="code-body flex p-2.5">
+          <pre className="code-body flex px-3 py-2.5">
             <span
               aria-hidden
               className="code-line-no sticky left-0 shrink-0 select-none whitespace-nowrap break-normal text-right tabular-nums"
@@ -122,7 +122,7 @@ export function CodeBlock({
             </code>
           </pre>
         ) : (
-          <pre className={cn('code-body p-2.5', wrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre')}>
+          <pre className={cn('code-body px-3 py-2.5', wrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre')}>
             <code className="hljs block">{children ?? code}</code>
           </pre>
         )}
@@ -133,7 +133,7 @@ export function CodeBlock({
           type="button"
           onClick={() => setExpanded((v) => !v)}
           aria-expanded={expanded}
-          className="flex h-7 w-full cursor-pointer items-center justify-center gap-1 border-t border-border text-micro text-muted-foreground outline-none transition-colors duration-(--duration-fast) hover:bg-accent/50 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          className="flex h-7 w-full items-center justify-center gap-1 border-t border-border/70 text-micro font-medium text-primary outline-none hover:bg-fill focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         >
           {expanded ? <TbChevronUp className="size-3" aria-hidden /> : <TbChevronDown className="size-3" aria-hidden />}
           {expanded ? t('md.collapseCode') : t('md.expandCode', { count: lineCount - COLLAPSED_VISIBLE_LINES })}

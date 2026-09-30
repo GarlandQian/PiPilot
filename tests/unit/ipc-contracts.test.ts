@@ -864,6 +864,7 @@ function darkSettingsForEvent() {
       wordWrap: true,
       showLineNumbers: true,
       compactToolCards: true,
+      glassTint: 50,
     },
     composer: {
       sendShortcut: 'enter',

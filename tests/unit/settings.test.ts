@@ -11,6 +11,9 @@ import { createSettingsStore } from '../../src/store/settings'
 import {
   cloneSettings,
   DEFAULT_SETTINGS,
+  GLASS_TINT_DEFAULT,
+  GLASS_TINT_MAX,
+  GLASS_TINT_MIN,
   parseSettingsDocument,
   sanitizeSettings,
   SETTINGS_SCHEMA_VERSION,
@@ -135,6 +138,29 @@ describe('current settings schema', () => {
       expect(migrated.terminal).toEqual({ ...DEFAULT_SETTINGS.terminal, ...previous.terminal })
       expect(migrated.composer.sendShortcut).toBe(composer.sendShortcut)
     }
+  })
+
+  it('adds the Liquid Glass preference to appearance saved before it existed', () => {
+    const { glassTint: _glassTint, ...legacyAppearance } = darkEnglishSettings().appearance
+    const previous = { ...darkEnglishSettings(), appearance: legacyAppearance }
+    const migrated = parseSettingsDocument({ version: SETTINGS_SCHEMA_VERSION, settings: previous }).settings
+    expect(migrated.appearance).toEqual({ ...legacyAppearance, glassTint: GLASS_TINT_DEFAULT })
+    expect(migrated.locale).toBe('en-US')
+  })
+
+  it('accepts only whole Liquid Glass values between clear and tinted', () => {
+    const current = darkEnglishSettings()
+    for (const glassTint of [GLASS_TINT_MIN, 35, GLASS_TINT_MAX]) {
+      const document = { version: SETTINGS_SCHEMA_VERSION, settings: { ...current, appearance: { ...current.appearance, glassTint } } }
+      expect(parseSettingsDocument(document).settings.appearance.glassTint).toBe(glassTint)
+    }
+    for (const glassTint of [-1, 101, 12.5, '50', null]) {
+      const document = { version: SETTINGS_SCHEMA_VERSION, settings: { ...current, appearance: { ...current.appearance, glassTint } } }
+      expect(() => parseSettingsDocument(document)).toThrow()
+    }
+    expect(sanitizeSettings({ appearance: { glassTint: 140 } }).appearance.glassTint).toBe(GLASS_TINT_MAX)
+    expect(sanitizeSettings({ appearance: { glassTint: -20 } }).appearance.glassTint).toBe(GLASS_TINT_MIN)
+    expect(sanitizeSettings({ appearance: { glassTint: 'clear' } }).appearance.glassTint).toBe(GLASS_TINT_DEFAULT)
   })
 
   it('preserves a missing explicit default and rejects malformed or duplicate custom profiles', () => {

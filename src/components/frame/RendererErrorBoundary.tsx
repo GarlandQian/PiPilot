@@ -12,15 +12,15 @@ function RendererErrorFallback() {
 
   return (
     <main className="flex h-screen min-h-0 items-center justify-center bg-background p-6 text-foreground">
-      <div className="flex max-w-md flex-col items-center gap-3 text-center" role="alert">
-        <TbAlertTriangle className="size-5 text-destructive" aria-hidden />
+      <div className="flex max-w-sm flex-col items-center gap-3 text-center" role="alert">
+        <TbAlertTriangle className="size-12 text-warning" aria-hidden />
         <div className="space-y-1">
-          <h1 className="text-sm font-medium">{t('app.rendererError.title')}</h1>
+          <h1 className="text-title">{t('app.rendererError.title')}</h1>
           <p className="text-caption text-muted-foreground">
             {t('app.rendererError.description')}
           </p>
         </div>
-        <Button size="sm" variant="outline" onClick={() => window.location.reload()}>
+        <Button className="mt-1" onClick={() => window.location.reload()}>
           {t('app.rendererError.reload')}
         </Button>
       </div>

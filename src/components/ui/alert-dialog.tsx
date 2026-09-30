@@ -5,6 +5,7 @@ import { AlertDialog as AlertDialogPrimitive } from "radix-ui"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { AppIcon } from "@/components/AppIcon"
 
 function AlertDialog({
   ...props
@@ -36,7 +37,7 @@ function AlertDialogOverlay({
     <AlertDialogPrimitive.Overlay
       data-slot="alert-dialog-overlay"
       className={cn(
-        "fixed inset-0 z-50 bg-black/50 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0",
+        "fixed inset-0 z-50 bg-black/18 dark:bg-black/40",
         className
       )}
       {...props}
@@ -44,9 +45,14 @@ function AlertDialogOverlay({
   )
 }
 
+/**
+ * macOS alert: app icon, centered bold title, small informative text and
+ * full-width buttons (side by side for two, stacked for more).
+ */
 function AlertDialogContent({
   className,
   size = "default",
+  children,
   ...props
 }: React.ComponentProps<typeof AlertDialogPrimitive.Content> & {
   size?: "default" | "sm"
@@ -58,11 +64,14 @@ function AlertDialogContent({
         data-slot="alert-dialog-content"
         data-size={size}
         className={cn(
-          "group/alert-dialog-content fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border bg-background p-6 duration-(--duration-base) data-[size=sm]:max-w-xs data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[size=default]:sm:max-w-lg",
+          "group/alert-dialog-content fixed top-[50%] left-[50%] z-50 flex w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] flex-col items-stretch gap-3.5 rounded-[26px] bg-surface-raised px-5 pt-6 pb-5 text-center shadow-window data-[size=default]:max-w-[400px] data-[size=sm]:max-w-[300px] dark:bg-[#323234]",
           className
         )}
         {...props}
-      />
+      >
+        <AppIcon className="mx-auto size-16" />
+        {children}
+      </AlertDialogPrimitive.Content>
     </AlertDialogPortal>
   )
 }
@@ -75,7 +84,7 @@ function AlertDialogHeader({
     <div
       data-slot="alert-dialog-header"
       className={cn(
-        "grid grid-rows-[auto_1fr] place-items-center gap-1.5 text-center has-data-[slot=alert-dialog-media]:grid-rows-[auto_auto_1fr] has-data-[slot=alert-dialog-media]:gap-x-6 sm:group-data-[size=default]/alert-dialog-content:place-items-start sm:group-data-[size=default]/alert-dialog-content:text-left sm:group-data-[size=default]/alert-dialog-content:has-data-[slot=alert-dialog-media]:grid-rows-[auto_1fr]",
+        "-mt-0.5 flex flex-col items-center gap-1.5 text-center",
         className
       )}
       {...props}
@@ -91,7 +100,7 @@ function AlertDialogFooter({
     <div
       data-slot="alert-dialog-footer"
       className={cn(
-        "flex flex-col-reverse gap-2 group-data-[size=sm]/alert-dialog-content:grid group-data-[size=sm]/alert-dialog-content:grid-cols-2 sm:flex-row sm:justify-end",
+        "mt-1 grid grid-cols-2 gap-2 has-[>:only-child]:grid-cols-1 has-[>:nth-child(3)]:flex has-[>:nth-child(3)]:flex-col-reverse [&>*]:w-full",
         className
       )}
       {...props}
@@ -107,7 +116,7 @@ function AlertDialogTitle({
     <AlertDialogPrimitive.Title
       data-slot="alert-dialog-title"
       className={cn(
-        "text-lg font-semibold sm:group-data-[size=default]/alert-dialog-content:group-has-data-[slot=alert-dialog-media]/alert-dialog-content:col-start-2",
+        "text-app font-bold text-foreground",
         className
       )}
       {...props}
@@ -122,7 +131,7 @@ function AlertDialogDescription({
   return (
     <AlertDialogPrimitive.Description
       data-slot="alert-dialog-description"
-      className={cn("text-sm text-muted-foreground", className)}
+      className={cn("text-micro leading-snug text-foreground/80", className)}
       {...props}
     />
   )

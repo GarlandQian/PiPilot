@@ -10,7 +10,7 @@ terminals, models, and Pi extensions.
 Pi continues to own its sessions, configuration, and resources. PiPilot provides the desktop
 experience and does not create a parallel agent runtime or migrate Pi data into a private format.
 
-**Source version:** 0.1.0 · [Download releases](https://github.com/GarlandQian/PiPilot/releases)
+**Source version:** 0.2.0 · [Download releases](https://github.com/GarlandQian/PiPilot/releases)
 
 [![CI](https://github.com/GarlandQian/PiPilot/actions/workflows/ci.yml/badge.svg)](https://github.com/GarlandQian/PiPilot/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2f3437.svg)](LICENSE)
@@ -18,7 +18,8 @@ experience and does not create a parallel agent runtime or migrate Pi data into 
 ## Features
 
 - **Projects and conversations** — choose project folders explicitly or start a projectless chat;
-  browse, search, organize, and manage Pi sessions.
+  browse, search, organize, and manage Pi sessions. Filter by activity, sort by recent or name, and
+  show archived tasks from the sidebar's View Options menu.
 - **Conversation workspace** — follow messages and tool activity in one timeline; queue, edit, or
   steer follow-up messages; use Commands, Skills, file references, model selection, and Thinking
   controls.
@@ -45,8 +46,8 @@ experience and does not create a parallel agent runtime or migrate Pi data into 
   official location. No commits, merges or pushes run automatically.
 - **Pi configuration** — manage models and providers, Packages, Resources, Extensions, Skills,
   Prompts, Themes, and global or project MCP settings.
-- **Desktop preferences** — use light or dark appearance, English or Simplified Chinese, keyboard
-  navigation, and configurable terminal typography.
+- **Desktop preferences** — choose system, light, or dark appearance; tune Liquid Glass surfaces
+  from clear to tinted; and configure language, keyboard navigation, and terminal typography.
 - **External Control** — optionally expose a local MCP interface for conversation status and prompt
   control. It is disabled by default; see [External Control](#external-control).
 
@@ -55,6 +56,13 @@ PiPilot is an Electron desktop application; it does not provide a web version.
 Background conversations keep running while you switch projects. Idle runtime caches have a
 global budget, and empty project Hosts retire after a grace period; executing, queued, interactive,
 or leased work is protected. Reclaiming a cache never removes a conversation from the sidebar.
+
+## Desktop preferences
+
+In **Settings > Appearance**, choose System, Light, or Dark and use the Liquid Glass slider to
+adjust glass-surface tint from Clear to Tinted. Existing appearance settings are retained when the
+new preference is added. In the session sidebar, the always-visible filters show all, running, or
+attention-needed sessions; **View Options** changes sort order or toggles archived tasks.
 
 ## Download and installation
 

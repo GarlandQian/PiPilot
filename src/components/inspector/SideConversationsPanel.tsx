@@ -104,7 +104,7 @@ export function SideConversationsPanel({ request, ownerKey, ready, visible }: {
     <div className="space-y-2 border-b border-border p-3">
       <p className="text-caption text-muted-foreground">{t('sideChat.description')}</p>
       {threads.length ? <div className="flex gap-1">
-        <select aria-label={t('sideChat.recent')} className="h-8 min-w-0 flex-1 rounded-md border bg-background px-2 text-caption" value={selected} onChange={(event) => setSelected(event.target.value)}>
+        <select aria-label={t('sideChat.recent')} className="mac-select min-w-0 flex-1" value={selected} onChange={(event) => setSelected(event.target.value)}>
           {threads.map((item) => <option key={item.id} value={item.id}>{item.reference.label} · {t(item.snapshot ? `sideChat.state.${item.snapshot.status}` : 'sideChat.state.draft')}</option>)}
         </select>
         <Button variant="ghost" size="icon-sm" disabled={thread?.busy} onClick={() => void closeThread()} aria-label={t('sideChat.close')} title={t('sideChat.close')}><TbX aria-hidden /></Button>
@@ -112,9 +112,9 @@ export function SideConversationsPanel({ request, ownerKey, ready, visible }: {
     </div>
     {thread ? <>
       <div ref={viewport} className="scroll-slim min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-3" onScroll={(event) => { const node = event.currentTarget; following.current = node.scrollHeight - node.scrollTop - node.clientHeight < 64 }}>
-        <details className="mb-4 rounded-md border px-3 py-2"><summary className="cursor-pointer break-words text-caption">{thread.reference.label}</summary><div className="mt-2"><MarkdownContent markdown={thread.reference.text} /></div></details>
+        <details className="mac-box mb-4 px-3 py-2"><summary className="break-words text-caption font-medium">{thread.reference.label}</summary><div className="mt-2"><MarkdownContent markdown={thread.reference.text} /></div></details>
         <div className="space-y-4" role="log" aria-label={t('sideChat.messages')}>
-          {thread.snapshot?.messages.map((message, index) => <div key={index} className={message.role === 'user' ? 'ml-5 rounded-lg bg-accent p-3' : 'min-w-0'}><MarkdownContent markdown={message.text} streaming={message.partial} /></div>)}
+          {thread.snapshot?.messages.map((message, index) => <div key={index} className={message.role === 'user' ? 'ml-auto w-fit max-w-[88%] rounded-[16px] bg-[#e9e9eb] px-3 py-1.5 dark:bg-[#3a3a3c]' : 'min-w-0'}><MarkdownContent markdown={message.text} streaming={message.partial} /></div>)}
         </div>
         {thread.snapshot ? <p role="status" className="mt-3 flex items-center gap-2 text-caption text-muted-foreground">{running(thread.snapshot) ? <TbLoader2 className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden /> : null}{t(`sideChat.state.${thread.snapshot.status}`)}</p> : null}
         {thread.error || thread.snapshot?.error ? <p role="alert" className="mt-3 whitespace-pre-wrap break-words text-caption text-destructive">{thread.error || thread.snapshot?.error}</p> : null}
@@ -122,7 +122,7 @@ export function SideConversationsPanel({ request, ownerKey, ready, visible }: {
       <div className="space-y-2 border-t border-border p-3">
         {!thread.snapshot && (!ready || thread.reference.ownerKey !== ownerKey) ? <p role="status" className="text-caption text-muted-foreground">{t('sideChat.returnToParent')}</p> : null}
         <Textarea aria-label={t('sideChat.question')} placeholder={t('sideChat.question')} value={thread.text} maxLength={20_000} disabled={thread.busy} onChange={(event) => update(thread.id, { text: event.target.value })}
-          onKeyDown={(event) => { if (!event.nativeEvent.isComposing && event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void submit() } }} className="max-h-44 min-h-20 resize-y" />
+          onKeyDown={(event) => { if (!event.nativeEvent.isComposing && event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void submit() } }} className="max-h-44 min-h-20 resize-y rounded-[14px]" />
         <div className="flex justify-end">
           {running(thread.snapshot) ? <Button size="sm" variant="outline" disabled={thread.busy} onClick={() => {
             update(thread.id, { busy: true }); void window.pipilot!.sideConversations.abort(thread.snapshot!.sideId).then((snapshot) => update(thread.id, { snapshot, busy: false }), (error) => update(thread.id, { error: errorText(error), busy: false }))

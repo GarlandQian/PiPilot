@@ -127,10 +127,10 @@ export function ExternalControlView({ active = true }: { active?: boolean }) {
 
   return (
     <>
-      <div className="grid min-w-0 gap-x-6 gap-y-6 @min-[880px]/integrations:grid-cols-2" data-external-control-workspace>
-        <section className="border-b border-border pb-5 @min-[880px]/integrations:col-span-2" aria-labelledby="external-control-title">
+      <div className="grid min-w-0 gap-4 @min-[880px]/integrations:grid-cols-2" data-external-control-workspace>
+        <section className="mac-box p-4 @min-[880px]/integrations:col-span-2" aria-labelledby="external-control-title">
           <div className="flex min-w-0 items-start gap-3">
-            <TbPlugConnected className="mt-0.5 size-5 shrink-0 text-muted-foreground" aria-hidden />
+            <span className="grid size-8 shrink-0 place-items-center rounded-[8px] bg-[#34c759] bg-[linear-gradient(to_bottom,rgb(255_255_255/0.2),transparent)] text-white shadow-[0_0.5px_1px_rgb(0_0_0/0.15)]" aria-hidden><TbPlugConnected className="size-[18px]" /></span>
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <h3 id="external-control-title" className="text-title">
@@ -176,9 +176,9 @@ export function ExternalControlView({ active = true }: { active?: boolean }) {
           </div>
         </section>
 
-        <section className="min-w-0 border-b border-border pb-5" aria-labelledby="external-control-launcher-title">
+        <section className="mac-box min-w-0 p-4" aria-labelledby="external-control-launcher-title">
           <div className="flex min-w-0 items-start gap-3">
-            <TbDownload className="mt-0.5 size-5 shrink-0 text-muted-foreground" aria-hidden />
+            <span className="grid size-8 shrink-0 place-items-center rounded-[8px] bg-[#007aff] bg-[linear-gradient(to_bottom,rgb(255_255_255/0.2),transparent)] text-white shadow-[0_0.5px_1px_rgb(0_0_0/0.15)]" aria-hidden><TbDownload className="size-[18px]" /></span>
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <h3 id="external-control-launcher-title" className="text-caption font-medium text-foreground">
@@ -248,7 +248,7 @@ export function ExternalControlView({ active = true }: { active?: boolean }) {
         </section>
 
         {snapshot.state === 'ready' && snapshot.configuration ? (
-          <section className="min-w-0 border-b border-border pb-5" aria-labelledby="external-control-configuration-title">
+          <section className="mac-box min-w-0 p-4" aria-labelledby="external-control-configuration-title">
             <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
               <div className="min-w-0">
                 <h3 id="external-control-configuration-title" className="text-caption font-medium text-foreground">
@@ -267,7 +267,7 @@ export function ExternalControlView({ active = true }: { active?: boolean }) {
                   : t('settings.externalControl.copy')}
               </Button>
             </div>
-            <pre className="scroll-slim mt-3 max-h-52 max-w-full overflow-auto rounded-lg bg-muted/60 p-3 font-mono text-micro text-foreground">
+            <pre className="scroll-slim mt-3 max-h-52 max-w-full overflow-auto rounded-lg bg-surface-inset p-3 font-mono text-micro text-foreground shadow-[inset_0_0_0_0.5px_var(--color-border)]">
               <code>{configurationText}</code>
             </pre>
             {copyState === 'failed' ? (
@@ -276,12 +276,12 @@ export function ExternalControlView({ active = true }: { active?: boolean }) {
               </p>
             ) : null}
           </section>
-        ) : <section className="min-w-0 border-b border-border pb-5" aria-label={t('settings.externalControl.configuration')}>
+        ) : <section className="mac-box min-w-0 p-4" aria-label={t('settings.externalControl.configuration')}>
           <h3 className="text-caption font-medium">{t('settings.externalControl.configuration')}</h3>
           <p className="mt-2 text-caption leading-relaxed text-muted-foreground">{t('settings.integrations.external.configurationPending')}</p>
         </section>}
 
-        <section className="min-w-0 @min-[880px]/integrations:col-span-2" aria-labelledby="external-control-recent-title">
+        <section className="mac-box min-w-0 p-4 @min-[880px]/integrations:col-span-2" aria-labelledby="external-control-recent-title">
           <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-2">
             <h3 id="external-control-recent-title" className="text-caption font-medium text-foreground">
               {t('settings.externalControl.recent')}

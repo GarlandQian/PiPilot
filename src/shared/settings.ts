@@ -15,6 +15,10 @@ export type RunningSubmitPreference = 'queue' | 'steer'
 export const TERMINAL_FONT_FAMILY_LIMIT = 120
 export const TERMINAL_FONT_SIZE_MIN = 11
 export const TERMINAL_FONT_SIZE_MAX = 18
+/** macOS 27 Liquid Glass intensity: 0 is clearest, 100 is fully tinted. */
+export const GLASS_TINT_MIN = 0
+export const GLASS_TINT_MAX = 100
+export const GLASS_TINT_DEFAULT = 50
 
 export interface AppearanceSettings {
   theme: ThemeMode
@@ -28,6 +32,7 @@ export interface AppearanceSettings {
   wordWrap: boolean
   showLineNumbers: boolean
   compactToolCards: boolean
+  glassTint: number
 }
 
 export interface TerminalSettings {
@@ -70,14 +75,15 @@ export const DEFAULT_SETTINGS: AppSettings = {
     theme: 'system',
     uiFontFamily: '',
     monoFontFamily: '',
-    uiFontSize: 14,
-    codeFontSize: 13,
+    uiFontSize: 13,
+    codeFontSize: 12,
     density: 'compact',
     reducedMotion: false,
     codeLigatures: false,
     wordWrap: true,
     showLineNumbers: true,
     compactToolCards: true,
+    glassTint: GLASS_TINT_DEFAULT,
   },
   composer: {
     sendShortcut: 'enter',
@@ -98,7 +104,7 @@ const COMPOSER_SEND_SHORTCUTS: readonly ComposerSendShortcut[] = ['enter', 'mod-
 const RUNNING_SUBMIT_PREFERENCES: readonly RunningSubmitPreference[] = ['queue', 'steer']
 const LEGACY_APP_KEYS = ['locale', 'appearance', 'composer', 'terminal'] as const
 const APP_KEYS = [...LEGACY_APP_KEYS, 'notifications'] as const
-const APPEARANCE_KEYS = [
+const LEGACY_APPEARANCE_KEYS = [
   'theme',
   'uiFontFamily',
   'monoFontFamily',
@@ -111,6 +117,7 @@ const APPEARANCE_KEYS = [
   'showLineNumbers',
   'compactToolCards',
 ] as const
+const APPEARANCE_KEYS = [...LEGACY_APPEARANCE_KEYS, 'glassTint'] as const
 const TERMINAL_KEYS = ['fontFamily', 'fontSize', 'defaultProfileId', 'profiles'] as const
 const LEGACY_TERMINAL_KEYS = ['fontFamily', 'fontSize'] as const
 const COMPOSER_KEYS = ['sendShortcut', 'runningSubmit'] as const
@@ -160,6 +167,19 @@ function terminalFontSizeOr(value: unknown, fallback: number) {
 
 function isExactAppearance(value: unknown): value is AppearanceSettings {
   if (!isRecord(value) || !hasExactKeys(value, APPEARANCE_KEYS)) return false
+  return isAppearanceFields(value) &&
+    typeof value.glassTint === 'number' &&
+    Number.isInteger(value.glassTint) &&
+    value.glassTint >= GLASS_TINT_MIN &&
+    value.glassTint <= GLASS_TINT_MAX
+}
+
+/** Appearance saved before the Liquid Glass intensity preference existed. */
+function isLegacyAppearance(value: unknown) {
+  return isRecord(value) && hasExactKeys(value, LEGACY_APPEARANCE_KEYS) && isAppearanceFields(value)
+}
+
+function isAppearanceFields(value: Record<string, unknown>) {
   return (
     THEMES.includes(value.theme as ThemeMode) &&
     typeof value.uiFontFamily === 'string' &&
@@ -220,7 +240,7 @@ function isMigratableSettings(value: unknown) {
   return isRecord(value) &&
     (hasExactKeys(value, LEGACY_APP_KEYS) || (hasExactKeys(value, APP_KEYS) && isExactNotifications(value.notifications))) &&
     LOCALES.includes(value.locale as Locale) &&
-    isExactAppearance(value.appearance) &&
+    (isExactAppearance(value.appearance) || isLegacyAppearance(value.appearance)) &&
     (isLegacyComposer(value.composer) || isExactComposer(value.composer)) &&
     (isExactTerminal(value.terminal) || (
       isRecord(value.terminal) &&
@@ -298,6 +318,12 @@ export function sanitizeSettings(
       compactToolCards: booleanOr(
         appearance.compactToolCards,
         fallback.appearance.compactToolCards,
+      ),
+      glassTint: boundedInteger(
+        appearance.glassTint,
+        GLASS_TINT_MIN,
+        GLASS_TINT_MAX,
+        fallback.appearance.glassTint,
       ),
     },
     composer: {

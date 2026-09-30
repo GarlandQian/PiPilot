@@ -601,6 +601,7 @@ export default function App() {
   )
   const compactSettingsDetailVisible = frameLayoutMode === 'settings-compact' && compactSettingsDetailOpen
   const contextPanelVisible = frameNav.contextPanelOpen && !compactSettingsDetailVisible
+  const [sidebarActionSlot, setSidebarActionSlot] = React.useState<HTMLDivElement | null>(null)
 
   return (
     <TooltipProvider delayDuration={350}>
@@ -608,8 +609,8 @@ export default function App() {
         askSideQuestion={conversationReady ? askSideQuestion : undefined}
         workspaceId={workspace.activeScope.kind === 'project' ? workspace.activeScope.workspaceId : null}>
       <ConversationSearchDialog open={searchOpen} onOpenChange={setSearchOpen} initialScope={searchScope} onNavigate={navigateSearch} onOpenResult={openSearchResult} />
-      <div className="flex h-screen w-full min-w-0 flex-col overflow-hidden bg-background text-foreground">
-        {nativeOpenFailed ? <div role="alert" className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2 text-caption text-destructive">
+      <div className="flex h-screen w-full min-w-0 flex-col overflow-hidden bg-window text-foreground">
+        {nativeOpenFailed ? <div role="alert" className="app-drag flex min-h-9 shrink-0 items-center gap-2 border-b border-border bg-surface py-1.5 pr-3 pl-4 text-caption text-destructive mac:pl-[calc(var(--traffic-light-gutter)+8px)]">
           <span className="flex-1">{t('notifications.openFailed')}</span>
           <Button variant="ghost" size="xs" onClick={dismissNativeError}>{t('notifications.localDismiss')}</Button>
         </div> : null}
@@ -626,6 +627,7 @@ export default function App() {
             onOpenAbout={() => setSettingsSection('about')}
             onOpenNotification={openNotification}
             width={panelLayout.contextPanelWidth}
+            actionSlotRef={setSidebarActionSlot}
           >
             <ContextPanel
               rail={rail}
@@ -634,6 +636,7 @@ export default function App() {
               className="min-h-0 w-full flex-1 border-r-0"
             >
               <SessionsPanel
+                headerActionSlot={sidebarActionSlot}
                 onSearchAll={() => { setSearchScope('all'); setSearchOpen(true) }}
                 hidden={!conversationWorkspace}
                 conversationReady={conversationReady}
@@ -716,8 +719,10 @@ export default function App() {
 
           <main
             hidden={!conversationWorkspace || (resourceExpanded && panelLayout.inspectorOpen && !compactConversation)}
-            className="relative flex min-w-0 flex-1 flex-col overflow-x-hidden bg-surface"
+            className="relative flex min-w-0 flex-1 flex-col overflow-x-hidden bg-surface [--toolbar-inset:var(--frame-header-h)]"
           >
+            {/* macOS 27 unified toolbar floats over the transcript, which scrolls beneath its frosted glass. */}
+            <div className="absolute inset-x-0 top-0 z-30 flex flex-col" data-toolbar-overlay>
             <ConversationHeader
               onSearch={() => { setSearchScope('current'); setSearchOpen(true) }}
               title={title}
@@ -747,19 +752,20 @@ export default function App() {
               }}
             />
             {compactFeedback.error ? (
-              <div role="alert" data-conversation-action-error="compact" className="shrink-0 break-words px-4 py-2 text-caption text-destructive [&_.md-body]:text-caption [&_.md-body]:text-destructive">
+              <div role="alert" data-conversation-action-error="compact" className="toolbar-material shrink-0 break-words px-5 py-2 text-caption text-destructive [&_.md-body]:text-caption [&_.md-body]:text-destructive">
                 <MarkdownContent markdown={compactFeedback.error} />
               </div>
             ) : compactFeedback.pending ? (
-              <p role="status" className="shrink-0 px-4 py-2 text-caption text-muted-foreground">
+              <p role="status" className="toolbar-material shrink-0 px-5 py-2 text-caption text-muted-foreground">
                 {t('chat.compacting')}
               </p>
             ) : null}
             {paletteStopFeedback.error ? (
-              <div role="alert" data-conversation-action-error="stop" className="shrink-0 break-words px-4 py-2 text-caption text-destructive [&_.md-body]:text-caption [&_.md-body]:text-destructive">
+              <div role="alert" data-conversation-action-error="stop" className="toolbar-material shrink-0 break-words px-5 py-2 text-caption text-destructive [&_.md-body]:text-caption [&_.md-body]:text-destructive">
                 <MarkdownContent markdown={paletteStopFeedback.error} />
               </div>
             ) : null}
+            </div>
             <ConversationTranscript
               emptyState={<ConversationWelcome
                 selected={conversationReady}
@@ -893,7 +899,7 @@ export default function App() {
         >
           <DialogContent
             showCloseButton={false}
-            className="flex flex-col translate-x-0 translate-y-0 gap-0 rounded-none border-y-0 border-r-0 bg-sidebar p-0"
+            className="flex flex-col translate-x-0 translate-y-0 gap-0 rounded-none rounded-l-2xl bg-surface p-0"
             onInteractOutside={(event) => {
               // The retained portal has stable React ancestry but moves into this dialog's DOM.
               const target = event.detail.originalEvent.target

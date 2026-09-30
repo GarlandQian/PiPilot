@@ -1,10 +1,11 @@
 "use client"
 
 import * as React from "react"
-import { TbCheck, TbChevronDown, TbChevronUp } from "react-icons/tb"
+import { TbCheck, TbChevronDown, TbChevronUp, TbSelector } from "react-icons/tb"
 import { Select as SelectPrimitive } from "radix-ui"
 
 import { cn } from "@/lib/utils"
+import { menuContentClass, menuItemClass, menuLabelClass, menuSeparatorClass } from "./menu-styles"
 
 function Select({
   ...props
@@ -37,14 +38,17 @@ function SelectTrigger({
       data-slot="select-trigger"
       data-size={size}
       className={cn(
-        "flex w-fit items-center justify-between gap-2 rounded-md border border-input bg-transparent px-3 py-2 text-sm whitespace-nowrap transition-colors duration-(--duration-fast) outline-none focus-visible:focus-ring disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive data-[placeholder]:text-muted-foreground data-[size=default]:h-[var(--control-h)] data-[size=sm]:h-[calc(var(--control-h)-4px)] *:data-[slot=select-value]:line-clamp-1 *:data-[slot=select-value]:flex *:data-[slot=select-value]:items-center *:data-[slot=select-value]:gap-2 dark:bg-input/30 dark:hover:bg-input/50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 [&_svg:not([class*='text-'])]:text-muted-foreground",
+        "flex w-fit items-center justify-between gap-2 rounded-full bg-control pr-[4px] pl-3 text-app whitespace-nowrap text-foreground shadow-[inset_0_1px_0.5px_rgb(255_255_255/0.9),0_0_0_0.5px_rgb(0_0_0/0.15),0_1px_2.5px_rgb(0_0_0/0.1)] dark:shadow-[inset_0_1px_0.5px_rgb(255_255_255/0.16),0_0_0_0.5px_rgb(0_0_0/0.6),0_1px_2.5px_rgb(0_0_0/0.3)] transition-[background-color,box-shadow] duration-(--duration-fast) outline-none focus-visible:focus-ring disabled:cursor-not-allowed disabled:opacity-45 aria-invalid:shadow-[0_0_0_1px_var(--color-destructive)] data-[placeholder]:text-muted-foreground data-[size=default]:h-[var(--control-h)] data-[size=sm]:h-[calc(var(--control-h)-4px)] *:data-[slot=select-value]:line-clamp-1 *:data-[slot=select-value]:flex *:data-[slot=select-value]:items-center *:data-[slot=select-value]:gap-2 hover:bg-[color-mix(in_srgb,var(--color-control)_94%,var(--color-foreground))] dark:hover:bg-white/18 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 [&_svg:not([class*='text-'])]:text-muted-foreground",
         className
       )}
       {...props}
     >
       {children}
       <SelectPrimitive.Icon asChild>
-        <TbChevronDown className="size-4 opacity-50" />
+        {/* NSPopUpButton's accent-tinted double chevron */}
+        <span className="flex size-[20px] shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-[inset_0_0.5px_0_rgb(255_255_255/0.25)]">
+          <TbSelector className="size-3 stroke-[2.4] text-primary-foreground!" />
+        </span>
       </SelectPrimitive.Icon>
     </SelectPrimitive.Trigger>
   )
@@ -62,7 +66,8 @@ function SelectContent({
       <SelectPrimitive.Content
         data-slot="select-content"
         className={cn(
-          "relative z-50 max-h-(--radix-select-content-available-height) min-w-[8rem] origin-(--radix-select-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-md border bg-popover text-popover-foreground data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95",
+          menuContentClass,
+          "relative max-h-(--radix-select-content-available-height) min-w-[8rem] origin-(--radix-select-content-transform-origin) p-0",
           position === "popper" &&
             "data-[side=bottom]:translate-y-1 data-[side=left]:-translate-x-1 data-[side=right]:translate-x-1 data-[side=top]:-translate-y-1",
           className
@@ -74,7 +79,7 @@ function SelectContent({
         <SelectScrollUpButton />
         <SelectPrimitive.Viewport
           className={cn(
-            "p-1",
+            "p-[5px]",
             position === "popper" &&
               "h-[var(--radix-select-trigger-height)] w-full min-w-[var(--radix-select-trigger-width)] scroll-my-1"
           )}
@@ -94,7 +99,7 @@ function SelectLabel({
   return (
     <SelectPrimitive.Label
       data-slot="select-label"
-      className={cn("px-2 py-1.5 text-xs text-muted-foreground", className)}
+      className={cn(menuLabelClass, className)}
       {...props}
     />
   )
@@ -109,17 +114,18 @@ function SelectItem({
     <SelectPrimitive.Item
       data-slot="select-item"
       className={cn(
-        "relative flex w-full cursor-default items-center gap-2 rounded-sm py-1.5 pr-8 pl-2 text-sm outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 [&_svg:not([class*='text-'])]:text-muted-foreground *:[span]:last:flex *:[span]:last:items-center *:[span]:last:gap-2",
+        menuItemClass,
+        "w-full pr-3 pl-7 *:[span]:last:flex *:[span]:last:items-center *:[span]:last:gap-2",
         className
       )}
       {...props}
     >
       <span
         data-slot="select-item-indicator"
-        className="absolute right-2 flex size-3.5 items-center justify-center"
+        className="absolute left-2 flex size-3.5 items-center justify-center"
       >
         <SelectPrimitive.ItemIndicator>
-          <TbCheck className="size-4" />
+          <TbCheck className="size-3.5 stroke-[2.6]" />
         </SelectPrimitive.ItemIndicator>
       </span>
       <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
@@ -134,7 +140,7 @@ function SelectSeparator({
   return (
     <SelectPrimitive.Separator
       data-slot="select-separator"
-      className={cn("pointer-events-none -mx-1 my-1 h-px bg-border", className)}
+      className={cn("pointer-events-none", menuSeparatorClass, className)}
       {...props}
     />
   )

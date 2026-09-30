@@ -12,7 +12,7 @@ function Checkbox({
     <CheckboxPrimitive.Root
       data-slot="checkbox"
       className={cn(
-        "peer size-4 shrink-0 rounded-[4px] border border-input transition-colors duration-(--duration-fast) outline-none focus-visible:focus-ring disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground dark:bg-input/30 dark:data-[state=checked]:bg-primary",
+        "peer size-[15px] shrink-0 rounded-[4px] bg-control shadow-[0_0_0_0.5px_var(--color-input),0_0.5px_1px_rgb(0_0_0/0.1)] transition-[background-color,box-shadow] duration-(--duration-fast) outline-none focus-visible:focus-ring disabled:cursor-not-allowed disabled:opacity-45 aria-invalid:shadow-[0_0_0_1px_var(--color-destructive)] data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground data-[state=checked]:shadow-[inset_0_0.5px_0_rgb(255_255_255/0.25),0_0_0_0.5px_rgb(0_0_0/0.1)] dark:data-[state=unchecked]:bg-white/8",
         className
       )}
       {...props}
@@ -21,7 +21,7 @@ function Checkbox({
         data-slot="checkbox-indicator"
         className="grid place-content-center text-current transition-none"
       >
-        <TbCheck className="size-3.5" />
+        <TbCheck className="size-3 stroke-[3.5]" />
       </CheckboxPrimitive.Indicator>
     </CheckboxPrimitive.Root>
   )

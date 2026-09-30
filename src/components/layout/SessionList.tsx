@@ -3,7 +3,6 @@ import {
   TbAlertCircle,
   TbArchive,
   TbArchiveOff,
-  TbChevronDown,
   TbChevronRight,
   TbCopy,
   TbDots,
@@ -160,7 +159,7 @@ function StatusIndicator({
   const icon = indicatorState === 'attention' ? <TbAlertCircle className="size-3.5 text-warning" aria-hidden /> : indicatorState === 'loading' || indicatorState === 'running'
     ? <TbLoader2 className="size-3.5 animate-spin text-sage motion-reduce:animate-none" aria-hidden />
     : indicatorState === 'unread'
-      ? <span className="size-1.5 rounded-full bg-sage" aria-hidden />
+      ? <span className="size-2 rounded-full bg-primary" aria-hidden />
       : <TbAlertCircle className="size-3.5 text-destructive" aria-hidden />
 
   return (
@@ -222,10 +221,10 @@ function ConversationRow({
   return (
     <li className="group/conversation relative" data-session-activity={item.activityState}>
       <div className={cn(
-        'relative grid min-h-9 grid-cols-[minmax(0,1fr)_20px_24px] items-center gap-1 rounded-md border-l-2 py-1 pl-2 pr-0.5 transition-colors duration-(--duration-fast)',
+        'relative grid min-h-7 grid-cols-[minmax(0,1fr)_20px_22px] items-center gap-1 rounded-[10px] py-[3px] pl-2.5 pr-0.5',
         active
-          ? 'border-sage bg-selected text-foreground'
-          : 'border-transparent text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+          ? 'bg-source-list-selected text-foreground'
+          : 'text-foreground/85 hover:bg-fill',
       )}>
         {renamingHere ? (
           <input
@@ -246,7 +245,7 @@ function ConversationRow({
               if (event.key === 'Escape') cancelRename()
             }}
             aria-label={t('sidebar.session.renameLabel')}
-            className="z-10 min-w-0 rounded-sm border border-input bg-input px-1 py-0.5 text-caption text-foreground outline-none focus-visible:focus-ring"
+            className="z-10 min-w-0 rounded-[4px] bg-control px-1 py-0.5 text-app text-foreground shadow-[0_0_0_0.5px_var(--color-ring),0_0_0_3px_color-mix(in_srgb,var(--color-ring)_40%,transparent)] outline-none"
           />
         ) : (
           <button
@@ -256,7 +255,7 @@ function ConversationRow({
             title={title}
             disabled={item.loading || item.disabled}
             onClick={() => onSelect(item)}
-            className="absolute inset-0 cursor-pointer rounded-lg outline-none focus-visible:focus-ring disabled:cursor-wait"
+            className="absolute inset-0 rounded-[10px] outline-none focus-visible:focus-ring disabled:cursor-wait"
           >
             <span className="sr-only">{title}</span>
           </button>
@@ -264,12 +263,12 @@ function ConversationRow({
 
         {!renamingHere && (
           <div className="pointer-events-none relative z-10 min-w-0">
-            <span className={cn('flex min-w-0 items-center gap-1.5 text-caption', active && 'font-medium')}>
+            <span className={cn('flex min-w-0 items-center gap-1.5 text-app', active && 'font-medium')}>
               <span className="truncate">{title}</span>
-              {item.pinned && <TbPin className="size-3 shrink-0 text-sage" aria-label={t('nav.redesign.pinned')} />}
+              {item.pinned && <TbPin className="size-3 shrink-0 text-primary" aria-label={t('nav.redesign.pinned')} />}
               {item.archived && <TbArchive className="size-3 shrink-0" aria-label={t('nav.redesign.archived')} />}
             </span>
-            {showScope && <span className="mt-0.5 block truncate text-micro text-muted-foreground/75">
+            {showScope && <span className="block truncate text-micro text-muted-foreground">
               {item.scopeLabel} · {t(item.status === 'failed' || item.activityState === 'failed' ? 'agent.status.failed'
                 : item.needsAttention ? 'nav.redesign.attention'
                 : item.unread ? 'nav.redesign.unread'
@@ -296,7 +295,7 @@ function ConversationRow({
                 size="icon-xs"
                 aria-label={t('sidebar.session.actions')}
                 disabled={item.loading || item.disabled}
-                className={cn('relative z-10 size-6 opacity-0 group-hover/conversation:opacity-100 group-focus-within/conversation:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100', active && 'opacity-100')}
+                className={cn('relative z-10 size-[22px] opacity-0 group-hover/conversation:opacity-100 group-focus-within/conversation:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100', active && 'opacity-100')}
                 onClick={(event) => event.stopPropagation()}
               >
                 <TbDots aria-hidden />
@@ -494,10 +493,10 @@ function ProjectChildren({
       ) : (
         <button
           type="button"
-          className="density-row flex w-full items-center gap-1.5 rounded-sm px-2 text-left text-caption font-medium text-foreground outline-none transition-colors duration-(--duration-fast) hover:bg-accent/50 focus-visible:focus-ring"
+          className="density-row flex w-full items-center gap-1.5 rounded-md px-2 text-left text-app text-foreground/85 outline-none hover:bg-fill focus-visible:focus-ring"
           onClick={() => onStartProjectTask(project.id)}
         >
-          <TbMessagePlus className="size-3.5" aria-hidden />
+          <TbMessagePlus className="size-3.5 text-primary" aria-hidden />
           {t('sidebar.project.startTask')}
         </button>
       )}
@@ -551,8 +550,8 @@ export function ProjectNavigationGroup({
     <section aria-labelledby="sidebar-projects-heading">
       {workflowProject && <ProjectWorkflowsDialog workspaceId={workflowProject.id} projectName={workflowProject.name}
         open onOpenChange={(open) => { if (!open) setWorkflowProject(null) }} onOpenProject={onStartProjectTask} />}
-      <div className="mb-1 flex min-h-8 items-center justify-between px-2">
-        <h2 id="sidebar-projects-heading" className="text-micro font-medium tracking-wide text-muted-foreground">
+      <div className="mb-0.5 flex min-h-6 items-center justify-between pl-2">
+        <h2 id="sidebar-projects-heading" className="text-micro font-semibold text-muted-foreground/90">
           {t('sidebar.projects')}
         </h2>
         <Tooltip>
@@ -560,7 +559,7 @@ export function ProjectNavigationGroup({
             <Button
               variant="ghost"
               size="icon-xs"
-              className="size-7 text-muted-foreground"
+              className="text-muted-foreground"
               aria-label={t('sidebar.addProject')}
               onClick={onAddProject}
             >
@@ -580,13 +579,13 @@ export function ProjectNavigationGroup({
           {t('sidebar.projects.empty')}
         </button>
       ) : (
-        <ul className="flex flex-col gap-2">
+        <ul className="flex flex-col gap-px">
           {projects.map((navigation) => {
             const { project } = navigation
             const active = project.id === activeProjectId
             return (
               <li key={project.id}>
-                <div className="group/project grid min-h-8 grid-cols-[20px_minmax(0,1fr)_24px_24px] items-center gap-0.5 rounded-md px-1 transition-colors duration-(--duration-fast) hover:bg-accent/45 focus-within:bg-accent/45">
+                <div className="group/project grid min-h-7 grid-cols-[16px_minmax(0,1fr)_22px_22px] items-center gap-0.5 rounded-[10px] pr-0.5 pl-0.5 hover:bg-fill">
                   <button
                     type="button"
                     aria-expanded={navigation.expanded}
@@ -595,11 +594,9 @@ export function ProjectNavigationGroup({
                       { name: project.name },
                     )}
                     onClick={() => onToggleProject(project.id, !navigation.expanded)}
-                    className="flex min-h-8 items-center justify-center rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:focus-ring"
+                    className="flex min-h-7 items-center justify-center rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:focus-ring"
                   >
-                    {navigation.expanded
-                      ? <TbChevronDown className="size-3 shrink-0 text-muted-foreground" aria-hidden />
-                      : <TbChevronRight className="size-3 shrink-0 text-muted-foreground" aria-hidden />}
+                    <TbChevronRight className={cn('size-3 shrink-0 stroke-[2.6] text-muted-foreground transition-transform duration-(--duration-fast)', navigation.expanded && 'rotate-90')} aria-hidden />
                   </button>
                   <button
                     type="button"
@@ -610,14 +607,14 @@ export function ProjectNavigationGroup({
                       if (!navigation.expanded) onToggleProject(project.id, true)
                       onResumeProject(project.id)
                     }}
-                    className="flex min-h-8 min-w-0 items-center gap-1.5 rounded-sm text-left outline-none focus-visible:focus-ring disabled:cursor-default"
+                    className="flex min-h-7 min-w-0 items-center gap-1.5 rounded-sm text-left outline-none focus-visible:focus-ring disabled:cursor-default"
                   >
                     {navigation.expanded
-                      ? <TbFolderOpen className="size-3.5 shrink-0" aria-hidden />
-                      : <TbFolder className="size-3.5 shrink-0" aria-hidden />}
+                      ? <TbFolderOpen className={cn('size-4 shrink-0', active ? 'text-primary' : 'text-muted-foreground')} aria-hidden />
+                      : <TbFolder className={cn('size-4 shrink-0', active ? 'text-primary' : 'text-muted-foreground')} aria-hidden />}
                     <span className={cn(
-                      'min-w-0 truncate text-caption font-medium',
-                      active ? 'text-foreground' : 'text-muted-foreground',
+                      'min-w-0 truncate text-app',
+                      active ? 'font-medium text-foreground' : 'text-foreground/85',
                       !project.available && 'opacity-55',
                     )} title={project.name}>
                       {project.name}
@@ -700,7 +697,7 @@ export function ProjectNavigationGroup({
                 </div>
 
                 {navigation.expanded && (
-                  <div className="mb-1 ml-3.5 mt-0.5 border-l border-border/50 pl-2">
+                  <div className="mt-px mb-1 pl-[18px]">
                     <ProjectChildren
                       navigation={navigation}
                       activeSessionId={active ? activeSessionId : ''}
@@ -724,11 +721,37 @@ export function ProjectNavigationGroup({
 export interface RecentChatGroupProps extends ConversationListActions {
   activeSessionId: string
   items: readonly SidebarConversationItem[]
+  onNew?: () => void
+}
+
+/** Section header with an optional trailing "+" (Finder/Mail sidebar style). */
+export function SidebarSectionHeader({ id, title, addLabel, onAdd }: {
+  id?: string
+  title: string
+  addLabel?: string
+  onAdd?: () => void
+}) {
+  return (
+    <div className="mb-0.5 flex min-h-6 items-center justify-between pl-2">
+      <h2 id={id} className="text-micro font-semibold text-muted-foreground/90">{title}</h2>
+      {onAdd && addLabel ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="ghost" size="icon-xs" className="text-muted-foreground" aria-label={addLabel} onClick={onAdd}>
+              <TbPlus aria-hidden />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="right">{addLabel}</TooltipContent>
+        </Tooltip>
+      ) : null}
+    </div>
+  )
 }
 
 export function RecentChatGroup({
   items,
   activeSessionId,
+  onNew,
   ...actions
 }: RecentChatGroupProps) {
   const t = useT()
@@ -736,9 +759,7 @@ export function RecentChatGroup({
 
   return (
     <section className="mt-4" aria-labelledby="sidebar-recent-heading">
-      <h2 id="sidebar-recent-heading" className="mb-1 flex min-h-8 items-center px-2 text-micro font-medium tracking-wide text-muted-foreground">
-        {t('sidebar.generalChats')}
-      </h2>
+      <SidebarSectionHeader id="sidebar-recent-heading" title={t('sidebar.generalChats')} addLabel={t('sidebar.newProjectless')} onAdd={onNew} />
       <ConversationList
         {...actions}
         items={projectless}

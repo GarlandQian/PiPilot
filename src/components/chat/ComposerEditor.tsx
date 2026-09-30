@@ -116,7 +116,7 @@ function ComposerMentionNodeView({ node, selected }: NodeViewProps) {
       contentEditable={false}
       aria-label={ariaLabel}
       className={cn(
-        'mx-0.5 inline-flex max-w-[min(34rem,80vw)] cursor-default select-none items-center gap-1 rounded border border-border bg-muted/70 px-1 py-0.5 align-baseline font-mono text-caption text-foreground',
+        'mx-0.5 inline-flex max-w-[min(34rem,80vw)] cursor-default select-none items-center gap-1 rounded-full bg-primary/10 px-2 py-px align-baseline font-mono text-caption text-primary',
         selected && 'border-ring bg-accent ring-1 ring-ring',
       )}
       data-composer-mention-kind={typeof kind === 'string' ? kind : 'unknown'}

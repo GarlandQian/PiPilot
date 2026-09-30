@@ -103,7 +103,7 @@ export function TerminalDrawer({ open, onOpenChange, scope, scopeName, projectId
     data-terminal-drawer
     data-terminal-maximized={maximized}
     hidden={!open}
-    className={cn('min-h-0 min-w-0 border-t border-border bg-sidebar', maximized ? 'absolute inset-0 z-20' : 'relative shrink-0')}
+    className={cn('min-h-0 min-w-0 border-t border-border bg-sidebar', maximized ? 'absolute inset-0 z-40' : 'relative shrink-0')}
     style={maximized ? undefined : { height: displayedHeight }}
   >
     {!maximized ? <div

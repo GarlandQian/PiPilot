@@ -12,10 +12,12 @@ export type {
 } from '@/shared/settings'
 
 export const DEFAULT_UI_FONT_STACK = [
-  'Inter',
+  '-apple-system',
+  'BlinkMacSystemFont',
   '"SF Pro Text"',
-  '"SF Pro Display"',
+  '"Segoe UI Variable Text"',
   '"Segoe UI"',
+  'Inter',
   '"PingFang SC"',
   '"Microsoft YaHei"',
   'system-ui',
@@ -23,10 +25,12 @@ export const DEFAULT_UI_FONT_STACK = [
 ].join(', ')
 
 export const DEFAULT_MONO_FONT_STACK = [
-  '"JetBrains Mono"',
+  '"SF Mono"',
   'SFMono-Regular',
+  'ui-monospace',
+  'Menlo',
+  '"JetBrains Mono"',
   '"Cascadia Code"',
-  '"Fira Code"',
   'Consolas',
   'monospace',
 ].join(', ')
@@ -36,7 +40,7 @@ export const UI_FONT_OPTIONS: { value: string; labelKey: string; stack?: string 
   { value: '', labelKey: 'settings.appearance.font.option.systemDefault' },
   { value: 'Inter', labelKey: 'Inter', stack: 'Inter' },
   { value: 'Segoe UI', labelKey: 'Segoe UI', stack: '"Segoe UI"' },
-  { value: 'SF Pro', labelKey: 'SF Pro', stack: '"SF Pro Text", "SF Pro Display"' },
+  { value: 'SF Pro', labelKey: 'SF Pro', stack: '-apple-system, BlinkMacSystemFont, "SF Pro Text"' },
   { value: 'PingFang SC', labelKey: 'PingFang SC', stack: '"PingFang SC"' },
   { value: 'Microsoft YaHei', labelKey: 'Microsoft YaHei', stack: '"Microsoft YaHei"' },
 ]

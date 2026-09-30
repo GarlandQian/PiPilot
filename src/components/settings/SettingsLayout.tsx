@@ -1,6 +1,7 @@
 import * as React from 'react'
-import { TbAlertTriangle, TbArrowLeft, TbCheck, TbLoader2 } from 'react-icons/tb'
+import { TbAlertTriangle, TbCheck, TbChevronLeft, TbLoader2 } from 'react-icons/tb'
 import { Button } from '@/components/ui/button'
+import { SettingsIconTile } from './common'
 import type { IntegrationsTabId } from './IntegrationsSettings'
 import { SETTINGS_SECTIONS, type SettingsSectionId } from './settings-navigation'
 import { useT } from '@/i18n'
@@ -107,30 +108,29 @@ export function SettingsLayout({
   return (
     <main
       hidden={hidden || !detailVisible}
-      className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-surface"
+      className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-surface"
       aria-label={t(metadata.labelKey)}
     >
-      <header className="flex shrink-0 items-start gap-3 border-b border-border/60 px-6 py-5 @min-[880px]/frame:px-10">
+      {/* Unified toolbar, like a System Settings pane title. */}
+      <header className="app-drag toolbar-material absolute inset-x-0 top-0 z-30 flex h-(--frame-header-h) items-center gap-2 pr-4 pl-3">
         {compact && onBack ? (
           <Button
             ref={compactBackRef}
             variant="ghost"
-            size="sm"
+            size="icon-sm"
+            className="glass size-[34px] hover:bg-(--glass-fill) hover:brightness-[0.97]"
             aria-label={t('settings.back')}
+            title={t('settings.back')}
             onClick={onBack}
           >
-            <TbArrowLeft aria-hidden />
-            {t('settings.back')}
+            <TbChevronLeft className="size-[18px] stroke-[2.4]" aria-hidden />
           </Button>
-        ) : null}
-        <div className="min-w-0 flex-1">
-          <h1 className="text-xl font-semibold text-foreground">{t(metadata.labelKey)}</h1>
-          <p className="mt-1 text-caption text-muted-foreground">{t(metadata.descriptionKey)}</p>
-        </div>
+        ) : <span className="w-2" aria-hidden />}
+        <h1 className="min-w-0 flex-1 truncate text-[calc(var(--app-font-size)+2px)] font-bold text-foreground">{t(metadata.labelKey)}</h1>
         {showSaveStatus && saveStatus !== 'idle' ? (
-          <div className={cn('flex max-w-[45%] items-start gap-1.5 pt-1 text-caption', saveStatus === 'error' ? 'text-destructive' : 'text-muted-foreground')} role={saveStatus === 'error' ? 'alert' : 'status'} data-settings-save-status={saveStatus}>
-            {saveStatus === 'saving' ? <TbLoader2 className="mt-0.5 size-3.5 shrink-0 animate-spin" aria-hidden /> : saveStatus === 'saved' ? <TbCheck className="mt-0.5 size-3.5 shrink-0 text-success" aria-hidden /> : <TbAlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />}
-            <span>{t(`settings.redesign.save.${saveStatus}`)}</span>
+          <div className={cn('flex max-w-[45%] items-center gap-1.5 text-caption', saveStatus === 'error' ? 'text-destructive' : 'text-muted-foreground')} role={saveStatus === 'error' ? 'alert' : 'status'} data-settings-save-status={saveStatus}>
+            {saveStatus === 'saving' ? <TbLoader2 className="size-3.5 shrink-0 animate-spin" aria-hidden /> : saveStatus === 'saved' ? <TbCheck className="size-3.5 shrink-0 text-success" aria-hidden /> : <TbAlertTriangle className="size-3.5 shrink-0" aria-hidden />}
+            <span className="truncate">{t(`settings.redesign.save.${saveStatus}`)}</span>
           </div>
         ) : null}
       </header>
@@ -139,12 +139,21 @@ export function SettingsLayout({
           key={id}
           hidden={id !== section}
           data-settings-section={id}
-          className="scroll-slim min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto"
+          className="scroll-slim min-h-0 min-w-0 flex-1 scroll-pt-[calc(var(--frame-header-h)+12px)] overflow-x-hidden overflow-y-auto"
         >
           <div className={cn(
-            '@container/settings-workspace mx-auto w-full px-6 py-7 @min-[880px]/frame:px-10',
-            id === 'integrations' || id === 'models' ? 'max-w-6xl' : 'max-w-4xl',
+            '@container/settings-workspace mx-auto w-full px-6 pt-[calc(var(--frame-header-h)+1.5rem)] pb-10 @min-[880px]/frame:px-8',
+            id === 'integrations' || id === 'models' ? 'max-w-6xl' : 'max-w-[720px]',
           )}>
+            {id === 'about' ? null : (() => {
+              const meta = SETTINGS_SECTIONS.find((item) => item.id === id)!
+              // System Settings pane hero: big tile, bold name, one-line summary.
+              return <div className="mb-6 flex flex-col items-center gap-1 rounded-xl bg-group px-6 pt-5 pb-4 text-center shadow-[inset_0_0_0_0.5px_var(--color-group-border)]">
+                <SettingsIconTile section={meta} className="mb-1.5 size-14 rounded-[15px] [&_svg]:size-[58%]" />
+                <p className="text-[calc(var(--app-font-size)+4px)] leading-tight font-bold text-foreground">{t(meta.labelKey)}</p>
+                <p className="max-w-md text-caption text-muted-foreground">{t(meta.descriptionKey)}</p>
+              </div>
+            })()}
             <React.Suspense fallback={<div className="flex min-h-40 items-center justify-center gap-2 text-sm text-muted-foreground" role="status"><TbLoader2 className="size-4 animate-spin" aria-hidden />{t('settings.loadingPage')}</div>}>
               {content(id)}
             </React.Suspense>

@@ -1,5 +1,5 @@
 import type * as React from 'react'
-import { TbAdjustmentsHorizontal, TbClock, TbCpu, TbInfoCircle, TbLanguage, TbPackages, TbPalette, TbTerminal2 } from 'react-icons/tb'
+import { TbClock, TbCpu, TbInfoCircle, TbPalette, TbPuzzle, TbSettings, TbTerminal2, TbWorld } from 'react-icons/tb'
 import type { MessageKey } from '@/i18n'
 import { SETTINGS_ROUTE_IDS, type SettingsRouteId } from '@/renderer/layout-preferences'
 
@@ -10,6 +10,8 @@ export interface SettingsSectionMeta {
   labelKey: MessageKey
   descriptionKey: MessageKey
   icon: React.ComponentType<{ className?: string }>
+  /** System Settings–style icon tile color. */
+  tint: string
   searchTerms: string
 }
 export interface SettingsGroupMeta {
@@ -19,18 +21,18 @@ export interface SettingsGroupMeta {
 }
 export const SETTINGS_GROUPS: readonly SettingsGroupMeta[] = [
   { id: 'preferences', labelKey: 'settings.group.preferences', sections: [
-    { id: 'general', labelKey: 'settings.nav.general', descriptionKey: 'settings.redesign.general', icon: TbAdjustmentsHorizontal, searchTerms: 'send enter queue steer runtime Pi 发送 排队 引导 运行' },
-    { id: 'appearance', labelKey: 'settings.nav.appearance', descriptionKey: 'settings.redesign.appearance', icon: TbPalette, searchTerms: 'theme font color size density wrap motion 字体 主题 颜色 密度 换行 动画' },
-    { id: 'language', labelKey: 'settings.nav.language', descriptionKey: 'settings.redesign.language', icon: TbLanguage, searchTerms: 'locale translation English Chinese 简体中文 英文 语言' },
-    { id: 'terminal', labelKey: 'settings.nav.terminal', descriptionKey: 'settings.redesign.terminal', icon: TbTerminal2, searchTerms: 'shell font size 终端 字体' },
+    { id: 'general', labelKey: 'settings.nav.general', descriptionKey: 'settings.redesign.general', icon: TbSettings, tint: '#8e8e93', searchTerms: 'send enter queue steer runtime Pi 发送 排队 引导 运行' },
+    { id: 'appearance', labelKey: 'settings.nav.appearance', descriptionKey: 'settings.redesign.appearance', icon: TbPalette, tint: '#5e5ce6', searchTerms: 'theme font color size density wrap motion liquid glass transparency tint 字体 主题 颜色 密度 换行 动画 玻璃 透明 着色' },
+    { id: 'language', labelKey: 'settings.nav.language', descriptionKey: 'settings.redesign.language', icon: TbWorld, tint: '#007aff', searchTerms: 'locale translation English Chinese 简体中文 英文 语言' },
+    { id: 'terminal', labelKey: 'settings.nav.terminal', descriptionKey: 'settings.redesign.terminal', icon: TbTerminal2, tint: '#3a3a3c', searchTerms: 'shell font size 终端 字体' },
   ] },
   { id: 'agent', labelKey: 'settings.redesign.agentGroup', sections: [
-    { id: 'models', labelKey: 'settings.nav.models', descriptionKey: 'settings.redesign.models', icon: TbCpu, searchTerms: 'provider API endpoint key token model 供应商 模型 接口 密钥' },
-    { id: 'integrations', labelKey: 'settings.nav.integrations', descriptionKey: 'settings.redesign.integrations', icon: TbPackages, searchTerms: 'package skill extension MCP plugin external control launcher 插件 扩展 技能 包 控制 启动器' },
-    { id: 'scheduled-tasks', labelKey: 'scheduledTasks.title', descriptionKey: 'scheduledTasks.description', icon: TbClock, searchTerms: 'schedule automation recurring 定时 计划 自动 重复 任务' },
+    { id: 'models', labelKey: 'settings.nav.models', descriptionKey: 'settings.redesign.models', icon: TbCpu, tint: '#ff9500', searchTerms: 'provider API endpoint key token model 供应商 模型 接口 密钥' },
+    { id: 'integrations', labelKey: 'settings.nav.integrations', descriptionKey: 'settings.redesign.integrations', icon: TbPuzzle, tint: '#34c759', searchTerms: 'package skill extension MCP plugin external control launcher 插件 扩展 技能 包 控制 启动器' },
+    { id: 'scheduled-tasks', labelKey: 'scheduledTasks.title', descriptionKey: 'scheduledTasks.description', icon: TbClock, tint: '#ff3b30', searchTerms: 'schedule automation recurring 定时 计划 自动 重复 任务' },
   ] },
   { id: 'application', labelKey: 'settings.redesign.applicationGroup', sections: [
-    { id: 'about', labelKey: 'settings.nav.about', descriptionKey: 'settings.redesign.about', icon: TbInfoCircle, searchTerms: 'version updates release download 版本 更新 发布 下载' },
+    { id: 'about', labelKey: 'settings.nav.about', descriptionKey: 'settings.redesign.about', icon: TbInfoCircle, tint: '#8e8e93', searchTerms: 'version updates release download 版本 更新 发布 下载' },
   ] },
 ]
 const sections = new Map(SETTINGS_GROUPS.flatMap((group) => group.sections).map((section) => [section.id, section]))

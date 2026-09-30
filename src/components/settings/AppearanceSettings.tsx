@@ -11,6 +11,7 @@ import { type MessageKey, useT } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { useSettings, useUpdateSettings } from '@/store/settings'
 import { MONO_FONT_OPTIONS, UI_FONT_OPTIONS } from '@/types/settings'
+import { GLASS_TINT_MAX, GLASS_TINT_MIN } from '@/shared/settings'
 
 export function AppearanceSettings() {
   const t = useT()
@@ -25,22 +26,44 @@ export function AppearanceSettings() {
 
   return <>
     <SettingSection title={t('settings.appearance.theme')}>
-      <div role="group" aria-label={t('settings.appearance.theme')} className="grid grid-cols-3 gap-3">
+      {/* System Settings › Appearance: thumbnails with an accent ring, label below. */}
+      <div role="group" aria-label={t('settings.appearance.theme')} className="grid grid-cols-3 gap-5 py-4!">
         {(['system', 'light', 'dark'] as const).map((mode) => <button
           key={mode}
           type="button"
           aria-label={t(`settings.appearance.theme.${mode}`)}
           aria-pressed={appearance.theme === mode}
           onClick={() => updateAppearance({ theme: mode })}
-          className={cn('min-w-0 rounded-md border p-2 text-left outline-none transition-colors focus-visible:focus-ring motion-reduce:transition-none', appearance.theme === mode ? 'border-ring bg-accent/40' : 'border-border hover:bg-accent/30')}
+          className="group/theme flex min-w-0 flex-col items-center gap-2 text-center outline-none"
         >
-          <ThemePreview mode={mode} />
-          <span className="mt-2 flex min-h-5 items-center justify-between gap-1 text-caption">
-            <span>{t(`settings.appearance.theme.${mode}`)}</span>
-            <TbCheck className={cn('size-3.5 shrink-0 text-sage', appearance.theme !== mode && 'invisible')} aria-hidden />
+          <span className={cn('block w-full rounded-[10px] p-[3px] transition-shadow duration-(--duration-fast) group-focus-visible/theme:focus-ring', appearance.theme === mode ? 'shadow-[0_0_0_3px_var(--color-primary)]' : 'shadow-[0_0_0_0.5px_var(--color-border)] group-hover/theme:shadow-[0_0_0_3px_var(--color-fill-strong)]')}>
+            <ThemePreview mode={mode} />
+          </span>
+          <span className={cn('flex items-center gap-1 text-caption', appearance.theme === mode ? 'font-semibold text-foreground' : 'text-foreground/80')}>
+            {t(`settings.appearance.theme.${mode}`)}
+            {appearance.theme === mode ? <TbCheck className="size-3.5 shrink-0 text-primary" aria-hidden /> : null}
           </span>
         </button>)}
       </div>
+      {/* macOS 27 Liquid Glass: preview over a vivid backdrop, then the Clear ↔ Tinted slider. */}
+      <div className="mac-group-raw px-3.5! py-3!" aria-hidden>
+        <div className="relative h-20 overflow-hidden rounded-[10px] bg-[linear-gradient(115deg,#ff9f0a_0%,#ff375f_32%,#bf5af2_62%,#0a84ff_100%)]">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_30%,rgb(255_255_255/0.55),transparent_45%),radial-gradient(circle_at_80%_80%,rgb(0_0_0/0.25),transparent_50%)]" />
+          <div className="glass absolute top-1/2 left-1/2 flex h-9 -translate-x-1/2 -translate-y-1/2 items-center gap-3 rounded-full px-4 text-caption font-semibold text-foreground">
+            <span className="size-2 rounded-full bg-primary" />
+            {t('settings.appearance.glass')}
+            <span className="text-muted-foreground">{appearance.glassTint}%</span>
+          </div>
+        </div>
+      </div>
+      <SettingRow label={t('settings.appearance.glass')} desc={t('settings.appearance.glassDesc')}>
+        <span className="text-caption text-muted-foreground">{t('settings.appearance.glassClear')}</span>
+        <input type="range" min={GLASS_TINT_MIN} max={GLASS_TINT_MAX} step={5} value={appearance.glassTint}
+          aria-label={t('settings.appearance.glass')} aria-valuetext={`${appearance.glassTint}%`}
+          onChange={(event) => updateAppearance({ glassTint: Number(event.target.value) })}
+          className="w-40 accent-[var(--color-sage)]" />
+        <span className="text-caption text-muted-foreground">{t('settings.appearance.glassTinted')}</span>
+      </SettingRow>
     </SettingSection>
     <SettingSection title={t('settings.redesign.typography')}>
       <AppearancePreview appearance={appearance} />

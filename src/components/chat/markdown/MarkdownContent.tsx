@@ -72,7 +72,7 @@ function useMarkdownComponents(options?: MarkdownCodeOptions): Components {
         )
       },
       table: ({ node: _node, children, ...props }) => (
-        <div className="scroll-slim my-2 max-w-full overflow-x-auto rounded-md border border-border outline-none focus-visible:focus-ring" role="region" aria-label={t('md.table')} tabIndex={0}>
+        <div className="scroll-slim my-2.5 max-w-full overflow-x-auto rounded-[12px] shadow-[inset_0_0_0_0.5px_var(--color-border)] outline-none focus-visible:focus-ring" role="region" aria-label={t('md.table')} tabIndex={0}>
           <table {...props} className="w-full border-collapse text-caption">
             {children}
           </table>
@@ -87,7 +87,7 @@ function useMarkdownComponents(options?: MarkdownCodeOptions): Components {
             src={safe}
             alt={alt ?? ''}
             loading="lazy"
-            className="my-2 max-h-72 max-w-full rounded-md border border-border object-contain"
+            className="my-2 max-h-72 max-w-full rounded-[12px] object-contain shadow-[0_0_0_0.5px_var(--color-border)]"
           />
         )
       },

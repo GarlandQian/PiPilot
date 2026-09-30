@@ -66,7 +66,7 @@ class DiffRenderErrorBoundary extends React.Component<
 
 const statusTone: Record<WorkspaceFileStatus, string> = {
   modified: 'text-warning',
-  added: 'text-sage',
+  added: 'text-success',
   deleted: 'text-destructive',
 }
 
@@ -77,9 +77,9 @@ function hasRenderableHunk(patch: string) {
 function DiffFileHeader({ file, onOpenFile }: { file: DiffViewerFile; onOpenFile?: (path: string) => void }) {
   const t = useT()
   return (
-    <header className="sticky top-0 z-20 flex min-h-12 items-center gap-2 border-y border-border bg-sidebar px-2.5 py-1.5">
+    <header className="toolbar-material sticky top-0 z-20 flex min-h-11 items-center gap-2 border-t border-border px-3 py-1.5">
       <div className="min-w-0 flex-1">
-        <p className="truncate font-mono text-caption text-foreground" title={file.path}>
+        <p className="truncate text-caption font-semibold text-foreground" title={file.path}>
           {file.previousPath ? `${file.previousPath} → ${file.path}` : file.path}
         </p>
         <p className="mt-0.5 flex items-center gap-2 text-micro tabular-nums">
@@ -87,7 +87,7 @@ function DiffFileHeader({ file, onOpenFile }: { file: DiffViewerFile; onOpenFile
           <span className={cn('font-medium', statusTone[file.status])}>
             {t(`inspector.files.${file.status}`)}
           </span>
-          <span className="text-sage">+{file.added}</span>
+          <span className="text-success">+{file.added}</span>
           <span className="text-destructive">−{file.deleted}</span>
         </p>
       </div>

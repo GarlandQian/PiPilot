@@ -15,18 +15,18 @@ export function LanguageSettings() {
           value={locale}
           onValueChange={(value) => { if (value === 'system' || value === 'zh-CN' || value === 'en-US') update({ locale: value }) }}
           aria-label={t('settings.language.ui')}
-          className="gap-0 divide-y divide-border/60"
+          className="mac-group-raw gap-0 divide-y divide-border"
         >
           {(['system', 'zh-CN', 'en-US'] as const).map((value) => {
             const label = t(value === 'system' ? 'settings.language.system' : value === 'zh-CN' ? 'settings.language.zh' : 'settings.language.en')
-            return <label key={value} className={cn('flex cursor-pointer items-center gap-4 px-1 py-5 text-app', locale === value ? 'text-foreground' : 'text-muted-foreground')}>
+            return <label key={value} className={cn('flex min-h-11 items-center gap-3 px-3.5 py-2.5 text-app', locale === value ? 'text-foreground' : 'text-foreground/80')}>
               <RadioGroupItem value={value} aria-label={label} />
               <span className="flex-1">{label}</span>
               {value !== 'system' ? <span className="text-caption text-muted-foreground">{value}</span> : null}
             </label>
           })}
         </RadioGroup>
-      <p className="pt-2 text-caption text-muted-foreground">{t('settings.language.note')}</p>
+      <p className="text-caption text-muted-foreground">{t('settings.language.note')}</p>
     </SettingSection>
   )
 }

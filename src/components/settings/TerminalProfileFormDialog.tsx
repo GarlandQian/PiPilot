@@ -129,9 +129,9 @@ export function TerminalProfileFormDialog({
         <FormRow label={t('settings.terminal.profiles.form.executable')} htmlFor={fieldId('executable')} error={fieldError('executable')} hint={<span id={`${fieldId('executable')}-hint`}>{t('settings.terminal.profiles.form.executableHint')}</span>}>
           <Input id={fieldId('executable')} autoComplete="off" spellCheck={false} value={draft.executable} maxLength={4096} onChange={(event) => setDraft((current) => ({ ...current, executable: event.target.value }))} aria-invalid={attempted && Boolean(errors.executable)} aria-describedby={description('executable')} className="font-mono" />
         </FormRow>
-        <details open={advanced} onToggle={(event) => setAdvanced(event.currentTarget.open)} className="min-w-0 rounded-md border border-border">
-          <summary className="cursor-pointer rounded-md px-4 py-3 text-app font-medium outline-none focus-visible:focus-ring">{t('settings.terminal.profiles.form.advanced')}</summary>
-          <div className="min-w-0 space-y-5 border-t border-border p-4">
+        <details open={advanced} onToggle={(event) => setAdvanced(event.currentTarget.open)} className="mac-box min-w-0 overflow-hidden">
+          <summary className="rounded-lg px-4 py-3 text-app font-medium outline-none focus-visible:focus-ring">{t('settings.terminal.profiles.form.advanced')}</summary>
+          <div className="min-w-0 space-y-5 border-t border-border bg-surface-raised p-4 dark:bg-transparent">
             <fieldset id={fieldId('args')} aria-describedby={description('args')} className="min-w-0 space-y-2">
               <legend className="mb-1 text-app font-medium">{t('settings.terminal.profiles.form.args')}</legend>
               <p id={`${fieldId('args')}-hint`} className="text-caption text-muted-foreground">{t('settings.terminal.profiles.form.argsHint')}</p>
@@ -148,7 +148,7 @@ export function TerminalProfileFormDialog({
               {draft.env.map((row, index) => {
                 const updateRow = (patch: Partial<EnvironmentRow>) => setDraft((current) => ({ ...current, env: current.env.map((variable) => variable.id === row.id ? { ...variable, ...patch } : variable) }))
                 const unsetId = `${id}-unset-${row.id}`
-                return <div key={row.id} className="min-w-0 rounded-md border border-border bg-surface-inset p-3">
+                return <div key={row.id} className="min-w-0 rounded-lg bg-fill p-3">
                   <div className="flex min-w-0 items-start gap-2">
                     <div className="grid min-w-0 flex-1 grid-cols-1 gap-2 sm:grid-cols-2">
                       <Input value={row.key} autoComplete="off" spellCheck={false} maxLength={256} aria-label={t('settings.terminal.profiles.form.envKey', { index: index + 1 })} placeholder={t('settings.terminal.profiles.form.envKeyPlaceholder')} aria-invalid={attempted && Boolean(errors.env)} aria-describedby={description('env')} onChange={(event) => updateRow({ key: event.target.value })} className="min-w-0 font-mono" />

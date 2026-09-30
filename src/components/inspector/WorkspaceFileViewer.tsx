@@ -1,7 +1,7 @@
 import * as React from 'react'
 import { QuoteSelection } from '@/components/precision/PrecisionReferences'
 import {
-  TbArrowLeft,
+  TbChevronLeft,
   TbAt,
   TbCheck,
   TbCopy,
@@ -178,18 +178,18 @@ export function WorkspaceFileViewer({
       className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden"
       data-workspace-file-viewer
     >
-      <header className="flex min-h-12 shrink-0 items-center gap-1 border-b border-border px-1.5 py-1.5">
+      <header className="flex min-h-11 shrink-0 items-center gap-1 border-b border-border px-2 py-1.5 [&_[data-slot=button]]:rounded-full">
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon-xs" aria-label={t('common.back')} onClick={onBack}>
-              <TbArrowLeft aria-hidden />
+            <Button variant="ghost" size="icon-sm" aria-label={t('common.back')} onClick={onBack}>
+              <TbChevronLeft className="size-[18px] stroke-[2.4]" aria-hidden />
             </Button>
           </TooltipTrigger>
           <TooltipContent>{t('common.back')}</TooltipContent>
         </Tooltip>
 
         <div className="min-w-0 flex-1 px-0.5">
-          {fileNavigation ?? <h2 className="truncate font-mono text-caption font-medium text-foreground" title={path}>
+          {fileNavigation ?? <h2 className="truncate text-caption font-semibold text-foreground" title={path}>
             {boundedPath}
           </h2>}
           <p className="truncate text-micro text-muted-foreground">
@@ -265,12 +265,12 @@ export function WorkspaceFileViewer({
           onValueChange={(value) => setMarkdownMode(value as MarkdownMode)}
           className="flex min-h-0 min-w-0 flex-1 flex-col gap-0"
         >
-          <div className="flex h-8 shrink-0 items-center border-b border-border/60 px-2">
-            <TabsList className="h-6 rounded-md p-0.5">
-              <TabsTrigger value="preview" className="h-5 px-2 text-micro">
+          <div className="flex h-10 shrink-0 items-center justify-center border-b border-border/60 px-2">
+            <TabsList className="h-6">
+              <TabsTrigger value="preview" className="px-3 text-micro">
                 {t('inspector.preview.mode.preview')}
               </TabsTrigger>
-              <TabsTrigger value="source" className="h-5 px-2 text-micro">
+              <TabsTrigger value="source" className="px-3 text-micro">
                 {t('inspector.preview.mode.source')}
               </TabsTrigger>
             </TabsList>

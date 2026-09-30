@@ -9,12 +9,12 @@ const Switch = React.forwardRef<
   <SwitchPrimitive.Root
     ref={ref}
     className={cn(
-      'peer inline-flex h-[18px] w-[32px] shrink-0 cursor-pointer items-center rounded-full border border-transparent bg-muted transition-colors duration-(--duration-fast) outline-none focus-visible:focus-ring disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:bg-primary',
+      'peer inline-flex h-[20px] w-[34px] shrink-0 items-center rounded-full bg-fill-strong shadow-[inset_0_0_0_0.5px_rgb(0_0_0/0.06),inset_0_1px_2px_rgb(0_0_0/0.06)] transition-colors duration-(--duration-base) ease-standard outline-none focus-visible:focus-ring disabled:cursor-not-allowed disabled:opacity-45 data-[state=checked]:bg-primary data-[state=checked]:shadow-[inset_0_0_0_0.5px_rgb(0_0_0/0.08)] dark:data-[state=unchecked]:bg-white/16',
       className,
     )}
     {...props}
   >
-    <SwitchPrimitive.Thumb className="pointer-events-none block h-[14px] w-[14px] translate-x-[2px] rounded-full bg-background transition-transform duration-(--duration-fast) data-[state=checked]:translate-x-[16px]" />
+    <SwitchPrimitive.Thumb className="pointer-events-none block h-[18px] w-[18px] translate-x-px rounded-full bg-white shadow-[0_0_0_0.5px_rgb(0_0_0/0.08),0_1px_2.5px_rgb(0_0_0/0.28)] transition-transform duration-(--duration-base) ease-spring data-[state=checked]:translate-x-[15px] dark:bg-[#f2f2f2]" />
   </SwitchPrimitive.Root>
 ))
 Switch.displayName = SwitchPrimitive.Root.displayName

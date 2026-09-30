@@ -114,6 +114,16 @@ export default function backgroundCatalogGate(pi) {
     await page.waitForLoadState('domcontentloaded')
     await page.setViewportSize({ width: 1440, height: 900 })
     await expect(page.locator('[data-model-thinking-trigger]')).toContainText('Fake Chat', { timeout: 20_000 })
+    await app.evaluate(({ app, BrowserWindow }) => {
+      app.focus({ steal: true })
+      const window = BrowserWindow.getAllWindows()[0]
+      window?.focus()
+      // The selected project's replies are viewed work: completion while it is
+      // on screen must stay read. macOS automation can leave the real window
+      // unfocused, which would (correctly) record them as unseen instead. The
+      // background project still exercises unread delivery below.
+      if (window) Object.defineProperty(window, 'isFocused', { configurable: true, value: () => true })
+    })
 
     await addProject(app, page, canonicalA)
     await send(page, 'Seed project A catalog')

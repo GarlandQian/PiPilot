@@ -69,8 +69,10 @@ test('runs a saved schedule in the background, preserves history and never repla
     await page.getByRole('region', { name: 'Settings', exact: true }).getByRole('button', { name: 'Scheduled tasks', exact: true }).click()
     const panel = page.locator('[data-scheduled-tasks]')
     await panel.getByRole('button', { name: 'New scheduled task', exact: true }).click()
-    await panel.getByLabel('Name', { exact: true }).fill('Scheduled fixture')
-    const targetPicker = panel.getByLabel('Existing conversation', { exact: true })
+    // The editor is a sheet (dialog) layered above the settings pane.
+    const sheet = page.getByRole('dialog', { name: 'New scheduled task', exact: true })
+    await sheet.getByLabel('Name', { exact: true }).fill('Scheduled fixture')
+    const targetPicker = sheet.getByLabel('Existing conversation', { exact: true })
     try { await expect(targetPicker.locator('option').filter({ hasText: 'Scheduled target' })).toHaveCount(1) }
     catch (error) {
       await testInfo.attach('scheduled-target-diagnostics', { contentType: 'application/json', body: JSON.stringify({
@@ -81,12 +83,13 @@ test('runs a saved schedule in the background, preserves history and never repla
       throw error
     }
     await targetPicker.selectOption({ label: (await targetPicker.locator('option').filter({ hasText: 'Scheduled target' }).textContent())! })
-    await panel.getByLabel('Prompt', { exact: true }).fill(prompt)
-    await panel.getByLabel('Frequency', { exact: true }).selectOption('once')
+    await sheet.getByLabel('Prompt', { exact: true }).fill(prompt)
+    await sheet.getByLabel('Frequency', { exact: true }).selectOption('once')
     const future = new Date(Date.now() + 24 * 3_600_000)
     const localFuture = new Date(future.getTime() - future.getTimezoneOffset() * 60_000).toISOString().slice(0, 16)
-    await panel.getByLabel('Start time (this computer’s local time)', { exact: true }).fill(localFuture)
-    await panel.getByRole('button', { name: 'Save task', exact: true }).click()
+    await sheet.getByLabel('Start time (this computer’s local time)', { exact: true }).fill(localFuture)
+    await sheet.getByRole('button', { name: 'Save task', exact: true }).click()
+    await expect(sheet).toHaveCount(0)
     await panel.getByRole('button', { name: 'Run now', exact: true }).click()
     try { await expect.poll(() => page.evaluate(async () => (await window.pipilot!.scheduledTasks.get()).runs[0]?.status), { timeout: 20_000 }).toBe('completed') }
     catch (error) {
@@ -105,8 +108,10 @@ test('runs a saved schedule in the background, preserves history and never repla
     await panel.getByRole('button', { name: 'Pause', exact: true }).click()
     const editPrompt = async (value: string) => {
       await panel.getByRole('button', { name: 'Edit task', exact: true }).click()
-      await panel.getByLabel('Prompt', { exact: true }).fill(value)
-      await panel.getByRole('button', { name: 'Save task', exact: true }).click()
+      const editSheet = page.getByRole('dialog', { name: 'Edit task', exact: true })
+      await editSheet.getByLabel('Prompt', { exact: true }).fill(value)
+      await editSheet.getByRole('button', { name: 'Save task', exact: true }).click()
+      await expect(editSheet).toHaveCount(0)
     }
     await editPrompt(failedPrompt)
     await panel.getByRole('button', { name: 'Run now', exact: true }).click()

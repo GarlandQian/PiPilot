@@ -112,7 +112,7 @@ export function ShellLogViewer({ label, source, sourceTruncated, tone, live = fa
     return nodes
   }, [matches, output, selectedMatch])
 
-  return <section className="shell-log-viewer min-w-0 overflow-hidden rounded-lg border border-border/70 bg-background" data-tool-evidence="auto" data-shell-log-viewer>
+  return <section className="shell-log-viewer min-w-0 overflow-hidden rounded-[12px] bg-surface-inset shadow-[inset_0_0_0_0.5px_var(--color-border)]" data-tool-evidence="auto" data-shell-log-viewer>
     <header className="flex min-h-8 flex-wrap items-center gap-1.5 border-b border-border/60 px-2.5 py-1">
       <h4 className="min-w-0 flex-1 text-micro font-medium text-muted-foreground">{label}</h4>
       {live ? <span className="text-micro text-muted-foreground" role="status">{t(following ? 'tool.redesign.live' : 'tool.redesign.paused')}</span> : null}

@@ -29,7 +29,7 @@ import { adjacentFileRowIndex } from './file-tree-state'
 
 const statusDot = {
   modified: 'bg-warning',
-  added: 'bg-sage',
+  added: 'bg-success',
   deleted: 'bg-destructive',
 } as const
 
@@ -159,8 +159,8 @@ function TreeNode({
         aria-busy={loading || undefined}
         title={node.path}
         className={cn(
-          'flex h-[var(--tree-row-h)] w-full cursor-pointer items-center gap-1 rounded-sm px-1 text-left outline-none transition-colors duration-(--duration-fast) hover:bg-accent/50 focus-visible:ring-1 focus-visible:ring-ring',
-          current && 'bg-accent/70',
+          'flex h-[var(--tree-row-h)] w-full items-center gap-1.5 rounded-md px-1 text-left outline-none hover:bg-fill focus-visible:focus-ring',
+          current && 'bg-selected hover:bg-selected',
         )}
         style={{ paddingLeft: `${depth * 14 + 4}px` }}
       >
@@ -170,7 +170,7 @@ function TreeNode({
             aria-hidden
           />
         ) : isDir ? (
-          <TbChevronRight className={cn('size-3 shrink-0 text-muted-foreground/70 transition-transform duration-(--duration-fast)', open && 'rotate-90')} aria-hidden />
+          <TbChevronRight className={cn('size-3 shrink-0 stroke-[2.6] text-muted-foreground transition-transform duration-(--duration-fast)', open && 'rotate-90')} aria-hidden />
         ) : (
           <span className="size-3 shrink-0" aria-hidden />
         )}
@@ -182,8 +182,8 @@ function TreeNode({
         />
         <span
           className={cn(
-            'truncate font-mono text-caption',
-            isDir ? 'font-medium text-foreground/90' : current ? 'text-foreground' : 'text-foreground/85',
+            'truncate text-app',
+            current ? 'text-foreground' : 'text-foreground/90',
             node.status === 'deleted' && 'line-through opacity-70',
           )}
         >
@@ -415,9 +415,9 @@ export function FileTree({
       </InspectorSectionToolbar>
       {errorMessage && root.children?.length ? <div role="alert" className="flex items-center gap-2 border-b border-border px-3 py-2 text-caption text-destructive"><span className="min-w-0 flex-1">{errorMessage}</span>{onRetry ? <Button variant="ghost" size="xs" onClick={onRetry}>{t('common.retry')}</Button> : null}</div> : null}
       {onSearch ? (
-        <div className="relative border-b border-border/60 p-1.5">
+        <div className="relative px-2 pt-2 pb-1">
           <TbSearch
-            className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground/70"
+            className="pointer-events-none absolute left-4 top-1/2 z-10 mt-0.5 size-3.5 -translate-y-1/2 text-muted-foreground"
             aria-hidden
           />
           <Input
@@ -438,14 +438,14 @@ export function FileTree({
             aria-label={t('inspector.files.search')}
             aria-controls={contentId}
             autoComplete="off"
-            className="h-7 pl-7 pr-7 text-caption"
+            className="h-7 rounded-full bg-fill pl-7 pr-7 text-app shadow-none dark:bg-fill focus-visible:bg-control"
           />
           {query ? (
             <Button
               type="button"
               variant="ghost"
               size="icon-xs"
-              className="absolute right-2 top-1/2 -translate-y-1/2"
+              className="absolute right-3 top-1/2 mt-0.5 size-5 -translate-y-1/2 rounded-full"
               onClick={() => { setQuery(''); searchInput.current?.focus() }}
               aria-label={t('inspector.files.clearSearch')}
             >
@@ -457,7 +457,7 @@ export function FileTree({
       <div
         id={contentId}
         aria-busy={loading || searchState.status === 'loading' || undefined}
-        className="scroll-slim min-h-0 flex-1 overflow-y-auto p-1"
+        className="scroll-slim min-h-0 flex-1 overflow-y-auto px-2 py-1"
       >
         {normalizedQuery ? searchContent : loading && !root.children?.length ? (
           <div className="flex h-full min-h-24 items-center justify-center gap-2 px-4 text-center text-caption text-muted-foreground" role="status">

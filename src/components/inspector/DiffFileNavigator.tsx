@@ -37,7 +37,7 @@ export function DiffFileNavigator({ files, onSelect }: {
           }}>
             <span className="min-w-0 flex-1 truncate font-mono text-caption" title={file.path}>{file.path}</span>
             <span className="shrink-0 text-micro text-muted-foreground">{t(file.stage === 'staged' ? 'inspector.diff.staged' : 'inspector.diff.unstaged')}</span>
-            <span className="shrink-0 text-micro tabular-nums"><span className="text-sage">+{file.added}</span> <span className="text-destructive">−{file.deleted}</span></span>
+            <span className="shrink-0 text-micro tabular-nums"><span className="text-success">+{file.added}</span> <span className="text-destructive">−{file.deleted}</span></span>
           </CommandItem>)}
         </CommandList>
       </Command>

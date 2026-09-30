@@ -82,7 +82,7 @@ export function McpServerBrowser({
       </div>
 
       {filtered.length === 0 ? (
-        <div className="flex min-h-48 flex-col items-center justify-center gap-2 rounded-lg bg-muted/30 p-5 text-center">
+        <div className="mac-box flex min-h-48 flex-col items-center justify-center gap-2 p-5 text-center">
           <TbServer className="size-6 text-muted-foreground" aria-hidden />
           <p className="text-app font-medium">{t(query.trim() ? 'settings.integrations.mcp.noMatches' : 'settings.mcp.noServers')}</p>
           <p className="max-w-sm text-caption text-muted-foreground">
@@ -105,7 +105,7 @@ export function McpServerBrowser({
                 <li
                   key={server.name}
                   data-mcp-server={server.name}
-                  className={cn('flex min-w-0 items-center gap-1 rounded-lg px-2 py-1.5', active ? 'bg-muted' : 'hover:bg-muted/45')}
+                  className={cn('flex min-w-0 items-center gap-1 rounded-[10px] px-2 py-1', active ? 'mac-selected-row' : 'hover:bg-fill')}
                 >
                   <button
                     type="button"
@@ -160,7 +160,7 @@ export function McpServerBrowser({
           </ul>
 
           {selected && (
-            <section id={detailsId} data-mcp-server-detail={selected.name} className={cn('min-w-0 rounded-lg border border-border/70 p-4', !explicitSelection && 'hidden @min-[800px]/mcp:block')} aria-label={t('settings.integrations.mcp.serverDetails', { name: selected.name })}>
+            <section id={detailsId} data-mcp-server-detail={selected.name} className={cn('mac-box min-w-0 p-4', !explicitSelection && 'hidden @min-[800px]/mcp:block')} aria-label={t('settings.integrations.mcp.serverDetails', { name: selected.name })}>
               <div className="flex min-w-0 items-start gap-3">
                 <Button
                   variant="ghost"
@@ -173,7 +173,7 @@ export function McpServerBrowser({
                     requestAnimationFrame(() => focusCatalogRow(collectionRef.current, selected.name))
                   }}
                 ><TbArrowLeft aria-hidden /></Button>
-                <span className="grid size-9 shrink-0 place-items-center rounded-md bg-muted"><TbServer className="size-4.5 text-muted-foreground" aria-hidden /></span>
+                <span className="grid size-9 shrink-0 place-items-center rounded-[9px] bg-[#8e8e93] bg-[linear-gradient(to_bottom,rgb(255_255_255/0.18),transparent)] shadow-[0_0.5px_1px_rgb(0_0_0/0.15)]"><TbServer className="size-4.5 text-white" aria-hidden /></span>
                 <div className="min-w-0 flex-1">
                   <h4 className="break-words text-app font-semibold">{selected.name}</h4>
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
@@ -186,7 +186,7 @@ export function McpServerBrowser({
               <dl className="mt-4 space-y-4 text-caption">
                 <div>
                   <dt className="mb-1 text-muted-foreground">{t(selected.transport === 'stdio' ? 'mcp.form.command' : selected.transport === 'http' ? 'mcp.form.url' : 'settings.integrations.mcp.endpoint')}</dt>
-                  <dd className="break-all rounded-md bg-muted/55 px-2.5 py-2 font-mono text-micro">{endpoint(selected) || t('settings.integrations.unknown')}</dd>
+                  <dd className="break-all rounded-lg bg-fill px-2.5 py-2 font-mono text-micro">{endpoint(selected) || t('settings.integrations.unknown')}</dd>
                 </div>
                 {args.length > 0 ? <div><dt className="mb-1 text-muted-foreground">{t('mcp.form.args')}</dt><dd className="flex flex-wrap gap-1.5">{args.map((arg, index) => <code key={index} className="max-w-full break-all rounded bg-muted/55 px-1.5 py-0.5 text-micro">{arg}</code>)}</dd></div> : null}
                 {stringValue(selected.definition.cwd) ? <div><dt className="mb-1 text-muted-foreground">{t('mcp.form.cwd')}</dt><dd className="break-all font-mono text-micro">{stringValue(selected.definition.cwd)}</dd></div> : null}

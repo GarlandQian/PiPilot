@@ -35,7 +35,7 @@ export function ContextPanel({ rail, hidden = false, headerAction, showHeader = 
       aria-label={label}
       style={width === undefined ? undefined : { width }}
       className={cn(
-        'flex h-full shrink-0 flex-col border-r border-border bg-sidebar',
+        'flex h-full shrink-0 flex-col border-r border-border bg-source-list',
         width === undefined && 'w-60',
         className,
       )}
@@ -48,7 +48,7 @@ export function ContextPanel({ rail, hidden = false, headerAction, showHeader = 
           {headerAction}
         </header>
       )}
-      <div className="scroll-slim min-h-0 flex-1 overflow-y-auto">
+      <div className="scroll-slim min-h-0 flex-1 overflow-y-auto overscroll-contain">
         {children}
       </div>
     </section>
@@ -94,14 +94,14 @@ export function ContextPanelNav({
                 onClick={() => onSelect(item.id)}
                 aria-current={active ? 'page' : undefined}
                 className={cn(
-                  'density-row flex w-full cursor-pointer items-center gap-2 rounded-md px-2.5 text-left text-app outline-none transition-colors duration-(--duration-fast) focus-visible:focus-ring',
+                  'density-row flex w-full items-center gap-2 rounded-md px-2 text-left text-app outline-none focus-visible:focus-ring',
                   active
-                    ? 'bg-selected font-medium text-foreground'
-                    : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+                    ? 'bg-source-list-selected text-foreground'
+                    : 'text-foreground/85 hover:bg-fill',
                 )}
               >
                 {item.icon
-                  ? <span aria-hidden className="flex shrink-0 items-center [&_svg]:size-4">{item.icon}</span>
+                  ? <span aria-hidden className={cn('flex shrink-0 items-center [&_svg]:size-4', active ? 'text-primary' : 'text-muted-foreground')}>{item.icon}</span>
                   : null}
                 <span className="min-w-0 flex-1 truncate">{item.label}</span>
               </button>

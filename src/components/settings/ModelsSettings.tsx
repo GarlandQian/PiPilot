@@ -45,11 +45,11 @@ function ModelsDocumentSettings({ document, operationOwnerKey, active }: {
   return <div className="min-w-0 space-y-7" data-models-settings>
     <ModelsRuntimeSettings snapshot={snapshot} operationOwnerKey={operationOwnerKey} />
     <SettingSection title={t('settings.models.customProviders')} desc={t('settings.models.workspace.description')}>
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-4">
-        <div className="flex items-center gap-1" role="group" aria-label={t('settings.models.mode.form')}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center rounded-full bg-fill p-[2px]" role="group" aria-label={t('settings.models.mode.form')}>
           {(['form', 'json'] as const).map((candidate) => <button key={candidate} type="button" aria-pressed={view === candidate}
-            className="inline-flex min-h-9 items-center gap-1.5 rounded-md px-3 text-caption text-muted-foreground outline-none hover:bg-accent/35 focus-visible:focus-ring aria-pressed:bg-accent/60 aria-pressed:font-medium aria-pressed:text-foreground"
-            onClick={() => setView(candidate)}>{candidate === 'json' ? <TbCode className="size-4" aria-hidden /> : null}{t(`settings.models.mode.${candidate}`)}</button>)}
+            className="inline-flex h-6 items-center gap-1.5 rounded-full px-3 text-caption font-medium text-foreground/70 outline-none hover:text-foreground focus-visible:focus-ring aria-pressed:bg-control aria-pressed:text-foreground aria-pressed:shadow-[inset_0_1px_0.5px_rgb(255_255_255/0.9),0_0_0_0.5px_rgb(0_0_0/0.1),0_1px_2px_rgb(0_0_0/0.12)] dark:aria-pressed:bg-white/22 dark:aria-pressed:shadow-none"
+            onClick={() => setView(candidate)}>{candidate === 'json' ? <TbCode className="size-3.5" aria-hidden /> : null}{t(`settings.models.mode.${candidate}`)}</button>)}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {snapshot ? <span className={cn('mr-1 text-micro', dirty ? 'text-warning' : 'text-muted-foreground')} role="status">{t(dirty ? 'settings.document.unsaved' : 'settings.models.workspace.saved')}</span> : null}
@@ -69,9 +69,9 @@ function ModelsDocumentSettings({ document, operationOwnerKey, active }: {
             <p className="break-all font-mono text-micro text-muted-foreground">{snapshot?.path || t('settings.models.noPath')}</p>
             <Textarea value={draftText} onChange={(event) => updateDraft(event.target.value)} disabled={saving} spellCheck={false}
               aria-invalid={!parsed.valid} aria-describedby={parsed.diagnostics.length ? diagnosticsId : undefined} aria-label={t('settings.models.mode.json')}
-              className="scroll-slim min-h-[28rem] resize-y bg-muted/20 p-4 font-mono text-caption leading-relaxed" />
+              className="scroll-slim min-h-[28rem] resize-y rounded-lg bg-surface-inset p-4 font-mono text-caption leading-relaxed dark:bg-black/20" />
           </div> : <div className="py-8 text-caption text-muted-foreground"><p>{t('settings.models.workspace.fixJson')}</p><Button variant="outline" className="mt-3" onClick={() => setView('json')}>{t('settings.models.mode.json')}</Button></div>}
-      {parsed.diagnostics.length > 0 ? <div id={diagnosticsId} className="space-y-1 border-l-2 border-destructive pl-3" role="alert">
+      {parsed.diagnostics.length > 0 ? <div id={diagnosticsId} className="space-y-1 rounded-lg bg-destructive/8 px-3 py-2" role="alert">
         {parsed.diagnostics.slice(0, 5).map((diagnostic, index) => <p key={`${diagnostic.code}:${diagnostic.offset}:${index}`} className="text-caption text-destructive">{t('settings.models.diagnostics', { line: diagnostic.line, column: diagnostic.column, message: diagnostic.message })}</p>)}
       </div> : null}
       {!snapshot?.applyStatus && savedApply ? <p className="py-2 text-caption text-muted-foreground" role="status">{t(`settings.models.apply.${savedApply}`)}</p> : null}
