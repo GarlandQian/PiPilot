@@ -47,7 +47,7 @@ test('measures input, frame gaps and session switches with 1000 replies and 32KB
   await writeFile(join(directory, 'short.jsonl'), entries(cwd, 'Performance short', 1))
   let release!: () => void
   const gate = new Promise<void>((resolveGate) => { release = resolveGate })
-  const chunks = [liveMarkdown.slice(0, 20_000), ...liveMarkdown.slice(20_000).match(/[^]{1,250}/g)!]
+  const chunks = [liveMarkdown.slice(0, 250), ...liveMarkdown.slice(250).match(/[^]{1,250}/g)!]
   const fixture = await startPiSdkFixture({ agentDir, promptGates: { [prompt]: gate },
     responseChunks: { [prompt]: { chunks, intervalMs: 70 } } })
   const app = await electron.launch({ args: [resolve(process.cwd())], env: { ...process.env, ...fixture.env,
@@ -98,10 +98,10 @@ test('measures input, frame gaps and session switches with 1000 replies and 32KB
     await cdp.send('Profiler.enable')
     await cdp.send('Profiler.start')
     release()
-    await expect(page.locator('.conversation-answer-content').last()).toContainText('Live section 0')
+    await expect(page.locator('.conversation-answer-content').last()).toContainText('Live section 0', { timeout: 15_000 })
     await input.pressSequentially('typing during the live answer', { delay: 80 })
     await expect(input).toHaveText('typing during the live answer')
-    await expect(page.locator('.conversation-answer-content').last()).toContainText('PERFORMANCE_RESPONSE_COMPLETE', { timeout: 30_000 })
+    await expect(page.locator('.conversation-answer-content').last()).toContainText('PERFORMANCE_RESPONSE_COMPLETE', { timeout: 60_000 })
     await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0)
     const { profile } = await cdp.send('Profiler.stop')
     const profilePath = testInfo.outputPath('renderer.cpuprofile')
