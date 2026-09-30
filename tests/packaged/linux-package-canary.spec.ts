@@ -148,15 +148,31 @@ async function assertRetainedData(page: Page, data: Awaited<ReturnType<typeof se
   const workspaces = await page.evaluate(() => window.pipilot!.workspace.get())
   expect(workspaces.recent).toContainEqual(expect.objectContaining({ id: workspaceId, pinned: true, available: true }))
   await page.evaluate((id) => window.pipilot!.workspace.open(id), workspaceId)
+  const activation = await page.evaluate((id) => window.pipilot!.conversation.new({
+    kind: 'project', workspaceId: id,
+  }), workspaceId)
+  expect(activation).toMatchObject({
+    scope: { kind: 'project', workspaceId },
+    sessionId: expect.any(String),
+  })
   await expect.poll(async () => {
     const catalog = await page.evaluate((id) => window.pipilot!.sessionCatalog.refresh({ kind: 'project', workspaceId: id }), workspaceId)
-    return catalog.rows.some((row) => row.sessionId === 'linux-canary-retained')
-  }).toBe(true)
+    return {
+      status: catalog.status,
+      retainedSessionVisible: catalog.rows.some((row) => row.sessionId === 'linux-canary-retained'),
+      diagnostics: catalog.diagnostics,
+    }
+  }, { message: 'The activated project catalog should include its retained session.' })
+    .toMatchObject({ status: 'ready', retainedSessionVisible: true })
 }
 
 async function saveDiagnostics(testInfo: TestInfo, token: string, output: string) {
   await writeFile(testInfo.outputPath('application.log'), output)
   await writeFile(testInfo.outputPath('processes.json'), JSON.stringify(await linuxCanaryProcesses(token), null, 2))
+  for (const name of ['conversation-navigation.json', 'observed-pi-session-directories.json']) {
+    const contents = await readFile(join(token, 'user-data', name)).catch(() => undefined)
+    if (contents) await writeFile(testInfo.outputPath(name), contents)
+  }
   const mainLog = await readFile(join(token, 'user-data', 'logs', 'main.log')).catch(() => undefined)
   if (mainLog) await writeFile(testInfo.outputPath('main.log'), mainLog)
 }
