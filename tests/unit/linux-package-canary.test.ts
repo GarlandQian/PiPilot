@@ -54,7 +54,7 @@ describe('Linux package canary isolation', () => {
     await expect(readLinuxCanaryManifest(root)).rejects.toThrow('must belong to the isolated')
   })
 
-  it('never matches unrelated process environment substrings or renderer children as the relaunched main', () => {
+  it('never matches unrelated process environment substrings or helper children as the relaunched main', () => {
     const token = '/tmp/pipilot-packaged-smoke-linux-example/appimage'
     expect(isCanaryProcessEnvironment(`PATH=/bin\0PIPILOT_LINUX_CANARY_TOKEN=${token}\0`, token)).toBe(true)
     expect(isCanaryProcessEnvironment(`PIPILOT_LINUX_CANARY_TOKEN=${token}-unrelated\0`, token)).toBe(false)
@@ -63,6 +63,7 @@ describe('Linux package canary isolation', () => {
     const main = { pid: 100, executable: '/tmp/.mount_fixture/pipilot', arguments: ['pipilot'], appImage: '/tmp/PiPilot.AppImage' }
     expect(isAppImageMainProcess(main, '/tmp/PiPilot.AppImage')).toBe(true)
     expect(isAppImageMainProcess({ ...main, arguments: ['pipilot', '--type=renderer'] }, '/tmp/PiPilot.AppImage')).toBe(false)
+    expect(isAppImageMainProcess({ ...main, arguments: ['pipilot', '/tmp/resources/app.asar/out/main/pi-management-helper.js'] }, '/tmp/PiPilot.AppImage')).toBe(false)
     expect(isAppImageMainProcess(main, '/tmp/Other.AppImage')).toBe(false)
   })
 
