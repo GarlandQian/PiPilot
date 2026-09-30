@@ -14,6 +14,7 @@ async function fixture() {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'pipilot-worktree-'))); roots.push(root)
   const repository = join(root, 'repo'); await mkdir(repository)
   await git(repository, ['init', '-b', 'main'])
+  await git(repository, ['config', 'core.autocrlf', 'false'])
   await git(repository, ['config', 'user.email', 'fixture@example.invalid'])
   await git(repository, ['config', 'user.name', 'Fixture'])
   await writeFile(join(repository, 'file.txt'), 'original\n')

@@ -131,7 +131,8 @@ export class WorktreeService {
         try { await this.persist() } catch (error) { record.state = 'active'; throw error }
         try {
           // Git moves the entire directory and its index. Ignored and untracked files survive.
-          await this.git(record.path, ['worktree', 'move', record.path, record.archivePath])
+          // Do not run with cwd inside the directory being renamed: Windows holds cwd open.
+          await this.git(record.repository, ['worktree', 'move', record.path, record.archivePath])
           await this.verify(record, record.archivePath)
           await this.lock(record, record.archivePath)
           record.state = 'archived'; delete record.error
@@ -151,8 +152,8 @@ export class WorktreeService {
       record.state = 'restoring'
       try { await this.persist() } catch (error) { record.state = 'archived'; throw error }
       try {
-        await this.git(record.archivePath, ['worktree', 'unlock', record.archivePath])
-        await this.git(record.archivePath, ['worktree', 'move', record.archivePath, record.path])
+        await this.git(record.repository, ['worktree', 'unlock', record.archivePath])
+        await this.git(record.repository, ['worktree', 'move', record.archivePath, record.path])
         await this.verify(record, record.path)
         record.workspaceId = (await this.options.register(record.path, `${record.name} · ${record.branch}`)).id
         record.state = 'active'; delete record.error
