@@ -86,7 +86,8 @@ export async function linuxCanaryProcesses(token: string): Promise<LinuxCanaryPr
 }
 
 export function isAppImageMainProcess(entry: LinuxCanaryProcess, appImage: string) {
-  return entry.appImage === appImage && basename(entry.executable) === 'pipilot'
+  const executableIsAppImage = entry.executable === appImage || entry.executable === `${appImage} (deleted)`
+  return entry.appImage === appImage && (executableIsAppImage || basename(entry.executable) === 'pipilot')
     && !entry.arguments.some((argument) => argument.startsWith('--type='))
     && !entry.arguments.some((argument) => /(?:^|[/\\])pi-management-helper\.js$/u.test(argument))
 }

@@ -5,7 +5,7 @@ if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) {
   throw new Error(`invalid release version: ${version}`)
 }
 
-const highlights = version === '0.3.1'
+const highlights = version === '0.3.2'
   ? [
       'Conversation overview with summaries, blockers, next steps, and plugin state.',
       'Import and export conversations as Markdown, with adjacent image attachments.',

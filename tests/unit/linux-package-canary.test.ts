@@ -62,6 +62,9 @@ describe('Linux package canary isolation', () => {
     expect(isCanaryProcessEnvironment('PIPILOT_LINUX_CANARY_TOKEN=\0', '')).toBe(false)
     const main = { pid: 100, executable: '/tmp/.mount_fixture/pipilot', arguments: ['pipilot'], appImage: '/tmp/PiPilot.AppImage' }
     expect(isAppImageMainProcess(main, '/tmp/PiPilot.AppImage')).toBe(true)
+    const launcher = { ...main, executable: '/tmp/PiPilot.AppImage', arguments: ['/tmp/PiPilot.AppImage'] }
+    expect(isAppImageMainProcess(launcher, '/tmp/PiPilot.AppImage')).toBe(true)
+    expect(isAppImageMainProcess({ ...launcher, executable: `${launcher.executable} (deleted)` }, '/tmp/PiPilot.AppImage')).toBe(true)
     expect(isAppImageMainProcess({ ...main, arguments: ['pipilot', '--type=renderer'] }, '/tmp/PiPilot.AppImage')).toBe(false)
     expect(isAppImageMainProcess({ ...main, arguments: ['pipilot', '/tmp/resources/app.asar/out/main/pi-management-helper.js'] }, '/tmp/PiPilot.AppImage')).toBe(false)
     expect(isAppImageMainProcess(main, '/tmp/Other.AppImage')).toBe(false)

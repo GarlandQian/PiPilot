@@ -6,7 +6,7 @@ PiPilot 是基于官方 [Pi coding agent](https://github.com/earendil-works/pi) 
 
 Pi 继续管理自己的 Session、配置和资源。PiPilot 负责桌面体验，不维护另一套 Agent Runtime，也不把 Pi 数据迁移到私有格式中。
 
-**源码版本：**0.3.1 · [下载发布版本](https://github.com/GarlandQian/PiPilot/releases)
+**源码版本：**0.3.2 · [下载发布版本](https://github.com/GarlandQian/PiPilot/releases)
 
 [![CI](https://github.com/GarlandQian/PiPilot/actions/workflows/ci.yml/badge.svg)](https://github.com/GarlandQian/PiPilot/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2f3437.svg)](LICENSE)
