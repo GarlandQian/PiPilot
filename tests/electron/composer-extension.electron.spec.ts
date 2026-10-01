@@ -118,7 +118,10 @@ test('uses one keyboard-safe Composer picker and middle-column extension surface
       name: 'Current model Fake Chat, click to switch',
     })
     await expect(selectedModelButton).toBeVisible({ timeout: 15_000 })
-    await expect(page.getByRole('button', { name: 'Add image', exact: true })).toBeEnabled()
+    // Images are added from the composer's "+" menu.
+    await page.getByRole('button', { name: 'Add', exact: true }).click()
+    await expect(page.getByRole('menuitem', { name: 'Add image', exact: true })).toBeEnabled()
+    await page.keyboard.press('Escape')
 
     await composer.fill('/fixture')
     const slashMenu = page.locator('[data-slot="command"][aria-label="Slash commands"]')
@@ -299,18 +302,18 @@ test('uses one keyboard-safe Composer picker and middle-column extension surface
     await expectNoDocumentHorizontalOverflow(page)
     await expectInsideConversationColumn(page, widgetActivity)
     const lightComposerSurfaceColor = await composer.evaluate((element) => {
-      const surface = element.closest('[data-composer-surface]')
+      const surface = element.closest('[data-composer-shell]')
       return surface ? window.getComputedStyle(surface).backgroundColor : ''
     })
     await page.evaluate(() => window.pipilot!.settings.update({ appearance: { theme: 'dark' } }))
     await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains('dark')))
       .toBe(true)
     await expect.poll(() => composer.evaluate((element) => {
-      const surface = element.closest('[data-composer-surface]')
+      const surface = element.closest('[data-composer-shell]')
       return surface ? window.getComputedStyle(surface).backgroundColor : ''
     })).not.toBe(lightComposerSurfaceColor)
     await expect.poll(() => composer.evaluate((element) => {
-      const surface = element.closest('[data-composer-surface]')
+      const surface = element.closest('[data-composer-shell]')
       return surface?.getAnimations().some((animation) => animation.playState === 'running') ?? false
     })).toBe(false)
     await expectNoDocumentHorizontalOverflow(page)

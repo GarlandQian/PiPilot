@@ -195,6 +195,8 @@ test('waits for renderer subscriptions before starting configured Pi', async ({}
       name: /^Notifications/,
     })
     const conversationNotices = page.locator('[data-conversation-notices]')
+    // The tray shows the newest notice; older ones wait behind a count.
+    await conversationNotices.getByRole('button', { name: /^Show all notifications/ }).click()
     await expect(conversationNotices.getByText('Startup fixture notification', { exact: true }))
       .toBeVisible()
     await expect(notificationButton).toHaveAttribute('aria-expanded', 'false')
@@ -669,7 +671,10 @@ test('keeps rich-editor text and images visible across default queueing, editing
     const composer = page.getByRole('textbox', { name: 'Message input' })
     const fileInput = page.locator('input[type="file"]')
 
-    await expect(page.getByRole('button', { name: 'Add image', exact: true })).toBeEnabled()
+    // Images are added from the composer's "+" menu.
+    await page.getByRole('button', { name: 'Add', exact: true }).click()
+    await expect(page.getByRole('menuitem', { name: 'Add image', exact: true })).toBeEnabled()
+    await page.keyboard.press('Escape')
 
     await fileInput.setInputFiles({
       name: 'image-only.png',
@@ -718,18 +723,23 @@ test('keeps rich-editor text and images visible across default queueing, editing
     await expect(composer).toHaveText('')
     await expect(pendingSteerImage).toHaveCount(0)
     const pendingRail = page.locator('[data-pending-message-rail]')
-    await expect(pendingRail).toContainText('1 pending')
-    await pendingRail.getByRole('button', { name: 'Show pending messages' }).click()
-    const imageOnlyRow = pendingRail.getByRole('listitem').first()
-    const originalItemId = await imageOnlyRow.getAttribute('data-pending-message-id')
+    const rows = pendingRail.locator('[data-pending-message-id]')
+    await expect(rows).toHaveCount(1)
+    const imageOnlyRow = rows.first()
     await expect(imageOnlyRow).toContainText('Images')
+    await imageOnlyRow.locator('[data-pending-toggle]').click()
     await expect(pendingRail.getByRole('img', { name: 'Queued image 1', exact: true }))
       .toHaveAttribute('src', `data:image/png;base64,${pixelPng.toString('base64')}`)
-    await imageOnlyRow.getByRole('button', { name: 'Edit message', exact: true }).click()
-    await imageOnlyRow.getByRole('textbox', { name: 'Edit message', exact: true }).fill(steerText)
-    await imageOnlyRow.getByRole('button', { name: 'Save changes', exact: true }).click()
-    const steeredRow = pendingRail.getByRole('listitem').filter({ hasText: steerText })
-    await expect(steeredRow).toHaveAttribute('data-pending-message-id', originalItemId!)
+    // Editing takes the image-only message back into the input to add text.
+    await imageOnlyRow.hover()
+    await imageOnlyRow.getByRole('button', { name: 'Edit in input', exact: true }).click()
+    await expect(rows).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Remove image image-1.png', exact: true })).toBeAttached()
+    await composer.fill(steerText)
+    await composer.press('Enter')
+    await expect(composer).toHaveText('')
+    const steeredRow = rows.filter({ hasText: steerText })
+    await expect(steeredRow).toContainText('1')
     await expect.poll(async () => page.evaluate(async () => {
       const response = await window.pipilot!.localPi.runtime.command({ type: 'get_delivery_state' })
       return response.success && response.command === 'get_delivery_state' ? response.data.items[0]?.mode : null
@@ -743,22 +753,15 @@ test('keeps rich-editor text and images visible across default queueing, editing
     })
     await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Queue', exact: true }).click()
-    await expect(pendingRail).toContainText('2 pending')
-    const queuedRow = pendingRail.getByRole('listitem').filter({ hasText: followUpText })
+    await expect(rows).toHaveCount(2)
+    const queuedRow = rows.filter({ hasText: followUpText })
     await expect(queuedRow).toBeVisible()
-    await expect(queuedRow.getByRole('img', { name: 'Queued image 1', exact: true }))
-      .toBeVisible()
-    await queuedRow.getByRole('button', { name: 'Show full message', exact: true }).click()
-    const expandedPendingText = queuedRow.locator('[data-pending-message-text]')
-    await expect(expandedPendingText).toHaveAttribute('data-expanded', 'true')
-    await expect(expandedPendingText).toHaveText(followUpText)
-    expect(await expandedPendingText.evaluate((element) => getComputedStyle(element).webkitLineClamp))
-      .toBe('none')
-    await expect(pendingRail.getByRole('group', { name: 'Queue', exact: true })).toHaveCount(0)
-    await expect(queuedRow).toBeVisible()
+    await queuedRow.locator('[data-pending-toggle]').click()
+    await expect(queuedRow.getByRole('img', { name: 'Queued image 1', exact: true })).toBeVisible()
+    await expect(queuedRow.locator('[data-pending-message-text]')).toHaveText(followUpText)
     expect(await page.evaluate(() => {
       const rail = document.querySelector<HTMLElement>('[data-pending-message-rail]')
-      const composer = document.querySelector<HTMLElement>('[data-composer-surface]')
+      const composer = document.querySelector<HTMLElement>('[data-composer-shell]')
       if (!rail || !composer) return null
       const railRect = rail.getBoundingClientRect()
       const composerRect = composer.getBoundingClientRect()
@@ -779,15 +782,14 @@ test('keeps rich-editor text and images visible across default queueing, editing
     await page.screenshot({
       path: testInfo.outputPath('pending-rail-desktop-light.png'),
     })
-    await steeredRow.getByRole('button', { name: 'Adjust direction', exact: true }).click()
-    await expect(steeredRow.getByRole('button', { name: 'Adjust direction', exact: true }))
-      .toHaveCount(0)
+    await steeredRow.getByRole('button', { name: 'Steer', exact: true }).click()
+    await expect(steeredRow.getByRole('button', { name: 'Steer', exact: true })).toHaveCount(0)
     await expect(steeredRow.getByRole('button', { name: 'Remove pending message', exact: true })).toHaveCount(0)
     await expect(pendingRail).toContainText(steerText)
     await expect(pendingRail).toContainText(followUpText)
-    await expect(pendingRail.locator('[data-queue-image]')).toHaveCount(2)
+    await queuedRow.hover()
     await queuedRow.getByRole('button', { name: 'Remove pending message' }).click()
-    await expect(pendingRail).toContainText('1 pending')
+    await expect(rows).toHaveCount(1)
     await expect(pendingRail).not.toContainText(followUpText)
 
     await page.evaluate(() => window.pipilot!.settings.update({
@@ -802,19 +804,16 @@ test('keeps rich-editor text and images visible across default queueing, editing
     const shortWrappedText = 'W'.repeat(220)
     await composer.fill(shortWrappedText)
     await page.getByRole('button', { name: 'Queue', exact: true }).click()
-    await expect(pendingRail).toContainText('2 pending')
-    const shortWrappedRow = pendingRail.getByRole('listitem').filter({ hasText: shortWrappedText })
-    await expect(shortWrappedRow.getByRole('button', { name: 'Show full message', exact: true }))
-      .toHaveCount(0)
-    const shortPendingText = shortWrappedRow.locator('[data-pending-message-text]')
-    await expect(shortPendingText).toHaveText(shortWrappedText)
-    expect(await shortPendingText.evaluate((element) => getComputedStyle(element).webkitLineClamp))
-      .toBe('none')
-    expect(await shortPendingText.evaluate((element) => element.scrollHeight <= element.clientHeight))
-      .toBe(true)
+    await expect(rows).toHaveCount(2)
+    // A long message stays one truncated row until opened.
+    const shortWrappedRow = rows.filter({ hasText: shortWrappedText })
+    const toggle = shortWrappedRow.locator('[data-pending-toggle]')
+    expect(await toggle.evaluate((element) => element.scrollWidth >= element.clientWidth && element.clientHeight < 60)).toBe(true)
+    await toggle.click()
+    await expect(shortWrappedRow.locator('[data-pending-message-text]')).toHaveText(shortWrappedText)
     expect(await page.evaluate(() => {
       const rail = document.querySelector<HTMLElement>('[data-pending-message-rail]')
-      const composer = document.querySelector<HTMLElement>('[data-composer-surface]')
+      const composer = document.querySelector<HTMLElement>('[data-composer-shell]')
       if (!rail || !composer) return null
       const railRect = rail.getBoundingClientRect()
       const composerRect = composer.getBoundingClientRect()
@@ -838,7 +837,7 @@ test('keeps rich-editor text and images visible across default queueing, editing
   }
 })
 
-test('queues skill mentions by default and clears frozen waiting messages before resuming', async ({}, testInfo) => {
+test('queues skill mentions by default, and Stop returns them to the input while keeping an unconfirmed steer to review', async ({}, testInfo) => {
   test.setTimeout(60_000)
   const runningPrompt = 'Hold the focused skill queue'
   let releaseRunning!: () => void
@@ -857,25 +856,31 @@ test('queues skill mentions by default and clears frozen waiting messages before
       await composer.press('Enter')
       await expect(composer).toHaveText('')
     }
-    await expect(pendingRail).toContainText('2 pending')
-    await pendingRail.getByRole('button', { name: 'Show pending messages', exact: true }).click()
-    const queuedSkill = pendingRail.getByRole('listitem').filter({ hasText: 'queued next' })
-    const steeredSkill = pendingRail.getByRole('listitem').filter({ hasText: 'guide current' })
+    const rows = pendingRail.locator('[data-pending-message-id]')
+    await expect(rows).toHaveCount(2)
+    const queuedSkill = rows.filter({ hasText: 'queued next' })
+    const steeredSkill = rows.filter({ hasText: 'guide current' })
     await expect(queuedSkill).toContainText('fixture-skill')
     await expect(steeredSkill).toContainText('fixture-skill')
-    await steeredSkill.getByRole('button', { name: 'Adjust direction', exact: true }).click()
-    await expect(steeredSkill.getByRole('button', { name: 'Adjust direction', exact: true })).toHaveCount(0)
-    await expect(queuedSkill.getByRole('button', { name: 'Adjust direction', exact: true })).toBeVisible()
+    await steeredSkill.getByRole('button', { name: 'Steer', exact: true }).click()
+    await expect(steeredSkill.getByRole('button', { name: 'Steer', exact: true })).toHaveCount(0)
+    await expect(queuedSkill.getByRole('button', { name: 'Steer', exact: true })).toBeVisible()
+    // Stop returns the queued message to the input; the steer Pi already took
+    // stays as an unconfirmed record to review.
     await page.getByRole('button', { name: 'Stop', exact: true }).click()
     await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0)
-    await expect(pendingRail.getByRole('button', { name: 'Resume queue', exact: true })).toBeVisible()
+    await expect(page.locator('[data-composer-restored]')).toContainText('(1)')
+    await expect(composer).toContainText('queued next')
+    await expect(queuedSkill).toHaveCount(0)
     await expect(steeredSkill).toContainText('Delivery unconfirmed')
+    await steeredSkill.hover()
     await steeredSkill.getByRole('button', { name: 'Dismiss unconfirmed record', exact: true }).click()
-    await pendingRail.getByRole('button', { name: 'More pending-message actions', exact: true }).click()
-    await page.getByRole('menuitem', { name: 'Clear waiting messages', exact: true }).click()
-    await expect(pendingRail).toContainText('0 pending')
-    await pendingRail.getByRole('button', { name: 'Resume queue', exact: true }).click()
+    // Nothing is left waiting, so the queue is not left paused.
     await expect(pendingRail).toHaveCount(0)
+    await expect.poll(async () => page.evaluate(async () => {
+      const response = await window.pipilot!.localPi.runtime.command({ type: 'get_delivery_state' })
+      return response.success && response.command === 'get_delivery_state' ? response.data.paused : null
+    })).toBe(false)
     await composer.fill('Run after clearing the frozen queue')
     await page.getByRole('button', { name: 'Send', exact: true }).click()
     await expect(page.getByRole('log', { name: 'Conversation', exact: true }).getByText('Fixture response: Run after clearing the frozen queue', { exact: true }))
@@ -915,6 +920,8 @@ test('clears a captured draft before acknowledgement and preserves a new draft a
     await expect(page.getByRole('button', { name: 'Remove image captured.png', exact: true })).toHaveCount(0)
     const outbox = page.locator('[data-composer-outbox]')
     await expect(outbox).toContainText(captured)
+    // A sending message is one row; its image shows once the row is opened.
+    await outbox.locator('[data-pending-toggle]').first().click()
     await expect(outbox.getByRole('img', { name: 'Queued image 1', exact: true })).toHaveAttribute('src', `data:image/png;base64,${image.toString('base64')}`)
     await composer.fill(nextDraft)
     await page.locator('input[type="file"]').setInputFiles({ name: 'next.png', mimeType: 'image/png', buffer: image })
@@ -2506,25 +2513,19 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
     await composer.pressSequentially('queued next')
     await composer.press('Enter')
     const pendingRail = page.locator('[data-pending-message-rail]')
-    await expect(pendingRail).toContainText('1 pending')
+    const rows = pendingRail.locator('[data-pending-message-id]')
+    await expect(rows).toHaveCount(1)
 
     await composer.fill('@fixture')
     await mentionMenu.getByRole('option').filter({ hasText: 'fixture-skill' }).click()
     await composer.pressSequentially('guide current')
     await composer.press('Enter')
-    await expect(pendingRail).toContainText('2 pending')
-    await pendingRail.getByRole('button', { name: 'Show pending messages' }).click()
-    const queuedSkill = pendingRail.getByRole('listitem')
-      .filter({ hasText: 'queued next' })
-    const steeredSkill = pendingRail.getByRole('listitem')
-      .filter({ hasText: 'guide current' })
-    await expect(queuedSkill)
-      .toBeVisible()
+    await expect(rows).toHaveCount(2)
+    const queuedSkill = rows.filter({ hasText: 'queued next' })
+    const steeredSkill = rows.filter({ hasText: 'guide current' })
     await expect(queuedSkill).toContainText('fixture-skill')
-    await expect(steeredSkill)
-      .toBeVisible()
     await expect(steeredSkill).toContainText('fixture-skill')
-    await steeredSkill.getByRole('button', { name: 'Adjust direction', exact: true }).click()
+    await steeredSkill.getByRole('button', { name: 'Steer', exact: true }).click()
     await expect.poll(async () => page.evaluate(async () => {
       const response = await window.pipilot!.localPi.runtime.command({ type: 'get_delivery_state' })
       return response.success && response.command === 'get_delivery_state'
@@ -2535,13 +2536,11 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
 
     await page.getByRole('button', { name: 'Stop', exact: true }).click()
     await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0)
-    await expect(pendingRail.getByRole('button', { name: 'Resume queue', exact: true })).toBeVisible()
+    await expect(composer).toContainText('queued next')
+    await steeredSkill.hover()
     await steeredSkill.getByRole('button', { name: 'Dismiss unconfirmed record', exact: true }).click()
-    await pendingRail.getByRole('button', { name: 'More pending-message actions' }).click()
-    await page.getByRole('menuitem', { name: 'Clear waiting messages', exact: true }).click()
-    await expect(pendingRail).toContainText('0 pending')
-    await pendingRail.getByRole('button', { name: 'Resume queue', exact: true }).click()
     await expect(pendingRail).toHaveCount(0)
+    await composer.fill('')
 
     await page.getByRole('button', {
       name: 'Current model Fake Fast, click to switch',
@@ -2662,7 +2661,10 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
     await composer.fill('accepted revision')
     await page.getByRole('button', { name: 'Send', exact: true }).click()
     await expect(composer).toHaveAttribute('contenteditable', 'true')
-    await expect(page.getByRole('button', { name: 'Add image', exact: true })).toBeEnabled()
+    // Images are added from the composer's "+" menu.
+    await page.getByRole('button', { name: 'Add', exact: true }).click()
+    await expect(page.getByRole('menuitem', { name: 'Add image', exact: true })).toBeEnabled()
+    await page.keyboard.press('Escape')
     await composer.fill('surviving draft')
     await page.locator('input[type="file"]').setInputFiles({
       name: 'pending.png',
@@ -2805,18 +2807,18 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
     await page.setViewportSize({ width: 640, height: 760 })
     await page.screenshot({ path: testInfo.outputPath('composer-mentions-narrow-light.png') })
     const lightComposerSurfaceColor = await composer.evaluate((element) => {
-      const surface = element.closest('[data-composer-surface]')
+      const surface = element.closest('[data-composer-shell]')
       return surface ? window.getComputedStyle(surface).backgroundColor : ''
     })
     await page.evaluate(() => window.pipilot!.settings.update({ appearance: { theme: 'dark' } }))
     await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains('dark')))
       .toBe(true)
     await expect.poll(() => composer.evaluate((element) => {
-      const surface = element.closest('[data-composer-surface]')
+      const surface = element.closest('[data-composer-shell]')
       return surface ? window.getComputedStyle(surface).backgroundColor : ''
     })).not.toBe(lightComposerSurfaceColor)
     await expect.poll(() => composer.evaluate((element) => {
-      const surface = element.closest('[data-composer-surface]')
+      const surface = element.closest('[data-composer-shell]')
       return surface?.getAnimations().some((animation) => animation.playState === 'running') ?? false
     })).toBe(false)
     await page.screenshot({ path: testInfo.outputPath('composer-mentions-narrow-dark.png') })
@@ -3080,6 +3082,7 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
         await expect(switchingDraftImage).toHaveCount(0)
         const outbox = page.locator('[data-composer-outbox]')
         await expect(outbox).toContainText(delayedPrompt)
+        await outbox.locator('[data-pending-toggle]').first().click()
         await expect(outbox.getByRole('img', { name: 'Queued image 1', exact: true }))
           .toHaveAttribute('src', `data:image/png;base64,${pixelPng.toString('base64')}`)
         await composer.fill(nextDraft)

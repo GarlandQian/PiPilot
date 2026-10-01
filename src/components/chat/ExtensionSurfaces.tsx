@@ -274,7 +274,7 @@ const GOAL_PRIMARY_ACTIONS: readonly GoalActionId[] = [
 ]
 
 /**
- * A single transient control immediately above Composer. Historical extension
+ * The status row of the composer tray. Historical extension
  * output belongs in the response group; this surface only keeps the most
  * urgent still-actionable state reachable.
  */
@@ -312,6 +312,7 @@ export function ActiveControlBar({
   let actionFailureMessage: string | null = null
   let prominentAction = false
   let reveal: { label: string; run: () => void } | null = null
+  let secondary: { label: string; Icon: typeof TbTrash; run: () => Promise<void> } | null = null
 
   if (retryActive) {
     identity = retryActivity.kind === 'provider'
@@ -362,6 +363,9 @@ export function ActiveControlBar({
     ActionIcon = goalActionIcons[goalAction]
     invokeAction = () => onGoalAction(goalAction)
     actionFailureMessage = t('goal.action.failed')
+    if (goalAction !== 'clear' && goalMode.actions.includes('clear')) {
+      secondary = { label: t(goalActionKeys.clear), Icon: goalActionIcons.clear, run: () => onGoalAction('clear') }
+    }
   } else if (working.visible) {
     identity = `working\0${working.message ?? ''}`
     title = t('extension.working.title')
@@ -378,15 +382,29 @@ export function ActiveControlBar({
 
   if (identity === 'none') return null
   const CurrentIcon = Icon
+  const run = (invoke: () => Promise<void>) => {
+    const requestIdentity = identity
+    setBusy(true)
+    setActionError(null)
+    void invoke()
+      .catch(() => {
+        if (identityRef.current === requestIdentity && actionFailureMessage) {
+          setActionError(actionFailureMessage)
+        }
+      })
+      .finally(() => {
+        if (identityRef.current === requestIdentity) setBusy(false)
+      })
+  }
   const CurrentActionIcon = ActionIcon
 
   return (
     <section
-      className="shrink-0 bg-surface px-6 pt-2"
+      data-composer-status
+      className="flex min-h-11 min-w-0 items-center gap-2 py-1.5 pr-3 pl-4"
       aria-label={title}
       role={actionError ? 'alert' : 'status'}
     >
-      <div className="glass mx-auto flex min-h-10 w-full max-w-(--conversation-width) items-center gap-2 rounded-full py-1 pr-1.5 pl-3.5">
         <CurrentIcon
           className={cn(
             'size-3.5 shrink-0 text-muted-foreground',
@@ -410,26 +428,19 @@ export function ActiveControlBar({
         {reveal ? (
           <Button variant="ghost" size="xs" onClick={reveal.run}>{reveal.label}</Button>
         ) : null}
+        {secondary ? (
+          <Button variant="ghost" size="xs" disabled={busy} onClick={() => run(secondary.run)}>
+            <secondary.Icon aria-hidden />
+            {secondary.label}
+          </Button>
+        ) : null}
         {invokeAction && actionLabel && CurrentActionIcon ? (
           <Button
             variant={prominentAction ? 'default' : 'ghost'}
             size="xs"
             disabled={busy}
             aria-busy={busy || undefined}
-            onClick={() => {
-              const requestIdentity = identity
-              setBusy(true)
-              setActionError(null)
-              void invokeAction()
-                .catch(() => {
-                  if (identityRef.current === requestIdentity && actionFailureMessage) {
-                    setActionError(actionFailureMessage)
-                  }
-                })
-                .finally(() => {
-                  if (identityRef.current === requestIdentity) setBusy(false)
-                })
-            }}
+            onClick={() => run(invokeAction)}
           >
             {busy
               ? <TbLoader2 className="animate-spin motion-reduce:animate-none" aria-hidden />
@@ -447,7 +458,6 @@ export function ActiveControlBar({
             {t('extension.activity.expand')}
           </Button>
         ) : null}
-      </div>
     </section>
   )
 }

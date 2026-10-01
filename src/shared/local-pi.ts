@@ -546,7 +546,8 @@ export type LocalPiDeliveryState = LocalPiDeliverySnapshot
 export const localPiRpcCommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('submit_message'), submissionId: z.string().min(1).max(256), message: z.string(), images: z.array(localPiImageContentSchema).optional(), mode: z.enum(['auto', 'command', 'steer', 'follow_up']), expectedSessionId: z.string().min(1).optional() }).strict(),
   z.object({ type: z.literal('get_delivery_state'), submissionId: z.string().min(1).max(256).optional(), expectedSessionId: z.string().min(1).optional() }).strict(),
-  z.object({ type: z.literal('mutate_delivery'), itemId: z.string().min(1), revision: z.number().int().nonnegative(), action: z.enum(['edit', 'promote', 'remove']), message: z.string().optional(), images: z.array(localPiImageContentSchema).optional(), expectedSessionId: z.string().min(1).optional() }).strict(),
+  // move: place the item before beforeItemId, or last when it is null/absent.
+  z.object({ type: z.literal('mutate_delivery'), itemId: z.string().min(1), revision: z.number().int().nonnegative(), action: z.enum(['edit', 'promote', 'remove', 'move']), message: z.string().optional(), images: z.array(localPiImageContentSchema).optional(), beforeItemId: z.string().min(1).nullable().optional(), expectedSessionId: z.string().min(1).optional() }).strict(),
   z.object({ type: z.literal('clear_delivery'), revision: z.number().int().nonnegative(), expectedSessionId: z.string().min(1).optional() }).strict(),
   z.object({ type: z.literal('resume_delivery'), revision: z.number().int().nonnegative().optional(), expectedSessionId: z.string().min(1).optional() }).strict(),
   z.object({ type: z.literal('prompt'), message: z.string(), images: z.array(localPiImageContentSchema).optional(), streamingBehavior: z.enum(['steer', 'followUp']).optional() }).strict(),

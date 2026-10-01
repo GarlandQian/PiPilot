@@ -3,15 +3,51 @@ import { sessionComposerDrafts, type SessionComposerDrafts } from '@/renderer/co
 import { usePrecisionComposer } from '@/components/precision/PrecisionReferences'
 import type { PrecisionReference } from '@/renderer/composer/precision-reference'
 import {
+  TbArrowBackUp,
   TbArrowUp,
+  TbAt,
+  TbCheck,
+  TbFileDescription,
   TbLoader2,
-  TbListDetails,
-  TbPlayerStop,
+  TbPhoto,
+  TbPlayerStopFilled,
   TbPlus,
-  TbRoute,
+  TbSlash,
+  TbTarget,
   TbX,
 } from 'react-icons/tb'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { primaryShortcut } from '@/lib/keyboard-shortcuts'
+import type { GoalModeProjection, PlanModeProjection } from '@/renderer/pi-rpc/adapters'
+import {
+  COMPOSER_MODE_BLOCK_KEYS,
+  composerModeAvailability,
+  composerModeMessage,
+  composerModeShortcut,
+  composerPlaceholderKey,
+  planModeActive,
+  type ComposerMode,
+  type ComposerModeAvailability,
+} from './composer-modes'
 import { MarkdownContent } from './markdown/MarkdownContent'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useT } from '@/i18n'
@@ -31,6 +67,7 @@ import {
   attachmentsToPiImagesIfCurrent,
   composerImageKey,
   isComposerSendShortcut,
+  piImagesToFiles,
   validateComposerImageBatch,
   type ComposerImageAttachment,
   type ComposerImageValidationError,
@@ -76,6 +113,9 @@ import {
 } from '@/renderer/composer/composer-picker'
 import {
   deriveComposerActionState,
+  deriveComposerSubmitMode,
+  projectPendingRail,
+  type PendingRailItem,
   type ComposerQueueMode,
   type ComposerQueueState,
   type ComposerSubmitAction,
@@ -164,14 +204,24 @@ export interface ComposerProps {
   onSetQueueMode(kind: 'steering' | 'followUp', mode: ComposerQueueMode): Promise<void>
   onPromoteFollowUp(itemId: string): Promise<void>
   onRemoveQueuedMessage(itemId: string): Promise<void>
-  onEditQueuedMessage(itemId: string, text: string, images?: readonly LocalPiImageContent[], expectedRevision?: number): Promise<void>
+  onMoveQueuedMessage(itemId: string, beforeItemId: string | null): Promise<void>
   onResumeQueue(): Promise<void>
-  onClearQueue(): Promise<void>
+  onClearQueue(expectedRevision?: number): Promise<void>
   onCompleteCommandArguments?(
     commandName: string,
     argumentPrefix: string,
   ): Promise<readonly LocalPiCommandArgumentCompletion[]>
   onSearchContext?(query: string): Promise<WorkspacePathSearchResult>
+  /** The tray's status row: retry, a plan waiting on you, Goal, plugin work. */
+  status?: React.ReactNode
+  /** Plugin notifications shown in the tray. */
+  notices?: React.ReactNode
+  planMode?: PlanModeProjection | null
+  goalMode?: GoalModeProjection | null
+  /** No messages yet, so the input starts a task rather than replies. */
+  conversationEmpty?: boolean
+  onExitPlanMode?(): Promise<void>
+  onOpenIntegrations?(): void
 }
 
 type BoundComposerCommandArgumentState =
@@ -546,11 +596,18 @@ function SessionComposer({
   onThinkingChange,
   onPromoteFollowUp,
   onRemoveQueuedMessage,
-  onEditQueuedMessage,
+  onMoveQueuedMessage,
   onResumeQueue,
   onClearQueue,
   onCompleteCommandArguments,
   onSearchContext,
+  status,
+  notices,
+  planMode = null,
+  goalMode = null,
+  conversationEmpty = false,
+  onExitPlanMode,
+  onOpenIntegrations,
 }: ComposerProps & {
   drafts: SessionComposerDrafts
   draftKey: string
@@ -566,6 +623,14 @@ function SessionComposer({
   const [attachments, setAttachments] = React.useState<readonly ComposerImageAttachment[]>(initialDraft.attachments)
   const [dragging, setDragging] = React.useState(false)
   const [submitError, setSubmitError] = React.useState<string | null>(null)
+  // A mode picked from "+" applies to the next message only; SessionComposer
+  // is keyed by draft, so switching conversations drops it.
+  const [modeIntent, setModeIntent] = React.useState<ComposerMode | null>(null)
+  const [addMenuOpen, setAddMenuOpen] = React.useState(false)
+  const [exitPlanConfirmOpen, setExitPlanConfirmOpen] = React.useState(false)
+  const [exitingPlan, setExitingPlan] = React.useState(false)
+  const rootRef = React.useRef<HTMLDivElement>(null)
+  const afterAddMenuClose = React.useRef<(() => void) | null>(null)
   const submitFeedback = useConversationOperationFeedback(operationOwnerKey)
   const stopFeedback = useConversationOperationFeedback(operationOwnerKey)
   const submitting = Boolean(submitFeedback.pending)
@@ -1212,6 +1277,10 @@ function SessionComposer({
       return
     }
     if ((!message.trim() && capturedAttachments.length === 0) || submitting) return
+    const capturedMode = modeIntent
+    // A mode starts through its plugin command, which takes text only and
+    // needs Pi idle; the button is disabled for both, this guards Enter.
+    if (capturedMode && (!message.trim() || capturedAttachments.length > 0 || isStreaming)) return
     if (capturedAttachments.length > 0 && !supportsImages) {
       setSubmitError(t('composer.imageUnsupportedModel'))
       return
@@ -1227,11 +1296,13 @@ function SessionComposer({
       if (!images || !isCurrent()) return
       let saved
       try {
-        saved = await outbox.save(message, action, images)
+        saved = await outbox.save(capturedMode ? composerModeMessage(capturedMode, message) : message, action, images)
       } catch {
         throw new Error(t('composer.outboxStorageFailed'))
       }
       drafts.acknowledge(draftKey, capturedDraft)
+      if (capturedMode) setModeIntent((current) => current === capturedMode ? null : current)
+      setRestoredCount(null)
       // Pi acceptance belongs to the saved message, not to this editor visit.
       void outbox.send(saved)
       if (!isCurrent() || scopeKeyRef.current !== capturedScopeKey) return
@@ -1253,6 +1324,8 @@ function SessionComposer({
     editorChange,
     draftKey,
     drafts,
+    isStreaming,
+    modeIntent,
     officialExecutableNames,
     outbox.save,
     outbox.send,
@@ -1278,6 +1351,116 @@ function SessionComposer({
     ? { action: 'follow_up' as const, kind: 'queue' as const }
     : actionState.submit
   const primaryAction = submitMode.action
+  // ⌘⇧↩ does whichever of Queue/Steer the preference does not.
+  const alternateMode = deriveComposerSubmitMode(isStreaming, Boolean(extensionCommand), runningSubmitPreference, true)
+  const modeContext = {
+    commands,
+    catalogReady: commandCatalogState.state === 'ready',
+    isStreaming,
+    planMode,
+    goalMode,
+  }
+  const modeAvailability: Record<ComposerMode, ComposerModeAvailability> = {
+    plan: composerModeAvailability('plan', modeContext),
+    goal: composerModeAvailability('goal', modeContext),
+  }
+  const planActive = planModeActive(planMode)
+  const modeBlocksSubmit = modeIntent !== null && (isStreaming || attachments.length > 0)
+  const canSubmit = actionState.canSubmit && !modeBlocksSubmit
+  const hasDraft = editorChange.hasContent || attachments.length > 0
+
+  const toggleMode = React.useCallback((mode: ComposerMode) => {
+    if (modeIntent === mode) {
+      setModeIntent(null)
+      editorRef.current?.focus()
+      return
+    }
+    if (!modeAvailability[mode].enabled || (mode === 'plan' && planActive)) {
+      // Explain why instead of silently ignoring the shortcut.
+      setAddMenuOpen(true)
+      return
+    }
+    setModeIntent(mode)
+    editorRef.current?.focus()
+  }, [modeAvailability.goal.enabled, modeAvailability.plan.enabled, modeIntent, planActive])
+
+  React.useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const mode = composerModeShortcut(event)
+      if (!mode || event.defaultPrevented || event.isComposing) return
+      // Settings and other workspaces keep the composer mounted but hidden.
+      if (!rootRef.current || rootRef.current.offsetParent === null) return
+      if (event.target instanceof Element && event.target.closest('[role="dialog"], [role="alertdialog"]')) return
+      event.preventDefault()
+      toggleMode(mode)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [toggleMode])
+
+  const exitPlanMode = React.useCallback(async () => {
+    if (!onExitPlanMode || exitingPlan) return
+    setExitingPlan(true)
+    try { await onExitPlanMode() }
+    catch { setSubmitError(t('plan.action.failed')) }
+    finally { setExitingPlan(false) }
+  }, [exitingPlan, onExitPlanMode, t])
+
+  const queueRef = React.useRef(queue)
+  queueRef.current = queue
+  const [restoredCount, setRestoredCount] = React.useState<number | null>(null)
+
+  // Messages taken back from the queue or outbox return to the input. Images
+  // are checked first, so nothing leaves the queue unless the input can take it.
+  const prepareRestore = React.useCallback((messages: readonly { text: string; images: readonly LocalPiImageContent[] }[]) => {
+    if (drafts.isLocked() || !draftEditable || !editorRef.current) throw new Error(t('composer.queueRestoreUnavailable'))
+    const files = piImagesToFiles(messages.flatMap((message) => message.images))
+    const validationError = files.length ? validateComposerImageBatch(attachmentSnapshot.current, files) : null
+    if (validationError) throw new Error(imageValidationMessage(validationError, t))
+    const text = messages.map((message) => message.text.trim()).filter(Boolean).join('\n\n')
+    return (at: 'start' | 'end') => {
+      if (text) editorRef.current?.insertPlainText(text, at)
+      if (!files.length) return
+      const restored = files.map((file): ComposerImageAttachment => ({
+        id: crypto.randomUUID(),
+        key: composerImageKey(file),
+        file,
+        previewUrl: URL.createObjectURL(file),
+      }))
+      const updated = [...attachmentSnapshot.current, ...restored]
+      attachmentSnapshot.current = updated
+      drafts.updateAttachments(draftKey, updated)
+      setAttachments(updated)
+    }
+  }, [draftEditable, draftKey, drafts, t])
+
+  const retractQueued = React.useCallback(async (item: PendingRailItem) => {
+    const commit = prepareRestore([item])
+    await onRemoveQueuedMessage(item.id)
+    commit('end')
+  }, [onRemoveQueuedMessage, prepareRestore])
+
+  const retractOutbox = React.useCallback(async (item: Parameters<typeof outbox.remove>[0]) => {
+    const commit = prepareRestore([item])
+    await outbox.remove(item)
+    commit('end')
+  }, [outbox.remove, prepareRestore])
+
+  /** Puts every waiting message back into the input, oldest first, ahead of the draft. */
+  const restoreQueue = React.useCallback(async () => {
+    const current = queueRef.current
+    const waiting = projectPendingRail(current).items.filter((item) =>
+      item.canEdit && (item.status === 'queued' || item.status === 'frozen'))
+    if (waiting.length) {
+      const commit = prepareRestore(waiting)
+      // Refuses if a message arrived since we read the queue, so none is lost.
+      await onClearQueue(current.revision)
+      commit('start')
+      setRestoredCount(waiting.length)
+    }
+    const latest = queueRef.current
+    if (latest.paused && !projectPendingRail(latest).items.some((item) => item.status === 'unknown')) await onResumeQueue()
+  }, [onClearQueue, onResumeQueue, prepareRestore])
 
   const handleEditorKeyDown = React.useCallback((event: KeyboardEvent) => {
     if (commandPickerOpen) {
@@ -1319,12 +1502,37 @@ function SessionComposer({
         return true
       }
     }
+    // Backspace in an empty input removes the mode chip, like a token.
+    if (event.key === 'Backspace' && modeIntent && !editorChange.hasContent) {
+      setModeIntent(null)
+      return true
+    }
+    // ⌥↑ takes the last waiting message back into the input (Codex).
+    if (event.key === 'ArrowUp' && event.altKey && !event.metaKey && !event.ctrlKey && !event.shiftKey) {
+      const last = [...projectPendingRail(queueRef.current).items].reverse()
+        .find((item) => item.canEdit && (item.status === 'queued' || item.status === 'frozen' || item.status === undefined))
+      if (!last) return false
+      void retractQueued(last).catch((error: unknown) => {
+        setSubmitError(error instanceof Error ? error.message : t('composer.queueActionFailed'))
+      })
+      return true
+    }
+    if (isStreaming && event.key === 'Enter' && event.shiftKey && (event.metaKey || event.ctrlKey) && !event.altKey) {
+      if (canSubmit) void dispatch(alternateMode.action)
+      return true
+    }
     if (!isComposerSendShortcut(event, sendShortcut)) return false
-    if (actionState.canSubmit) void dispatch(primaryAction)
+    if (canSubmit) void dispatch(primaryAction)
     return true
   }, [
     activeSlashId,
-    actionState.canSubmit,
+    alternateMode.action,
+    canSubmit,
+    editorChange.hasContent,
+    isStreaming,
+    modeIntent,
+    retractQueued,
+    t,
     closeCommandPicker,
     commandPickerOpen,
     commandArgumentCandidateById,
@@ -1338,16 +1546,34 @@ function SessionComposer({
     slashRows,
   ])
 
+  // Stop returns unsent messages to the input instead of leaving a paused queue.
+  const restoreAfterStop = React.useRef(false)
   const stop = React.useCallback(async () => {
     if (!actionState.canStop) return
-    await stopFeedback.run('stop', () => onStop(), t('composer.stopFailed'))
+    restoreAfterStop.current = true
+    const stopped = await stopFeedback.run('stop', () => onStop(), t('composer.stopFailed'))
+    if (!stopped) restoreAfterStop.current = false
   }, [actionState.canStop, onStop, stopFeedback.run, t])
+  // A paused queue with nothing left in it would only hold the next message
+  // back (e.g. once an unconfirmed record kept after Stop is dismissed).
+  React.useEffect(() => {
+    if (!queue.paused || queue.pendingCount > 0 || isStreaming || stopFeedback.pending || restoreAfterStop.current) return
+    void onResumeQueue().catch(() => undefined)
+  }, [isStreaming, onResumeQueue, queue.paused, queue.pendingCount, stopFeedback.pending])
+  React.useEffect(() => {
+    if (!restoreAfterStop.current || isStreaming || !queue.paused || stopFeedback.pending) return
+    restoreAfterStop.current = false
+    void restoreQueue().catch((error: unknown) => {
+      setSubmitError(error instanceof Error ? error.message : t('composer.queueActionFailed'))
+    })
+  }, [isStreaming, queue.paused, queue.revision, restoreQueue, stopFeedback.pending, t])
 
   const visibleError = submitError ?? submitFeedback.error ??
     (submissionConflict ? conflictMessage : null) ??
     (attachments.length > 0 && !supportsImages
       ? t('composer.imageUnsupportedModel')
-      : null)
+      : null) ??
+    (modeIntent && attachments.length > 0 ? t('composer.mode.noImages') : null)
   const submitLabel = t(submitMode.kind === 'queue'
     ? 'composer.queue'
     : submitMode.kind === 'steer'
@@ -1355,46 +1581,116 @@ function SessionComposer({
       : submitMode.kind === 'run-now'
         ? 'composer.runNow'
         : 'composer.send')
-  const SubmitIcon = submitMode.kind === 'queue'
-    ? TbListDetails
-    : submitMode.kind === 'steer' ? TbRoute : TbArrowUp
+  const SubmitIcon = TbArrowUp
+  const sendKey = sendShortcut === 'enter' ? '↩' : primaryShortcut('↩')
+  const submitTip = (kind: typeof submitMode.kind) => t(kind === 'steer' ? 'composer.submitTip.steer' : 'composer.submitTip.queue')
+
+  const placeholder = t(composerPlaceholderKey({ mode: modeIntent, planActive, isStreaming, conversationEmpty }))
+  const outboxNeedsAttention = Boolean(outbox.storageError) ||
+    outbox.items.some((item) => item.status === 'failed' || item.status === 'unknown')
+
+  const modeMenuItem = (mode: ComposerMode) => {
+    const availability = modeAvailability[mode]
+    const on = modeIntent === mode || (mode === 'plan' && planActive)
+    const blocked = availability.enabled ? null : availability.reason
+    const label = t(mode === 'plan' ? 'composer.mode.plan' : 'composer.mode.goal')
+    const hint = mode === 'plan' && planActive
+      ? t('composer.mode.planOn')
+      : blocked
+        ? t(COMPOSER_MODE_BLOCK_KEYS[blocked])
+        : t(mode === 'plan' ? 'composer.mode.hint.plan' : 'composer.mode.hint.goal')
+    const Icon = mode === 'plan' ? TbFileDescription : TbTarget
+    return (
+      <DropdownMenuItem
+        key={mode}
+        data-composer-mode-item={mode}
+        // "Not installed" stays selectable: it leads to Settings.
+        disabled={(blocked !== null && blocked !== 'notInstalled') || (mode === 'plan' && planActive)}
+        onSelect={() => {
+          if (blocked === 'notInstalled') onOpenIntegrations?.()
+          else toggleMode(mode)
+        }}
+        className="group/item py-1.5 data-[disabled]:opacity-100 data-[disabled]:text-muted-foreground"
+      >
+        <span
+          aria-hidden
+          className={cn(
+            'grid size-[22px] shrink-0 place-items-center rounded-[6px] bg-[linear-gradient(to_bottom,rgb(255_255_255/0.2),transparent)] text-white',
+            mode === 'plan' ? 'bg-primary' : 'bg-[#34c759]',
+            'group-data-[disabled]/item:opacity-45',
+            blocked === 'notInstalled' && 'opacity-50',
+          )}
+        >
+          <Icon className="size-3.5 text-white" />
+        </span>
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className={cn(blocked === 'notInstalled' && 'text-muted-foreground')}>{label}</span>
+          <span className="text-micro text-muted-foreground">{hint}</span>
+        </span>
+        {on
+          ? <TbCheck className="size-4 stroke-[2.6]" aria-hidden />
+          : <DropdownMenuShortcut>{primaryShortcut(mode === 'plan' ? '⇧P' : '⇧G')}</DropdownMenuShortcut>}
+      </DropdownMenuItem>
+    )
+  }
 
   return (
-    <div data-composer-root data-draft-storage={draftStorageState} className="shrink-0 bg-surface px-6 pb-3 pt-2">
+    <div ref={rootRef} data-composer-root data-draft-storage={draftStorageState} className="shrink-0 bg-surface px-6 pb-4 pt-2">
       <div className="mx-auto min-w-0 w-full max-w-(--conversation-width)">
         {draftStorageState === 'error' && <div role="alert" className="mb-2 flex items-center gap-2 text-caption text-destructive">
           <span>{t('composer.draftSaveFailed')}</span>
           <Button size="sm" variant="ghost" onClick={() => { void drafts.flush(draftKey).catch(() => undefined) }}>{t('common.retry')}</Button>
         </div>}
-        <ComposerOutbox
-          items={outbox.items}
-          storageError={outbox.storageError}
-          connected={connected}
-          onCheck={outbox.check}
-          onRetry={outbox.retry}
-          onRemove={outbox.remove}
-        />
-        <PendingMessageRail
-          key={operationOwnerKey}
-          operationOwnerKey={operationOwnerKey}
-          queue={queue}
-          stopping={Boolean(stopFeedback.pending)}
-          onPromoteFollowUp={onPromoteFollowUp}
-          onRemoveQueuedMessage={onRemoveQueuedMessage}
-          onEditQueuedMessage={onEditQueuedMessage}
-          onResumeQueue={onResumeQueue}
-          onClearQueue={onClearQueue}
-        />
+        {/* One shape with one border: the tray (most important status, notices,
+            then the queue) is the top section of the input, not a second card. */}
+        <div
+          data-composer-shell
+          className={cn(
+            // Liquid Glass field: specular rim + darkened edge over an opaque, legible fill.
+            'min-w-0 overflow-hidden rounded-(--radius-composer) bg-composer shadow-[var(--glass-shadow),var(--shadow-composer)] transition-shadow duration-(--duration-base) has-[[data-composer-surface]:focus-within]:shadow-[inset_0_1px_0.5px_rgb(255_255_255/0.6),0_0_0_0.5px_color-mix(in_srgb,var(--color-ring)_70%,transparent),0_0_0_4px_color-mix(in_srgb,var(--color-ring)_20%,transparent),0_10px_30px_-8px_rgb(0_0_0/0.18)] motion-reduce:transition-none',
+            dragging && 'shadow-[0_0_0_2px_var(--color-primary)]',
+          )}
+        >
+        <div data-composer-tray className="composer-tray">
+          {/* An unsent message outranks every other status. */}
+          {outboxNeedsAttention ? null : status}
+          {notices}
+          {restoredCount ? (
+            <div role="status" className="flex min-h-10 min-w-0 items-center gap-2 py-1 pr-2 pl-4" data-composer-restored>
+              <TbArrowBackUp className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+              <span className="min-w-0 flex-1 truncate text-caption text-muted-foreground">{t('composer.queueRestored', { count: restoredCount })}</span>
+              <Button type="button" variant="ghost" size="icon-xs" className="rounded-full" aria-label={t('composer.dismissNotice')} onClick={() => setRestoredCount(null)}><TbX aria-hidden /></Button>
+            </div>
+          ) : null}
+          {/* Waiting messages and ones still on their way form one list. */}
+          <PendingMessageRail
+            key={operationOwnerKey}
+            operationOwnerKey={operationOwnerKey}
+            queue={queue}
+            stopping={Boolean(stopFeedback.pending)}
+            onPromoteFollowUp={onPromoteFollowUp}
+            onRemoveQueuedMessage={onRemoveQueuedMessage}
+            onMoveQueuedMessage={onMoveQueuedMessage}
+            onRetract={retractQueued}
+            onRetractAll={restoreQueue}
+            onResumeQueue={onResumeQueue}
+            onClearQueue={() => onClearQueue()}
+          />
+          <ComposerOutbox
+            items={outbox.items}
+            storageError={outbox.storageError}
+            connected={connected}
+            onCheck={outbox.check}
+            onRetry={(item) => outbox.retry(item)}
+            onRemove={outbox.remove}
+            onRetract={retractOutbox}
+          />
+        </div>
         <div
           data-composer-surface
           data-composer-mode={isStreaming ? 'running' : 'idle'}
           aria-busy={submitting}
-          className={cn(
-            // Liquid Glass field: specular rim + darkened edge over an opaque, legible fill.
-            'min-w-0 bg-composer shadow-[var(--glass-shadow),var(--shadow-composer)] transition-shadow duration-(--duration-base) focus-within:shadow-[inset_0_1px_0.5px_rgb(255_255_255/0.6),0_0_0_0.5px_color-mix(in_srgb,var(--color-ring)_70%,transparent),0_0_0_4px_color-mix(in_srgb,var(--color-ring)_20%,transparent),0_10px_30px_-8px_rgb(0_0_0/0.18)] motion-reduce:transition-none',
-            queue.pendingCount > 0 || queue.paused ? 'rounded-b-(--radius-composer) rounded-t-none' : 'rounded-(--radius-composer)',
-            dragging && 'bg-primary/5 shadow-[0_0_0_2px_var(--color-primary)]',
-          )}
+          className={cn('min-w-0', dragging && 'bg-primary/5')}
           onDragEnter={(event) => {
             if (event.dataTransfer.types.includes('Files')) {
               event.preventDefault()
@@ -1416,7 +1712,7 @@ function SessionComposer({
           {attachments.length > 0 ? (
             <div
               data-composer-attachments
-              className="scroll-slim grid max-h-28 min-w-0 grid-cols-[repeat(auto-fill,minmax(9rem,1fr))] gap-1.5 overflow-y-auto px-2 pt-2"
+              className="scroll-slim grid max-h-28 min-w-0 grid-cols-[repeat(auto-fill,minmax(9rem,1fr))] gap-1.5 overflow-y-auto px-3 pt-3"
             >
               {attachments.map((attachment) => (
                 <div
@@ -1518,7 +1814,7 @@ function SessionComposer({
                   ariaDescribedBy={visibleError ? 'composer-input-error' : undefined}
                   ariaInvalid={Boolean(visibleError)}
                   disabled={!draftEditable}
-                  placeholder={t('composer.inputPlaceholder')}
+                  placeholder={placeholder}
                   onChange={updateEditor}
                   onKeyDown={handleEditorKeyDown}
                   onMentionKeyDown={handleMentionKeyDown}
@@ -1530,7 +1826,7 @@ function SessionComposer({
           />
           <div
             data-composer-toolbar
-            className="flex min-h-11 min-w-0 items-center gap-1 px-2.5 pb-2.5 pt-0.5 [&_[data-slot=button]]:rounded-full"
+            className="@container flex min-h-12 min-w-0 items-center gap-1 px-2.5 pt-1 pb-2.5"
           >
             <input
               ref={fileInput}
@@ -1545,22 +1841,111 @@ function SessionComposer({
                 event.target.value = ''
               }}
             />
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  disabled={!connected || !supportsImages}
-                  aria-label={t('composer.addFile')}
-                  onClick={() => fileInput.current?.click()}
+            <DropdownMenu open={addMenuOpen} onOpenChange={setAddMenuOpen}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      disabled={!connected}
+                      aria-label={t('composer.add')}
+                      data-composer-add
+                      className="grid size-[32px] shrink-0 place-items-center rounded-full text-foreground/70 outline-none transition-colors duration-(--duration-fast) hover:bg-fill-strong hover:text-foreground focus-visible:focus-ring disabled:opacity-40 data-[state=open]:bg-fill-strong data-[state=open]:text-foreground motion-reduce:transition-none"
+                    >
+                      <TbPlus className="size-[18px] stroke-[2.2]" aria-hidden />
+                    </button>
+                  </DropdownMenuTrigger>
+                </TooltipTrigger>
+                <TooltipContent>{t('composer.add')}</TooltipContent>
+              </Tooltip>
+              <DropdownMenuContent
+                side="top"
+                align="start"
+                sideOffset={8}
+                className="w-[300px]"
+                onCloseAutoFocus={(event) => {
+                  // Return to the text first. Caret actions open a picker, which
+                  // dismisses on focus moving in, so run them once focus settles.
+                  event.preventDefault()
+                  editorRef.current?.focus()
+                  const action = afterAddMenuClose.current
+                  afterAddMenuClose.current = null
+                  if (action) requestAnimationFrame(action)
+                }}
+              >
+                <DropdownMenuLabel>{t('composer.menu.add')}</DropdownMenuLabel>
+                <DropdownMenuItem
+                  disabled={!supportsImages || modeIntent !== null}
+                  onSelect={() => fileInput.current?.click()}
+                  className="group/item py-1.5 data-[disabled]:opacity-100 data-[disabled]:text-muted-foreground"
                 >
-                  <TbPlus aria-hidden />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                {supportsImages ? t('composer.addFile') : t('composer.imageUnsupportedModel')}
-              </TooltipContent>
-            </Tooltip>
+                  <TbPhoto aria-hidden />
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span>{t('composer.addFile')}</span>
+                    {!supportsImages || modeIntent !== null ? <span className="text-micro text-muted-foreground">
+                      {t(!supportsImages ? 'composer.imageUnsupportedModel' : 'composer.mode.noImages')}
+                    </span> : null}
+                  </span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={!hasContextSource || !draftEditable}
+                  onSelect={() => { afterAddMenuClose.current = () => editorRef.current?.insertTrigger('@') }}
+                  className="group/item py-1.5 data-[disabled]:opacity-100 data-[disabled]:text-muted-foreground"
+                >
+                  <TbAt aria-hidden />
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span>{t('composer.menu.mention')}</span>
+                    {!hasContextSource ? <span className="text-micro text-muted-foreground">{t('composer.menu.mentionUnavailable')}</span> : null}
+                  </span>
+                  <DropdownMenuShortcut>@</DropdownMenuShortcut>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  // The command picker opens only for a leading "/".
+                  disabled={editorChange.hasContent || !draftEditable}
+                  onSelect={() => { afterAddMenuClose.current = () => editorRef.current?.insertTrigger('/') }}
+                  className="group/item py-1.5 data-[disabled]:opacity-100 data-[disabled]:text-muted-foreground"
+                >
+                  <TbSlash aria-hidden />
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span>{t('composer.menu.command')}</span>
+                    {editorChange.hasContent ? <span className="text-micro text-muted-foreground">{t('composer.menu.commandUnavailable')}</span> : null}
+                  </span>
+                  <DropdownMenuShortcut>/</DropdownMenuShortcut>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel>{t('composer.menu.modes')}</DropdownMenuLabel>
+                {modeMenuItem('plan')}
+                {modeMenuItem('goal')}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            {planActive ? (
+              <ModeChip
+                mode="plan"
+                active
+                label={t('composer.mode.plan')}
+                title={t('composer.mode.planOn')}
+                removeLabel={t('plan.action.exit')}
+                disabled={isStreaming || exitingPlan || !onExitPlanMode}
+                disabledTitle={isStreaming ? t('composer.mode.blocked.running') : undefined}
+                busy={exitingPlan}
+                onRemove={() => {
+                  // A written plan is lost on exit, so confirm first.
+                  if (planMode?.markdown) setExitPlanConfirmOpen(true)
+                  else void exitPlanMode()
+                }}
+              />
+            ) : null}
+            {modeIntent ? (
+              <ModeChip
+                mode={modeIntent}
+                label={t(modeIntent === 'plan' ? 'composer.mode.plan' : 'composer.mode.goal')}
+                removeLabel={t('composer.mode.remove', { mode: t(modeIntent === 'plan' ? 'composer.mode.plan' : 'composer.mode.goal') })}
+                onRemove={() => {
+                  setModeIntent(null)
+                  editorRef.current?.focus()
+                }}
+              />
+            ) : null}
             <div className="min-w-1 flex-1" />
             <ModelPicker
               key={operationOwnerKey}
@@ -1575,48 +1960,82 @@ function SessionComposer({
               onSelect={onModelChange}
               onThinkingSelect={onThinkingChange}
             />
-
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="default"
-                  size="icon-sm"
-                  className="shrink-0 rounded-full"
-                  onClick={() => void dispatch(submitMode.action)}
-                  disabled={!actionState.canSubmit}
-                  aria-label={submitLabel}
-                  data-composer-submit={submitMode.kind}
-                >
-                  {submitting
-                    ? <TbLoader2 className="animate-spin motion-reduce:animate-none" aria-hidden />
-                    : <SubmitIcon aria-hidden />}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>{submitLabel}</TooltipContent>
-            </Tooltip>
-            {isStreaming ? (
-              <div className="flex h-8 shrink-0 items-center" data-composer-running-actions>
+            <div className="ml-[7px] flex shrink-0 items-center gap-1.5">
+              {isStreaming && hasDraft ? (
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <Button
-                      variant="outline"
-                      size="icon-sm"
-                      className="rounded-full"
+                    <button
+                      type="button"
+                      className="grid size-[26px] place-items-center rounded-full bg-fill-strong text-foreground outline-none transition-[background-color,transform] duration-(--duration-fast) hover:bg-black/15 focus-visible:focus-ring active:scale-90 disabled:opacity-40 motion-reduce:transition-none motion-reduce:active:scale-100 dark:hover:bg-white/20"
                       onClick={() => void stop()}
                       disabled={!actionState.canStop}
                       aria-label={t('composer.stop')}
                       aria-busy={Boolean(stopFeedback.pending)}
                     >
                       {stopFeedback.pending
-                        ? <TbLoader2 className="animate-spin motion-reduce:animate-none" aria-hidden />
-                        : <TbPlayerStop aria-hidden />}
-                    </Button>
+                        ? <TbLoader2 className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden />
+                        : <TbPlayerStopFilled className="size-3" aria-hidden />}
+                    </button>
                   </TooltipTrigger>
                   <TooltipContent>{t('composer.stop')}</TooltipContent>
                 </Tooltip>
-              </div>
-            ) : null}
+              ) : null}
+              {isStreaming && !hasDraft ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      className="grid size-[32px] place-items-center rounded-full bg-foreground text-background outline-none transition-[background-color,transform] duration-(--duration-fast) hover:bg-foreground/85 focus-visible:focus-ring active:scale-90 disabled:opacity-40 motion-reduce:transition-none motion-reduce:active:scale-100"
+                      onClick={() => void stop()}
+                      disabled={!actionState.canStop}
+                      aria-label={t('composer.stop')}
+                      aria-busy={Boolean(stopFeedback.pending)}
+                    >
+                      {stopFeedback.pending
+                        ? <TbLoader2 className="size-4 animate-spin motion-reduce:animate-none" aria-hidden />
+                        : <TbPlayerStopFilled className="size-3.5" aria-hidden />}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t('composer.stop')}</TooltipContent>
+                </Tooltip>
+              ) : (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      className={cn(
+                        'grid size-[32px] place-items-center rounded-full text-white outline-none transition-[background-color,transform] duration-(--duration-fast) focus-visible:focus-ring active:scale-90 motion-reduce:transition-none motion-reduce:active:scale-100',
+                        canSubmit
+                          ? 'bg-primary hover:bg-primary/90'
+                          // Empty: a quiet solid grey, not a faded accent.
+                          : 'bg-black/[0.16] dark:bg-white/[0.16] dark:text-white/50',
+                      )}
+                      onClick={() => void dispatch(submitMode.action)}
+                      disabled={!canSubmit}
+                      aria-label={submitLabel}
+                      data-composer-submit={submitMode.kind}
+                    >
+                      {submitting
+                        ? <TbLoader2 className="size-4 animate-spin motion-reduce:animate-none" aria-hidden />
+                        : <SubmitIcon className="size-[18px] stroke-[2.6]" aria-hidden />}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {modeIntent && isStreaming ? t('composer.mode.blocked.running') : isStreaming && submitMode.kind !== 'run-now' ? (
+                      // Both ways to send during a reply, each with its key.
+                      <span className="grid grid-cols-[auto_auto] items-center gap-x-4 gap-y-1">
+                        <span>{submitTip(submitMode.kind)}</span>
+                        <kbd className="justify-self-end font-sans opacity-70">{sendKey}</kbd>
+                        <span>{submitTip(alternateMode.kind)}</span>
+                        <kbd className="justify-self-end font-sans opacity-70">{primaryShortcut('⇧↩')}</kbd>
+                      </span>
+                    ) : submitLabel}
+                  </TooltipContent>
+                </Tooltip>
+              )}
+            </div>
           </div>
+        </div>
         </div>
 
         {visibleError ? (
@@ -1638,10 +2057,70 @@ function SessionComposer({
             <MarkdownContent markdown={availabilityError} />
           </div>
         ) : null}
-        <p className="mt-2 px-2 text-center text-micro text-muted-foreground/80">
-          {t('composer.disclaimer')}
-        </p>
       </div>
+      <AlertDialog open={exitPlanConfirmOpen} onOpenChange={setExitPlanConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('composer.mode.exitConfirm.title')}</AlertDialogTitle>
+            <AlertDialogDescription>{t('composer.mode.exitConfirm.description')}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                setExitPlanConfirmOpen(false)
+                void exitPlanMode()
+              }}
+            >
+              {t('composer.mode.exitConfirm.confirm')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
+  )
+}
+
+/** A removable mode token beside "+": tinted while chosen, solid while the plugin's mode is on. */
+function ModeChip({ mode, active = false, label, title, removeLabel, disabled, disabledTitle, busy, onRemove }: {
+  mode: ComposerMode
+  active?: boolean
+  label: string
+  title?: string
+  removeLabel: string
+  disabled?: boolean
+  disabledTitle?: string
+  busy?: boolean
+  onRemove(): void
+}) {
+  const Icon = mode === 'plan' ? TbFileDescription : TbTarget
+  return (
+    <span
+      data-composer-mode={mode}
+      data-composer-mode-active={active || undefined}
+      title={title}
+      className={cn(
+        'inline-flex h-[28px] min-w-0 shrink-0 items-center gap-1 rounded-full pr-[3px] pl-2.5 text-caption font-medium',
+        mode === 'plan'
+          ? active ? 'bg-primary text-primary-foreground' : 'bg-primary/12 text-primary'
+          : 'bg-[#34c759]/15 text-[#248a3d] dark:text-[#30d158]',
+      )}
+    >
+      <Icon className="size-3.5 shrink-0" aria-hidden />
+      <span className="truncate">{label}</span>
+      <button
+        type="button"
+        aria-label={removeLabel}
+        title={disabled && disabledTitle ? disabledTitle : removeLabel}
+        disabled={disabled}
+        onClick={onRemove}
+        className="grid size-[22px] shrink-0 place-items-center rounded-full outline-none transition-colors duration-(--duration-fast) hover:bg-black/10 focus-visible:focus-ring disabled:opacity-50 motion-reduce:transition-none dark:hover:bg-white/15"
+      >
+        {busy
+          ? <TbLoader2 className="size-3 animate-spin motion-reduce:animate-none" aria-hidden />
+          : <TbX className="size-3 stroke-[2.6]" aria-hidden />}
+      </button>
+    </span>
   )
 }

@@ -55,14 +55,22 @@ export function normalizeRunningSubmitPreference(
   return value === 'steer' ? 'steer' : 'queue'
 }
 
+/**
+ * While Pi replies, a message either queues (sent after the reply) or steers
+ * (Pi reads it after its current step). The preference picks the default;
+ * `alternate` (⌘⇧↩) picks the other, like Codex's follow-up behavior.
+ */
 export function deriveComposerSubmitMode(
   isStreaming: boolean,
   hasExtensionCommand: boolean,
-  _runningSubmit: RunningSubmitPreference = 'queue',
+  runningSubmit: RunningSubmitPreference = 'queue',
+  alternate = false,
 ): ComposerSubmitMode {
   if (!isStreaming) return { action: 'prompt', kind: 'send' }
   if (hasExtensionCommand) return { action: 'prompt', kind: 'run-now' }
-  return { action: 'follow_up', kind: 'queue' }
+  return (runningSubmit === 'steer') !== alternate
+    ? { action: 'steer', kind: 'steer' }
+    : { action: 'follow_up', kind: 'queue' }
 }
 
 export function deriveComposerActionState(input: {

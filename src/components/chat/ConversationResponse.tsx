@@ -25,7 +25,13 @@ export function ConversationResponse({ response, highlighted, anchorRef, renderP
     data-conversation-outline-entry={response.anchorEntryId}
     data-outline-highlighted={highlighted || undefined}
     data-conversation-response={response.id}
-    className={cn('min-w-0 rounded-lg pb-2 transition-colors duration-(--duration-base) motion-reduce:transition-none', highlighted && 'bg-accent/35 ring-2 ring-inset ring-ring/45')}
+    // The highlight frame sits 12px outside the content, so it never lands on
+    // the edge of a full-width card or bubble inside the reply. A shadow
+    // spread (tint) and an offset outline (edge) draw it without widening the layout.
+    className={cn(
+      'min-w-0 rounded-[4px] pb-2 transition-[background-color,box-shadow,outline-color] duration-(--duration-base) [outline:1px_solid_transparent] [outline-offset:12px] motion-reduce:transition-none',
+      highlighted && 'bg-primary/[0.05] shadow-[0_0_0_12px_color-mix(in_srgb,var(--color-primary)_5%,transparent)] outline-[color-mix(in_srgb,var(--color-primary)_28%,transparent)]',
+    )}
   >
     {searchPreview}
     {response.prompt ? <div className="mb-7 min-w-0">{renderPrompt(response.prompt)}</div> : null}

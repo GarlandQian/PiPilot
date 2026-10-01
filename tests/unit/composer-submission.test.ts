@@ -6,6 +6,7 @@ import {
   COMPOSER_IMAGE_TOTAL_BYTE_LIMIT,
   composerImageKey,
   isComposerSendShortcut,
+  piImagesToFiles,
   validateComposerImageBatch,
 } from '../../src/renderer/composer/composer-submission'
 
@@ -106,5 +107,21 @@ describe('composer image batch validation', () => {
       }),
       [image('next.png', 9 * 1024 * 1024)],
     )).toBe('total-too-large')
+  })
+})
+
+describe('images taken back from the queue', () => {
+  it('round-trips into distinct attachments the composer accepts', async () => {
+    const png = { type: 'image' as const, mimeType: 'image/png', data: btoa('png-bytes') }
+    const jpeg = { type: 'image' as const, mimeType: 'image/jpeg', data: btoa('jpeg-bytes') }
+    const files = piImagesToFiles([png, png, jpeg], 1_000)
+    expect(files.map((file) => [file.name, file.type, file.lastModified])).toEqual([
+      ['image-1.png', 'image/png', 1_000],
+      ['image-2.png', 'image/png', 1_001],
+      ['image-3.jpg', 'image/jpeg', 1_002],
+    ])
+    // The same picture twice is still two attachments, not a duplicate.
+    expect(validateComposerImageBatch([], files)).toBeNull()
+    expect(await attachmentsToPiImagesIfCurrent(files.map((file) => ({ file })), () => true)).toEqual([png, png, jpeg])
   })
 })

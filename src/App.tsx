@@ -843,19 +843,27 @@ export default function App() {
               onOpenSubagent={openSubagentExecution}
               onOpenCommand={openCommandExecution}
             />
-            {conversationReady ? (
-              <ActiveControlBar
-                planMode={extension.planMode}
-                goalMode={extension.goalMode}
-                retryActivity={pi.retryActivity}
-                working={extension.working}
-                onPlanAction={runPlanAction}
-                onGoalAction={runGoalAction}
-                onStopRetry={actions.abortRetry}
-              />
-            ) : null}
-            {conversationReady ? <ConversationNotices /> : null}
             <Composer
+              status={conversationReady ? (
+                <ActiveControlBar
+                  planMode={extension.planMode}
+                  goalMode={extension.goalMode}
+                  retryActivity={pi.retryActivity}
+                  working={extension.working}
+                  onPlanAction={runPlanAction}
+                  onGoalAction={runGoalAction}
+                  onStopRetry={actions.abortRetry}
+                />
+              ) : null}
+              notices={conversationReady ? <ConversationNotices /> : null}
+              planMode={conversationReady ? extension.planMode : null}
+              goalMode={conversationReady ? extension.goalMode : null}
+              conversationEmpty={conversationReady && pi.session?.messageCount === 0}
+              onExitPlanMode={() => runPlanAction('exit')}
+              onOpenIntegrations={() => {
+                setIntegrationsTab('packages')
+                setSettingsSection('integrations')
+              }}
               connected={conversationReady}
               draftEditable={!switching && Boolean(workspace.activeSessionId)}
               loadingModels={conversation.status === 'loading'}
@@ -893,7 +901,7 @@ export default function App() {
               onSetQueueMode={actions.setQueueMode}
               onPromoteFollowUp={actions.promoteFollowUp}
               onRemoveQueuedMessage={actions.removeQueuedMessage}
-              onEditQueuedMessage={actions.editQueuedMessage}
+              onMoveQueuedMessage={actions.moveQueuedMessage}
               onResumeQueue={actions.resumeQueue}
               onClearQueue={actions.clearQueue}
               onCompleteCommandArguments={conversationReady

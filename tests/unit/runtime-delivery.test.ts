@@ -193,6 +193,28 @@ describe('durable runtime delivery', () => {
     expect(delivery.snapshot().receipts[0]?.status).toBe('consumed')
   })
 
+  it('reorders waiting follow-ups, which changes what is delivered next', async () => {
+    const { delivery, session, submit } = await fixture()
+    const first = await submit('first')
+    const second = await submit('second')
+    const third = await submit('third')
+    const move = (itemId: string, beforeItemId?: string | null) => delivery.mutate({
+      type: 'mutate_delivery', itemId, revision: delivery.snapshot().revision, action: 'move', beforeItemId,
+    })
+    await move(third.receipt.itemId!, first.receipt.itemId!)
+    expect(delivery.snapshot().items.map((item) => item.message)).toEqual(['third', 'first', 'second'])
+    await move(third.receipt.itemId!, null)
+    expect(delivery.snapshot().items.map((item) => item.message)).toEqual(['first', 'second', 'third'])
+    await expect(move(first.receipt.itemId!, 'gone')).rejects.toThrow('already consumed or removed')
+    // A stale revision is refused rather than reordering a queue the user did not see.
+    await expect(delivery.mutate({ type: 'mutate_delivery', itemId: second.receipt.itemId!, revision: 0, action: 'move' }))
+      .rejects.toThrow('queue changed')
+    session.isStreaming = false
+    await move(second.receipt.itemId!, first.receipt.itemId!)
+    await delivery.pump()
+    expect(session.prompt).toHaveBeenLastCalledWith('second', expect.any(Object))
+  })
+
   it('clears native work before abort and freezes new sends until explicit resume', async () => {
     const { delivery, session, submit } = await fixture()
     await submit('first')

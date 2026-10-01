@@ -962,8 +962,9 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
         sessionFile: canonicalSelectedSessionFile,
         sessionState: { isStreaming: false },
       })
+    // An abort outside the composer can leave waiting messages paused.
     const resumeQueue = page.getByRole('button', {
-      name: 'Resume queue',
+      name: 'Send them',
       exact: true,
     })
     if (await resumeQueue.isVisible()) await resumeQueue.click()

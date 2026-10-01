@@ -140,10 +140,10 @@ async function interruptSubmissionReply(app: ElectronApplication, message: strin
   }, { channel: ipcChannels.localPiCommand, text: message, runOriginal: accepted })
 }
 
-test('saves before clearing, allows another send during acceptance, and freezes complete editable queues until Resume', async ({}, testInfo) => {
+test('queues during a reply, edits by taking a message back, reorders, and Stop returns unsent messages to the input', async ({}, testInfo) => {
   test.setTimeout(90_000)
   const running = 'Hold this run while editing the delivery queue'
-  const clearingRun = 'Hold another run before clearing paused messages'
+  const clearingRun = 'Hold another run before clearing waiting messages'
   const provider = deferred()
   const clearingProvider = deferred()
   const { app, page, fixture } = await launchFixture(testInfo, {
@@ -151,76 +151,86 @@ test('saves before clearing, allows another send during acceptance, and freezes 
     [clearingRun]: clearingProvider.promise,
   })
   const reply = await holdSubmissionReply(app, running)
+  const rows = pending(page).locator('[data-pending-message-id]')
+  const order = async () => (await delivery(page)).items.map((item) => item.message)
   try {
     await send(page, running)
     await expect.poll(() => reply.evaluate((gate) => gate.accepted)).toBe(true)
     await expect(page.locator('[data-outbox-status="sending"]')).toContainText(running)
     await send(page, 'First queued image instruction', 'first.png')
-    await expect(pending(page)).toContainText('1 pending')
     await send(page, '', 'only-image.png')
-    await expect(pending(page)).toContainText('2 pending')
     await send(page, 'Last queued instruction')
-    await expect(pending(page)).toContainText('3 pending')
+    await expect(rows).toHaveCount(3)
     expect(fixture.prompts).toEqual([running])
     await reply.evaluate((gate) => gate.release())
     await expect(page.locator('[data-composer-outbox]')).toHaveCount(0)
 
-    await pending(page).getByRole('button', { name: 'Show pending messages', exact: true }).click()
-    const first = pending(page).getByRole('listitem').filter({ hasText: 'First queued image instruction' })
-    await first.getByRole('button', { name: 'Edit message', exact: true }).click()
-    await first.getByRole('textbox', { name: 'Edit message', exact: true }).fill('Edited first queued image instruction')
+    // One quiet row per message: Steer stays visible, the full text opens in place.
+    const first = rows.filter({ hasText: 'First queued image instruction' })
+    await expect(first.getByRole('button', { name: 'Steer', exact: true })).toBeVisible()
+    await first.locator('[data-pending-toggle]').click()
     await expect(first.getByRole('img', { name: 'Queued image 1', exact: true })).toHaveAttribute('src', imageSrc)
-    await first.getByRole('button', { name: 'Save changes', exact: true }).click()
-    await expect.poll(async () => (await delivery(page)).items.map((item) => item.message))
-      .toEqual(['Edited first queued image instruction', '', 'Last queued instruction'])
-    await expect(pending(page).locator('[data-queue-image]')).toHaveCount(2)
+
+    // Edit takes the message out of the queue and back into the input, with its image.
+    await first.hover()
+    await first.getByRole('button', { name: 'Edit in input', exact: true }).click()
+    await expect(composer(page)).toHaveText('First queued image instruction')
+    await expect(page.getByRole('button', { name: 'Remove image image-1.png', exact: true })).toBeAttached()
+    await expect.poll(order).toEqual(['', 'Last queued instruction'])
+    await composer(page).fill('Edited first queued image instruction')
+    await page.locator('[data-composer-submit]').click()
+    await expect(composer(page)).toHaveText('')
+    await expect.poll(order).toEqual(['', 'Last queued instruction', 'Edited first queued image instruction'])
+
+    // Reorder from the row's menu and by dragging; delivery follows the list.
+    const edited = rows.filter({ hasText: 'Edited first queued image instruction' })
+    await edited.click({ button: 'right' })
+    await page.getByRole('menuitem', { name: 'Move up', exact: true }).click()
+    await expect.poll(order).toEqual(['', 'Edited first queued image instruction', 'Last queued instruction'])
+    await edited.dragTo(rows.first(), { targetPosition: { x: 40, y: 3 } })
+    await expect.poll(order).toEqual(['Edited first queued image instruction', '', 'Last queued instruction'])
     await page.screenshot({ path: testInfo.outputPath('delivery-editable-queue-light.png') })
 
+    // Stop puts every unsent message back into the input, ahead of the draft,
+    // instead of leaving a paused queue to resume.
+    await composer(page).fill('Draft typed during the run')
     await page.getByRole('button', { name: 'Stop', exact: true }).click()
-    await expect(pending(page)).toContainText('Paused · 3 pending')
-    await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0)
-    await expect.poll(async () => (await delivery(page)).items.map((item) => item.status)).toEqual(['frozen', 'frozen', 'frozen'])
-    await send(page, 'New instruction while paused', 'paused.png')
-    await expect(pending(page)).toContainText('Paused · 4 pending')
-    await expect(pending(page).locator('[data-queue-image]')).toHaveCount(3)
-    expect(fixture.prompts).toEqual([running])
+    await expect(page.locator('[data-composer-restored]')).toContainText('Unsent messages moved back to the input (3)')
+    await expect(pending(page)).toHaveCount(0)
+    await expect.poll(() => delivery(page)).toMatchObject({ paused: false, items: [] })
+    const restored = await composer(page).innerText()
+    expect(restored.indexOf('Edited first queued image instruction')).toBeLessThan(restored.indexOf('Last queued instruction'))
+    expect(restored.indexOf('Last queued instruction')).toBeLessThan(restored.indexOf('Draft typed during the run'))
+    await expect(page.locator('[data-composer-attachments] img')).toHaveCount(2)
     await page.evaluate(() => window.pipilot!.settings.update({ appearance: { theme: 'dark' } }))
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1100, 680))
     await page.setViewportSize({ width: 1100, height: 680 })
     await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains('dark'))).toBe(true)
-    expect(await page.evaluate(() => {
-      const rail = document.querySelector<HTMLElement>('[data-pending-message-rail]')!.getBoundingClientRect()
-      const editor = document.querySelector<HTMLElement>('[data-composer-surface]')!.getBoundingClientRect()
-      return {
-        horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
-        aligned: Math.abs(rail.left - editor.left) <= 1 && Math.abs(rail.right - editor.right) <= 1,
-      }
-    })).toEqual({ horizontalOverflow: false, aligned: true })
-    await page.screenshot({ path: testInfo.outputPath('delivery-paused-minimum-dark.png') })
+    expect(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)).toBe(false)
+    await page.screenshot({ path: testInfo.outputPath('delivery-restored-minimum-dark.png') })
     provider.release()
     await page.waitForTimeout(300)
     expect(fixture.prompts).toEqual([running])
 
-    await pending(page).getByRole('button', { name: 'Resume queue', exact: true }).click()
-    await expect.poll(() => fixture.prompts.includes('New instruction while paused')).toBe(true)
-    await expect(pending(page)).toHaveCount(0)
-    await expect.poll(async () => (await history(page)).filter((message) => message.role === 'user' &&
-      Array.isArray(message.content) && message.content.some((part) => part.type === 'image')).length).toBe(3)
+    // The restored text and both images go out as one ordinary message.
+    await page.locator('[data-composer-submit]').click()
+    await expect.poll(() => fixture.prompts.some((prompt) => prompt.includes('Draft typed during the run'))).toBe(true)
+    await expect(page.locator('[data-composer-restored]')).toHaveCount(0)
+    await expect.poll(async () => (await history(page)).some((message) => message.role === 'user' &&
+      Array.isArray(message.content) && message.content.filter((part) => part.type === 'image').length === 2)).toBe(true)
     await page.screenshot({ path: testInfo.outputPath('delivery-queue-resumed.png') })
 
-    await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 20_000 })
     await send(page, clearingRun)
     await expect.poll(() => fixture.prompts.includes(clearingRun)).toBe(true)
     await send(page, 'Clear this waiting image', 'clear.png')
-    await expect(pending(page)).toContainText('1 pending')
-    await page.getByRole('button', { name: 'Stop', exact: true }).click()
-    await expect(pending(page)).toContainText('Paused · 1 pending')
-    await pending(page).getByRole('button', { name: 'More pending-message actions', exact: true }).click()
-    await page.getByRole('menuitem', { name: 'Clear waiting messages', exact: true }).click()
-    await expect.poll(() => delivery(page)).toMatchObject({ paused: true, items: [] })
-    await expect(pending(page)).toContainText('Paused · 0 pending')
-    await pending(page).getByRole('button', { name: 'Resume queue', exact: true }).click()
+    await send(page, 'And this waiting note')
+    await expect(rows).toHaveCount(2)
+    await pending(page).getByRole('button', { name: 'Clear all', exact: true }).click()
+    await expect.poll(() => delivery(page)).toMatchObject({ items: [] })
     await expect(pending(page)).toHaveCount(0)
+    clearingProvider.release()
+    await page.waitForTimeout(300)
     expect(fixture.prompts).not.toContain('Clear this waiting image')
   } finally {
     provider.release()
@@ -232,7 +242,7 @@ test('saves before clearing, allows another send during acceptance, and freezes 
   }
 })
 
-test('promotes a single queued message with its image into real Pi steering without a global send mode', async ({}, testInfo) => {
+test('steers into the running reply from a row, with ⌘⇧↩, or by default from the setting', async ({}, testInfo) => {
   test.setTimeout(60_000)
   const running = 'Hold this run for a direction adjustment'
   const steering = 'Use the queued screenshot to adjust direction'
@@ -242,20 +252,38 @@ test('promotes a single queued message with its image into real Pi steering with
     await send(page, running)
     await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible()
     await send(page, steering, 'steer.png')
-    await expect(pending(page)).toContainText('1 pending')
-    await pending(page).getByRole('button', { name: 'Show pending messages', exact: true }).click()
-    const item = pending(page).getByRole('listitem').filter({ hasText: steering })
-    await item.getByRole('button', { name: 'Adjust direction', exact: true }).click()
-    await expect(item.getByRole('button', { name: 'Adjust direction', exact: true })).toHaveCount(0)
-    await expect(item.getByRole('button', { name: 'Edit message', exact: true })).toHaveCount(0)
-    await expect(item.getByRole('img', { name: 'Queued image 1', exact: true })).toHaveAttribute('src', imageSrc)
+    const item = pending(page).locator('[data-pending-message-id]').filter({ hasText: steering })
+    await item.getByRole('button', { name: 'Steer', exact: true }).click()
+    await expect(item).toContainText('Steering · next step')
+    await expect(item.getByRole('button', { name: 'Steer', exact: true })).toHaveCount(0)
+    await expect(item.getByRole('button', { name: 'Edit in input', exact: true })).toHaveCount(0)
     await expect.poll(async () => (await delivery(page)).items[0]).toMatchObject({ mode: 'steer', status: 'delivering' })
+
+    // ⌘⇧↩ does the opposite of the setting: steer while the default is Queue.
+    await composer(page).fill('Steer with the shortcut')
+    await composer(page).press('ControlOrMeta+Shift+Enter')
+    await expect(composer(page)).toHaveText('')
+    await expect.poll(async () => (await delivery(page)).items.find((entry) => entry.message === 'Steer with the shortcut'))
+      .toMatchObject({ mode: 'steer' })
+
+    // With Steer as the default, Enter steers and ⌘⇧↩ queues.
+    await page.evaluate(() => window.pipilot!.settings.update({ composer: { runningSubmit: 'steer' } }))
+    await composer(page).fill('Steer by default')
+    await composer(page).press('Enter')
+    await expect(composer(page)).toHaveText('')
+    await composer(page).fill('Queue with the shortcut')
+    await composer(page).press('ControlOrMeta+Shift+Enter')
+    await expect(composer(page)).toHaveText('')
+    await expect.poll(async () => Object.fromEntries((await delivery(page)).items.map((entry) => [entry.message, entry.mode])))
+      .toMatchObject({ 'Steer by default': 'steer', 'Queue with the shortcut': 'follow_up' })
+
     provider.release()
     await expect.poll(() => fixture.prompts.filter((prompt) => prompt === steering).length).toBe(1)
-    await expect(pending(page)).toHaveCount(0)
     await expect.poll(async () => (await history(page)).some((message) => message.role === 'user' &&
       Array.isArray(message.content) && message.content.some((part) => part.type === 'text' && part.text === steering) &&
       message.content.some((part) => part.type === 'image' && part.data === pixelPng.toString('base64')))).toBe(true)
+    await expect.poll(() => fixture.prompts.includes('Queue with the shortcut'), { timeout: 20_000 }).toBe(true)
+    await expect(pending(page)).toHaveCount(0, { timeout: 20_000 })
   } finally {
     provider.release()
     await app.close()
@@ -283,6 +311,7 @@ test('persists unconfirmed delivery across reload and session switching, and ret
     fault = await interruptSubmissionReply(app, accepted, true)
     await send(page, accepted, 'accepted.png')
     await expect(page.locator('[data-outbox-status="unknown"]')).toContainText(accepted)
+    await page.locator('[data-outbox-status="unknown"] [data-pending-toggle]').click()
     await expect(page.locator('[data-composer-outbox]').getByRole('img')).toHaveAttribute('src', imageSrc)
     await page.screenshot({ path: testInfo.outputPath('delivery-unconfirmed-light.png') })
     await projectSession(page, 'Delivery B').click()
@@ -311,15 +340,21 @@ test('persists unconfirmed delivery across reload and session switching, and ret
     const failed = page.locator('[data-outbox-status="failed"]')
     await expect(failed).toContainText(missing)
     await expect(composer(page)).toHaveText('Keep this new draft untouched')
-    await failed.getByRole('button', { name: 'Edit message', exact: true }).click()
-    await failed.getByRole('textbox', { name: 'Edit message', exact: true }).fill('Edited retry is accepted exactly once')
-    await expect(failed.getByRole('img', { name: 'Queued image 1', exact: true })).toHaveAttribute('src', imageSrc)
     await page.screenshot({ path: testInfo.outputPath('delivery-edit-failed-light.png') })
-    await failed.getByRole('button', { name: 'Save and retry', exact: true }).click()
+    // Editing a failed message takes it back into the input, after the draft.
+    await failed.hover()
+    await failed.getByRole('button', { name: 'Edit in input', exact: true }).click()
     await expect(page.locator('[data-composer-outbox]')).toHaveCount(0)
+    const merged = await composer(page).innerText()
+    expect(merged.indexOf('Keep this new draft untouched')).toBeLessThan(merged.indexOf(missing))
+    await expect(page.locator('[data-composer-attachments] img')).toHaveCount(1)
+    await composer(page).fill('Edited retry is accepted exactly once')
+    await page.locator('[data-composer-submit]').click()
     await expect.poll(() => fixture.prompts.filter((prompt) => prompt === 'Edited retry is accepted exactly once').length).toBe(1)
     expect(fixture.prompts).not.toContain(missing)
-    await expect(composer(page)).toHaveText('Keep this new draft untouched')
+    await expect.poll(async () => (await history(page)).some((entry) => entry.role === 'user' &&
+      Array.isArray(entry.content) && entry.content.some((part) => part.type === 'text' && part.text === 'Edited retry is accepted exactly once') &&
+      entry.content.some((part) => part.type === 'image' && part.data === pixelPng.toString('base64')))).toBe(true)
     await page.screenshot({ path: testInfo.outputPath('delivery-retry-keeps-next-draft.png') })
   } finally {
     if (fault) {
@@ -363,6 +398,7 @@ test('recovers a saved message after consecutive IndexedDB status-write aborts w
     const uncertain = page.locator('[data-outbox-status="unknown"]')
     await expect(uncertain).toContainText(message)
     await expect(uncertain.getByRole('button', { name: 'Check delivery', exact: true })).toBeEnabled()
+    await uncertain.locator('[data-pending-toggle]').click()
     await expect(uncertain.getByRole('img', { name: 'Queued image 1', exact: true })).toHaveAttribute('src', imageSrc)
     expect(fixture.prompts).not.toContain(message)
 
@@ -435,6 +471,7 @@ test('blocks sending and retries until the saved draft cleanup commits, then pre
     await page.locator('[data-composer-submit]').click()
     const failed = page.locator('[data-outbox-status="failed"]')
     await expect(failed).toContainText(message)
+    await failed.locator('[data-pending-toggle]').click()
     await expect(failed.getByRole('img', { name: 'Queued image 1', exact: true })).toHaveAttribute('src', imageSrc)
     await expect(page.locator('[data-composer-root]')).toHaveAttribute('data-draft-storage', 'error')
     await expect(composer(page)).toHaveText('')

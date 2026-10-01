@@ -24,7 +24,7 @@ export default function overviewPlanFixture(pi) {
   const read = (ctx) => [...ctx.sessionManager.getBranch()].reverse().find((entry) => entry.type === 'custom' && entry.customType === 'plan-mode-state')?.data;
   const restore = (_event, ctx) => {
     const state = read(ctx);
-    const status = state?.enabled ? 'plan ready' : state?.activeImplementation ? 'plan implementing' : undefined;
+    const status = state?.enabled ? (state.latestPlan ? 'plan ready' : 'plan active') : state?.activeImplementation ? 'plan implementing' : undefined;
     ctx.ui.setStatus('plan-mode', status);
     ctx.ui.setWidget('plan-mode-plan', undefined);
   };
@@ -32,6 +32,15 @@ export default function overviewPlanFixture(pi) {
   pi.on('session_tree', restore);
   pi.registerCommand('plan', { description: 'Isolated Plan UI protocol fixture', handler: async (args, ctx) => {
     const state = read(ctx);
+    if (args === 'exit') {
+      pi.appendEntry('plan-mode-state', { enabled: false, awaitingAction: false });
+      return restore(null, ctx);
+    }
+    if (args && !['implement', 'show', 'finalize', 'save', 'export'].includes(args)) {
+      pi.appendEntry('fixture-plan-request', { args });
+      pi.appendEntry('plan-mode-state', { enabled: true, awaitingAction: false });
+      return restore(null, ctx);
+    }
     if (args !== 'implement' || !state?.enabled || !state.latestPlan) throw new Error('Unsupported fixture plan action');
     pi.appendEntry('plan-mode-state', { enabled: false, awaitingAction: false, activeImplementation: {
       id: 'fixture-implementation', plan: state.latestPlan, source: 'plan_mode_complete', startedAt: Date.now(), retention: 'keep',
@@ -52,6 +61,10 @@ export default function overviewGoalFixture(pi) {
   pi.on('session_tree', restore);
   pi.registerCommand('goal', { description: 'Isolated Goal UI protocol fixture', handler: async (args, ctx) => {
     const goal = read(ctx);
+    if (args && !['pause', 'resume', 'clear', 'status'].includes(args)) {
+      pi.appendEntry('goal-state', { goal: { id: 'fixture-started-goal', text: args, status: 'active', iteration: 0, tokensUsed: 0, timeUsedSeconds: 0, automaticModelTurns: 0 } });
+      return restore(null, ctx);
+    }
     if (!goal || !['pause', 'resume', 'clear'].includes(args)) throw new Error('Unsupported fixture goal action');
     pi.appendEntry('goal-state', { goal: args === 'clear' ? null : { ...goal, status: args === 'pause' ? 'paused' : 'active' } });
     restore(null, ctx);
@@ -328,6 +341,109 @@ test('keeps overview scoped, preserves drafts and routes plugin actions through 
       errors, prompts: fixture.prompts, context: await context.textContent().catch(() => null),
       runtime: await page.evaluate(() => window.pipilot!.localPi.runtime.status()).catch(() => null),
     }) })
+    throw error
+  } finally { await closeFixtureApplication(app); await fixture.close() }
+})
+
+test('starts Plan and Goal from the composer "+" menu through their plugin commands', async ({}, testInfo) => {
+  test.setTimeout(90_000)
+  const userData = testInfo.outputPath('user-data'), project = testInfo.outputPath('Mode project'), agentDir = testInfo.outputPath('pi-agent')
+  await Promise.all([userData, project].map((path) => mkdir(path, { recursive: true })))
+  await writeFile(join(userData, 'settings.json'), JSON.stringify({ version: SETTINGS_SCHEMA_VERSION, settings: {
+    ...DEFAULT_SETTINGS, locale: 'en-US', notifications: { desktop: false, sound: false },
+    appearance: { ...DEFAULT_SETTINGS.appearance, theme: 'light', reducedMotion: true },
+  } }))
+  await writeFile(join(project, 'notes.md'), '# Notes\n')
+  const cwd = await realpath(project)
+  const sessionDirectory = join(agentDir, 'sessions', `--${cwd.replace(/^[/\\]/u, '').replace(/[/\\:]/gu, '-')}--`)
+  await mkdir(sessionDirectory, { recursive: true })
+  const sessionPath = join(sessionDirectory, 'other.jsonl')
+  await writeFile(sessionPath, history(cwd, false).map((entry) => JSON.stringify(entry)).join('\n') + '\n')
+  const fixture = await startPiSdkFixture({ agentDir, globalPackages: await installOverviewPluginFixtures(agentDir) })
+  const app = await electron.launch({ args: [resolve(process.cwd())], env: { ...process.env, ...fixture.env,
+    PIPILOT_E2E_USER_DATA: userData, PIPILOT_E2E_DISABLE_AUTO_RESTART: '1' } })
+  const page = await app.firstWindow(), errors: string[] = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  const composer = page.getByRole('textbox', { name: 'Message input', exact: true })
+  const add = page.getByRole('button', { name: 'Add', exact: true })
+  const planChip = page.locator('[data-composer-mode="plan"]')
+  const goalChip = page.locator('[data-composer-mode="goal"]')
+  const modeItem = (mode: 'plan' | 'goal') => page.locator(`[data-composer-mode-item="${mode}"]`)
+  const savedEntries = async () => (await readFile(sessionPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>)
+  try {
+    await page.setViewportSize({ width: 1440, height: 1000 })
+    await expect(page.locator('[data-model-thinking-trigger]')).toContainText('Fake Chat', { timeout: 20_000 })
+    await app.evaluate(({ dialog }, path) => { Object.defineProperty(dialog, 'showOpenDialog', {
+      configurable: true, value: async () => ({ canceled: false, filePaths: [path] }),
+    }) }, project)
+    await page.getByRole('button', { name: 'Add project folder', exact: true }).click()
+    await page.getByRole('region', { name: 'Projects', exact: true }).getByRole('button', { name: 'Other context', exact: true }).click()
+    await expect(page.getByRole('log', { name: 'Conversation', exact: true })).toContainText('Unrelated answer without task data.')
+
+    // A mode is a removable token: picked from "+", dropped with Backspace.
+    await add.click()
+    await expect(modeItem('plan')).toBeEnabled()
+    await modeItem('plan').click()
+    await expect(planChip).toBeVisible()
+    await expect(composer).toBeFocused()
+    await expect(page.locator('[data-composer-surface]')).toContainText('Describe what to plan…')
+    await composer.press('Backspace')
+    await expect(planChip).toHaveCount(0)
+
+    // Shortcuts toggle a mode, and Plan and Goal replace each other.
+    await page.keyboard.press('ControlOrMeta+Shift+P')
+    await expect(planChip).toBeVisible()
+    await page.keyboard.press('ControlOrMeta+Shift+G')
+    await expect(goalChip).toBeVisible()
+    await expect(planChip).toHaveCount(0)
+    await page.keyboard.press('ControlOrMeta+Shift+G')
+    await expect(goalChip).toHaveCount(0)
+
+    // Sending with Plan selected runs the plugin's /plan with the typed request.
+    await page.keyboard.press('ControlOrMeta+Shift+P')
+    await composer.fill('Add export to settings')
+    await composer.press('Enter')
+    await expect(planChip).toHaveAttribute('data-composer-mode-active', 'true', { timeout: 20_000 })
+    await expect(composer).toHaveText('')
+    await expect.poll(async () => (await savedEntries()).some((entry) => entry.customType === 'fixture-plan-request' &&
+      (entry.data as { args?: string }).args === 'Add export to settings')).toBe(true)
+    expect(fixture.prompts).toHaveLength(0)
+    await add.click()
+    await expect(modeItem('goal')).toBeDisabled()
+    await expect(modeItem('goal')).toContainText('Plan mode is on. Exit it first')
+    await page.keyboard.press('Escape')
+    await page.screenshot({ path: testInfo.outputPath('composer-plan-mode-light.png'), animations: 'disabled' })
+
+    // With no plan written yet, the active chip's ✕ leaves Plan mode at once.
+    await planChip.getByRole('button', { name: 'Exit plan mode', exact: true }).click()
+    await expect(planChip).toHaveCount(0, { timeout: 20_000 })
+
+    // Goal starts the same way, then lives in the tray rather than as a chip.
+    await page.keyboard.press('ControlOrMeta+Shift+G')
+    await composer.fill('Ship the checked report')
+    await composer.press('Enter')
+    await expect(goalChip).toHaveCount(0)
+    await expect(page.getByRole('status', { name: 'Goal', exact: true })).toContainText('Running', { timeout: 20_000 })
+    await add.click()
+    await expect(modeItem('plan')).toBeDisabled()
+    await expect(modeItem('plan')).toContainText('A goal is unfinished')
+
+    // "+" also opens the / and @ pickers at the caret.
+    await page.getByRole('menuitem', { name: /^Commands & skills/ }).click()
+    await expect(page.locator('[data-slot="command"][aria-label="Slash commands"]')).toBeVisible()
+    await expect(composer).toHaveText('/')
+    await composer.press('Escape')
+    await composer.fill('')
+    await add.click()
+    await page.getByRole('menuitem', { name: /^Reference a file/ }).click()
+    await expect(page.locator('[data-slot="command"][aria-label="Files and Skills"]')).toBeVisible()
+    await expect(composer).toHaveText('@')
+    await page.evaluate(() => window.pipilot!.settings.update({ appearance: { theme: 'dark' } }))
+    await expect(page.locator('html')).toHaveClass(/dark/)
+    await page.screenshot({ path: testInfo.outputPath('composer-goal-tray-dark.png'), animations: 'disabled' })
+    expect(errors).toEqual([])
+  } catch (error) {
+    await page.screenshot({ path: testInfo.outputPath('composer-modes-failure.png') }).catch(() => undefined)
     throw error
   } finally { await closeFixtureApplication(app); await fixture.close() }
 })

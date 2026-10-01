@@ -68,6 +68,10 @@ export interface ComposerEditorHandle {
   removeMentions(): boolean
   insertReferences(references: readonly PrecisionReference[]): boolean
   appendPlainText(text: string): boolean
+  /** Types an @ or / at the caret so its picker opens, as if typed. */
+  insertTrigger(trigger: '@' | '/'): boolean
+  /** Puts plain text before or after the draft, separated by a blank line. */
+  insertPlainText(text: string, at: 'start' | 'end'): boolean
   replaceSlashArgumentCompletion(
     query: ComposerSlashArgumentQuery,
     value: string,
@@ -478,7 +482,7 @@ export const ComposerEditor = React.forwardRef<ComposerEditorHandle, ComposerEdi
           'aria-invalid': String(ariaInvalid),
           'aria-label': ariaLabel,
           'aria-multiline': 'true',
-          class: 'scroll-slim min-h-16 max-h-48 overflow-y-auto whitespace-pre-wrap break-words px-4 pb-2 pt-4 text-app text-foreground outline-none',
+          class: 'scroll-slim min-h-16 max-h-48 overflow-y-auto whitespace-pre-wrap break-words px-[18px] pb-2 pt-4 text-app text-foreground outline-none',
           id: 'composer-input',
           role: 'textbox',
           spellcheck: 'true',
@@ -694,6 +698,28 @@ export const ComposerEditor = React.forwardRef<ComposerEditorHandle, ComposerEdi
         const content = plainTextToComposerDocument(text).content ?? []
         return editor.chain().focus('end').insertContent(content).run()
       },
+      insertPlainText(text, at) {
+        if (!editor.isEditable || !text.trim()) return false
+        exitSuggestion(editor.view, mentionPluginKey)
+        lastSuggestion.current = null
+        const content = plainTextToComposerDocument(text).content ?? []
+        const size = editor.state.doc.content.size
+        if (!composerDocumentHasContent(editor.getJSON())) {
+          return editor.chain().insertContentAt({ from: 0, to: size }, content).focus('end').run()
+        }
+        const separator = { type: 'paragraph' }
+        return at === 'start'
+          ? editor.chain().insertContentAt(0, [...content, separator]).focus('start').run()
+          : editor.chain().insertContentAt(size, [separator, ...content]).focus('end').run()
+      },
+      insertTrigger(trigger) {
+        if (!editor.isEditable) return false
+        const { from } = editor.state.selection
+        const before = editor.state.doc.textBetween(Math.max(0, from - 1), from, '\n', '\uFFFC')
+        // Mentions open only at a word boundary, like a typed "@".
+        const text = trigger === '@' && before && !/\s/u.test(before) ? ` ${trigger}` : trigger
+        return editor.chain().focus().insertContent({ type: 'text', text }).run()
+      },
       replaceSlashArgumentCompletion(query, value) {
         if (revision.current !== query.documentRevision) return false
         if (plainTextBeforeCursor(editor) !== query.textBeforeCursor) return false
@@ -731,7 +757,7 @@ export const ComposerEditor = React.forwardRef<ComposerEditorHandle, ComposerEdi
         {empty ? (
           <span
             aria-hidden
-            className="pointer-events-none absolute left-4 top-4 text-app text-muted-foreground"
+            className="pointer-events-none absolute left-[18px] top-4 text-app text-muted-foreground"
           >
             {placeholder}
           </span>

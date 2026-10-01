@@ -79,7 +79,7 @@
   --radius-xl: 14px;
   --radius-2xl: 20px;
   --radius: var(--radius-md); /* legacy alias */
-  --radius-composer: 22px;
+  --radius-composer: 24px;
   --conversation-width: 780px;
 
   /* Liquid Glass (macOS 27): translucent fill, darkened rim, bright specular edge.
@@ -584,6 +584,23 @@
   input[type='range'] {
     accent-color: var(--color-primary);
   }
+}
+
+/* ==================================================================
+   Composer tray: status, notices and the queue, the top section of the input
+   ================================================================== */
+.composer-tray {
+  background: var(--color-fill);
+}
+.composer-tray:empty {
+  display: none;
+}
+.composer-tray > * + * {
+  border-top: 0.5px solid var(--color-border);
+}
+/* The shell draws the outer edge; the tray only adds one hairline above the text. */
+.composer-tray:not(:empty) {
+  border-bottom: 0.5px solid var(--color-border);
 }
 
 /* ==================================================================

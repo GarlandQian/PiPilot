@@ -434,6 +434,7 @@ export class RuntimeDelivery {
     if (item.status === 'delivering') throw new Error('Pi has already taken this message. It can no longer be edited or removed.')
     if (item.status === 'unknown' && command.action !== 'remove') throw new Error('Delivery is unconfirmed. Review its outcome before submitting a new message.')
     if (command.action === 'promote' && item.mode !== 'follow_up') throw new Error('Only a queued follow-up can be promoted.')
+    if (command.action === 'move' && item.status !== 'queued' && item.status !== 'frozen') throw new Error('Only a waiting message can be reordered.')
     if (command.action === 'edit' && !command.message?.trim() && !command.images?.length) throw new Error('An edited message or image is required.')
     if (command.action === 'remove') {
       ledger.items = ledger.items.filter((candidate) => candidate !== item)
@@ -444,6 +445,13 @@ export class RuntimeDelivery {
       const record = ledger.records.find(({ receipt }) => receipt.submissionId === item.submissionId)
       if (record) record.receipt.acceptedMode = 'steer'
       ledger.items = [...ledger.items.filter((candidate) => candidate !== item), item]
+    } else if (command.action === 'move') {
+      // Order is the send order; delivery always takes the first queued item.
+      const rest = ledger.items.filter((candidate) => candidate !== item)
+      const target = command.beforeItemId ? rest.findIndex((candidate) => candidate.id === command.beforeItemId) : rest.length
+      if (target < 0) throw new Error('The message it was moved next to was already consumed or removed.')
+      rest.splice(target, 0, item)
+      ledger.items = rest
     } else {
       item.message = command.message ?? ''
       item.images = command.images ? structuredClone(command.images) : undefined

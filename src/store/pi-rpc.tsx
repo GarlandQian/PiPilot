@@ -294,9 +294,12 @@ interface PiRpcActions {
   checkSubmission(submissionId: string): Promise<PiSubmissionStatus>
   editQueuedMessage(itemId: string, text: string, images?: readonly LocalPiImageContent[], expectedRevision?: number): Promise<void>
   resumeQueue(): Promise<void>
-  clearQueue(): Promise<void>
+  /** With expectedRevision, refuses to clear a queue that changed since it was read. */
+  clearQueue(expectedRevision?: number): Promise<void>
   promoteFollowUp(itemId: string): Promise<void>
   removeQueuedMessage(itemId: string): Promise<void>
+  /** Moves a waiting message before another, or last when beforeItemId is null. */
+  moveQueuedMessage(itemId: string, beforeItemId: string | null): Promise<void>
   setAutoCompaction(enabled: boolean): Promise<void>
   setAutoRetry(enabled: boolean): Promise<void>
   abortRetry(): Promise<void>
@@ -2402,6 +2405,9 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
     async removeQueuedMessage(itemId) {
       await mutateDelivery(deliveryOwner, { itemId, action: 'remove' })
     },
+    async moveQueuedMessage(itemId, beforeItemId) {
+      await mutateDelivery(deliveryOwner, { itemId, action: 'move', beforeItemId })
+    },
     async editQueuedMessage(itemId, text, images, expectedRevision) {
       await mutateDelivery(deliveryOwner, {
         itemId, action: 'edit', message: text,
@@ -2415,13 +2421,13 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
       const next = await runCommand({ type: 'resume_delivery', revision: deliveryRef.current?.revision, expectedSessionId: deliveryOwner.sessionId ?? undefined })
       if (samePiDeliveryOwner(deliveryOwner, currentDeliveryOwner())) commitDelivery(next)
     },
-    async clearQueue() {
+    async clearQueue(expectedRevision) {
       if (!samePiDeliveryOwner(deliveryOwner, currentDeliveryOwner())) {
         throw new Error('The source conversation changed before pending messages could be cleared.')
       }
       const delivery = deliveryRef.current
       if (!delivery) throw new Error('Pending messages are still loading.')
-      const next = await runCommand({ type: 'clear_delivery', revision: delivery.revision, expectedSessionId: deliveryOwner.sessionId ?? undefined })
+      const next = await runCommand({ type: 'clear_delivery', revision: expectedRevision ?? delivery.revision, expectedSessionId: deliveryOwner.sessionId ?? undefined })
       if (samePiDeliveryOwner(deliveryOwner, currentDeliveryOwner())) commitDelivery(next)
     },
     async setAutoCompaction(enabled) {

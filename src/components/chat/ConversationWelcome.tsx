@@ -26,5 +26,7 @@ export function ConversationWelcome({ projectName, selected, starting = false, o
       </Button>
       {!projectName ? <Button variant="outline" size="lg" onClick={onOpenProject}><TbFolderPlus aria-hidden />{t('chat.welcome.openProject')}</Button> : null}
     </div>
+    {/* Said once where a conversation starts, not under every message. */}
+    <p className="mt-6 text-micro text-muted-foreground/70" data-conversation-disclaimer>{t('composer.disclaimer')}</p>
   </section>
 }

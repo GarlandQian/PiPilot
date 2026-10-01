@@ -5,11 +5,13 @@ if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) {
   throw new Error(`invalid release version: ${version}`)
 }
 
-const highlights = version === '0.3.0'
+const highlights = version === '0.3.1'
   ? [
       'Conversation overview with summaries, blockers, next steps, and plugin state.',
       'Import and export conversations as Markdown, with adjacent image attachments.',
       'Plan Mode, Goal, and Subagents integration with shared Pi package management.',
+      'Choose queue or steer while Pi replies; reorder or restore unsent messages and attachments.',
+      'Start Plan or Goal from the composer with shortcuts, and manage the active work near the input.',
       'Configurable completion sounds and a macOS 27 sidebar title bar fix.',
     ]
   : []

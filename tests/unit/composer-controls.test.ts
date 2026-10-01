@@ -70,6 +70,17 @@ describe('Composer submit controls', () => {
     })
   })
 
+  it('follows the running preference, with the alternate shortcut doing the other', () => {
+    const queue = { action: 'follow_up', kind: 'queue' }
+    const steer = { action: 'steer', kind: 'steer' }
+    expect(deriveComposerSubmitMode(true, false, 'queue', true)).toEqual(steer)
+    expect(deriveComposerSubmitMode(true, false, 'steer')).toEqual(steer)
+    expect(deriveComposerSubmitMode(true, false, 'steer', true)).toEqual(queue)
+    // Idle sends and plugin commands are unaffected by either.
+    expect(deriveComposerSubmitMode(false, false, 'steer', true)).toEqual({ action: 'prompt', kind: 'send' })
+    expect(deriveComposerSubmitMode(true, true, 'steer')).toEqual({ action: 'prompt', kind: 'run-now' })
+  })
+
   it('projects one model and thinking trigger without inventing unavailable values', () => {
     expect(projectModelThinkingTrigger(
       { id: 'model-id', name: ' Model name ' },
@@ -108,7 +119,7 @@ describe('Composer submit controls', () => {
     expect(normalizeRunningSubmitPreference(undefined)).toBe('queue')
     expect(normalizeRunningSubmitPreference('invalid')).toBe('queue')
     expect(normalizeRunningSubmitPreference('steer')).toBe('steer')
-    expect(deriveComposerSubmitMode(true, false, 'steer')).toEqual({
+    expect(deriveComposerSubmitMode(true, false, normalizeRunningSubmitPreference('invalid'))).toEqual({
       action: 'follow_up',
       kind: 'queue',
     })

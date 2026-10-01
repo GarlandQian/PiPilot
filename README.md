@@ -10,7 +10,7 @@ terminals, models, and Pi extensions.
 Pi continues to own its sessions, configuration, and resources. PiPilot provides the desktop
 experience and does not create a parallel agent runtime or migrate Pi data into a private format.
 
-**Source version:** 0.3.0 · [Download releases](https://github.com/GarlandQian/PiPilot/releases)
+**Source version:** 0.3.1 · [Download releases](https://github.com/GarlandQian/PiPilot/releases)
 
 [![CI](https://github.com/GarlandQian/PiPilot/actions/workflows/ci.yml/badge.svg)](https://github.com/GarlandQian/PiPilot/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2f3437.svg)](LICENSE)
@@ -20,15 +20,16 @@ experience and does not create a parallel agent runtime or migrate Pi data into 
 - **Projects and conversations** — choose project folders explicitly or start a projectless chat;
   browse, search, organize, and manage Pi sessions. Filter by activity, sort by recent or name, and
   show archived tasks from the sidebar's View Options menu.
-- **Conversation workspace** — follow messages and tool activity in one timeline; queue, edit, or
-  steer follow-up messages; use Commands, Skills, file references, model selection, and Thinking
-  controls.
+- **Conversation workspace** — follow messages and tool activity in one timeline. While Pi
+  replies, queue or steer a message (⌘⇧↩ picks the other); reorder queued messages, take one back
+  into the input to edit, or steer it. Stopping a reply puts unsent messages back into the input.
+  Use Commands, Skills, file references, model selection, and Thinking controls.
 - **Local drafts** — restore unsent text, references, and images after restarting. Drafts stay in
   PiPilot's local application storage; sending or clearing input removes its saved draft, and
   deleting a conversation removes its draft. Shutdown waits for pending draft writes.
 - **Conversation overview** — the inspector's Overview tab keeps a short summary, status, and
-  up to three next-step drafts. Expand Plan and Goal to see their plugin state and controls.
-  Only relevant outputs, sources, used Skills/MCP, and web links appear.
+  up to three next-step drafts. Plan and Goal each get one status row; Plan links to its card in
+  the conversation. Only relevant outputs, sources, used Skills/MCP, and web links appear.
 - **Markdown export** — export the current conversation branch, a response round, or a single
   message. Tool logs are optional; images are saved beside the Markdown file. System messages
   and hidden thinking are excluded.
@@ -79,11 +80,14 @@ intermediate activity, retries, cancellations, and tool completions stay quiet.
 
 ## Plans, goals, and conversation overview
 
-The Plan Mode plugin owns planning, revision, saving, and the handoff to implementation. Use `/plan`
-or expand **Plan** in the inspector's **Overview** tab to access its actions. **Implement** hands the
-plan to the agent; it does not track completed steps or guarantee continued work until every step
-is done. Use the Goal plugin for continued execution toward a goal. Its status and pause/resume
-controls appear separately in Overview. Subagents provides delegation, with activity shown in the
+The Plan Mode plugin owns planning, revision, saving, and the handoff to implementation. Choose
+**Plan** from the composer's **+** menu (⌘⇧P), write the request, and send it; this runs
+`/plan <request>`. The plan appears as a card in the conversation, where you start, revise, save,
+export, or discard it, and the composer offers **Start implementation** while it waits for you.
+**Start implementation** hands the plan to the agent; it does not track completed steps or
+guarantee continued work until every step is done. Use the Goal plugin (**Goal** in the **+** menu,
+⌘⇧G, or `/goal <objective>`) for continued execution toward a goal. Its status and
+pause/resume/clear controls appear above the composer and in Overview. Subagents provides delegation, with activity shown in the
 conversation and subagent inspector. PiPilot uses these plugins' commands and state rather than
 maintaining a second plan approval or execution engine.
 

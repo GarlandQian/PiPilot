@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { TbBrain, TbCheck, TbLoader2, TbSelector } from 'react-icons/tb'
+import { TbBrain, TbCheck, TbLoader2, TbChevronDown } from 'react-icons/tb'
 import { Button } from '@/components/ui/button'
 import { MarkdownContent } from './markdown/MarkdownContent'
 import {
@@ -105,9 +105,10 @@ export function ModelPicker({
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
-          variant="secondary"
+          variant="ghost"
           size="sm"
-          className="h-7 min-w-0 max-w-72 shrink gap-1.5 rounded-full px-3 text-caption font-medium"
+          // Borderless until hovered, so it reads as a setting, not a second action.
+          className="h-[30px] min-w-0 max-w-72 shrink gap-1 rounded-full px-2.5 text-caption font-medium text-foreground/75 hover:bg-fill-strong hover:text-foreground data-[state=open]:bg-fill-strong data-[state=open]:text-foreground"
           data-model-thinking-trigger
           aria-label={thinkingLabel
             ? t('composer.modelThinkingSwitcher', {
@@ -118,14 +119,15 @@ export function ModelPicker({
         >
           <span className="truncate">{label}</span>
           {thinkingLabel ? (
-            <>
+            // In a narrow composer the thinking level goes first, then the name truncates.
+            <span className="flex min-w-0 shrink-[2] items-center gap-1 @max-md:hidden">
               <span className="shrink-0 text-muted-foreground" aria-hidden>·</span>
               <span className="min-w-0 truncate text-muted-foreground">{thinkingLabel}</span>
-            </>
+            </span>
           ) : null}
           {selecting
             ? <TbLoader2 className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" aria-hidden />
-            : <TbSelector className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />}
+            : <TbChevronDown className="size-3.5 shrink-0 stroke-[2.4] text-muted-foreground" aria-hidden />}
         </Button>
       </PopoverTrigger>
       <PopoverContent

@@ -82,3 +82,17 @@ export async function attachmentsToPiImagesIfCurrent(
   const images = await Promise.all(attachments.map(attachmentToPiImage))
   return isCurrent() ? images : null
 }
+
+/**
+ * Turns images taken back from the queue into composer attachments. Names
+ * and timestamps are distinct so the duplicate check treats each as new.
+ */
+export function piImagesToFiles(images: readonly LocalPiImageContent[], now = Date.now()): File[] {
+  return images.map((image, index) => {
+    const binary = atob(image.data)
+    const bytes = new Uint8Array(binary.length)
+    for (let offset = 0; offset < binary.length; offset += 1) bytes[offset] = binary.charCodeAt(offset)
+    const extension = image.mimeType === 'image/jpeg' ? 'jpg' : image.mimeType.split('/')[1] || 'png'
+    return new File([bytes], `image-${index + 1}.${extension}`, { type: image.mimeType, lastModified: now + index })
+  })
+}

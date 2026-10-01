@@ -69,7 +69,7 @@ function pendingItem(overrides: Partial<PendingRailItem> = {}): PendingRailItem 
   }
 }
 
-function renderPendingRail(item: PendingRailItem) {
+function renderPendingRail(item: PendingRailItem, queue: { paused?: boolean } = {}) {
   return render(createElement(PendingMessageRail, {
     operationOwnerKey: 'pending-preview',
     queue: {
@@ -77,10 +77,13 @@ function renderPendingRail(item: PendingRailItem) {
       steering: [], steeringItems: [],
       followUp: [item.text], followUpItems: [item],
       steeringMode: 'one-at-a-time', followUpMode: 'one-at-a-time',
+      ...queue,
     },
     onPromoteFollowUp: async () => undefined,
     onRemoveQueuedMessage: async () => undefined,
-    onEditQueuedMessage: async () => undefined,
+    onMoveQueuedMessage: async () => undefined,
+    onRetract: async () => undefined,
+    onRetractAll: async () => undefined,
     onResumeQueue: async () => undefined,
     onClearQueue: async () => undefined,
   }))
@@ -327,17 +330,29 @@ describe('pending message Markdown', () => {
     expect(markup).not.toContain('composer.pendingMessageExpand')
   })
 
-  it('formats the collapsed message while preserving its attached image', () => {
-    const markup = render(createElement(PendingItemContent, {
-      item: pendingItem({ images: [{ type: 'image', mimeType: 'image/png', data: 'aGVsbG8=' }] }),
-    }))
+  it('keeps a queued message to one collapsed row that counts its images', () => {
+    const image = { type: 'image' as const, mimeType: 'image/png', data: 'aGVsbG8=' }
+    const row = renderPendingRail(pendingItem({ images: [image] }))
+    expect(row).toMatch(/<button[^>]*aria-expanded="false"[^>]*data-pending-toggle/u)
+    expect(row).not.toContain('src="data:image/png')
+    // Codex-style row: Steer stays visible; editing returns it to the input.
+    expect(row).toContain('composer.promoteToSteer')
+    expect(row).toContain('aria-label="composer.editPending"')
+    expect(row).toContain('aria-label="composer.removePending"')
+    expect(row).not.toMatch(/composer\.pending(?:Count|More|Expand)\b/u)
 
-    expect(markup).toContain('<strong>Continue</strong>')
-    expect(markup).toContain('href="https://example.test/guide"')
-    expect(markup).toContain('src="data:image/png;base64,aGVsbG8="')
-    expect(markup).toContain('data-queue-image="true"')
-    expect(markup).toContain('composer.pendingMessageExpand')
-    expect(markup).toContain('aria-expanded="false"')
+    const opened = render(createElement(PendingItemContent, { item: pendingItem({ images: [image] }) }))
+    expect(opened).toContain('<strong>Continue</strong>')
+    expect(opened).toContain('src="data:image/png;base64,aGVsbG8="')
+    expect(opened).toContain('data-queue-image="true"')
+  })
+
+  it('offers sending or taking back a queue that paused without Stop, but no Steer', () => {
+    const markup = renderPendingRail(pendingItem({ status: 'frozen' }), { paused: true })
+    expect(markup).toContain('composer.queuePausedTitle')
+    expect(markup).toContain('composer.queueRestore')
+    expect(markup).toContain('composer.queueResume')
+    expect(markup).not.toContain('composer.promoteToSteer')
   })
 
   it('formats a queue preview inside its disclosure without nested interactive content', () => {
