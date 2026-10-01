@@ -595,6 +595,8 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
       'applicationUpdate',
       'changes',
       'conversation',
+      'conversationExport',
+      'conversationImport',
       'conversationSearch',
       'externalControl',
       'files',
