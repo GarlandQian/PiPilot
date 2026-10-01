@@ -126,7 +126,7 @@
   --space-2x: 2px;
   --space-3x: 3px;
   --vsession-gap: 10px;
-  /* width reserved for the inset traffic lights (x=18, three 12px lights) */
+  /* width reserved for the inset traffic lights; 0 where the OS draws its own frame */
   --traffic-light-gutter: 0px;
 }
 
@@ -193,9 +193,11 @@
    paints its own opaque surface; the window and sidebar stay transparent. */
 :root[data-platform='darwin'] {
   --color-window: transparent;
+  /* Traffic lights sit at x=18 and span 60pt on macOS 26+ (three 14pt lights,
+     9pt apart); toolbar items start ~14pt after the green light. */
+  --traffic-light-gutter: 92px;
   /* Native vibrancy by default; the tinted half of Liquid Glass frosts it over. */
   --color-source-list: color-mix(in srgb, var(--source-list-solid) max(0%, calc((var(--glass-tint) - 0.5) * 170%)), transparent);
-  --traffic-light-gutter: 76px;
 }
 
 @theme inline {

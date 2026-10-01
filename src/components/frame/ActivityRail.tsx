@@ -109,7 +109,7 @@ export function ActivityRail({
       style={expanded && width !== undefined ? { width } : undefined}
       className={cn(
         'flex h-full shrink-0 flex-col border-r border-border bg-source-list mac:border-black/10 dark:mac:border-black/50',
-        expanded ? 'w-60' : 'w-12 items-center mac:w-[76px]',
+        expanded ? 'w-60' : 'w-12 items-center mac:w-[96px]',
       )}
     >
       {/* Title bar: traffic lights, sidebar toggle, then the page's own actions (Notes/Mail layout). */}
