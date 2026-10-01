@@ -205,6 +205,8 @@ export type Turn =
       markdown: string
       lifecycle: 'planning' | 'ready' | 'saved' | 'implementing'
       sourceEntryId?: string
+      /** A later plan version exists in this conversation. */
+      superseded?: boolean
       actions: readonly (
         | 'show'
         | 'finalize'

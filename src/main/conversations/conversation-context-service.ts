@@ -6,6 +6,7 @@ import {
   type SessionCatalogSelectionToken,
 } from '../../shared/conversation-scope'
 import type { LocalPiRuntimeSnapshot } from '../../shared/local-pi'
+import { importedConversationHistorySchema, type ImportedConversationHistory } from '../../shared/conversation-import'
 import type { ConversationNavigationRepository } from '../repositories/conversation-navigation-repository'
 import {
   ConversationScopeError,
@@ -86,6 +87,17 @@ export class ConversationContextService {
         selectionToken,
       )
       // Navigation changes selection, not ownership of a project's terminal.
+      this.navigationRepository.setActiveScope(scope)
+      return result
+    })
+  }
+
+  importConversation(rawScope: ConversationScope, rawHistory: ImportedConversationHistory): Promise<ConversationActivationResult> {
+    const scope = conversationScopeSchema.parse(rawScope)
+    const history = importedConversationHistorySchema.parse(rawHistory)
+    return this.enqueue(async () => {
+      const runtime = await this.activationService.start(scope, history)
+      const result = this.confirmedActivation(scope, runtime)
       this.navigationRepository.setActiveScope(scope)
       return result
     })

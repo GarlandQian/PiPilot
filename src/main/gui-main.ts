@@ -43,6 +43,8 @@ import { registerModelsConfigIpc } from './ipc/register-models-config-ipc'
 import { registerPiIntegrationsIpc } from './ipc/register-pi-integrations-ipc'
 import { registerSessionCatalogIpc } from './ipc/register-session-catalog-ipc'
 import { registerConversationSearchIpc } from './ipc/register-conversation-search-ipc'
+import { registerConversationExportIpc } from './ipc/register-conversation-export-ipc'
+import { registerConversationImportIpc } from './ipc/register-conversation-import-ipc'
 import { registerConversationIpc } from './ipc/register-conversation-ipc'
 import { SettingsRepository } from './repositories/settings-repository'
 import { WorkspaceRepository } from './repositories/workspace-repository'
@@ -572,6 +574,7 @@ if (!hasSingleInstanceLock) {
         runtime: runtimeHost,
         catalog: officialPiSessionCatalog,
         desktopEnabled: () => settingsRepository.get().settings.notifications.desktop,
+        soundEnabled: () => settingsRepository.get().settings.notifications.sound,
         isWindowForeground: () => Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && mainWindow.isFocused()),
         revealWindow: revealMainWindow,
         projectName: (scope) => scope.kind === 'project' ? workspaceRepository.getLocation(scope.workspaceId)?.name : undefined,
@@ -588,14 +591,7 @@ if (!hasSingleInstanceLock) {
         catalog: officialPiSessionCatalog,
         runtime: runtimeHost,
         workspaces: workspaceRepository,
-        desktopEnabled: () => settingsRepository.get().settings.notifications.desktop,
-        notificationBody: (run) => {
-          const configured = settingsRepository.get().settings.locale
-          const locale = configured === 'system' ? app.getLocale() : configured
-          const messages = locale.toLowerCase().startsWith('zh') ? zhCN : enUS
-          return messages[run.status === 'completed' ? 'scheduledTasks.notificationCompleted' : 'scheduledTasks.notificationFailed']
-        },
-        revealWindow: revealMainWindow,
+        notifications: taskNotificationService,
       })
       scheduledTaskIpc = registerScheduledTasksIpc({ getMainWindow: () => mainWindow, policy, service: scheduledTaskFeature.service })
       const synchronizeAffectedPiRuntimes = async (
@@ -831,6 +827,8 @@ if (!hasSingleInstanceLock) {
         policy,
       })
       registerConversationSearchIpc({ catalog: officialPiSessionCatalog, getMainWindow: () => mainWindow, policy })
+      registerConversationExportIpc({ runtimeHost, sessionCatalog: officialPiSessionCatalog, getMainWindow: () => mainWindow, policy })
+      registerConversationImportIpc({ contextService: conversationContextService, getMainWindow: () => mainWindow, policy })
       registerTerminalIpc({
         getMainWindow: () => mainWindow,
         policy,
@@ -870,6 +868,14 @@ if (!hasSingleInstanceLock) {
       await openMainWindow()
       createApplicationTray()
       diagnostics.record('info', 'APPLICATION_READY')
+
+      // Optional global packages must not delay the window or a user's first
+      // conversation. Isolated UI/package fixtures stay offline by default.
+      if (!testUserDataOverride) {
+        void piIntegrationService.bootstrapDefaults().catch(() => {
+          diagnostics.record('warn', 'PI_DEFAULT_PACKAGES_BOOTSTRAP_FAILED')
+        })
+      }
 
       app.on('activate', () => {
         revealMainWindow()

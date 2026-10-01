@@ -84,6 +84,7 @@ test('quotes message, exact file lines and command output as durable snapshots w
     await quote(message, message.locator('p').first(), 'history response')
     await expect(composer(page).locator('[data-precision-reference="message"]')).toHaveCount(1)
 
+    await inspector(page).getByRole('tab', { name: 'Files', exact: true }).click()
     await inspector(page).locator('[data-workspace-tree-row="example.ts"]').click()
     const reader = inspector(page).locator('[data-workspace-file-viewer]:visible')
     await quote(reader, reader.locator('code').last(), 'export const second = 20')

@@ -397,6 +397,7 @@ export class PiHostUtility {
           ...(request.command.forkSessionFile === undefined
             ? {}
             : { forkSessionFile: request.command.forkSessionFile }),
+          ...(request.command.importHistory === undefined ? {} : { importHistory: request.command.importHistory }),
         }
         const runtime = manager.createWithTimeout
           ? await manager.createWithTimeout(target, request.timeoutMs)

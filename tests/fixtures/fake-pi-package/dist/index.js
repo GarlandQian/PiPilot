@@ -11,7 +11,7 @@ export const VERSION = '0.84.1'
 
 const fixtureRoot = dirname(dirname(fileURLToPath(import.meta.url)))
 const managedRoot = join(fixtureRoot, 'managed')
-const PLAN_MODE_SOURCE = 'npm:@narumitw/pi-plan-mode@0.50.1'
+const PLAN_MODE_SOURCE = 'npm:@narumitw/pi-plan-mode@0.58.3'
 const RETRY_SOURCE = 'npm:@narumitw/pi-retry@0.31.0'
 
 function richPackageSources() {

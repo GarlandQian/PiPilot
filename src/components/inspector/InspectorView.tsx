@@ -1,17 +1,17 @@
 import type * as React from 'react'
-import { TbArrowsMaximize, TbArrowsMinimize, TbChevronLeft, TbFiles, TbGitCompare, TbX, TbMessages } from 'react-icons/tb'
+import { TbArrowsMaximize, TbArrowsMinimize, TbChevronLeft, TbFiles, TbGitCompare, TbX, TbMessages, TbLayoutDashboard } from 'react-icons/tb'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useT } from '@/i18n'
 
-export const INSPECTOR_TABS = ['files', 'diff'] as const
+export const INSPECTOR_TABS = ['context', 'files', 'diff'] as const
 export type InspectorTab = (typeof INSPECTOR_TABS)[number] | 'subagent' | 'command' | 'sidechat'
 
 export function isInspectorTab(value: string): value is InspectorTab {
   return value === 'sidechat' || value === 'subagent' || value === 'command' || (INSPECTOR_TABS as readonly string[]).includes(value)
 }
 
-const viewIcons = { files: TbFiles, diff: TbGitCompare }
+const viewIcons = { context: TbLayoutDashboard, files: TbFiles, diff: TbGitCompare }
 
 export function InspectorToolbar({ activeView, onViewChange, onClose, onBack, workspaceName, onExpand, expanded, hasSideChat }: {
   activeView: InspectorTab
@@ -64,9 +64,9 @@ export function InspectorView({ view, activeView, children }: {
   const t = useT()
   return <section
     id={`resource-view-${view}`}
-    role={view === 'files' || view === 'diff' ? 'tabpanel' : 'region'}
+    role={view === 'files' || view === 'diff' || view === 'context' ? 'tabpanel' : 'region'}
     aria-label={t(`inspector.tab.${view}`)}
-    aria-labelledby={view === 'files' || view === 'diff' ? `resource-tab-${view}` : undefined}
+    aria-labelledby={view === 'files' || view === 'diff' || view === 'context' ? `resource-tab-${view}` : undefined}
     data-inspector-view={view}
     hidden={view !== activeView}
     className="min-h-0 flex-1 overflow-hidden"

@@ -5,8 +5,9 @@ import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ConversationScope, OfficialPiSessionSummary } from '../../src/shared/conversation-scope'
 import type { LocalPiRuntimeSnapshot } from '../../src/shared/local-pi'
-import type { PiRuntimeControlSummary } from '../../src/main/pi-host/pi-runtime-frontend'
+import type { PiRuntimeControlSummary, PiRuntimeWorkflowState } from '../../src/main/pi-host/pi-runtime-frontend'
 import { TaskNotificationService, type TaskNotificationServiceOptions } from '../../src/main/notifications/task-notification-service'
+import { createRuntimeActivity, reduceRuntimeActivity, summarizeRuntimeActivity } from '../../src/main/pi-host/runtime-activity'
 
 const scope = { kind: 'projectless' } as const
 const otherScope: ConversationScope = { kind: 'project', workspaceId: '00000000-0000-4000-8000-000000000123' }
@@ -26,6 +27,7 @@ class FakeRuntime {
   listeners = new Set<(snapshot: LocalPiRuntimeSnapshot) => void>()
   getSnapshot = () => this.snapshot
   listControlRuntimes = () => this.summaries
+  getControlWorkflowState = vi.fn<() => Promise<PiRuntimeWorkflowState>>(async () => ({}))
   subscribe = (listener: (snapshot: LocalPiRuntimeSnapshot) => void) => {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
@@ -41,7 +43,7 @@ function row(token = selectionToken): OfficialPiSessionSummary {
   return { scope, sessionId: 'session-1', name: 'Private task title', preview: 'Private response', createdAt: new Date(now).toISOString(), modifiedAt: new Date(now).toISOString(), selectionToken: token }
 }
 
-async function setup(options: { foreground?: boolean; enabled?: boolean; initial?: PiRuntimeControlSummary[]; filePath?: string; currentTime?: () => number } = {}) {
+async function setup(options: { foreground?: boolean; enabled?: boolean; sound?: boolean; supported?: boolean; initial?: PiRuntimeControlSummary[]; filePath?: string; currentTime?: () => number } = {}) {
   const directory = options.filePath ? undefined : await mkdtemp(join(tmpdir(), 'pipilot-notifications-'))
   if (directory) roots.push(directory)
   const filePath = options.filePath ?? join(directory!, 'task-notifications.json')
@@ -49,6 +51,8 @@ async function setup(options: { foreground?: boolean; enabled?: boolean; initial
   runtime.summaries = options.initial ?? []
   let foreground = options.foreground ?? true
   let enabled = options.enabled ?? true
+  let sound = options.sound ?? true
+  const playCompletionSound = vi.fn()
   const clicks: Array<() => void> = []
   const closes: Array<ReturnType<typeof vi.fn>> = []
   const show = vi.fn((_kind: string, onClick: () => void) => {
@@ -66,15 +70,15 @@ async function setup(options: { foreground?: boolean; enabled?: boolean; initial
   const revealWindow = vi.fn()
   const service = new TaskNotificationService({
     filePath, runtime, catalog: catalog as unknown as TaskNotificationServiceOptions['catalog'],
-    desktopEnabled: () => enabled, isWindowForeground: () => foreground, revealWindow,
-    projectName: () => 'Private project', native: { supported: () => true, show }, now: options.currentTime ?? (() => now),
+    desktopEnabled: () => enabled, soundEnabled: () => sound, isWindowForeground: () => foreground, revealWindow,
+    projectName: () => 'Private project', native: { supported: () => options.supported ?? true, show, playCompletionSound }, now: options.currentTime ?? (() => now),
   })
   services.push(service)
   await service.initialize()
-  return { service, runtime, filePath, show, clicks, closes, revealWindow, catalog, setForeground: (value: boolean) => { foreground = value }, setEnabled: (value: boolean) => { enabled = value } }
+  return { service, runtime, filePath, show, clicks, closes, revealWindow, catalog, playCompletionSound, setSound: (value: boolean) => { sound = value }, setForeground: (value: boolean) => { foreground = value }, setEnabled: (value: boolean) => { enabled = value } }
 }
 
-function run(runtime: FakeRuntime, outcome: 'completed' | 'failed' | 'cancelled' = 'completed', patch: Partial<PiRuntimeControlSummary> = {}) {
+async function run(runtime: FakeRuntime, outcome: 'completed' | 'failed' | 'cancelled' = 'completed', patch: Partial<PiRuntimeControlSummary> = {}) {
   runtime.emit([runtimeSummary({ ...patch, lifecycle: 'running', activity: 'prompt', outcome: undefined })])
   runtime.emit([runtimeSummary({ ...patch, outcome })])
 }
@@ -97,25 +101,210 @@ afterEach(async () => {
 })
 
 describe('task notifications', () => {
+  it('reports each failed scheduled preflight once without inventing a conversation target or playing sound', async () => {
+    const h = await setup({ foreground: false })
+    const failure = { runId: 'scheduled-run-1', conversationId: 'deleted-conversation' }
+    h.service.reportScheduledPreflightFailure(failure)
+    h.service.reportScheduledPreflightFailure(failure)
+    h.service.reportScheduledPreflightFailure({ ...failure, conversationId: 'unrelated-conversation' })
+    expect(h.show).toHaveBeenCalledExactlyOnceWith('failed', expect.any(Function))
+    expect(h.playCompletionSound).not.toHaveBeenCalled()
+    h.clicks[0]()
+    expect(h.revealWindow).toHaveBeenCalledOnce()
+    expect(h.service.get()).toMatchObject({ items: [], requestedId: null })
+    expect(h.catalog.listControlTargets).not.toHaveBeenCalled()
+    h.service.reportScheduledPreflightFailure({ ...failure, runId: 'scheduled-run-2' })
+    expect(h.show).toHaveBeenCalledTimes(2)
+    await h.service.dispose()
+    expect(h.closes.every((close) => close.mock.calls.length === 1)).toBe(true)
+    h.clicks[0]()
+    h.service.reportScheduledPreflightFailure({ ...failure, runId: 'scheduled-run-3' })
+    expect(h.show).toHaveBeenCalledTimes(2)
+    expect(h.revealWindow).toHaveBeenCalledOnce()
+  })
+
+  it.each([{ foreground: true }, { enabled: false }, { supported: false }])(
+    'respects scheduled failure visibility, desktop preferences and OS support: %j', async (options) => {
+      const h = await setup({ foreground: false, ...options })
+      h.service.reportScheduledPreflightFailure({ runId: 'scheduled-run', conversationId: 'conversation' })
+      expect(h.show).not.toHaveBeenCalled()
+      expect(h.playCompletionSound).not.toHaveBeenCalled()
+      h.setForeground(false)
+      h.setEnabled(true)
+      h.service.reportScheduledPreflightFailure({ runId: 'scheduled-run', conversationId: 'conversation' })
+      expect(h.show).not.toHaveBeenCalled()
+    },
+  )
+
+  it('isolates native errors during scheduled failure presentation without repeating delivery', async () => {
+    const h = await setup({ foreground: false })
+    h.show.mockImplementationOnce(() => { throw new Error('OS notification unavailable') })
+    const failure = { runId: 'scheduled-run', conversationId: 'conversation' }
+    expect(() => h.service.reportScheduledPreflightFailure(failure)).not.toThrow()
+    h.service.reportScheduledPreflightFailure(failure)
+    expect(h.show).toHaveBeenCalledOnce()
+    expect(h.playCompletionSound).not.toHaveBeenCalled()
+  })
+
+  it('sounds once only for an unseen successful execution, independently of desktop banners', async () => {
+    const h = await setup({ enabled: false })
+    h.service.setPresentation({ scope, sessionId: 'session-1' })
+    await run(h.runtime, 'completed', { selected: true })
+    expect(h.playCompletionSound).not.toHaveBeenCalled()
+    await run(h.runtime, 'completed', { selected: false })
+    h.runtime.emit([runtimeSummary()])
+    h.service.markRead()
+    h.service.refreshPresentation()
+    expect(h.playCompletionSound).toHaveBeenCalledTimes(1)
+    expect(h.show).not.toHaveBeenCalled()
+    h.setForeground(false)
+    await run(h.runtime, 'completed', { selected: true })
+    expect(h.playCompletionSound).toHaveBeenCalledTimes(2)
+    h.setSound(false)
+    await run(h.runtime)
+    expect(h.playCompletionSound).toHaveBeenCalledTimes(2)
+    h.setSound(true)
+    h.runtime.emit([runtimeSummary()])
+    expect(h.playCompletionSound).toHaveBeenCalledTimes(2)
+    await run(h.runtime)
+    expect(h.playCompletionSound).toHaveBeenCalledTimes(3)
+  })
+
+  it('waits through tool completion, agent_end and retry until authoritative settlement', async () => {
+    const h = await setup({ foreground: false })
+    let activity = createRuntimeActivity()
+    const emit = (event: Parameters<typeof reduceRuntimeActivity>[1] & { type: 'event' }) => {
+      activity = reduceRuntimeActivity(activity, event)
+      h.runtime.emit([runtimeSummary(summarizeRuntimeActivity(activity))])
+    }
+    emit({ type: 'event', event: { type: 'agent_start' } })
+    emit({ type: 'event', event: { type: 'tool_execution_start', toolCallId: 'tool-1', toolName: 'read', args: {} } })
+    emit({ type: 'event', event: { type: 'tool_execution_end', toolCallId: 'tool-1', toolName: 'read', result: { content: [] }, isError: false } })
+    emit({ type: 'event', event: { type: 'agent_end', messages: [], willRetry: true } })
+    emit({ type: 'event', event: { type: 'auto_retry_end', success: true, attempt: 1 } })
+    emit({ type: 'event', event: { type: 'agent_end', messages: [], willRetry: false } })
+    expect(h.playCompletionSound).not.toHaveBeenCalled()
+    emit({ type: 'event', event: { type: 'agent_settled' } })
+    emit({ type: 'event', event: { type: 'agent_settled' } })
+    await Promise.resolve()
+    expect(h.playCompletionSound).toHaveBeenCalledOnce()
+    expect(h.show).toHaveBeenCalledOnce()
+  })
+
+  it('keeps failure, cancellation, input, restored history and metadata enrichment silent', async () => {
+    const h = await setup({ foreground: false, initial: [runtimeSummary()] })
+    await run(h.runtime, 'failed')
+    await run(h.runtime, 'cancelled')
+    h.runtime.emit([runtimeSummary({ lifecycle: 'running', activity: 'interaction' })])
+    h.runtime.emit([runtimeSummary()])
+    expect(h.playCompletionSound).not.toHaveBeenCalled()
+    await run(h.runtime)
+    await vi.waitFor(() => expect(h.service.get().items[h.service.get().items.length - 1]?.catalogId).toBeDefined())
+    expect(h.playCompletionSound).toHaveBeenCalledOnce()
+    await h.service.dispose()
+    const restored = await setup({ filePath: h.filePath, foreground: false, initial: [runtimeSummary()] })
+    expect(restored.service.get().items).toHaveLength(h.service.get().items.length)
+    expect(restored.playCompletionSound).not.toHaveBeenCalled()
+  })
+
+  it('keeps notification state and native delivery when the system sound fails', async () => {
+    const h = await setup({ foreground: false })
+    h.playCompletionSound.mockImplementation(() => { throw new Error('Audio unavailable') })
+    await run(h.runtime)
+    expect(h.service.get().items).toMatchObject([{ kind: 'completed', read: false }])
+    expect(h.show).toHaveBeenCalledOnce()
+  })
+
   it('ignores historical completions and metadata reads, deduplicates settlement, and records subsequent runs', async () => {
     const { service, runtime } = await setup({ initial: [runtimeSummary()] })
     runtime.emit([runtimeSummary({ lifecycle: 'accepting' })])
     runtime.emit([runtimeSummary()])
     expect(service.get().items).toEqual([])
-    run(runtime)
+    await run(runtime)
     runtime.emit([runtimeSummary()])
+    await Promise.resolve()
     expect(service.get().items.map(({ kind }) => kind)).toEqual(['completed'])
-    run(runtime, 'failed')
+    await run(runtime, 'failed')
     expect(service.get().items.map(({ kind }) => kind)).toEqual(['completed', 'failed'])
   })
 
   it('does not turn cancellation into completion or report an intermediate retry error', async () => {
     const { service, runtime } = await setup()
-    run(runtime, 'cancelled')
+    await run(runtime, 'cancelled')
     runtime.emit([runtimeSummary({ lifecycle: 'running', activity: 'retry', outcome: 'failed' })])
     expect(service.get().items).toEqual([])
     runtime.emit([runtimeSummary()])
+    await Promise.resolve()
     expect(service.get().items.map(({ kind }) => kind)).toEqual(['completed'])
+  })
+
+  it('does not announce planning, saved plans, or unfinished goals as completed', async () => {
+    const h = await setup({ foreground: false })
+    const goal = { id: 'goal-1', text: 'Validate', iteration: 1, tokensUsed: 0, timeUsedSeconds: 0, automaticModelTurns: 0 }
+    const workflows: PiRuntimeWorkflowState[] = [
+      { plan: { enabled: true, awaitingAction: false } },
+      { plan: { enabled: true, awaitingAction: true, latestPlan: 'Review this plan' } },
+      { plan: { enabled: false, awaitingAction: false, savedPlan: { plan: 'Implement later' } } },
+      ...(['active', 'paused', 'blocked', 'usage_limited', 'budget_limited'] as const).map((status) => ({ goal: { ...goal, status } })),
+      { goal: { ...goal, status: 'active', waiting: { reason: 'Dependency unavailable', resumeAt: now + 10_000 } } },
+    ]
+    for (const workflow of workflows) {
+      h.runtime.getControlWorkflowState.mockResolvedValue(workflow)
+      await run(h.runtime)
+      expect(h.playCompletionSound).not.toHaveBeenCalled()
+      expect(h.service.get().items).toHaveLength(0)
+    }
+    h.runtime.getControlWorkflowState.mockResolvedValue({ goal: { ...goal, status: 'complete' } })
+    await run(h.runtime)
+    await run(h.runtime, 'failed')
+    expect(h.service.get().items.map(({ kind }) => kind)).toEqual(['completed', 'failed'])
+    expect(h.playCompletionSound).toHaveBeenCalledOnce()
+  })
+
+  it('allows ordinary turn completion after authoritative plugin clear or implementation handoff', async () => {
+    const h = await setup({ foreground: false })
+    h.runtime.getControlWorkflowState.mockResolvedValue({ goal: null, plan: { enabled: false, awaitingAction: false } })
+    await run(h.runtime)
+    h.runtime.getControlWorkflowState.mockResolvedValue({ plan: { enabled: false, awaitingAction: false, activeImplementation: { plan: 'Work handed off' } } })
+    await run(h.runtime)
+    expect(h.service.get().items.map(({ kind }) => kind)).toEqual(['completed', 'completed'])
+  })
+
+  it('ignores a completion check overtaken by another run or runtime retirement', async () => {
+    const h = await setup({ foreground: false })
+    let finish!: (workflow: PiRuntimeWorkflowState) => void
+    h.runtime.getControlWorkflowState.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    await run(h.runtime)
+    h.runtime.emit([runtimeSummary({ lifecycle: 'running', activity: 'prompt', outcome: undefined })])
+    finish({})
+    await Promise.resolve()
+    expect(h.service.get().items).toEqual([])
+    h.runtime.emit([runtimeSummary()])
+    await Promise.resolve()
+    expect(h.playCompletionSound).toHaveBeenCalledOnce()
+
+    h.runtime.getControlWorkflowState.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    await run(h.runtime)
+    h.runtime.emit([])
+    finish({})
+    await Promise.resolve()
+    expect(h.playCompletionSound).toHaveBeenCalledOnce()
+  })
+
+  it('checks visible presentation after workflow verification and stays silent when verification fails', async () => {
+    const h = await setup()
+    let finish!: (workflow: PiRuntimeWorkflowState) => void
+    h.runtime.getControlWorkflowState.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    await run(h.runtime, 'completed', { selected: true })
+    h.service.setPresentation({ scope, sessionId: 'session-1' })
+    finish({})
+    await Promise.resolve()
+    expect(h.service.get().items).toMatchObject([{ read: true }])
+    expect(h.playCompletionSound).not.toHaveBeenCalled()
+    h.runtime.getControlWorkflowState.mockRejectedValueOnce(new Error('Runtime replaced'))
+    await run(h.runtime)
+    expect(h.service.get().items).toHaveLength(1)
+    expect(h.playCompletionSound).not.toHaveBeenCalled()
   })
 
   it('does not announce old outcomes when queued work is cleared or a standalone question is answered', async () => {
@@ -131,15 +320,15 @@ describe('task notifications', () => {
   it('marks a viewed task read without desktop delivery and leaves other foreground tasks unread', async () => {
     const { service, runtime, show } = await setup()
     service.setPresentation({ scope, sessionId: 'session-1' })
-    run(runtime, 'completed', { selected: true })
-    run(runtime, 'failed', { selected: false, scope: otherScope })
+    await run(runtime, 'completed', { selected: true })
+    await run(runtime, 'failed', { selected: false, scope: otherScope })
     expect(service.get().items.map(({ read }) => read)).toEqual([true, false])
     expect(show).not.toHaveBeenCalled()
   })
 
   it('does not mark a notice read before Renderer confirms the selected conversation is presented', async () => {
     const { service, runtime } = await setup()
-    run(runtime, 'completed', { selected: true })
+    await run(runtime, 'completed', { selected: true })
     expect(service.get().items[0].read).toBe(false)
     service.setPresentation({ scope: otherScope, sessionId: 'session-1' })
     expect(service.get().items[0].read).toBe(false)
@@ -149,7 +338,7 @@ describe('task notifications', () => {
 
   it('does not mark a physical copy read merely because the selected task has the same session ID', async () => {
     const { service, runtime } = await setup()
-    run(runtime)
+    await run(runtime)
     runtime.emit([runtimeSummary({ runtimeId: 'runtime-copy', sessionFile: '/private/tasks/copy.jsonl', selected: true })])
     service.setPresentation({ scope, sessionId: 'session-1' })
     expect(service.get().items[0].read).toBe(false)
@@ -158,7 +347,7 @@ describe('task notifications', () => {
   it('notifies a hidden selected task, supports desktop opt-out and marks read on visible presentation', async () => {
     const { service, runtime, show, setForeground, setEnabled, closes } = await setup({ foreground: false })
     service.setPresentation({ scope, sessionId: 'session-1' })
-    run(runtime, 'completed', { selected: true })
+    await run(runtime, 'completed', { selected: true })
     expect(show).toHaveBeenCalledWith('completed', expect.any(Function))
     expect(service.get().items[0].read).toBe(false)
     setForeground(true)
@@ -167,7 +356,7 @@ describe('task notifications', () => {
     expect(closes[0]).toHaveBeenCalledOnce()
     setForeground(false)
     setEnabled(false)
-    run(runtime, 'failed', { selected: true })
+    await run(runtime, 'failed', { selected: true })
     expect(service.get().items[1].read).toBe(false)
     expect(show).toHaveBeenCalledTimes(1)
   })
@@ -176,7 +365,7 @@ describe('task notifications', () => {
     const { service, runtime } = await setup()
     service.setPresentation({ scope, sessionId: 'session-1' })
     service.setPresentation({ scope: null, sessionId: null })
-    run(runtime, 'completed', { selected: true })
+    await run(runtime, 'completed', { selected: true })
     service.refreshPresentation()
     expect(service.get().items[0].read).toBe(false)
     service.setPresentation({ scope, sessionId: 'session-1' })
@@ -209,7 +398,7 @@ describe('task notifications', () => {
 
   it('queues a native click without changing task selection and resolves an exact physical target', async () => {
     const { service, runtime, clicks, revealWindow, catalog } = await setup({ foreground: false })
-    run(runtime)
+    await run(runtime)
     const id = service.get().items[0].id
     clicks[0]()
     expect(revealWindow).toHaveBeenCalledOnce()
@@ -223,7 +412,7 @@ describe('task notifications', () => {
 
   it('does not route by duplicate session ID and consumes an unavailable native-click target', async () => {
     const { service, runtime, clicks, catalog } = await setup({ foreground: false })
-    run(runtime)
+    await run(runtime)
     clicks[0]()
     catalog.listControlTargets.mockResolvedValueOnce({ status: 'ready', scope, revision: 2, diagnostics: [], targets: [{ scope, sessionId: 'session-1', sessionFile: '/private/tasks/copy.jsonl', createdAt: new Date(now).toISOString(), name: 'Copy' }] })
     await expect(service.resolveTarget(service.get().items[0].id)).rejects.toMatchObject({ code: 'NOTIFICATION_TARGET_UNAVAILABLE' })
@@ -234,7 +423,7 @@ describe('task notifications', () => {
 
   it('checks each duplicate catalog row against the private file target', async () => {
     const { service, runtime, catalog } = await setup()
-    run(runtime)
+    await run(runtime)
     const wrongToken = 'sel_000000000000000000000002'
     catalog.list.mockResolvedValueOnce({ status: 'ready', scope, rows: [row(wrongToken), row()], nextCursor: null, diagnostics: [] })
     catalog.resolve.mockResolvedValueOnce({ mode: 'open', scope, sessionId: 'session-1', sessionFile: '/private/tasks/copy.jsonl', cwd: '/private/tasks' })
@@ -249,7 +438,7 @@ describe('task notifications', () => {
       { scope, sessionId: 'session-1', sessionFile: canonicalFile, createdAt: new Date(now).toISOString(), name: 'Linked task' },
     ] })
     catalog.resolve.mockResolvedValue({ mode: 'open', scope, sessionId: 'session-1', sessionFile: canonicalFile, cwd: '/private/tasks' })
-    run(runtime, 'completed', { sessionFile: aliasFile, selected: true })
+    await run(runtime, 'completed', { sessionFile: aliasFile, selected: true })
     const id = service.get().items[0].id
     expect(show).toHaveBeenCalledOnce()
     expect(service.get().items[0]).toMatchObject({ read: false })
@@ -273,7 +462,7 @@ describe('task notifications', () => {
   it('restores an aliased private target and reads it only when its canonical physical task is presented', async () => {
     const { aliasFile, canonicalFile } = await linkedSession()
     const first = await setup({ foreground: false })
-    run(first.runtime)
+    await run(first.runtime)
     await first.service.dispose()
     const persisted = JSON.parse(await readFile(first.filePath, 'utf8'))
     persisted.records[0].sessionFile = aliasFile
@@ -303,7 +492,7 @@ describe('task notifications', () => {
     catalog.listControlTargets.mockResolvedValue({ status: 'ready', scope, revision: 1, diagnostics: [], targets: [
       { scope, sessionId: 'session-1', sessionFile: canonicalFile, createdAt: new Date(now).toISOString(), name: 'Actual task' },
     ] })
-    run(runtime, 'completed', { sessionFile: fileLink })
+    await run(runtime, 'completed', { sessionFile: fileLink })
     await expect(service.resolveTarget(service.get().items[0].id)).rejects.toMatchObject({ code: 'NOTIFICATION_TARGET_UNAVAILABLE' })
     expect(catalog.revalidateControlTarget).not.toHaveBeenCalled()
     expect(service.get().items[0].read).toBe(false)
@@ -312,7 +501,7 @@ describe('task notifications', () => {
   it('flushes an in-flight canonical private target when the app quits immediately after completion', async () => {
     const { aliasFile, canonicalFile } = await linkedSession()
     const { service, runtime, filePath } = await setup()
-    run(runtime, 'completed', { sessionFile: aliasFile })
+    await run(runtime, 'completed', { sessionFile: aliasFile })
     await service.dispose()
     const persisted = JSON.parse(await readFile(filePath, 'utf8'))
     expect(persisted.records[0].sessionFile).toBe(canonicalFile)
@@ -320,7 +509,7 @@ describe('task notifications', () => {
 
   it('does not retarget a notification when a replacement file reuses its path and session ID', async () => {
     const { service, runtime, catalog } = await setup()
-    run(runtime)
+    await run(runtime)
     await vi.waitFor(() => expect(service.get().items[0].catalogId).toBeDefined())
     catalog.listControlTargets.mockResolvedValueOnce({ status: 'ready', scope, revision: 2, diagnostics: [], targets: [{ scope, sessionId: 'session-1', sessionFile, createdAt: new Date(now + 1_000).toISOString(), name: 'Replacement task' }] })
     await expect(service.resolveTarget(service.get().items[0].id)).rejects.toMatchObject({ code: 'NOTIFICATION_TARGET_UNAVAILABLE' })
@@ -332,7 +521,7 @@ describe('task notifications', () => {
     const { service, runtime, catalog, show } = await setup({ foreground: false })
     let finish: (value: Awaited<ReturnType<typeof catalog.listControlTargets>>) => void = () => undefined
     catalog.listControlTargets.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
-    run(runtime)
+    await run(runtime)
     const id = service.get().items[0].id
     expect(show).toHaveBeenCalledOnce()
     expect(service.get().items[0].catalogId).toBeUndefined()
@@ -346,21 +535,21 @@ describe('task notifications', () => {
 
   it('closes desktop handles on explicit read or clear without treating target resolution as read', async () => {
     const { service, runtime, closes } = await setup({ foreground: false })
-    run(runtime)
+    await run(runtime)
     const first = service.get().items[0].id
     await service.resolveTarget(first)
     expect(service.get().items[0].read).toBe(false)
     expect(closes[0]).not.toHaveBeenCalled()
     service.markRead(first)
     expect(closes[0]).toHaveBeenCalledOnce()
-    run(runtime, 'failed')
+    await run(runtime, 'failed')
     service.clear(service.get().items[1].id)
     expect(closes[1]).toHaveBeenCalledOnce()
   })
 
   it('persists private targets atomically and restores read state while resolving previous-process questions', async () => {
     const first = await setup()
-    run(first.runtime)
+    await run(first.runtime)
     first.service.markRead()
     first.runtime.emit([runtimeSummary({ lifecycle: 'running', activity: 'interaction', outcome: undefined })])
     await first.service.dispose()
@@ -381,10 +570,10 @@ describe('task notifications', () => {
   it('retains only the latest 100 events and 30 days, and survives malformed persistence', async () => {
     let timestamp = now
     const { service, runtime, filePath } = await setup({ currentTime: () => timestamp })
-    for (let index = 0; index < 102; index += 1) { timestamp += 1; run(runtime) }
+    for (let index = 0; index < 102; index += 1) { timestamp += 1; await run(runtime) }
     expect(service.get().items).toHaveLength(100)
     timestamp += 31 * 24 * 60 * 60 * 1000
-    run(runtime)
+    await run(runtime)
     expect(service.get().items).toHaveLength(1)
     await service.dispose()
     await writeFile(filePath, '{ broken')
@@ -396,7 +585,7 @@ describe('task notifications', () => {
     const { service, runtime, show } = await setup({ foreground: false })
     show.mockImplementationOnce(() => { throw new Error('OS denied delivery') })
     service.subscribe(() => { throw new Error('Renderer gone') })
-    expect(() => run(runtime)).not.toThrow()
+    await expect(run(runtime)).resolves.toBeUndefined()
     expect(service.get().items).toHaveLength(1)
     service.clear()
     expect(service.get().items).toEqual([])
@@ -406,7 +595,7 @@ describe('task notifications', () => {
 
   it('keeps native-click window errors isolated and preserves the queued navigation request', async () => {
     const { service, runtime, clicks, revealWindow } = await setup({ foreground: false })
-    run(runtime)
+    await run(runtime)
     revealWindow.mockImplementationOnce(() => { throw new Error('Window destroyed') })
     expect(() => clicks[0]()).not.toThrow()
     expect(service.get().requestedId).toBe(service.get().items[0].id)

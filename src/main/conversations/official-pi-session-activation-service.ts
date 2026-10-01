@@ -1,5 +1,7 @@
 import { lstat, open, realpath } from 'node:fs/promises'
 import { isAbsolute, resolve } from 'node:path'
+import type { ImportedConversationHistory } from '../../shared/conversation-import'
+import { removeFailedConversationImport } from './failed-conversation-import'
 import {
   conversationActivationResultSchema,
   conversationScopeSchema,
@@ -49,7 +51,7 @@ type SessionRuntimeHost = Pick<
   | 'rollbackSelection'
   | 'start'
   | 'stop'
->
+> & Partial<Pick<PiRuntimeFrontend, 'releaseSession'>>
 
 interface ActiveRuntimeScope {
   generation: number
@@ -110,22 +112,37 @@ export class OfficialPiSessionActivationService {
     private readonly runtimeHost: SessionRuntimeHost,
   ) {}
 
-  start(rawScope: ConversationScope) {
+  start(rawScope: ConversationScope, importHistory?: ImportedConversationHistory) {
     const scope = conversationScopeSchema.parse(rawScope)
-    return this.enqueueActivation(() => this.startInternal(scope))
+    return this.enqueueActivation(() => this.startInternal(scope, importHistory))
   }
 
-  private async startInternal(scope: ConversationScope) {
+  private async startInternal(scope: ConversationScope, importHistory?: ImportedConversationHistory) {
     await this.scopeResolver.prepare(scope)
     let snapshot: LocalPiRuntimeSnapshot
     try {
-      snapshot = await this.runtimeHost.start({ scope })
+      snapshot = await this.runtimeHost.start({ scope, ...(importHistory === undefined ? {} : { importHistory }) })
     } catch (error) {
       this.reconcileActiveRuntimeScope()
       throw error
     }
-    this.activeRuntimeScope = this.requireActiveRuntimeScope(scope, snapshot)
-    await this.recordActivation(scope, snapshot.sessionState ?? undefined)
+    const activated = this.requireActiveRuntimeScope(scope, snapshot)
+    this.activeRuntimeScope = activated
+    try {
+      const observation = await this.recordActivation(scope, snapshot.sessionState ?? undefined)
+      if (importHistory && observation !== 'observed') throw new OfficialPiSessionActivationError('PI_SESSION_CONFIRMATION_FAILED', 'The imported conversation was not persisted.')
+    } catch (error) {
+      if (importHistory && this.isActive(activated)) {
+        await this.runtimeHost.rollbackSelection(activated).catch(() => false)
+        this.reconcileActiveRuntimeScope()
+        if (snapshot.sessionFile && snapshot.sessionState?.sessionId) {
+          const sessionFile = snapshot.sessionFile
+          const sessionId = snapshot.sessionState.sessionId
+          await this.runtimeHost.releaseSession?.(sessionFile, async () => { await removeFailedConversationImport(sessionFile, sessionId, importHistory.importId) }).catch(() => false)
+        }
+      }
+      throw error
+    }
     return snapshot
   }
 

@@ -118,6 +118,12 @@ export interface ComposerFocusRequest {
   sequence: number
 }
 
+export interface ComposerTextInsertionRequest {
+  text: string
+  scopeKey: string
+  sequence: number
+}
+
 export interface ComposerProps {
   connected: boolean
   /** False while navigation has not yet bound input to a definite conversation. */
@@ -135,6 +141,7 @@ export interface ComposerProps {
   thinkingLevels: readonly LocalPiThinkingLevel[]
   draftReplacement?: { revision: number; text: string } | null
   mentionInsertionRequest?: ComposerMentionInsertionRequest | null
+  textInsertionRequest?: ComposerTextInsertionRequest | null
   focusRequest?: ComposerFocusRequest | null
   scopeKey: string
   /** Stable conversation identity, independent of a restarted Runtime. */
@@ -483,6 +490,7 @@ export function Composer(props: ComposerProps) {
   const t = useT()
   const consumedMentionInsertionSequence = React.useRef(0)
   const consumedFocusSequence = React.useRef(0)
+  const consumedTextInsertionSequence = React.useRef(0)
   const draftKey = props.draftKey ?? props.scopeKey
   const getStorageState = React.useCallback(() => drafts.storageState(draftKey), [draftKey, drafts])
   const storageState = React.useSyncExternalStore(drafts.subscribeStorage, getStorageState, getStorageState)
@@ -499,6 +507,7 @@ export function Composer(props: ComposerProps) {
   return <SessionComposer key={draftKey} {...props} drafts={drafts} draftKey={draftKey}
     draftEditable={props.draftEditable !== false && !locked} connected={props.connected && !locked}
     consumedMentionInsertionSequence={consumedMentionInsertionSequence}
+    consumedTextInsertionSequence={consumedTextInsertionSequence}
     consumedFocusSequence={consumedFocusSequence} />
 }
 
@@ -518,12 +527,14 @@ function SessionComposer({
   thinkingLevels,
   draftReplacement,
   mentionInsertionRequest,
+  textInsertionRequest,
   focusRequest,
   scopeKey,
   draftKey,
   drafts,
   consumedMentionInsertionSequence,
   consumedFocusSequence,
+  consumedTextInsertionSequence,
   operationOwnerKey = scopeKey,
   sendShortcut,
   runningSubmitPreference,
@@ -545,6 +556,7 @@ function SessionComposer({
   draftKey: string
   consumedMentionInsertionSequence: React.RefObject<number>
   consumedFocusSequence: React.RefObject<number>
+  consumedTextInsertionSequence: React.RefObject<number>
 }) {
   const t = useT()
   const hasContextSource = onSearchContext !== undefined
@@ -939,6 +951,22 @@ function SessionComposer({
     consumedFocusSequence.current = focusRequest.sequence
     focusEditor('current')
   }, [connected, consumedFocusSequence, draftEditable, focusEditor, focusRequest, scopeKey])
+
+  React.useEffect(() => {
+    const request = textInsertionRequest
+    if (!request || request.sequence <= consumedTextInsertionSequence.current) return
+    if (request.scopeKey !== scopeKey) {
+      consumedTextInsertionSequence.current = request.sequence
+      return
+    }
+    if (!connected || !draftEditable || !editorRef.current) return
+    consumedTextInsertionSequence.current = request.sequence
+    if (!editorRef.current.appendPlainText(request.text)) return
+    setSubmitError(null)
+    setCommandPickerOpen(false)
+    setSlashActiveId(null)
+    setMentionActiveId(null)
+  }, [connected, consumedTextInsertionSequence, draftEditable, scopeKey, textInsertionRequest])
 
   React.useEffect(() => {
     const request = mentionInsertionRequest

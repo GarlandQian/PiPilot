@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { importedConversationHistorySchema } from './conversation-import'
 import {
   localPiExtensionUiRequestSchema,
   localPiExtensionUiResponseSchema,
@@ -561,10 +562,11 @@ export const piHostCommandSchema = z.discriminatedUnion('type', [
       sessionDir: hostPathSchema.optional(),
       sessionFile: hostPathSchema.optional(),
       forkSessionFile: hostPathSchema.optional(),
+      importHistory: importedConversationHistorySchema.optional(),
     })
     .strict()
     .superRefine((command, context) => {
-      if (command.sessionFile !== undefined && command.forkSessionFile !== undefined) {
+      if ([command.sessionFile, command.forkSessionFile, command.importHistory].filter((item) => item !== undefined).length > 1) {
         context.addIssue({
           code: 'custom',
           message: 'Runtime session and fork sources are mutually exclusive.',

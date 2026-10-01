@@ -34,6 +34,8 @@ interface PiSdkFixtureOptions {
   }>>
   /** Exercise the actual codemode Worker and native MCP from packaged apps. */
   codemodeToolPrompts?: Readonly<Record<string, string>>
+  /** Return a deterministic provider tool call; the real SDK executes it. */
+  providerToolCall?: (request: { prompt: string; body: unknown }) => { id: string; name: string; arguments: Record<string, unknown> } | null
   /** Emit observable assistant commentary before the real SDK write call. */
   writeToolCommentary?: Readonly<Record<string, {
     text: string
@@ -76,8 +78,8 @@ export async function startPiSdkFixture(
   const requests: PiSdkFixture['requests'] = []
   const codemodeResults: string[] = []
   const protocol = options.protocol ?? 'openai-completions'
-  if (options.codemodeToolPrompts && protocol !== 'openai-completions') {
-    throw new Error('Codemode fixture calls currently require OpenAI Chat Completions.')
+  if ((options.codemodeToolPrompts || options.providerToolCall) && protocol !== 'openai-completions') {
+    throw new Error('Generic fixture tool calls currently require OpenAI Chat Completions.')
   }
   const server = createServer((request, response) => {
     if (request.method !== 'POST' || !fixtureRequestPath(protocol, request.url ?? '')) {
@@ -104,6 +106,12 @@ export async function startPiSdkFixture(
         if (promptDelay > 0) await delay(promptDelay)
         const content = `Fixture response: ${prompt}`
         const stream = createFixtureStreamWriter(protocol, response, model)
+        const providerToolCall = options.providerToolCall?.({ prompt, body })
+        if (providerToolCall) {
+          stream.toolCall!(providerToolCall)
+          stream.finish(true)
+          return
+        }
         const codemode = options.codemodeToolPrompts?.[prompt]
         if (codemode) {
           const raw = body as { messages?: Array<{ role?: string; tool_call_id?: string; content?: unknown }> }

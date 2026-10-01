@@ -11,7 +11,7 @@ test('searches message content and saved sessions, and asks a side question whil
   const userData = testInfo.outputPath('user-data'), project = testInfo.outputPath('Search project'), agentDir = testInfo.outputPath('pi-agent')
   await Promise.all([userData, project].map((path) => mkdir(path, { recursive: true })))
   await writeFile(join(userData, 'settings.json'), JSON.stringify({ version: SETTINGS_SCHEMA_VERSION, settings: {
-    ...DEFAULT_SETTINGS, locale: 'en-US', notifications: { desktop: false }, appearance: { ...DEFAULT_SETTINGS.appearance, reducedMotion: true },
+    ...DEFAULT_SETTINGS, locale: 'en-US', notifications: { desktop: false, sound: false }, appearance: { ...DEFAULT_SETTINGS.appearance, reducedMotion: true },
   } }))
   const cwd = await realpath(project)
   const sessionDirectory = join(agentDir, 'sessions', `--${cwd.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}--`)

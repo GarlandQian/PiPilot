@@ -147,7 +147,7 @@ test('installs unsigned A at a custom path, rejects corruption, then updates and
   await writeFile(join(userData, 'preserved-canary.txt'), sentinel)
   await writeFile(join(userData, 'settings.json'), JSON.stringify({ version: SETTINGS_SCHEMA_VERSION,
     settings: { ...DEFAULT_SETTINGS, locale: 'en-US',
-      appearance: { ...DEFAULT_SETTINGS.appearance, theme: 'dark' }, notifications: { desktop: false } } }))
+      appearance: { ...DEFAULT_SETTINGS.appearance, theme: 'dark' }, notifications: { desktop: false, sound: false } } }))
   const runningPrompt = 'Update canary keeps this task running until restart is explicitly confirmed'
   let releasePrompt!: () => void
   const promptGate = new Promise<void>((done) => { releasePrompt = done })

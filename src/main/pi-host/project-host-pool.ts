@@ -80,6 +80,7 @@ export interface ProjectRuntimeTarget {
   sessionDir?: string
   sessionFile?: string
   forkSessionFile?: string
+  importHistory?: import('../../shared/conversation-import').ImportedConversationHistory
 }
 
 export interface ProjectRuntimeDescriptor {
@@ -471,7 +472,7 @@ export class ProjectHostPool {
     const sessionDir = target.sessionDir === undefined
       ? undefined
       : normalizePath(target.sessionDir, 'sessionDir')
-    if (target.sessionFile !== undefined && target.forkSessionFile !== undefined) {
+    if ([target.sessionFile, target.forkSessionFile, target.importHistory].filter((item) => item !== undefined).length > 1) {
       throw new ProjectHostPoolError(
         'RUNTIME_TARGET_INVALID',
         'Runtime session and fork sources are mutually exclusive.',
@@ -503,6 +504,7 @@ export class ProjectHostPool {
         sessionDir,
         sessionFile,
         forkSessionFile,
+        target.importHistory,
       )
       const actualLease = descriptor.sessionFile === null
         ? requestedLease
@@ -1374,6 +1376,7 @@ export class ProjectHostPool {
     sessionDir: string | undefined,
     sessionFile?: string,
     forkSessionFile?: string,
+    importHistory?: import('../../shared/conversation-import').ImportedConversationHistory,
   ): Promise<ProjectRuntimeDescriptor> {
     const result = await this.requestHost(entry, {
       type: 'runtime.create',
@@ -1381,6 +1384,7 @@ export class ProjectHostPool {
       ...(sessionDir === undefined ? {} : { sessionDir }),
       ...(sessionFile === undefined ? {} : { sessionFile }),
       ...(forkSessionFile === undefined ? {} : { forkSessionFile }),
+      ...(importHistory === undefined ? {} : { importHistory }),
     }, { timeoutMs: PROJECT_RUNTIME_CREATE_TIMEOUT_MS })
     if (this.hosts.get(entry.hostKey) !== entry || entry.state !== 'ready') {
       throw new ProjectHostPoolError(

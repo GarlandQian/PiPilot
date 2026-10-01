@@ -28,6 +28,7 @@ import type {
   LocalPiRpcResponse,
   LocalPiRuntimeSnapshot,
   LocalPiSessionState,
+  LocalPiSessionEntry,
   LocalPiRuntimeSessionStatus,
 } from '../../src/shared/local-pi'
 import {
@@ -76,6 +77,7 @@ function sessionState(
 }
 
 class FakeFrontendPool {
+  taskEntries: { entries: LocalPiSessionEntry[]; leafId: string | null } = { entries: [], leafId: null }
   readonly deliveryStates = new Map<string, LocalPiDeliverySnapshot>()
   readonly maintenanceGate = new RuntimeMaintenanceGate()
   assertAdmission(cwd: string) {
@@ -308,6 +310,9 @@ class FakeFrontendPool {
     let response: LocalPiRpcResponse
     let sampledRuntime: ProjectRuntimeDescriptor | undefined
     switch (command.type) {
+      case 'get_entries':
+        response = { type: 'response', command: 'get_entries', success: true, data: structuredClone(this.taskEntries) }
+        break
       case 'get_messages':
         response = { type: 'response', command: 'get_messages', success: true, data: { messages: [] } }
         break
@@ -663,6 +668,52 @@ function createHarness(options: PiRuntimeFrontendOptions = {}) {
 }
 
 describe('Runtime preparation and global retention', () => {
+  it('reads exact background entries without changing the selected conversation', async () => {
+    const { frontend, pool } = createHarness({ isPersistedSessionFile: () => true })
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' })
+    const selected = frontend.getActiveRuntimeIdentity()
+    const lease = await frontend.acquireControlRuntime({ scope: projectScope, sessionFile: '/sessions/background.jsonl' })
+    pool.taskEntries = { leafId: 'background', entries: [{ id: 'background', parentId: null, timestamp: '', type: 'custom', customType: 'fixture', data: {} }] }
+    expect(await frontend.getControlEntries(lease)).toEqual(pool.taskEntries)
+    expect(frontend.getActiveRuntimeIdentity()).toEqual(selected)
+    expect(pool.commandCalls[pool.commandCalls.length - 1]).toMatchObject({ runtimeId: lease.runtimeId, expectedGeneration: lease.generation, command: { type: 'get_entries' } })
+    pool.rebindRuntime(lease.runtimeId, '/sessions/replaced.jsonl')
+    await expect(frontend.getControlEntries(lease)).rejects.toThrow()
+    frontend.releaseControlRuntime(lease)
+    await frontend.dispose()
+  })
+
+  it('reads plugin workflow state from the exact background branch and rejects retired handles', async () => {
+    const { frontend, pool } = createHarness({ isPersistedSessionFile: () => true })
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' })
+    const selected = frontend.getActiveRuntimeIdentity()
+    const lease = await frontend.acquireControlRuntime({ scope: projectScope, sessionFile: '/sessions/background.jsonl' })
+    const plan = { enabled: true, awaitingAction: true, latestPlan: 'Current branch' }
+    pool.taskEntries = { leafId: 'current', entries: [
+      { id: 'root', parentId: null, timestamp: new Date(1).toISOString(), type: 'custom', customType: 'plan-mode-state', data: { ...plan, latestPlan: 'Root' } },
+      { id: 'current', parentId: 'root', timestamp: new Date(2).toISOString(), type: 'custom', customType: 'plan-mode-state', data: plan },
+      { id: 'other', parentId: 'root', timestamp: new Date(3).toISOString(), type: 'custom', customType: 'plan-mode-state', data: { ...plan, latestPlan: 'Abandoned branch' } },
+    ] }
+    expect(await frontend.getControlWorkflowState(lease)).toEqual({ plan, goal: undefined })
+    expect(pool.commandCalls[pool.commandCalls.length - 1]).toMatchObject({ runtimeId: lease.runtimeId, expectedGeneration: lease.generation, command: { type: 'get_entries' } })
+    expect(frontend.getActiveRuntimeIdentity()).toEqual(selected)
+    pool.taskEntries.leafId = 'invalid'
+    pool.taskEntries.entries.push({ id: 'invalid', parentId: 'current', timestamp: new Date(4).toISOString(), type: 'custom', customType: 'plan-mode-state', data: { version: 99 } })
+    await expect(frontend.getControlWorkflowState(lease)).rejects.toThrow('could not be verified')
+    pool.taskEntries.entries.push({ id: 'cleared', parentId: 'current', timestamp: new Date(5).toISOString(), type: 'custom', customType: 'goal-state', data: { goal: null } })
+    pool.taskEntries.leafId = 'cleared'
+    expect(await frontend.getControlWorkflowState(lease)).toEqual({ plan, goal: null })
+    pool.taskEntries.entries.push({ id: 'invalid-goal', parentId: 'cleared', timestamp: new Date(6).toISOString(), type: 'custom', customType: 'goal-state', data: {} })
+    pool.taskEntries.leafId = 'invalid-goal'
+    await expect(frontend.getControlWorkflowState(lease)).rejects.toThrow('could not be verified')
+    pool.taskEntries.leafId = 'missing'
+    await expect(frontend.getControlWorkflowState(lease)).rejects.toThrow('could not be verified')
+    pool.rebindRuntime(lease.runtimeId, '/sessions/replaced.jsonl')
+    await expect(frontend.getControlWorkflowState(lease)).rejects.toThrow()
+    frontend.releaseControlRuntime(lease)
+    await frontend.dispose()
+  })
+
   it('settles a closed side conversation when Host transcript reads publish unchanged idle snapshots', async () => {
     const { frontend, pool } = createHarness({ isPersistedSessionFile: () => true })
     await frontend.start({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' })
@@ -3218,6 +3269,23 @@ describe('PiRuntimeFrontend', () => {
       runtimeId: 'rt_frontend_2',
       generation: 1,
     }])
+    await frontend.dispose()
+  })
+
+  it('does not auto-create another import on hydration failure and preserves the running selection', async () => {
+    const { frontend, pool } = createHarness({ isPersistedSessionFile: () => true })
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/running.jsonl' })
+    const selected = frontend.getActiveRuntimeIdentity()!
+    pool.emitEvent(runtimeEvent(selected.runtimeId, selected.generation, { type: 'agent_start' }))
+    pool.failNextHydration = true
+    await expect(frontend.start({ scope: projectScope, importHistory: {
+      importId: '6026a02d-70cb-49ad-a0c2-f875b2f6c9ec', title: 'Imported',
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'Stored document' }] }],
+    } })).rejects.toMatchObject({ code: 'PI_RUNTIME_CONFIRMATION_FAILED' })
+    expect(pool.createCount).toBe(2)
+    expect(frontend.getActiveRuntimeIdentity()?.runtimeId).toBe(selected.runtimeId)
+    expect(pool.disposeCalls).toEqual([{ runtimeId: 'rt_frontend_2', generation: 1 }])
+    expect(pool.commandCalls.some((call) => call.runtimeId === selected.runtimeId && call.command.type === 'abort')).toBe(false)
     await frontend.dispose()
   })
 

@@ -10,7 +10,7 @@ terminals, models, and Pi extensions.
 Pi continues to own its sessions, configuration, and resources. PiPilot provides the desktop
 experience and does not create a parallel agent runtime or migrate Pi data into a private format.
 
-**Source version:** 0.2.2 · [Download releases](https://github.com/GarlandQian/PiPilot/releases)
+**Source version:** 0.3.0 · [Download releases](https://github.com/GarlandQian/PiPilot/releases)
 
 [![CI](https://github.com/GarlandQian/PiPilot/actions/workflows/ci.yml/badge.svg)](https://github.com/GarlandQian/PiPilot/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2f3437.svg)](LICENSE)
@@ -26,6 +26,15 @@ experience and does not create a parallel agent runtime or migrate Pi data into 
 - **Local drafts** — restore unsent text, references, and images after restarting. Drafts stay in
   PiPilot's local application storage; sending or clearing input removes its saved draft, and
   deleting a conversation removes its draft. Shutdown waits for pending draft writes.
+- **Conversation overview** — the inspector's Overview tab keeps a short summary, status, and
+  up to three next-step drafts. Expand Plan and Goal to see their plugin state and controls.
+  Only relevant outputs, sources, used Skills/MCP, and web links appear.
+- **Markdown export** — export the current conversation branch, a response round, or a single
+  message. Tool logs are optional; images are saved beside the Markdown file. System messages
+  and hidden thinking are excluded.
+- **Markdown import** — preview a document and create a separate project or general conversation.
+  Current PiPilot exports restore user/assistant history; ordinary or unrecognized Markdown becomes
+  background content. Importing never submits a prompt or replays old tools or plan approvals.
 - **Project tools** — inspect files and diffs, search command output, review subagent activity, and
   use per-project terminal tabs.
 - **References and review** — quote selected message, file or command text with its source snapshot;
@@ -63,6 +72,49 @@ In **Settings > Appearance**, choose System, Light, or Dark and use the Liquid G
 adjust glass-surface tint from Clear to Tinted. Existing appearance settings are retained when the
 new preference is added. In the session sidebar, the always-visible filters show all, running, or
 attention-needed sessions; **View Options** changes sort order or toggles archived tasks.
+
+In **Settings > General**, completion sound is enabled by default and can be turned off independently
+of desktop notifications. A completed conversation sounds once only when you are not viewing it;
+intermediate activity, retries, cancellations, and tool completions stay quiet.
+
+## Plans, goals, and conversation overview
+
+The Plan Mode plugin owns planning, revision, saving, and the handoff to implementation. Use `/plan`
+or expand **Plan** in the inspector's **Overview** tab to access its actions. **Implement** hands the
+plan to the agent; it does not track completed steps or guarantee continued work until every step
+is done. Use the Goal plugin for continued execution toward a goal. Its status and pause/resume
+controls appear separately in Overview. Subagents provides delegation, with activity shown in the
+conversation and subagent inspector. PiPilot uses these plugins' commands and state rather than
+maintaining a second plan approval or execution engine.
+
+The current upstream saved-plan `/plan implement` path does not enforce mutual exclusion with
+Goal. PiPilot's GUI withholds Plan implementation, revision, and finalization actions while a Goal
+is unfinished, including while paused. Raw slash commands retain the plugin's behavior; finish or
+clear the existing Goal before using them to start plan implementation.
+
+PiPilot's built-in task tool maintains only the conversation summary, actual blockers, and up to
+three next-step drafts. This metadata is stored as custom entries in the official Pi session tree.
+Historical built-in plan records remain in the session; Overview reuses their metadata but does
+not reactivate their approvals or execution state. Older conversations have no generated summary
+until the assistant updates it. A suggested next step appends to the existing draft and preserves
+references and images; it never sends automatically. File entries link to their conversation
+records, and a mentioned web URL is not a claim that the page was visited.
+
+Use a conversation's sidebar **… > Export Markdown…** menu, beside its pin/archive actions.
+Exporting an unopened or background conversation does not switch the current conversation or start
+its agent. Message actions still export individual messages or response rounds. Keep the generated
+image folder beside the Markdown file; workspace output links are retained without copying their files.
+
+To import, use a project's **… > Import conversation from Markdown…**, or the menu beside the sidebar's
+new-conversation button. Preview the file, edit its name, choose a project or general chat, then confirm.
+Current PiPilot exports include versioned role metadata; edited, old, or unrecognized files fall back
+to background documents rather than guessing roles from headings. Missing/unsupported images are
+reported. Only supported images in the adjacent export attachment folder are read, never remote or
+arbitrary linked files. File reads are bounded to 16 MiB of Markdown and 32 MiB including attachments;
+the resulting conversation must also fit a 6 MiB transfer budget (including encoded image data).
+Oversized imports are rejected during preview, before creating a conversation.
+The new conversation has its own identity and waits for your next message; old tools, pending messages,
+and plan approvals are not restored. Existing conversations remain unchanged.
 
 ## Download and installation
 
@@ -183,6 +235,16 @@ official session storage.
 
 The default Pi Agent directory is `~/.pi/agent`. Set `PI_CODING_AGENT_DIR` to use another directory;
 the Pi runtime, package manager, model editor, and global MCP editor use that same location.
+
+PiPilot automatically installs missing Plan Mode, Subagents, and Goal packages into that shared
+global Pi directory. The initial versions supported by this release are `@narumitw/pi-plan-mode@0.58.3`,
+`pi-subagents@0.74.0`, and `@narumitw/pi-goal@0.54.8`. These are regular Pi packages, available to Pi CLI
+sessions using the same Agent directory; they are not private copies bundled into each project.
+Existing installations and configured sources, versions, and resource filters are preserved.
+Removing a default package opts out of automatic reinstallation, including after a restart or app
+upgrade. Installation failures remain visible in **Settings > Integrations** and require an explicit
+retry; PiPilot does not repeatedly retry or silently replace an existing version. You can manage or
+reinstall each package there yourself.
 
 | Path | Purpose |
 | --- | --- |

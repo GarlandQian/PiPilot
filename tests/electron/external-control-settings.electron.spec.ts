@@ -50,13 +50,14 @@ test('manages External Control in the compact Integrations tab', async ({}, test
       .click()
     await page.getByRole('tab', { name: 'External Control', exact: true }).click()
 
+    const launcher = page.locator('section[aria-labelledby="external-control-launcher-title"]')
     const enableSwitch = page.getByRole('switch', {
       name: 'Enable External Control',
       exact: true,
     })
     await expect(enableSwitch).not.toBeChecked()
     await expect(page.getByText('Disabled', { exact: true })).toBeVisible()
-    await expect(page.getByText('Not installed', { exact: true })).toBeVisible()
+    await expect(launcher.getByText('Not installed', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Install', exact: true }).click()
     await expect.poll(() => page.evaluate(() => window.pipilot!.externalControl.getLauncher()))
       .toEqual({ state: 'installed', managed: true, requiresClientRestart: false })
@@ -71,7 +72,7 @@ test('manages External Control in the compact Integrations tab', async ({}, test
     }).click()
     await expect.poll(() => page.evaluate(() => window.pipilot!.externalControl.getLauncher()))
       .toEqual({ state: 'missing', managed: false, requiresClientRestart: false })
-    await expect(page.getByText('Not installed', { exact: true })).toBeVisible()
+    await expect(launcher.getByText('Not installed', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Install', exact: true }).click()
     await expect.poll(() => page.evaluate(() => window.pipilot!.externalControl.getLauncher()))
       .toEqual({ state: 'installed', managed: true, requiresClientRestart: false })

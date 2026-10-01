@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge'
 import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { parsePromptSkillEnvelope } from '@/renderer/pi-rpc/prompt-presentation'
+import { parseConversationPlanKickoff } from '@/shared/conversation-task'
 import { InlineMarkdown } from './markdown/InlineMarkdown'
 import { MarkdownContent } from './markdown/MarkdownContent'
 
@@ -11,7 +12,8 @@ import { MarkdownContent } from './markdown/MarkdownContent'
 export function PromptMarkdown({ text, compact = false }: { text: string; compact?: boolean }) {
   const t = useT()
   const skill = React.useMemo(() => parsePromptSkillEnvelope(text), [text])
-  const message = skill?.userMessage ?? text
+  const kickoff = parseConversationPlanKickoff(text)
+  const message = kickoff ? t('taskContext.planKickoff', { title: kickoff.title }) : skill?.userMessage ?? text
   return <div className="min-w-0 space-y-2">
     {skill ? <details className="group/skill min-w-0">
       <summary className="flex w-fit max-w-full cursor-pointer list-none items-center gap-1.5 rounded-md outline-none focus-visible:focus-ring [&::-webkit-details-marker]:hidden">
@@ -33,7 +35,10 @@ export function PromptMarkdown({ text, compact = false }: { text: string; compac
 
 /** Skill identity remains visible in compact previews without nested controls. */
 export function PromptInlineMarkdown({ text }: { text: string }) {
+  const t = useT()
   const skill = React.useMemo(() => parsePromptSkillEnvelope(text), [text])
+  const kickoff = parseConversationPlanKickoff(text)
+  if (kickoff) return <InlineMarkdown markdown={t('taskContext.planKickoff', { title: kickoff.title })} />
   if (!skill) return <InlineMarkdown markdown={text} />
   return <span>
     <Badge variant="secondary" className="mr-1.5 max-w-40 align-middle text-micro" data-prompt-skill={skill.name}>

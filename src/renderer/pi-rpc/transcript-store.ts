@@ -1,11 +1,13 @@
 import type { ConversationOutlineItem, ToolCall, Turn } from '@/types/chat'
 import { adjacentTurnChanges } from './turn-changes'
+import type { LocalPiEntrySnapshot } from './response-provenance'
 
 export interface PiTranscriptSnapshot {
   turns: readonly Turn[]
   outline: readonly ConversationOutlineItem[]
   revision: number
   loading: boolean
+  entries?: LocalPiEntrySnapshot | null
 }
 
 /** Fine-grained read selectors prevent transcript deltas from waking the shell. */
@@ -17,6 +19,7 @@ export function createTranscriptStore(initial: PiTranscriptSnapshot) {
     getSnapshot: () => snapshot,
     getLoading: () => snapshot.loading,
     getOutline: () => snapshot.outline,
+    getEntries: () => snapshot.entries ?? null,
     getToolCall: (id: string | null) => id ? tools.get(id) ?? null : null,
     subscribe(listener: () => void) {
       listeners.add(listener)

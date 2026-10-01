@@ -1,8 +1,8 @@
 import * as React from 'react'
 import { QuoteSelection } from '@/components/precision/PrecisionReferences'
-import { TbAlertTriangle, TbBrain, TbChevronRight, TbCheck, TbCopy, TbGitFork, TbInfoCircle, TbLoader2, TbDeviceFloppy, TbDownload, TbEye, TbFileDescription, TbFlag, TbLogout, TbPencil, TbPlayerPlay } from 'react-icons/tb'
+import { TbAlertTriangle, TbBrain, TbChevronRight, TbCheck, TbClockPause, TbCopy, TbDots, TbDownload, TbFileDescription, TbFlag, TbGitFork, TbInfoCircle, TbLoader2, TbLogout, TbPencil, TbPlayerPlay } from 'react-icons/tb'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
@@ -10,12 +10,25 @@ import { UserMessageContent } from './UserMessageContent'
 import { MarkdownContent } from './markdown/MarkdownContent'
 import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
+import { primaryShortcut } from '@/lib/keyboard-shortcuts'
 import { nextTypewriterText, shouldStartTypewriterFromEmpty, thinkingDisclosureAfterPhaseChange, transientTurnAnimationKey } from '@/renderer/pi-rpc/live-typewriter'
 import { parsePromptSkillEnvelope } from '@/renderer/pi-rpc/prompt-presentation'
 import { useSettings } from '@/store/settings'
 import type { Turn } from '@/types/chat'
+import {
+  menuPlanActions,
+  PLAN_LIFECYCLE_KEYS,
+  planActionIsDestructive,
+  planActionLabelKey,
+  planNeedsDecision,
+  primaryPlanAction,
+  type PlanAction,
+} from './plan-presentation'
 
-export const UserMessage = React.memo(function UserMessage({ turn }: { turn: Extract<Turn, { kind: 'user' }> }) {
+export const UserMessage = React.memo(function UserMessage({ turn, onExport }: {
+  turn: Extract<Turn, { kind: 'user' }>
+  onExport?: (entryId: string) => void
+}) {
   const t = useT()
   const { locale } = useSettings()
   const [copied, setCopied] = React.useState(false)
@@ -47,6 +60,8 @@ export const UserMessage = React.memo(function UserMessage({ turn }: { turn: Ext
           if (copyTimer.current) clearTimeout(copyTimer.current)
           copyTimer.current = setTimeout(() => setCopied(false), 1400)
         }}>{copied ? <TbCheck aria-hidden /> : <TbCopy aria-hidden />}</Button>
+        {onExport && turn.anchorEntryId ? <Button variant="ghost" size="icon-xs" className="opacity-0 group-hover/question:opacity-100 focus-visible:opacity-100"
+          aria-label={t('export.message')} onClick={() => onExport(turn.anchorEntryId!)}><TbDownload aria-hidden /></Button> : null}
         <time className="tabular-nums">{time}</time>
       </div>
       {copyFailed ? <p role="status" className="mt-2 text-caption text-destructive">{t('chat.response.copyFailed')}</p> : null}
@@ -311,53 +326,98 @@ export const NoticeMessage = React.memo(function NoticeMessage({ turn }: { turn:
   )
 })
 
-const planLifecycleKeys = {
-  planning: 'plan.lifecycle.planning',
-  ready: 'plan.lifecycle.ready',
-  saved: 'plan.lifecycle.saved',
-  implementing: 'plan.lifecycle.implementing',
-} as const
-
-const planActionKeys = {
-  show: 'plan.action.show',
-  finalize: 'plan.action.finalize',
-  implement: 'plan.action.implement',
-  save: 'plan.action.save',
-  export: 'plan.action.export',
-  revise: 'plan.action.revise',
-  exit: 'plan.action.exit',
-} as const
-
 const planActionIcons = {
-  show: TbEye,
+  show: TbFileDescription,
   finalize: TbFlag,
   implement: TbPlayerPlay,
-  save: TbDeviceFloppy,
+  save: TbClockPause,
   export: TbDownload,
   revise: TbPencil,
   exit: TbLogout,
 }
 
+/** Lines shown before "Show full plan"; longer plans fade out instead of nesting a scroller. */
+const PLAN_PREVIEW_MAX_HEIGHT = '22rem'
+
 interface PlanModeMessageProps {
   turn: Extract<Turn, { kind: 'plan' }>
-  onAction?: (action: Extract<Turn, { kind: 'plan' }>['actions'][number], revision?: string) => Promise<void>
+  onAction?: (action: PlanAction, revision?: string) => Promise<void>
 }
 
-export const PlanModeMessage = React.memo(function PlanModeMessage({
-  turn,
-  onAction,
-}: PlanModeMessageProps) {
+/**
+ * The single home of a plan. Only the plugin's current plan is a full card with
+ * actions; earlier versions collapse to one read-only line.
+ */
+export const PlanModeMessage = React.memo(function PlanModeMessage({ turn, onAction }: PlanModeMessageProps) {
+  return turn.actions.length > 0
+    ? <CurrentPlanCard turn={turn} onAction={onAction} />
+    : <EarlierPlan turn={turn} />
+})
+
+function EarlierPlan({ turn }: { turn: Extract<Turn, { kind: 'plan' }> }) {
   const t = useT()
-  const [busy, setBusy] = React.useState<string | null>(null)
+  const [open, setOpen] = React.useState(false)
+  return (
+    <section aria-label={t('plan.title')} data-plan-card data-plan-current="false">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        className="flex w-full min-w-0 items-center gap-2 rounded-[12px] bg-fill/70 px-3 py-2 text-left text-caption outline-none hover:bg-fill focus-visible:focus-ring"
+      >
+        <TbFileDescription className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+        <span className="font-medium text-foreground/85">{t('plan.title')}</span>
+        <span className="min-w-0 flex-1 truncate text-muted-foreground">
+          {t(turn.superseded ? 'plan.superseded' : 'plan.earlier')}
+        </span>
+        <TbChevronRight className={cn('size-3.5 shrink-0 text-muted-foreground transition-transform duration-(--duration-fast)', open && 'rotate-90')} aria-hidden />
+      </button>
+      {open ? (
+        <div className="mt-1.5 rounded-[12px] bg-surface-raised px-4 py-3 shadow-[inset_0_0_0_0.5px_var(--color-border)] dark:bg-white/[0.03]">
+          <MarkdownContent markdown={turn.markdown} />
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
+function CurrentPlanCard({ turn, onAction }: PlanModeMessageProps) {
+  const t = useT()
+  const [busy, setBusy] = React.useState<PlanAction | null>(null)
   const [error, setError] = React.useState(false)
   const [revisionOpen, setRevisionOpen] = React.useState(false)
   const [revision, setRevision] = React.useState('')
   const [revisionSent, setRevisionSent] = React.useState(false)
+  const [expanded, setExpanded] = React.useState(false)
+  const [overflows, setOverflows] = React.useState(false)
+  const bodyRef = React.useRef<HTMLDivElement>(null)
+  const revisionRef = React.useRef<HTMLTextAreaElement>(null)
+  const lifecycle = revisionSent ? 'planning' : turn.lifecycle
+  const primary = revisionSent ? null : primaryPlanAction(turn.lifecycle, turn.actions)
+  const menu = revisionSent ? [] : menuPlanActions(turn.lifecycle, turn.actions)
+  const disabled = !onAction || Boolean(busy) || revisionSent
 
-  const runAction = React.useCallback(async (
-    action: Extract<Turn, { kind: 'plan' }>['actions'][number],
-    revisionText?: string,
-  ) => {
+  // A new plan version or state starts from the default reading position.
+  React.useEffect(() => {
+    setRevisionSent(false)
+    setExpanded(false)
+  }, [turn.markdown, turn.lifecycle])
+
+  React.useLayoutEffect(() => {
+    const body = bodyRef.current
+    if (!body) return
+    const measure = () => setOverflows(body.scrollHeight > body.clientHeight + 1)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(body)
+    return () => observer.disconnect()
+  }, [turn.markdown, expanded])
+
+  React.useEffect(() => {
+    if (revisionOpen) revisionRef.current?.focus()
+  }, [revisionOpen])
+
+  const runAction = React.useCallback(async (action: PlanAction, revisionText?: string) => {
     if (!onAction || busy || revisionSent) return
     setBusy(action)
     setError(false)
@@ -375,84 +435,134 @@ export const PlanModeMessage = React.memo(function PlanModeMessage({
     }
   }, [busy, onAction, revisionSent])
 
+  const sendRevision = () => {
+    if (revision.trim()) void runAction('revise', revision.trim())
+  }
+
   return (
     <section
       aria-label={t('plan.title')}
-      className="overflow-hidden rounded-[16px] bg-surface-raised shadow-[var(--glass-shadow)] dark:bg-white/[0.04]"
+      data-plan-card
+      data-plan-current="true"
+      data-plan-lifecycle={lifecycle}
+      className="overflow-hidden rounded-[16px] bg-surface-raised shadow-[var(--glass-shadow)] transition-shadow duration-300 data-[plan-flash]:shadow-[var(--glass-shadow),0_0_0_3px_color-mix(in_srgb,var(--color-primary)_45%,transparent)] dark:bg-white/[0.04]"
     >
       <header className="flex min-h-11 items-center gap-2.5 border-b border-border px-3.5 py-2">
         <span className="grid size-6 shrink-0 place-items-center rounded-[6px] bg-primary bg-[linear-gradient(to_bottom,rgb(255_255_255/0.2),transparent)] text-white" aria-hidden><TbFileDescription className="size-3.5" /></span>
-        <h3 className="min-w-0 flex-1 text-app font-semibold text-foreground">
-          {t('plan.title')}
-        </h3>
-        <span className="shrink-0 rounded-full bg-fill-strong px-2 py-px text-micro font-medium text-muted-foreground">
-          {t(planLifecycleKeys[revisionSent ? 'planning' : turn.lifecycle])}
+        <h3 className="min-w-0 text-app font-semibold text-foreground">{t('plan.title')}</h3>
+        <span role="status" className={cn(
+          'shrink-0 rounded-full px-2 py-px text-micro font-medium',
+          planNeedsDecision(lifecycle) && !revisionSent ? 'bg-primary/12 text-primary' : 'bg-fill-strong text-muted-foreground',
+        )}>
+          {lifecycle === 'planning' || lifecycle === 'implementing'
+            ? <TbLoader2 className="mr-1 inline size-3 animate-spin align-[-2px] motion-reduce:animate-none" aria-hidden />
+            : null}
+          {t(PLAN_LIFECYCLE_KEYS[lifecycle])}
         </span>
+        <span className="flex-1" />
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span tabIndex={0} className="shrink-0 cursor-default rounded-full bg-fill px-2 py-px text-micro text-muted-foreground outline-none focus-visible:focus-ring">
+              {t('plan.badge.plugin')}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="max-w-64">{t('plan.badge.tooltip')}</TooltipContent>
+        </Tooltip>
       </header>
-      <div className="max-h-[50vh] overflow-y-auto px-4 py-3">
-        <MarkdownContent markdown={turn.markdown} />
-      </div>
-      <footer className="flex min-h-11 flex-wrap items-center gap-1.5 border-t border-border bg-fill/50 px-3 py-2">
-        {turn.actions.map((action) => {
-          const Icon = planActionIcons[action]
-          return (
-            <Button
-              key={action}
-              variant="ghost"
-              size="sm"
-              disabled={!onAction || Boolean(busy) || revisionSent}
-              aria-busy={busy === action || undefined}
-              onClick={() => {
-                if (action === 'revise') setRevisionOpen(true)
-                else void runAction(action)
-              }}
-            >
-              {busy === action
-                ? <TbLoader2 className="animate-spin motion-reduce:animate-none" aria-hidden />
-                : <Icon aria-hidden />}
-              {t(planActionKeys[action])}
-            </Button>
-          )
-        })}
-        {error ? (
-          <span className="ml-auto text-micro text-destructive" role="alert">
-            {t('plan.action.failed')}
-          </span>
-        ) : null}
-      </footer>
 
-      <Dialog open={revisionOpen} onOpenChange={setRevisionOpen}>
-        <DialogContent className="sm:max-w-xl">
-          <DialogHeader>
-            <DialogTitle>{t('plan.revise.title')}</DialogTitle>
-            <DialogDescription>{t('plan.revise.description')}</DialogDescription>
-          </DialogHeader>
+      <div className="relative">
+        <div
+          ref={bodyRef}
+          className="overflow-hidden px-4 py-3"
+          style={expanded ? undefined : { maxHeight: PLAN_PREVIEW_MAX_HEIGHT }}
+        >
+          {turn.markdown
+            ? <MarkdownContent markdown={turn.markdown} />
+            : <p className="text-caption text-muted-foreground">{t('plan.pending')}</p>}
+        </div>
+        {!expanded && overflows ? (
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-surface-raised to-transparent dark:from-[#232325]" aria-hidden />
+        ) : null}
+      </div>
+      {overflows || expanded ? (
+        <div className="flex justify-center pb-2">
+          <Button variant="ghost" size="xs" className="text-primary" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
+            {t(expanded ? 'plan.collapse' : 'plan.expand')}
+          </Button>
+        </div>
+      ) : null}
+
+      {revisionOpen ? (
+        <div className="border-t border-border bg-fill/40 px-3.5 py-3">
           <Textarea
+            ref={revisionRef}
             value={revision}
             onChange={(event) => setRevision(event.target.value)}
             placeholder={t('plan.revise.placeholder')}
             aria-label={t('plan.revise.input')}
-            className="min-h-28 resize-y"
+            className="min-h-20 resize-y"
+            onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing) return
+              if (event.key === 'Escape') { event.preventDefault(); setRevisionOpen(false) }
+              if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); sendRevision() }
+            }}
           />
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setRevisionOpen(false)}>
-              {t('common.cancel')}
+          <div className="mt-2 flex items-center justify-end gap-2">
+            <span className="mr-auto text-micro text-muted-foreground">{t('plan.revise.hint', { shortcut: primaryShortcut('↩') })}</span>
+            <Button variant="outline" size="sm" onClick={() => setRevisionOpen(false)}>{t('common.cancel')}</Button>
+            <Button size="sm" disabled={!revision.trim() || Boolean(busy)} aria-busy={busy === 'revise' || undefined} onClick={sendRevision}>
+              {busy === 'revise' ? <TbLoader2 className="animate-spin motion-reduce:animate-none" aria-hidden /> : null}
+              {t('plan.revise.send')}
             </Button>
-            <Button
-              disabled={!revision.trim() || Boolean(busy)}
-              onClick={() => void runAction('revise', revision.trim())}
-            >
-              {busy === 'revise' && (
-                <TbLoader2 className="animate-spin motion-reduce:animate-none" aria-hidden />
-              )}
-              {t('plan.action.revise')}
+          </div>
+        </div>
+      ) : null}
+
+      {primary || menu.length || error ? (
+        <footer className="flex min-h-11 items-center gap-2 border-t border-border bg-fill/50 px-3 py-2">
+          {error ? <span className="min-w-0 truncate text-micro text-destructive" role="alert">{t('plan.action.failed')}</span> : null}
+          <span className="flex-1" />
+          {menu.length ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon-sm" disabled={disabled} aria-label={t('plan.more')} title={t('plan.more')}>
+                  <TbDots aria-hidden />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-52">
+                {menu.map((action) => {
+                  const Icon = planActionIcons[action]
+                  const destructive = planActionIsDestructive(action, turn.lifecycle)
+                  return <React.Fragment key={action}>
+                    {action === 'exit' && menu.length > 1 ? <DropdownMenuSeparator /> : null}
+                    <DropdownMenuItem
+                      variant={destructive ? 'destructive' : 'default'}
+                      onSelect={() => {
+                        if (action === 'revise') setRevisionOpen(true)
+                        else void runAction(action)
+                      }}
+                    >
+                      <Icon aria-hidden />
+                      {t(planActionLabelKey(action, turn.lifecycle))}
+                    </DropdownMenuItem>
+                  </React.Fragment>
+                })}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
+          {primary ? (
+            <Button size="sm" disabled={disabled} aria-busy={busy === primary || undefined} onClick={() => void runAction(primary)}>
+              {busy === primary
+                ? <TbLoader2 className="animate-spin motion-reduce:animate-none" aria-hidden />
+                : <TbPlayerPlay aria-hidden />}
+              {t(planActionLabelKey(primary, turn.lifecycle))}
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          ) : null}
+        </footer>
+      ) : null}
     </section>
   )
-})
+}
 
 interface ResponseActionsProps {
   turn: Extract<Turn, { kind: 'response-actions' }>
@@ -460,6 +570,7 @@ interface ResponseActionsProps {
   forking: boolean
   onFork: (turn: Extract<Turn, { kind: 'response-actions' }>) => void
   canFork: boolean
+  onExportResponse?: (anchorEntryId: string) => void
 }
 
 export const ResponseActions = React.memo(function ResponseActions({
@@ -468,6 +579,7 @@ export const ResponseActions = React.memo(function ResponseActions({
   forking,
   onFork,
   canFork,
+  onExportResponse,
 }: ResponseActionsProps) {
   const t = useT()
   const [copyState, setCopyState] = React.useState<'idle' | 'copied' | 'failed'>('idle')
@@ -533,6 +645,11 @@ export const ResponseActions = React.memo(function ResponseActions({
         </TooltipTrigger>
         <TooltipContent>{forkLabel}</TooltipContent>
       </Tooltip>
+      {onExportResponse && turn.anchorEntryId ? <Tooltip>
+        <TooltipTrigger asChild><Button variant="ghost" size="icon-sm" aria-label={t('export.response')}
+          onClick={() => onExportResponse(turn.anchorEntryId!)}><TbDownload aria-hidden /></Button></TooltipTrigger>
+        <TooltipContent>{t('export.response')}</TooltipContent>
+      </Tooltip> : null}
       {copyState === 'failed' ? (
         <span className="max-w-48 truncate pl-1 text-micro text-destructive" role="alert">
           {t('chat.response.copyFailed')}

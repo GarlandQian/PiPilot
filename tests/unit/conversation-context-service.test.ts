@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -118,6 +118,7 @@ async function fixture() {
     scopeResolver,
   })
   return {
+    root,
     deleteSession,
     navigation,
     open,
@@ -133,6 +134,36 @@ async function fixture() {
 }
 
 describe('ConversationContextService', () => {
+  it('keeps a confirmed import successful when persisting or publishing navigation fails', async () => {
+    const context = await fixture()
+    // Replace only the isolated navigation test file with a directory so the
+    // repository's atomic rename actually fails, without mocking persistence.
+    const navigationFile = join(context.root, 'user-data', 'conversation-navigation.json')
+    await rm(navigationFile)
+    await mkdir(navigationFile)
+    await writeFile(join(navigationFile, 'fixture'), 'retain this directory')
+    context.navigation.subscribe(() => { throw new Error('Renderer closed during publish') })
+    const delivered = vi.fn()
+    context.navigation.subscribe(delivered)
+    const history = { importId: '0b131794-4161-43c5-a595-0fb7e0d5f217', title: 'Imported', messages: [{ role: 'user' as const, content: [{ type: 'text' as const, text: 'Document' }] }] }
+    await expect(context.service.importConversation(projectScope, history)).resolves.toMatchObject({ scope: projectScope, sessionId: 'session-2' })
+    expect(context.navigation.get().activeScope).toEqual(projectScope)
+    expect(context.start).toHaveBeenCalledTimes(1)
+    expect(delivered).toHaveBeenCalledWith(expect.objectContaining({ activeScope: projectScope }))
+  })
+
+  it('activates an import in the explicitly chosen scope and keeps prior navigation if startup fails', async () => {
+    const context = await fixture()
+    const history = { title: 'Imported', messages: [{ role: 'user' as const, content: [{ type: 'text' as const, text: 'Document' }] }] }
+    context.start.mockRejectedValueOnce(new Error('Import startup failed'))
+    await expect(context.service.importConversation(projectScope, history)).rejects.toThrow('Import startup failed')
+    expect(context.navigation.get().activeScope).toEqual(projectlessScope)
+    const result = await context.service.importConversation(projectScope, history)
+    expect(context.start).toHaveBeenLastCalledWith(projectScope, history)
+    expect(context.navigation.get().activeScope).toEqual(projectScope)
+    expect(result.scope).toEqual(projectScope)
+  })
+
   it('starts fresh in the fixed projectless scope and creates no project record', async () => {
     const context = await fixture()
     const result = await context.service.start()

@@ -1,15 +1,15 @@
 import * as React from 'react'
 import { createPortal } from 'react-dom'
-import { TbArchive, TbEdit, TbFilter, TbLoader2, TbSearch, TbTextScan2, TbX } from 'react-icons/tb'
+import { TbArchive, TbChevronDown, TbEdit, TbFileImport, TbFilter, TbLoader2, TbSearch, TbTextScan2, TbX } from 'react-icons/tb'
 import { Button } from '@/components/ui/button'
-import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { readProjectExpansionPreferences, writeProjectExpansionPreferences } from '@/renderer/layout-preferences'
 import { readNavigationPreferences, taskOrganizationKey, taskScopeKey, updateTaskOrganization, writeNavigationPreferences } from '@/renderer/navigation-preferences'
-import type { OfficialPiSessionSummary } from '@/shared/conversation-scope'
+import type { ConversationScope, OfficialPiSessionSummary } from '@/shared/conversation-scope'
 import type { WorkspaceSummary } from '@/shared/schemas/workspace'
 import { usePiExtensionUi, usePiRuntime } from '@/store/pi-rpc'
 import { conversationScopeKey, useWorkspaceStore } from '@/store/workspace'
@@ -45,6 +45,8 @@ export interface SessionsPanelProps {
   onRenameCommit(item: SidebarConversationItem, title: string): void
   onDuplicate(item: SidebarConversationItem): void
   onDelete(item: SidebarConversationItem): void
+  onExport(item: SidebarConversationItem): void
+  onImport(scope: ConversationScope): void
   onStartProjectTask(workspaceId: string): void
   onChooseWorkspace(): void
   onPinWorkspace(workspaceId: string, pinned: boolean): void
@@ -56,7 +58,7 @@ export function SessionsPanel({
   onSearchAll,
   hidden = false, conversationReady, navigationRevision, renamingSelectionToken, deletingSelectionToken, isOpeningSessionRow,
   onSelect, onNewPrimary, onNewProjectless, onRenameStart, onRenameCommit, onDuplicate,
-  onDelete, onStartProjectTask, onChooseWorkspace, onPinWorkspace, onRemoveWorkspace,
+  onDelete, onExport, onImport, onStartProjectTask, onChooseWorkspace, onPinWorkspace, onRemoveWorkspace,
 }: SessionsPanelProps) {
   const workspace = useWorkspaceStore()
   const pi = usePiRuntime()
@@ -261,7 +263,7 @@ export function SessionsPanel({
 
   const actions: ConversationListActions = {
     renamingSelectionToken, onSelect: selectTask, onRenameStart, onRenameCommit,
-    onDuplicate: (item) => { setPendingProject(null); onDuplicate(item) }, onDelete,
+    onDuplicate: (item) => { setPendingProject(null); onDuplicate(item) }, onDelete, onExport,
     onPin: (item, pinned) => setPreferences((previous) => updateTaskOrganization(previous, item.summary, { pinned })),
     onArchive: (item, archived) => setPreferences((previous) => updateTaskOrganization(previous, item.summary, { archived })),
   }
@@ -301,7 +303,7 @@ export function SessionsPanel({
   return (
     <div hidden={hidden} className="min-w-0 px-2.5 pb-4 pt-0.5" data-navigation="tasks">
       {/* Compose lives in the sidebar title bar, like Notes and Mail. */}
-      {headerActionSlot && !hidden ? createPortal(<Tooltip>
+      {headerActionSlot && !hidden ? createPortal(<div className="flex items-center"><Tooltip>
         <TooltipTrigger asChild>
           <Button variant="ghost" size="icon-sm" className="text-foreground/75"
             aria-label={t('nav.redesign.newTask')}
@@ -311,7 +313,13 @@ export function SessionsPanel({
           </Button>
         </TooltipTrigger>
         <TooltipContent side="bottom">{t('nav.redesign.newTask')}</TooltipContent>
-      </Tooltip>, headerActionSlot) : null}
+      </Tooltip><DropdownMenu>
+        <DropdownMenuTrigger asChild><Button variant="ghost" size="icon-xs" aria-label={t('import.newOptions')}><TbChevronDown aria-hidden /></Button></DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem disabled={workspace.activeScope.kind === 'project' && !activeProject?.available} onSelect={() => { setPendingProject(null); onNewPrimary() }}><TbEdit aria-hidden />{t('nav.redesign.newTask')}</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => onImport(workspace.activeScope.kind === 'project' && activeProject?.available ? workspace.activeScope : { kind: 'projectless' })}><TbFileImport aria-hidden />{t('import.open')}</DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu></div>, headerActionSlot) : null}
 
       {/* One search field; its trailing button widens the search to full conversation history. */}
       <div className="relative mb-2">
@@ -414,6 +422,7 @@ export function SessionsPanel({
               onAddProject={() => { setPendingProject(null); onChooseWorkspace() }}
               onToggleProject={toggleProject} onResumeProject={resumeProject}
               onStartProjectTask={(id) => { setPendingProject(null); onStartProjectTask(id) }}
+              onImportProject={(workspaceId) => onImport({ kind: 'project', workspaceId })}
               onLoadMore={(id) => setProjectSessionLimits((previous) => ({
                 ...previous, [id]: (previous[id] ?? INITIAL_SESSION_LIMIT) + SESSION_PAGE_SIZE,
               }))}

@@ -34,11 +34,20 @@ import {
   piPackageSourceType,
   updateConfiguredPackageForScope,
 } from './pi-package-scope'
+import {
+  bootstrapRecommendedPackages,
+  recommendedPackageSnapshot,
+  recordRecommendedPackageMutation,
+} from './recommended-packages'
+import { createPiManagementOutput } from './pi-management-output'
+import { safePiManagementMessage } from './pi-management-diagnostics'
 
 const HELPER_INPUT_LIMIT = 4 * 1_024 * 1_024
 const PACKAGE_MANIFEST_LIMIT = 256 * 1_024
 const MODEL_TEST_TIMEOUT_MS = 30_000
 const MODEL_TEST_PREVIEW_LIMIT = 512
+let protocolOutput: Awaited<ReturnType<typeof createPiManagementOutput>> | undefined
+let packageCommand: string[] | undefined
 
 interface ExternalConfiguredPackage {
   source: string
@@ -75,8 +84,10 @@ interface ExternalPackageUpdate {
 interface ExternalPackageManager {
   setProgressCallback(callback: ((event: PiManagementProgress) => void) | undefined): void
   listConfiguredPackages(): ExternalConfiguredPackage[]
+  getInstalledPath(source: string, scope: 'user' | 'project'): string | undefined
   resolve(onMissing?: (source: string) => Promise<'install' | 'skip' | 'error'>): Promise<ExternalResolvedPaths>
   install(source: string, options?: { local?: boolean }): Promise<void>
+  addSourceToSettings(source: string, options?: { local?: boolean }): boolean
   installAndPersist(source: string, options?: { local?: boolean }): Promise<void>
   removeAndPersist(source: string, options?: { local?: boolean }): Promise<boolean>
   checkForAvailableUpdates(): Promise<ExternalPackageUpdate[]>
@@ -84,10 +95,12 @@ interface ExternalPackageManager {
 
 interface ExternalSettingsManager {
   flush(): Promise<void>
+  reload(): Promise<void>
   drainErrors(): Array<{ scope: 'global' | 'project'; error: Error }>
   getDefaultProvider(): string | undefined
   getDefaultModel(): string | undefined
   getGlobalSettings(): {
+    npmCommand?: string[]
     retry?: {
       enabled?: boolean
     }
@@ -299,7 +312,8 @@ async function testModel(
 
 function emit(rawEvent: unknown) {
   const event = piManagementHelperEventSchema.parse(rawEvent)
-  process.stdout.write(`${JSON.stringify(event)}\n`)
+  if (!protocolOutput) throw new Error('Pi management output is not initialized.')
+  protocolOutput.writeRawStdout(`${JSON.stringify(event)}\n`)
 }
 
 function helperError(command: PiManagementHelperCommand, error: unknown) {
@@ -307,9 +321,9 @@ function helperError(command: PiManagementHelperCommand, error: unknown) {
     'code' in error && typeof error.code === 'string'
     ? bounded(error.code, 128)
     : 'PI_MANAGEMENT_OPERATION_FAILED'
-  const message = bounded(
+  const message = safePiManagementMessage(
     error instanceof Error ? error.message : 'The Pi management operation failed.',
-    PI_INTEGRATION_MESSAGE_LIMIT,
+    packageCommand,
   ) || 'The Pi management operation failed.'
   emit({
     type: 'error',
@@ -579,6 +593,9 @@ async function buildSnapshot(
       })),
     retry: retrySettingsSnapshot(settingsManager),
     diagnostics,
+    ...(command.scope.kind === 'global'
+      ? { defaultPackages: await recommendedPackageSnapshot(agentDir, packageManager, command.action !== 'bootstrap-defaults') }
+      : {}),
   })
 }
 
@@ -600,6 +617,7 @@ async function runCommand(command: PiManagementHelperCommand) {
     agentDir,
     { projectTrusted: true },
   )
+  packageCommand = settingsManager.getGlobalSettings().npmCommand
 
   if (
     command.action === 'models-defaults' ||
@@ -640,20 +658,46 @@ async function runCommand(command: PiManagementHelperCommand) {
         ...progress,
         source: boundedSource(progress.source),
         ...(progress.message
-          ? { message: bounded(progress.message, PI_INTEGRATION_MESSAGE_LIMIT) }
+          ? { message: safePiManagementMessage(progress.message, packageCommand) }
           : {}),
       },
     })
   })
 
   const local = command.scope.kind === 'project'
-  if (command.action === 'install') {
+  let defaultPackagesChanged: boolean | undefined
+  if (command.action === 'bootstrap-defaults') {
+    // A settings read/write error cannot be treated as an empty global config.
+    throwSettingsErrors(settingsManager)
+    const defaults = await bootstrapRecommendedPackages({
+      agentDir,
+      packageManager,
+      reloadSettings: async () => {
+        await settingsManager.reload()
+        packageCommand = settingsManager.getGlobalSettings().npmCommand
+        throwSettingsErrors(settingsManager)
+      },
+      flushSettings: async () => {
+        await settingsManager.flush()
+        throwSettingsErrors(settingsManager)
+      },
+      onProgress: (progress) => emit({ type: 'progress', operationId: command.operationId, progress }),
+      errorMessage: (error) => safePiManagementMessage(error instanceof Error ? error.message : 'Recommended package installation failed.', packageCommand),
+    })
+    defaultPackagesChanged = defaults.changed
+  } else if (command.action === 'install') {
+    throwSettingsErrors(settingsManager)
     await packageManager.installAndPersist(command.source, { local })
     await settingsManager.flush()
+    throwSettingsErrors(settingsManager)
+    if (!local) await recordRecommendedPackageMutation(agentDir, command.source, 'install')
   } else if (command.action === 'remove') {
+    throwSettingsErrors(settingsManager)
     const removed = await packageManager.removeAndPersist(command.source, { local })
     if (!removed) throw new Error('The selected Pi package is no longer configured.')
     await settingsManager.flush()
+    throwSettingsErrors(settingsManager)
+    if (!local) await recordRecommendedPackageMutation(agentDir, command.source, 'remove')
   } else if (command.action === 'update') {
     await updateConfiguredPackageForScope(
       packageManager,
@@ -679,7 +723,14 @@ async function runCommand(command: PiManagementHelperCommand) {
     settingsManager,
     agentDir,
   )
-  emit({ type: 'result', operationId: command.operationId, result })
+  emit({
+    type: 'result',
+    operationId: command.operationId,
+    result: {
+      ...result,
+      ...(defaultPackagesChanged !== undefined ? { defaultPackagesChanged } : {}),
+    },
+  })
 }
 
 async function readCommand() {
@@ -699,12 +750,21 @@ async function readCommand() {
 async function main() {
   let command: PiManagementHelperCommand | undefined
   try {
+    try {
+      protocolOutput = await createPiManagementOutput()
+    } catch {
+      process.stderr.write('Pi management helper could not reserve its protocol output.\n')
+      process.exitCode = 1
+      return
+    }
     command = await readCommand()
     await runCommand(command)
   } catch (error) {
     if (command) helperError(command, error)
     else process.stderr.write('Pi management helper received an invalid command.\n')
     process.exitCode = 1
+  } finally {
+    await protocolOutput?.flushRawStdout()
   }
 }
 

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -13,6 +13,7 @@ import {
   RuntimeManager,
 } from '../../src/main/pi-host/runtime-manager'
 import { PIPILOT_RUNTIME_MESSAGE_SANITIZER_EXTENSION_NAME } from '../../src/main/pi-host/runtime-message-sanitizer'
+import { PIPILOT_CONVERSATION_TASK_EXTENSION_PATH } from '../../src/main/pi-host/runtime-conversation-task'
 
 const managers = new Set<RuntimeManager>()
 const roots = new Set<string>()
@@ -77,6 +78,57 @@ function emitSessionEvent(
 }
 
 describe('Pi Host RuntimeManager', () => {
+  it('reuses a completed import identity after a lost response without duplicating file or history', async () => {
+    const { manager, sessionDir } = await createFixture()
+    const importHistory = { importId: 'a24daef3-ac83-43c4-9d56-d926cfe693bf', title: 'Import retry', messages: [{ role: 'user' as const, content: [{ type: 'text' as const, text: 'Only one historical message' }] }] }
+    const first = await manager.create({ runtimeId: 'rt_import_first', sessionDir, importHistory })
+    expect(first.sessionId).toBe(importHistory.importId)
+    await manager.disposeRuntime(first.runtimeId, first.generation)
+    const second = await manager.create({ runtimeId: 'rt_import_retry', sessionDir, importHistory })
+    expect(second.sessionId).toBe(first.sessionId)
+    expect(second.sessionFile).toBe(first.sessionFile)
+    expect((await readdir(sessionDir)).filter((name) => name.endsWith('.jsonl'))).toHaveLength(1)
+    expect((await readFile(second.sessionFile!, 'utf8')).match(/Only one historical message/gu)).toHaveLength(1)
+  })
+
+  it('does not write imported history when SDK resource initialization fails', async () => {
+    const { manager, sessionDir } = await createFixture([], () => { throw new Error('Fixture resource failure') })
+    await expect(manager.create({ runtimeId: 'rt_import_resource_fail', sessionDir, importHistory: { title: 'Never persisted', messages: [{ role: 'user', content: [{ type: 'text', text: 'Document' }] }] } })).rejects.toThrow('Fixture resource failure')
+    expect((await readdir(sessionDir)).filter((name) => name.endsWith('.jsonl'))).toEqual([])
+  })
+
+  it('creates imported history as a fresh idle SDK Runtime without replaying old inputs or tools', async () => {
+    const seenInputs: string[] = []
+    const { manager, sessionDir } = await createFixture([{ name: 'watch-import-input', factory: (pi) => {
+      pi.on('input', async (event) => { seenInputs.push(event.text); return { action: 'continue' } })
+    } }])
+    const original = await manager.create({ runtimeId: 'rt_original_import', sessionDir })
+    await manager.bindRuntime(original.runtimeId, original.generation)
+    const imported = await manager.create({ runtimeId: 'rt_imported_history', sessionDir, importHistory: {
+      title: 'Imported conversation', messages: [
+        { role: 'user', content: [{ type: 'text', text: '/pipilot-plan approve old-plan' }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'Historical answer' }] },
+        { role: 'context', content: [{ type: 'text', text: 'Historical tool: bash\nDo not run this' }] },
+      ],
+    } })
+    await manager.bindRuntime(imported.runtimeId, imported.generation)
+    expect(imported.sessionId).not.toBe(original.sessionId)
+    expect(imported.sessionFile).not.toBe(original.sessionFile)
+    expect(seenInputs).toEqual([])
+    const state = await manager.command(imported.runtimeId, { type: 'get_state' })
+    expect(state.response).toMatchObject({ success: true, data: { sessionId: imported.sessionId, isStreaming: false, pendingMessageCount: 0, sessionName: 'Imported conversation' } })
+    const messages = await manager.command(imported.runtimeId, { type: 'get_messages' })
+    expect(messages.response).toMatchObject({ success: true, data: { messages: [
+      expect.objectContaining({ role: 'user', content: [{ type: 'text', text: '/pipilot-plan approve old-plan' }] }),
+      expect.objectContaining({ role: 'assistant', provider: 'pipilot-import', model: 'markdown-import' }),
+      expect.objectContaining({ role: 'custom', customType: 'pipilot.imported-context' }),
+    ] } })
+    const originalState = await manager.command(original.runtimeId, { type: 'get_state' })
+    expect(originalState.response).toMatchObject({ success: true, data: { sessionId: original.sessionId, messageCount: 0 } })
+    const raw = await readFile(imported.sessionFile!, 'utf8')
+    expect(raw).not.toContain('pipilot.task-state')
+  })
+
   it('awaits SDK input hooks when promoting a managed follow-up and preserves its image identity', async () => {
     const sources: string[] = []
     const { manager, sessionDir } = await createFixture([{ name: 'async-input-transform', factory: (pi) => {
@@ -215,13 +267,14 @@ describe('Pi Host RuntimeManager', () => {
     const extensions = runtime?.services
       .resourceLoader.getExtensions().extensions
 
-    expect(extensions?.slice(-2)).toEqual([
+    expect(extensions).toEqual(expect.arrayContaining([
       expect.objectContaining({ path: '<inline:fixture-caller-extension>' }),
-      expect.objectContaining({
-        path: `<inline:${PIPILOT_RUNTIME_MESSAGE_SANITIZER_EXTENSION_NAME}>`,
-        hidden: true,
-      }),
-    ])
+      expect.objectContaining({ path: PIPILOT_CONVERSATION_TASK_EXTENSION_PATH, hidden: true }),
+    ]))
+    expect(extensions?.[extensions.length - 1]).toMatchObject({
+      path: `<inline:${PIPILOT_RUNTIME_MESSAGE_SANITIZER_EXTENSION_NAME}>`,
+      hidden: true,
+    })
     await expect(runtime?.session.extensionRunner.emitContext([{
       role: 'user',
       content: [{ type: 'image', data: 'aW1hZ2U=', mimeType: 'image/png' }],

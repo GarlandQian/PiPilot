@@ -15,6 +15,7 @@ export interface LoadedSessionCatalog {
 export interface WorkspaceAdapter {
   readonly mode: 'electron'
   readonly conversation: PiPilotApi['conversation']
+  readonly conversationImport: PiPilotApi['conversationImport']
   readonly localPi: PiPilotApi['localPi']
   readonly workspace: PiPilotApi['workspace']
   readonly files: PiPilotApi['files']
@@ -67,6 +68,7 @@ export function createDefaultWorkspaceAdapter(): WorkspaceAdapter | null {
   return {
     mode: 'electron',
     conversation: window.pipilot.conversation,
+    conversationImport: window.pipilot.conversationImport,
     localPi: window.pipilot.localPi,
     workspace: window.pipilot.workspace,
     files: window.pipilot.files,

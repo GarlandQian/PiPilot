@@ -850,7 +850,7 @@ describe('terminal IPC schemas', () => {
 
 function darkSettingsForEvent() {
   return {
-    notifications: { desktop: true },
+    notifications: { desktop: true, sound: true },
     locale: 'en-US',
     appearance: {
       theme: 'dark',

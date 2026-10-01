@@ -50,6 +50,9 @@ export function GeneralSettings({ restartBusy, restartMessage, restartAvailable,
         <Switch checked={notifications.desktop} onCheckedChange={(desktop) => update({ notifications: { desktop } })} aria-label={t('settings.general.desktopNotifications')} aria-describedby={notificationHintId} />
       </SettingRow>
       <p id={notificationHintId} className="text-caption text-muted-foreground">{t(!taskNotifications.loading && !taskNotifications.snapshot.desktopSupported ? 'settings.general.desktopNotificationsUnavailable' : 'settings.general.desktopNotificationsHint')}</p>
+      <SettingRow label={t('notifications.completionSound')} desc={t('notifications.completionSoundDesc')}>
+        <Switch checked={notifications.sound} onCheckedChange={(sound) => update({ notifications: { sound } })} aria-label={t('notifications.completionSound')} />
+      </SettingRow>
     </SettingSection>
     <SettingSection title={t('settings.general.localPi')} desc={t('settings.general.localPiDesc')}>
       <div className="flex flex-wrap items-center gap-3 py-3">

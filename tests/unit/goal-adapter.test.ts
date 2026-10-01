@@ -9,9 +9,9 @@ import { createLocalPiProjectorState } from '../../src/renderer/pi-rpc/projector
 const capability: GoalCapability = {
   id: 'goal',
   packageName: '@narumitw/pi-goal',
-  version: '0.52.2',
-  packageSource: 'npm:@narumitw/pi-goal@0.52.2',
-  commandSource: 'npm:@narumitw/pi-goal@0.52.2',
+  version: '0.54.8',
+  packageSource: 'npm:@narumitw/pi-goal@0.54.8',
+  commandSource: 'npm:@narumitw/pi-goal@0.54.8',
   commandScope: 'user',
   commandName: 'goal',
 }
@@ -34,7 +34,7 @@ function state(entries: ReturnType<typeof goalEntry>[]) {
     entrySnapshot: {
       generation: 7,
       sessionId: 'session-a',
-      entries,
+      entries: entries.map((entry, index) => ({ ...entry, parentId: index ? entries[index - 1]!.id : null })),
       leafId: entries[entries.length - 1]?.id ?? null,
       cursor: entries[entries.length - 1]?.id ?? null,
     },
@@ -95,7 +95,7 @@ describe('Goal adapter', () => {
     expect(projection).toMatchObject({
       lifecycle: 'waiting',
       goal: { waiting: { reason: 'Waiting for CI' } },
-      actions: ['status', 'resume', 'clear'],
+      actions: ['status', 'pause', 'resume', 'clear'],
     })
   })
 
@@ -123,5 +123,20 @@ describe('Goal adapter', () => {
       capability,
       { scopeKey: 'project:one', statuses: {} },
     )).toBeNull()
+    expect(projectGoalMode(
+      state([goalEntry({ ...activeGoal, text: '', tokensUsed: -1 })]),
+      capability,
+      { scopeKey: 'project:one', statuses: { goal: 'complete' } },
+    )).toBeNull()
+  })
+
+  it('reads only the selected branch and does not resurrect a cleared goal from status text', () => {
+    const snapshot = state([goalEntry(activeGoal, 'active'), goalEntry(null, 'cleared')])
+    expect(projectGoalMode(snapshot, capability, { scopeKey: 'one', statuses: { goal: 'active 12k' } })).toBeNull()
+    snapshot.entrySnapshot!.entries = [...snapshot.entrySnapshot!.entries, { ...goalEntry({ ...activeGoal, text: 'Abandoned goal' }, 'abandoned'), parentId: 'active' }]
+    snapshot.entrySnapshot!.leafId = 'active'
+    expect(projectGoalMode(snapshot, capability, { scopeKey: 'one' })?.goal?.text).toBe(activeGoal.text)
+    snapshot.entrySnapshot!.leafId = 'missing'
+    expect(projectGoalMode(snapshot, capability, { scopeKey: 'one', statuses: { goal: 'active 12k' } })).toBeNull()
   })
 })

@@ -76,7 +76,7 @@ test('uses one keyboard-safe Composer picker and middle-column extension surface
       settings: {
         ...DEFAULT_SETTINGS,
         locale: 'en-US',
-        notifications: { desktop: false },
+        notifications: { desktop: false, sound: false },
       },
     }, null, 2)}\n`,
   )

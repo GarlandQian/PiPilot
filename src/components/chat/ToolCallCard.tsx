@@ -5,6 +5,7 @@ import {
   TbCopy,
   TbFileDiff,
   TbFileText,
+  TbLoader2,
   TbTerminal2,
   TbTool,
 } from 'react-icons/tb'
@@ -14,6 +15,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { classifyWorkspaceFile } from '@/components/inspector/workspace-file-kind'
 import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
+import { CONVERSATION_TASK_TOOL_NAME } from '@/shared/conversation-task'
 import { projectPlainText } from '@/renderer/pi-rpc/structured-value'
 import { toolCallCopyText } from '@/renderer/pi-rpc/tool-presenters'
 import { useSettings } from '@/store/settings'
@@ -206,6 +208,19 @@ export function ToolCallCard({ call, onOpenCommand, searchRequest }: { call: Too
     } catch {
       setCopied(false)
     }
+  }
+
+  if (call.title === CONVERSATION_TASK_TOOL_NAME && !call.malformed && !searchMatched
+    && (call.status === 'success' || call.status === 'running' || call.status === 'queued')) {
+    const StatusIcon = call.status === 'success' ? TbCheck : call.status === 'running' ? TbLoader2 : TbTool
+    return <div
+      className="flex min-h-[var(--tool-row-h)] min-w-0 items-center gap-2 px-2 py-1 text-caption text-muted-foreground"
+      data-tool-kind={call.kind} data-tool-id={call.id} data-task-state-update
+      role="status"
+    >
+      <StatusIcon className={cn('size-3.5 shrink-0', call.status === 'running' && 'animate-spin motion-reduce:animate-none')} aria-hidden />
+      <span>{t(call.status === 'success' ? 'taskContext.toolUpdated' : call.status === 'queued' ? 'taskContext.toolQueued' : 'taskContext.toolUpdating')}</span>
+    </div>
   }
 
   return (

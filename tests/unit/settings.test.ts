@@ -57,9 +57,21 @@ describe('current settings schema', () => {
     const { notifications: _notifications, ...existing } = darkEnglishSettings()
     existing.terminal = { ...existing.terminal, defaultProfileId: customShell.id, profiles: [customShell] }
     const migrated = parseSettingsDocument({ version: SETTINGS_SCHEMA_VERSION, settings: existing }).settings
-    expect(migrated).toEqual({ ...existing, notifications: { desktop: true } })
+    expect(migrated).toEqual({ ...existing, notifications: { desktop: true, sound: true } })
     expect(parseSettingsDocument({ version: SETTINGS_SCHEMA_VERSION, settings: { ...migrated, notifications: { desktop: false } } }).settings.notifications.desktop).toBe(false)
     expect(() => parseSettingsDocument({ version: SETTINGS_SCHEMA_VERSION, settings: { ...migrated, notifications: { desktop: 'yes' } } })).toThrow()
+  })
+  it('migrates desktop-only preferences and preserves an explicit sound opt-out', () => {
+    const existing = darkEnglishSettings()
+    expect(parseSettingsDocument({ version: SETTINGS_SCHEMA_VERSION, settings: {
+      ...existing, notifications: { desktop: false },
+    } }).settings.notifications).toEqual({ desktop: false, sound: true })
+    expect(parseSettingsDocument({ version: SETTINGS_SCHEMA_VERSION, settings: {
+      ...existing, notifications: { desktop: true, sound: false },
+    } }).settings.notifications).toEqual({ desktop: true, sound: false })
+    expect(() => parseSettingsDocument({ version: SETTINGS_SCHEMA_VERSION, settings: {
+      ...existing, notifications: { desktop: true, sound: 'yes' },
+    } })).toThrow()
   })
   it('accepts only a complete current document', () => {
     expect(parseSettingsDocument({

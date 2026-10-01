@@ -120,6 +120,8 @@ export class LocalPiIntegrationService {
   private mutationChain: Promise<unknown> = Promise.resolve()
   private snapshotFlights = new Map<string, Promise<PiIntegrationSnapshot>>()
   private disposed = false
+  private bootstrapFlight: Promise<PiIntegrationOperationResult> | null = null
+  private bootstrapError: string | null = null
 
   constructor(private readonly options: LocalPiIntegrationServiceOptions) {
     if (!isAbsolute(options.restartMarkerPath)) {
@@ -161,6 +163,48 @@ export class LocalPiIntegrationService {
 
   remove(scope: PiIntegrationScope, source: string) {
     return this.packageMutation('remove', scope, source)
+  }
+
+  /** Call without awaiting during startup. Durable helper claims prevent retries on later launches. */
+  bootstrapDefaults() {
+    if (this.bootstrapFlight) return this.bootstrapFlight
+    this.bootstrapFlight = this.enqueueOperation('bootstrap-defaults', { kind: 'global' }, undefined, async (operation) => {
+      const target = await this.captureTarget(operation.scope)
+      let installationStarted = false
+      let payload: PiManagementSnapshotPayload
+      try {
+        payload = await this.runHelper(target, {
+          action: 'bootstrap-defaults',
+          operationId: operation.operationId,
+        }, (progress) => {
+          if (progress.action === 'install' && progress.type === 'start') installationStarted = true
+          this.progress(operation, progress)
+        })
+      } catch (error) {
+        // The helper may have persisted earlier packages before timing out on
+        // a later one. Do not hide this possible configuration/runtime gap.
+        if (installationStarted) await this.setRestartMarker(target.markerKey, true)
+        throw error
+      }
+      let runtimeSync: PiIntegrationOperationResult['runtimeSync'] = 'not-requested'
+      let runtimeError: string | undefined
+      if (payload.defaultPackagesChanged) {
+        await this.setRestartMarker(target.markerKey, true)
+        runtimeSync = 'persisted-only'
+        try {
+          await this.options.reloadHosts(target.scope, target.cwd)
+          runtimeSync = 'synchronized'
+          await this.setRestartMarker(target.markerKey, false)
+        } catch (error) {
+          runtimeError = `Runtime reload deferred or failed: ${errorMessage(error)}`
+        }
+      }
+      return this.operationResult(operation.operationId, await this.composeSnapshot(target, payload), runtimeSync, runtimeError)
+    }).catch((error: unknown) => {
+      this.bootstrapError = errorMessage(error)
+      throw error
+    })
+    return this.bootstrapFlight
   }
 
   checkUpdates(scope: PiIntegrationScope) {
@@ -382,6 +426,7 @@ export class LocalPiIntegrationService {
         operationId: operation.operationId,
         source,
       }, (progress) => this.progress(operation, progress))
+      if (target.scope.kind === 'global') this.bootstrapError = null
       await this.setRestartMarker(target.markerKey, true)
       this.assertCurrent(target)
 
@@ -544,7 +589,7 @@ export class LocalPiIntegrationService {
   private runHelper(
     target: CapturedManagementTarget,
     operation:
-      | { action: 'snapshot' | 'check-updates'; operationId: string }
+      | { action: 'snapshot' | 'check-updates' | 'bootstrap-defaults'; operationId: string }
       | { action: 'install' | 'update' | 'remove'; operationId: string; source: string }
       | { action: 'set-retry'; operationId: string; enabled: boolean }
       | { action: 'models-defaults'; operationId: string }
@@ -552,13 +597,13 @@ export class LocalPiIntegrationService {
       | { action: 'test-model'; operationId: string; content: string; providerId: string; modelId: string },
     onProgress?: (progress: PiManagementProgress) => void,
   ) {
-    const command: PiManagementHelperCommand = {
+    const command = {
       protocolVersion: 1,
       cwd: target.cwd,
       scope: target.scope,
       ...operation,
     }
-    return this.options.helperHost.run(command, onProgress)
+    return this.options.helperHost.run(command as PiManagementHelperCommand, onProgress)
   }
 
   private async composeSnapshot(
@@ -566,9 +611,7 @@ export class LocalPiIntegrationService {
     payload: PiManagementSnapshotPayload,
   ) {
     await this.ensureRestartMarkersLoaded()
-    const diagnostics = this.restartMarkerPersistenceFailed
-      ? payload.diagnostics.slice(0, PI_INTEGRATION_DIAGNOSTIC_LIMIT - 1)
-      : [...payload.diagnostics]
+    const diagnostics = [...payload.diagnostics]
     if (this.restartMarkerPersistenceFailed) {
       diagnostics.push({
         code: 'PI_RESTART_MARKER_PERSIST_FAILED',
@@ -576,7 +619,20 @@ export class LocalPiIntegrationService {
         severity: 'warning' as const,
       })
     }
+    if (this.bootstrapError && target.scope.kind === 'global') {
+      diagnostics.push({
+        code: 'PI_DEFAULT_PACKAGES_BOOTSTRAP_FAILED',
+        message: this.bootstrapError,
+        severity: 'warning' as const,
+      })
+    }
     const sdkModuleRoot = await this.bundledSdkModuleRoot()
+    const { defaultPackagesChanged: _defaultPackagesChanged, ...snapshotPayload } = payload
+    if (this.bootstrapError && snapshotPayload.defaultPackages) {
+      snapshotPayload.defaultPackages = snapshotPayload.defaultPackages.map((item) => item.status === 'installing'
+        ? { ...item, status: 'failed' as const, message: this.bootstrapError! }
+        : item)
+    }
     return piIntegrationSnapshotSchema.parse({
       state: 'ready',
       generation: ++this.snapshotGeneration,
@@ -585,9 +641,9 @@ export class LocalPiIntegrationService {
         version: BUNDLED_PI_VERSION,
       },
       scope: target.scope,
-      ...payload,
+      ...snapshotPayload,
       restartRequired: this.restartMarkers.has(target.markerKey),
-      diagnostics,
+      diagnostics: diagnostics.slice(-PI_INTEGRATION_DIAGNOSTIC_LIMIT),
       checkedAt: this.now(),
     })
   }

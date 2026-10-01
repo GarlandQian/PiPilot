@@ -1,7 +1,10 @@
-import { resolve } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   LocalPiManagementHost,
+  terminatePiManagementProcess,
   type LocalPiManagementHostError,
 } from '../../src/main/local-pi-management/local-pi-management-host'
 import type { PiManagementHelperCommand } from '../../src/shared/pi-integrations'
@@ -73,5 +76,47 @@ describe('LocalPiManagementHost', () => {
     await expect(host.run(command())).rejects.toMatchObject({
       code: 'PI_MANAGEMENT_HELPER_TIMEOUT',
     } satisfies Partial<LocalPiManagementHostError>)
+  })
+
+  it('constructs Windows descendant termination only for a validated owned PID', () => {
+    const runFile = vi.fn()
+    const kill = vi.fn()
+    const signalGroup = vi.fn()
+    terminatePiManagementProcess({ pid: 123, kill }, 'win32', runFile as never, signalGroup as never)
+    expect(runFile).toHaveBeenCalledWith('taskkill', ['/PID', '123', '/T', '/F'], { windowsHide: true }, expect.any(Function))
+    terminatePiManagementProcess({ pid: -1, kill }, 'win32', runFile as never, signalGroup as never)
+    terminatePiManagementProcess({ pid: undefined, kill }, 'win32', runFile as never, signalGroup as never)
+    expect(runFile).toHaveBeenCalledOnce()
+    expect(kill).not.toHaveBeenCalled()
+    expect(signalGroup).not.toHaveBeenCalled()
+  })
+
+  it.skipIf(process.platform === 'win32')('terminates a real owned npm-like descendant on helper timeout', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pipilot-helper-process-tree-'))
+    const pidPath = join(root, 'child.pid')
+    const helperPath = join(root, 'hanging-helper.mjs')
+    let descendant: number | undefined
+    try {
+      await writeFile(helperPath, `
+import { spawn } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+const child = spawn(process.execPath, ['-e', "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"], { stdio: 'ignore' });
+writeFileSync(${JSON.stringify(pidPath)}, String(child.pid));
+process.on('SIGTERM', () => {});
+setInterval(() => {}, 1000);
+`)
+      const host = new LocalPiManagementHost({ helperEntryPath: helperPath, electronExecutablePath: process.execPath, timeoutMs: 1_000, mutationTimeoutMs: 1_000, killGraceMs: 50 })
+      hosts.add(host)
+      const result = host.run(command('install'))
+      const rejected = expect(result).rejects.toMatchObject({ code: 'PI_MANAGEMENT_HELPER_TIMEOUT' })
+      await vi.waitFor(async () => { descendant = Number(await readFile(pidPath, 'utf8')); expect(descendant).toBeGreaterThan(0) })
+      await rejected
+      await vi.waitFor(() => expect(() => process.kill(descendant!, 0)).toThrow(), { timeout: 3_000 })
+    } finally {
+      if (descendant && Number.isSafeInteger(descendant) && descendant > 0) {
+        try { process.kill(descendant, 'SIGKILL') } catch { /* already terminated */ }
+      }
+      await rm(root, { recursive: true, force: true })
+    }
   })
 })

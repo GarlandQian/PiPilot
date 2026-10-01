@@ -9,6 +9,7 @@ import type { PiPackageSummary, PiResourceKind } from '@/shared/pi-integrations'
 import { usePiIntegrations } from '@/store/pi-integrations'
 import { CatalogCollection, CompatibilityBadge, EmptyState, SearchField, focusCatalogRow, totalResources } from './CatalogPrimitives'
 import { filterIntegrationPackages } from './catalog-model'
+import { DefaultPackages } from './DefaultPackages'
 
 function PackageDetail({
   pkg,
@@ -115,6 +116,11 @@ export function PackagesView({ active = true, onOpenResources }: { active?: bool
   return (
     <>
       <p className="mb-4 max-w-2xl text-caption text-muted-foreground">{t('settings.integrations.packages.description')}</p>
+      {integrations.scope.kind === 'global' && <DefaultPackages
+        packages={integrations.snapshot?.defaultPackages ?? []}
+        busy={busy}
+        onInstall={(source) => void integrations.install(source)}
+      />}
       <div className="grid min-h-[28rem] gap-5 @min-[880px]/integrations:grid-cols-[minmax(15rem,0.8fr)_minmax(0,1.2fr)] @min-[880px]/integrations:gap-4" data-integration-catalog="packages">
         <div className={cn(
           'mac-box min-w-0 self-start p-2.5',

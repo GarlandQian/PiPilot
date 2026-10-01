@@ -34,7 +34,7 @@ function workspaceFileViewer(inspector: Locator, path: string) {
 async function expectInspectorResourceTabNavigation(inspector: Locator) {
   const tabs = inspector.getByRole('tablist', { name: 'Switch inspector view', exact: true })
   await expect(tabs).toBeVisible()
-  await expect(tabs.getByRole('tab')).toHaveText(['Files', 'Changes'])
+  await expect(tabs.getByRole('tab')).toHaveText(['Overview', 'Files', 'Changes'])
   for (const name of ['Terminal', 'Agents', 'Output', 'Raw history', 'Pi shell', 'Outline']) {
     await expect(tabs.getByRole('tab', { name, exact: true })).toHaveCount(0)
   }
@@ -164,7 +164,7 @@ test('waits for renderer subscriptions before starting configured Pi', async ({}
       settings: {
         ...DEFAULT_SETTINGS,
         locale: 'en-US',
-        notifications: { desktop: false },
+        notifications: { desktop: false, sound: false },
       },
     }, null, 2)}\n`,
   )
@@ -1129,8 +1129,8 @@ test('asks for a project in Files and Changes independently of conversation navi
       await selectInspectorView(inspector, view)
       const activePanel = inspector.getByRole('tabpanel', { name: view, exact: true })
       await expect(inspector.getByRole('tabpanel')).toHaveCount(1)
-      await expect(inspector.getByRole('tab')).toHaveCount(2)
-      await expect(inspector.getByRole('tabpanel', { includeHidden: true })).toHaveCount(2)
+      await expect(inspector.getByRole('tab')).toHaveCount(3)
+      await expect(inspector.getByRole('tabpanel', { includeHidden: true })).toHaveCount(3)
       const activeTab = inspector.getByRole('tab', { name: view, exact: true })
       await expect(activeTab).toHaveAttribute('aria-selected', 'true')
       await expect(activePanel).toHaveAttribute('id', (await activeTab.getAttribute('aria-controls'))!)
@@ -1254,6 +1254,7 @@ test('searches conversation turns, navigates by keyboard, and inserts file-tree 
     const inspector = page.getByRole('complementary', { name: 'Inspector' })
     const composer = page.getByRole('textbox', { name: 'Message input' })
     const promptsBeforeInspectorMentions = [...piFixture.prompts]
+    await selectInspectorView(inspector, 'Files')
     const fileSearch = inspector.getByRole('textbox', {
       name: 'Search workspace files',
       exact: true,
@@ -1557,6 +1558,7 @@ test('keeps open file selection through tree navigation and compact frame transi
     const markdownViewer = workspaceFileViewer(inspector, 'README.md')
 
     await test.step('retain file A after Back, open file B, and select and close individual readers', async () => {
+      await selectInspectorView(inspector, 'Files')
       await inspector.getByRole('button').filter({ hasText: /^src$/u }).click()
       await inspector.getByRole('button').filter({ hasText: /^example\.ts$/u }).click()
       await expect(sourceViewer).toContainText('export const example = true')
@@ -2079,6 +2081,7 @@ test('opens a persisted project session on the first click while Pi initializes'
     })
     await expect(projectSession).toBeVisible({ timeout: 20_000 })
     await expect(secondProjectSession).toBeVisible({ timeout: 20_000 })
+    await selectInspectorView(page, 'Files')
     await expect(page.locator('[data-workspace-tree-row="available.txt"]')).toBeVisible()
     expect(await page.evaluate(async () =>
       (await window.pipilot!.localPi.runtime.status()).state)).not.toBe('ready')
@@ -2262,7 +2265,7 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
       settings: {
         ...DEFAULT_SETTINGS,
         locale: 'en-US',
-        notifications: { desktop: false },
+        notifications: { desktop: false, sound: false },
       },
     }, null, 2)}\n`,
     'utf8',
@@ -3271,7 +3274,7 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
     // Detail Back retains the resource drawer; Close restores its entry point.
     await compactSubagentInspector.getByRole('button', { name: 'Back to project resources', exact: true }).click()
     await expect(compactSubagentInspector).toBeVisible()
-    await expect(compactSubagentInspector.getByRole('tab')).toHaveText(['Files', 'Changes'])
+    await expect(compactSubagentInspector.getByRole('tab')).toHaveText(['Overview', 'Files', 'Changes'])
     await compactSubagentInspector.getByRole('button', { name: 'Close panel', exact: true }).click()
     await expect(compactSubagentInspector).toHaveCount(0)
     await expect(subagentCall).toBeFocused()
@@ -3662,7 +3665,9 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
     await expect(lastChangedFile).toBeAttached()
     await firstChangedFile.scrollIntoViewIfNeeded()
     await expect(firstChangedFile).toBeVisible()
-    await expect(firstChangedFile).toContainText('export const change1 = 1')
+    // The inspector opens on Overview, so this is the first syntax-highlighted
+    // surface of the run and pays the highlighter's cold start.
+    await expect(firstChangedFile).toContainText('export const change1 = 1', { timeout: 20_000 })
     await lastChangedFile.scrollIntoViewIfNeeded()
     await expect(lastChangedFile).toBeVisible()
     await expect(lastChangedFile).toContainText('export const change12 = 1')
@@ -3800,6 +3805,8 @@ test('launches a sandboxed shell with a narrow validated bridge', { tag: '@integ
         'applicationUpdate',
         'changes',
         'conversation',
+        'conversationExport',
+        'conversationImport',
         'conversationSearch',
         'externalControl',
         'files',

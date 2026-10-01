@@ -6,6 +6,8 @@ import {
   TbChevronRight,
   TbCopy,
   TbDots,
+  TbDownload,
+  TbFileImport,
   TbFolder,
   TbFolderOpen,
   TbFolderPlus,
@@ -78,6 +80,7 @@ export interface ConversationListActions {
   onDelete(item: SidebarConversationItem): void
   onPin?(item: SidebarConversationItem, pinned: boolean): void
   onArchive?(item: SidebarConversationItem, archived: boolean): void
+  onExport?(item: SidebarConversationItem): void
 }
 
 interface ConversationListProps extends ConversationListActions {
@@ -190,6 +193,7 @@ function ConversationRow({
   onDelete,
   onPin,
   onArchive,
+  onExport,
   showScope,
 }: {
   item: SidebarConversationItem
@@ -310,6 +314,9 @@ function ConversationRow({
                 {item.archived ? <TbArchiveOff aria-hidden /> : <TbArchive aria-hidden />}
                 {t(item.archived ? 'nav.redesign.restoreTask' : 'nav.redesign.archiveTask')}
               </DropdownMenuItem>}
+              {onExport && <DropdownMenuItem onSelect={() => onExport(item)}>
+                <TbDownload aria-hidden />{t('export.conversation')}
+              </DropdownMenuItem>}
               {(onPin || onArchive) && <DropdownMenuSeparator />}
               <DropdownMenuItem onSelect={() => {
                 setRequestedRename(true)
@@ -351,6 +358,7 @@ export function ConversationList({
   onDelete,
   onPin,
   onArchive,
+  onExport,
 }: ConversationListProps) {
   if (items.length === 0) {
     return emptyLabel
@@ -373,6 +381,7 @@ export function ConversationList({
           onDelete={onDelete}
           onPin={onPin}
           onArchive={onArchive}
+          onExport={onExport}
           showScope={variant === 'focus'}
         />
       ))}
@@ -388,6 +397,7 @@ export interface ProjectNavigationGroupProps extends ConversationListActions {
   onToggleProject(projectId: string, expanded: boolean): void
   onResumeProject(projectId: string): void
   onStartProjectTask(projectId: string): void
+  onImportProject?(projectId: string): void
   onLoadMore(projectId: string): void
   onPinProject(projectId: string, pinned: boolean): void
   onRemoveProject(project: WorkspaceSummary): void
@@ -522,6 +532,7 @@ export function ProjectNavigationGroup({
   onToggleProject,
   onResumeProject,
   onStartProjectTask,
+  onImportProject,
   onLoadMore,
   onPinProject,
   onRemoveProject,
@@ -532,6 +543,7 @@ export function ProjectNavigationGroup({
   onDelete,
   onPin,
   onArchive,
+  onExport,
 }: ProjectNavigationGroupProps) {
   const t = useT()
   const [workflowProject, setWorkflowProject] = React.useState<WorkspaceSummary | null>(null)
@@ -544,6 +556,7 @@ export function ProjectNavigationGroup({
     onDelete,
     onPin,
     onArchive,
+    onExport,
   }
 
   return (
@@ -667,6 +680,9 @@ export function ProjectNavigationGroup({
                         <TbMessagePlus aria-hidden />
                         {t('sidebar.project.newSession')}
                       </DropdownMenuItem>
+                      {onImportProject && <DropdownMenuItem disabled={!project.available} onSelect={() => onImportProject(project.id)}>
+                        <TbFileImport aria-hidden />{t('import.open')}
+                      </DropdownMenuItem>}
                       <DropdownMenuItem
                         disabled={!project.available}
                         onSelect={() => onResumeProject(project.id)}

@@ -5,16 +5,11 @@ import {
   TbChevronRight,
   TbCheck,
   TbClock,
+  TbFileDescription,
   TbInfoCircle,
   TbLoader2,
   TbListDetails,
   TbNotes,
-  TbDeviceFloppy,
-  TbDownload,
-  TbEye,
-  TbFlag,
-  TbLogout,
-  TbPencil,
   TbPlayerStop,
   TbPlayerPlay,
   TbPlayerPause,
@@ -45,17 +40,8 @@ import type {
 } from '@/renderer/pi-rpc/adapters/plan-mode'
 import type { ResponseActivity, StructuredValueProjection } from '@/types/chat'
 import { MarkdownContent } from './markdown/MarkdownContent'
+import { primaryPlanAction, revealCurrentPlan } from './plan-presentation'
 import { StructuredValueView } from './StructuredValueView'
-
-const planActionIcons = {
-  show: TbEye,
-  finalize: TbFlag,
-  implement: TbPlayerPlay,
-  save: TbDeviceFloppy,
-  export: TbDownload,
-  revise: TbPencil,
-  exit: TbLogout,
-} as const
 
 const goalActionIcons = {
   status: TbListDetails,
@@ -80,23 +66,6 @@ const goalLifecycleKeys = {
   'usage-limited': 'goal.lifecycle.usageLimited',
   'budget-limited': 'goal.lifecycle.budgetLimited',
   complete: 'goal.lifecycle.complete',
-} as const
-
-const planActionKeys = {
-  show: 'plan.action.show',
-  finalize: 'plan.action.finalize',
-  implement: 'plan.action.implement',
-  save: 'plan.action.save',
-  export: 'plan.action.export',
-  revise: 'plan.action.revise',
-  exit: 'plan.action.exit',
-} as const
-
-const PLAN_LIFECYCLE_KEYS = {
-  planning: 'plan.lifecycle.planning',
-  ready: 'plan.lifecycle.ready',
-  saved: 'plan.lifecycle.saved',
-  implementing: 'plan.lifecycle.implementing',
 } as const
 
 function isStructuredActivityValue(projection: StructuredValueProjection) {
@@ -297,16 +266,6 @@ export interface ActiveControlBarProps {
   onRevealActivity?(): void
 }
 
-const PLAN_PRIMARY_ACTIONS: readonly PlanActionId[] = [
-  'implement',
-  'finalize',
-  'show',
-  'revise',
-  'save',
-  'export',
-  'exit',
-]
-
 const GOAL_PRIMARY_ACTIONS: readonly GoalActionId[] = [
   'resume',
   'pause',
@@ -336,9 +295,9 @@ export function ActiveControlBar({
 
   const retryActive = retryActivity.kind === 'provider' ||
     (retryActivity.kind === 'summarization' && retryActivity.phase !== 'finished')
-  const planAction = planMode
-    ? PLAN_PRIMARY_ACTIONS.find((action) => planMode.actions.includes(action)) ?? null
-    : null
+  // The plan card in the transcript owns every plan control; the capsule only
+  // surfaces a plan that is waiting on the user, so it can't be missed.
+  const planAction = planMode ? primaryPlanAction(planMode.lifecycle, planMode.actions) : null
   const goalAction = goalMode
     ? GOAL_PRIMARY_ACTIONS.find((action) => goalMode.actions.includes(action)) ?? null
     : null
@@ -351,6 +310,8 @@ export function ActiveControlBar({
   let ActionIcon: React.ComponentType<{ className?: string; 'aria-hidden'?: boolean }> | null = null
   let invokeAction: (() => Promise<void>) | null = null
   let actionFailureMessage: string | null = null
+  let prominentAction = false
+  let reveal: { label: string; run: () => void } | null = null
 
   if (retryActive) {
     identity = retryActivity.kind === 'provider'
@@ -380,15 +341,16 @@ export function ActiveControlBar({
         : t('retry.summary.attempting')
       Icon = TbNotes
     }
-  } else if (planMode && planAction) {
+  } else if (planMode && planAction && (planMode.lifecycle === 'ready' || planMode.lifecycle === 'saved')) {
     identity = `plan\0${planMode.scopeKey}\0${planMode.sessionId}\0${planMode.generation}\0${planMode.lifecycle}`
-    title = t('plan.title')
-    summary = t(PLAN_LIFECYCLE_KEYS[planMode.lifecycle])
-    Icon = TbNotes
-    actionLabel = t(planActionKeys[planAction])
-    ActionIcon = planActionIcons[planAction]
+    title = t(planMode.lifecycle === 'ready' ? 'plan.capsule.ready' : 'plan.capsule.saved')
+    Icon = TbFileDescription
+    actionLabel = t('plan.action.implement')
+    ActionIcon = TbPlayerPlay
     invokeAction = () => onPlanAction(planAction)
     actionFailureMessage = t('plan.action.failed')
+    prominentAction = true
+    reveal = { label: t('plan.view'), run: revealCurrentPlan }
   } else if (goalMode && goalAction) {
     identity = `goal\0${goalMode.scopeKey}\0${goalMode.sessionId}\0${goalMode.generation}\0${goalMode.goal?.id ?? goalMode.lifecycle}`
     title = t('goal.title')
@@ -428,6 +390,7 @@ export function ActiveControlBar({
         <CurrentIcon
           className={cn(
             'size-3.5 shrink-0 text-muted-foreground',
+            identity.startsWith('plan') && 'text-primary',
             (identity.startsWith('working') ||
               (retryActivity.kind === 'provider' &&
                 (retryActivity.cancelling || countdown === null || countdown === 0))) &&
@@ -435,18 +398,21 @@ export function ActiveControlBar({
           )}
           aria-hidden
         />
-        <span className="shrink-0 text-caption font-medium text-foreground">{title}</span>
-        <div
+        <span className={cn('text-caption font-medium text-foreground', summary || actionError ? 'shrink-0' : 'min-w-0 flex-1 truncate')}>{title}</span>
+        {summary || actionError ? <div
           className={cn(
             'scroll-slim max-h-28 min-w-0 flex-1 overflow-y-auto text-caption text-muted-foreground',
             actionError && 'text-destructive',
           )}
         >
           <MarkdownContent markdown={actionError ?? summary} />
-        </div>
+        </div> : null}
+        {reveal ? (
+          <Button variant="ghost" size="xs" onClick={reveal.run}>{reveal.label}</Button>
+        ) : null}
         {invokeAction && actionLabel && CurrentActionIcon ? (
           <Button
-            variant="ghost"
+            variant={prominentAction ? 'default' : 'ghost'}
             size="xs"
             disabled={busy}
             aria-busy={busy || undefined}

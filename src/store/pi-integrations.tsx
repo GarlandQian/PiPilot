@@ -82,6 +82,50 @@ function initialScope(
     : { kind: 'global' }
 }
 
+/** Coalesces background completion reads without invalidating a foreground request. */
+export function createPiIntegrationBootstrapRefresh(refresh: () => Promise<void>) {
+  let requests = 0
+  let pending = false
+  let refreshing = false
+  let disposed = false
+  const observed = new Set<string>()
+
+  const flush = () => {
+    if (disposed || requests > 0 || refreshing || !pending) return
+    pending = false
+    refreshing = true
+    void (async () => {
+      try { await refresh() } catch { /* The store owns visible load errors. */ }
+      finally {
+        refreshing = false
+        flush()
+      }
+    })()
+  }
+
+  return {
+    beginRequest() {
+      requests += 1
+      let finished = false
+      return () => {
+        if (finished) return
+        finished = true
+        requests -= 1
+        flush()
+      }
+    },
+    observe(operation: PiIntegrationOperation) {
+      if (operation.kind !== 'bootstrap-defaults' ||
+          !['succeeded', 'failed'].includes(operation.phase) ||
+          observed.has(operation.operationId)) return
+      observed.add(operation.operationId)
+      pending = true
+      flush()
+    },
+    dispose() { disposed = true },
+  }
+}
+
 export function PiIntegrationsProvider({ children }: { children: React.ReactNode }) {
   const workspace = useWorkspaceStore()
   const [adapter] = React.useState<PiIntegrationsAdapter | null>(createPiIntegrationsAdapter)
@@ -96,6 +140,7 @@ export function PiIntegrationsProvider({ children }: { children: React.ReactNode
   }))
   const stateRef = React.useRef(state)
   const requestEpoch = React.useRef(0)
+  const bootstrapRefresh = React.useRef<ReturnType<typeof createPiIntegrationBootstrapRefresh> | null>(null)
 
   const updateState = React.useCallback((
     update: (previous: PiIntegrationsState) => PiIntegrationsState,
@@ -122,24 +167,30 @@ export function PiIntegrationsProvider({ children }: { children: React.ReactNode
     snapshot: PiIntegrationSnapshot,
     epoch: number,
     expectedScope: PiIntegrationScope,
+    preserveBootstrapError = false,
   ) => {
     if (
       epoch !== requestEpoch.current ||
       piIntegrationScopeKey(stateRef.current.scope) !== piIntegrationScopeKey(expectedScope) ||
       piIntegrationScopeKey(snapshot.scope) !== piIntegrationScopeKey(expectedScope)
     ) return false
-    updateState((previous) => ({
-      ...previous,
-      snapshot,
-      status: statusFor(snapshot, previous.operation),
-      errorCode: null,
-      errorMessage: null,
-    }))
+    updateState((previous) => {
+      const failed = preserveBootstrapError && previous.operation?.kind === 'bootstrap-defaults' &&
+        previous.operation.phase === 'failed' ? previous.operation : null
+      return {
+        ...previous,
+        snapshot,
+        status: failed ? 'error' : statusFor(snapshot, previous.operation),
+        errorCode: failed ? 'PI_INTEGRATIONS_OPERATION_FAILED' : null,
+        errorMessage: failed ? failed.message ?? 'The operation failed.' : null,
+      }
+    })
     return true
   }, [updateState])
 
-  const refresh = React.useCallback(async () => {
+  const refresh = React.useCallback(async (preserveBootstrapError = false) => {
     if (!adapter) return
+    const finishRequest = bootstrapRefresh.current?.beginRequest()
     const epoch = ++requestEpoch.current
     const scope = stateRef.current.scope
     updateState((previous) => ({
@@ -149,9 +200,11 @@ export function PiIntegrationsProvider({ children }: { children: React.ReactNode
       errorMessage: null,
     }))
     try {
-      applySnapshot(await adapter.load(scope), epoch, scope)
+      applySnapshot(await adapter.load(scope), epoch, scope, preserveBootstrapError)
     } catch (error) {
       fail(error, epoch)
+    } finally {
+      finishRequest?.()
     }
   }, [adapter, applySnapshot, fail, updateState])
 
@@ -160,6 +213,7 @@ export function PiIntegrationsProvider({ children }: { children: React.ReactNode
       Promise<PiIntegrationOperationResult>,
   ) => {
     if (!adapter) return null
+    const finishRequest = bootstrapRefresh.current?.beginRequest()
     const epoch = ++requestEpoch.current
     const scope = stateRef.current.scope
     updateState((previous) => ({
@@ -175,6 +229,8 @@ export function PiIntegrationsProvider({ children }: { children: React.ReactNode
     } catch (error) {
       fail(error, epoch)
       return null
+    } finally {
+      finishRequest?.()
     }
   }, [adapter, applySnapshot, fail, updateState])
 
@@ -205,12 +261,21 @@ export function PiIntegrationsProvider({ children }: { children: React.ReactNode
 
   React.useEffect(() => {
     if (!adapter) return
+    const background = createPiIntegrationBootstrapRefresh(() => refresh(true))
+    bootstrapRefresh.current = background
     const unsubscribeOperations = adapter.subscribe((operation) => {
       if (
         piIntegrationScopeKey(operation.scope) !==
         piIntegrationScopeKey(stateRef.current.scope)
-      ) return
-      updateState((previous) => ({
+      ) {
+        // Global packages also contribute inherited resources to project views.
+        background.observe(operation)
+        return
+      }
+      updateState((previous) => operation.kind === 'bootstrap-defaults' &&
+        previous.operation && previous.operation.kind !== 'bootstrap-defaults' &&
+        ['queued', 'running', 'progress'].includes(previous.operation.phase)
+        ? previous : ({
         ...previous,
         operation,
         status: operation.phase === 'failed'
@@ -223,8 +288,12 @@ export function PiIntegrationsProvider({ children }: { children: React.ReactNode
             }
           : {}),
       }))
+      background.observe(operation)
     })
     return () => {
+      background.dispose()
+      if (bootstrapRefresh.current === background) bootstrapRefresh.current = null
+      requestEpoch.current += 1
       unsubscribeOperations()
     }
   }, [adapter, refresh, updateState])
@@ -249,7 +318,7 @@ export function PiIntegrationsProvider({ children }: { children: React.ReactNode
       await runOperation((nextAdapter, scope) => nextAdapter.install(scope, source))
     },
     loadScope: async (scope) => adapter ? adapter.load(scope) : null,
-    refresh,
+    refresh: () => refresh(),
     remove: async (source) => {
       await runOperation((nextAdapter, scope) => nextAdapter.remove(scope, source))
     },

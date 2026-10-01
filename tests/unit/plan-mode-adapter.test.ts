@@ -10,9 +10,10 @@ import {
   projectPlanMode,
 } from '../../src/renderer/pi-rpc/adapters'
 import { createLocalPiProjectorState } from '../../src/renderer/pi-rpc/projector'
+import { appendLocalPiEntryEvent } from '../../src/renderer/pi-rpc/response-provenance'
 import { projectLocalPiTurns } from '../../src/renderer/pi-rpc/presentation'
 
-const source = 'npm:@narumitw/pi-plan-mode@0.50.1'
+const source = 'npm:@narumitw/pi-plan-mode@0.58.3'
 
 const planPackage: PiPackageSummary = {
   id: 'plan-package',
@@ -20,7 +21,7 @@ const planPackage: PiPackageSummary = {
   sourceType: 'npm',
   displayName: '@narumitw/pi-plan-mode',
   scope: 'global',
-  installedVersion: '0.50.1',
+  installedVersion: '0.58.3',
   pinned: true,
   filtered: false,
   resourceCounts: { extension: 1, skill: 0, prompt: 0, theme: 0 },
@@ -69,6 +70,77 @@ function state(messages: readonly LocalPiAgentMessage[]) {
 }
 
 describe('Plan Mode adapter', () => {
+  it('restores Plan controls when only an appended Goal clear changes the official branch', () => {
+    const projectionState = state([])
+    projectionState.entrySnapshot = {
+      generation: 7, sessionId: 'session-a', cursor: 'goal', leafId: 'goal',
+      entries: [
+        { id: 'plan', parentId: null, timestamp: '2026-10-01T00:00:00Z', type: 'custom', customType: 'plan-mode-state', data: { enabled: true, awaitingAction: true, latestPlan: '# Current plan' } },
+        { id: 'goal', parentId: 'plan', timestamp: '2026-10-01T00:00:01Z', type: 'custom', customType: 'goal-state', data: { goal: { id: 'g', text: 'Existing objective', status: 'paused', iteration: 0, tokensUsed: 0, timeUsedSeconds: 0, automaticModelTurns: 0 } } },
+      ],
+    }
+    const context = { scopeKey: 'one', statuses: { 'plan-mode': 'plan ready' } }
+    const before = projectPlanMode(projectionState, capability, context)!
+    expect(before.actions).not.toContain('implement')
+    expect(before.actions).not.toContain('revise')
+    const next = {
+      ...projectionState,
+      entrySnapshot: appendLocalPiEntryEvent(projectionState.entrySnapshot, {
+        id: 'goal-clear', parentId: 'goal', timestamp: '2026-10-01T00:00:02Z',
+        type: 'custom', customType: 'goal-state', data: { goal: null },
+      }),
+    }
+    expect(next.messages).toBe(projectionState.messages)
+    expect(next.tools).toBe(projectionState.tools)
+    expect(next.entrySnapshot).not.toBe(projectionState.entrySnapshot)
+    const after = projectPlanMode(next, capability, context)!
+    expect(after.sourceEntryId).toBe(before.sourceEntryId)
+    expect(after.lifecycle).toBe(before.lifecycle)
+    expect(after.markdown).toBe(before.markdown)
+    expect(after.actions).toEqual(['show', 'exit', 'revise', 'implement', 'save', 'export'])
+  })
+
+  it('withholds execution and revision while any same-branch Goal remains unfinished', () => {
+    for (const status of ['active', 'paused', 'blocked', 'budget_limited', 'usage_limited']) {
+      const projectionState = state([])
+      projectionState.entrySnapshot = {
+        generation: 7, sessionId: 'session-a', cursor: 'goal', leafId: 'goal',
+        entries: [
+          { id: 'plan', parentId: null, timestamp: '2026-10-01T00:00:00Z', type: 'custom', customType: 'plan-mode-state', data: { enabled: true, awaitingAction: true, latestPlan: '# Current plan' } },
+          { id: 'goal', parentId: 'plan', timestamp: '2026-10-01T00:00:01Z', type: 'custom', customType: 'goal-state', data: { goal: { id: 'g', text: 'Existing objective', status, iteration: 0, tokensUsed: 0, timeUsedSeconds: 0, automaticModelTurns: 0 } } },
+        ],
+      }
+      expect(projectPlanMode(projectionState, capability, { scopeKey: 'one' })?.actions).toEqual(['show', 'exit', 'save', 'export'])
+      projectionState.entrySnapshot.leafId = 'plan'
+      expect(projectPlanMode(projectionState, capability, { scopeKey: 'one' })?.actions).toContain('implement')
+    }
+  })
+
+  it('uses official branch state for restore, saved plans, and clearing instead of old messages', () => {
+    const projectionState = state([completion({ version: 1, source: 'plan_mode_complete', plan: '# Old proposal' })])
+    projectionState.entrySnapshot = {
+      generation: 7, sessionId: 'session-a', cursor: 'abandoned', leafId: 'saved',
+      entries: [
+        { id: 'saved', parentId: null, timestamp: '2026-10-01T00:00:00Z', type: 'custom', customType: 'plan-mode-state', data: { enabled: false, awaitingAction: false, savedPlan: { plan: '# Saved current plan', source: 'plan_mode_complete' } } },
+        { id: 'abandoned', parentId: 'saved', timestamp: '2026-10-01T00:00:01Z', type: 'custom', customType: 'plan-mode-state', data: { enabled: true, awaitingAction: true, latestPlan: '# Abandoned' } },
+        { id: 'clear', parentId: 'saved', timestamp: '2026-10-01T00:00:02Z', type: 'custom', customType: 'plan-mode-state', data: { enabled: false, awaitingAction: false } },
+      ],
+    }
+    expect(projectPlanMode(projectionState, capability, { scopeKey: 'one' })).toMatchObject({ lifecycle: 'saved', markdown: '# Saved current plan', actions: ['show', 'exit', 'implement', 'export'] })
+    // The saved plan no longer has a message in this transcript, so its one card
+    // goes last and the stale proposal reads as an earlier version.
+    const saved = projectPlanMode(projectionState, capability, { scopeKey: 'one' })!
+    const plans = projectLocalPiTurns(projectionState, { planMode: saved }).filter((turn) => turn.kind === 'plan')
+    expect(plans).toEqual([
+      expect.objectContaining({ markdown: '# Old proposal', actions: [], superseded: true }),
+      expect.objectContaining({ markdown: '# Saved current plan', lifecycle: 'saved', sourceEntryId: 'saved', actions: saved.actions }),
+    ])
+    projectionState.entrySnapshot.leafId = 'clear'
+    expect(projectPlanMode(projectionState, capability, { scopeKey: 'one', statuses: { 'plan-mode': 'plan ready' } })).toBeNull()
+    projectionState.entrySnapshot.leafId = 'missing'
+    expect(projectPlanMode(projectionState, capability, { scopeKey: 'one' })).toBeNull()
+  })
+
   it('accepts only exact bounded plan_mode_complete v1 details', () => {
     expect(parsePlanCompletionDetails({
       version: 1,
@@ -174,6 +246,10 @@ describe('Plan Mode adapter', () => {
     expect(planning?.lifecycle).toBe('planning')
     expect(planning?.actions).toEqual(['finalize', 'exit'])
     expect(planning?.actions).not.toContain('revise')
+    // Plan mode is on before any plan exists; its card still offers finalize/exit.
+    expect(projectLocalPiTurns(state([]), { planMode: planning }).filter((turn) => turn.kind === 'plan')).toEqual([
+      expect.objectContaining({ markdown: '', lifecycle: 'planning', actions: ['finalize', 'exit'] }),
+    ])
   })
 
   it('maps only externally reachable direct routes', () => {
@@ -209,6 +285,7 @@ describe('Plan Mode adapter', () => {
         markdown: '# Earlier',
         sourceEntryId: 'plan-call-earlier',
         actions: [],
+        superseded: true,
       }),
       expect.objectContaining({
         kind: 'plan',
@@ -217,6 +294,9 @@ describe('Plan Mode adapter', () => {
         actions: expect.arrayContaining(['implement', 'exit']),
       }),
     ]))
+    // Only earlier versions collapse; the newest plan stays the full card.
+    expect(turns.find((turn) => turn.kind === 'plan' && turn.markdown === '# Current'))
+      .not.toHaveProperty('superseded')
   })
 
   it('deduplicates tool and proposed-plan surfaces without dropping the current source', () => {
@@ -243,7 +323,8 @@ describe('Plan Mode adapter', () => {
     expect(turns).toContainEqual(expect.objectContaining({
       kind: 'plan',
       sourceEntryId: 'custom:3:1',
-      actions: expect.arrayContaining(['show', 'revise', 'exit']),
+      actions: expect.arrayContaining(['show', 'exit']),
     }))
+    expect(plan.actions).not.toContain('revise')
   })
 })

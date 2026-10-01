@@ -49,6 +49,8 @@ import {
 } from '@/renderer/pi-rpc/adapters'
 import {
   mergeLocalPiEntrySnapshot,
+  canAppendLocalPiEntry,
+  appendLocalPiEntryEvent,
   type LocalPiEntrySnapshot,
 } from '@/renderer/pi-rpc/response-provenance'
 import { createProvenanceRefreshQueue } from '@/renderer/pi-rpc/provenance-refresh-queue'
@@ -828,13 +830,16 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
   const planStatus = statuses[PLAN_STATUS_KEY]
   const planWidget = widgets.find((widget) => widget.key === PLAN_WIDGET_KEY)
   const goalStatus = statuses[GOAL_STATUS_KEY]
+  // Goal slash commands can change Plan actions by appending a custom entry
+  // without changing Plan status, messages, or tools. Keep the entry snapshot
+  // in this memo's dependencies so clearing Goal releases the handoff controls.
   const planMode = React.useMemo(() => projectPlanMode(
     projection,
     projectionScopeKey.current === activeScopeKey
       ? adapterCapabilities.planMode
       : null,
     { scopeKey: activeScopeKey, statuses: planStatus === undefined ? {} : { [PLAN_STATUS_KEY]: planStatus }, widgets: planWidget ? [planWidget] : [] },
-  ), [activeScopeKey, adapterCapabilities.planMode, projection.generation, projection.sessionId, projection.messages, projection.tools, planStatus, planWidget])
+  ), [activeScopeKey, adapterCapabilities.planMode, projection.generation, projection.sessionId, projection.entrySnapshot, projection.messages, projection.tools, planStatus, planWidget])
   const goalMode = React.useMemo(() => projectGoalMode(
     projection,
     projectionScopeKey.current === activeScopeKey
@@ -1675,16 +1680,16 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
       previousProjection.entrySnapshot.sessionId === previousProjection.sessionId &&
       !previousProjection.entrySnapshot.entries.some((entry) => entry.id === event.entry.id)
     ) {
-      nextProjection = {
-        ...nextProjection,
-        entrySnapshot: mergeLocalPiEntrySnapshot(previousProjection.entrySnapshot, {
-          generation: envelope.generation,
-          sessionId: previousProjection.sessionId,
-          entries: [event.entry],
-          leafId: event.entry.id,
-          append: true,
-        }),
-        revision: previousProjection.revision + 1,
+      if (canAppendLocalPiEntry(previousProjection.entrySnapshot, event.entry)) {
+        nextProjection = {
+          ...nextProjection,
+          entrySnapshot: appendLocalPiEntryEvent(previousProjection.entrySnapshot, event.entry),
+          revision: previousProjection.revision + 1,
+        }
+      } else {
+        // Keep the last contiguous cursor until an authoritative page supplies
+        // the ordinary SDK messages preceding this custom entry.
+        void refreshResponseActivityProvenance()
       }
     }
     commitProjection(nextProjection)
@@ -2500,6 +2505,7 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
       outline: outlineProjector(turns),
       revision: projection.revision + responseActivityRevision,
       loading: transcriptLoading,
+      entries: projection.entrySnapshot,
     }
   }, [activeScopeKey, planMode, projection, responseActivities, responseActivityRevision, transcriptLoading, turnProjector, outlineProjector])
   const [transcriptStore] = React.useState(() => createTranscriptStore(transcriptSnapshot))
@@ -2513,7 +2519,7 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
       ? 'failed'
       : session?.isStreaming
         ? planMode?.lifecycle === 'planning' ? 'planning' : 'running'
-        : goalMode?.lifecycle === 'active' || goalMode?.lifecycle === 'queued'
+        : goalMode?.lifecycle === 'active'
           ? 'running'
         : 'idle',
     models,
@@ -2528,10 +2534,23 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
     retryActivity,
   }), [commands, compacting, error, goalMode?.lifecycle, hydration, loading, models, planMode?.lifecycle, queue, retryActivity, runtime, session, stats, thinkingLevels])
 
+  // Supported Plan and Goal plugins are presented by their own surfaces (plan
+  // card, composer capsule, Overview). Their raw status lines would only repeat
+  // that state, and copies promoted from earlier prompts go stale.
+  const visibleNotifications = React.useMemo(() => {
+    const owned = [
+      ...(adapterCapabilities.planMode ? [`status:${PLAN_STATUS_KEY}`, `widget:${PLAN_WIDGET_KEY}`] : []),
+      ...(adapterCapabilities.goal ? [`status:${GOAL_STATUS_KEY}`] : []),
+    ]
+    if (!owned.length) return notifications
+    return notifications.filter((notification) => !owned.some((suffix) =>
+      notification.id === `extension-${suffix}` || notification.id.endsWith(`:${suffix}`)))
+  }, [adapterCapabilities.goal, adapterCapabilities.planMode, notifications])
+
   const extensionView = React.useMemo<PiExtensionView>(() => ({
     dialog: dialogs[0] ?? null,
     dialogBusy,
-    notifications,
+    notifications: visibleNotifications,
     statuses,
     widgets,
     title: extensionTitle,
@@ -2540,7 +2559,7 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
     draftReplacement,
     goalMode,
     planMode,
-  }), [dialogBusy, dialogs, draftReplacement, extensionTitle, goalMode, notifications, planMode, statuses, unsupportedMethods, widgets, workingMessage, workingVisible])
+  }), [dialogBusy, dialogs, draftReplacement, extensionTitle, goalMode, visibleNotifications, planMode, statuses, unsupportedMethods, widgets, workingMessage, workingVisible])
 
   return (
     <ActionsContext.Provider value={actions}>
@@ -2569,6 +2588,12 @@ export function usePiTranscript() {
 export function usePiTranscriptLoading() {
   const store = requiredContext(TranscriptContext, 'usePiTranscriptLoading')
   return React.useSyncExternalStore(store.subscribe, store.getLoading, store.getLoading)
+}
+
+/** Durable current-branch entries; streaming text deltas do not wake this selector. */
+export function usePiSessionEntries() {
+  const store = requiredContext(TranscriptContext, 'usePiSessionEntries')
+  return React.useSyncExternalStore(store.subscribe, store.getEntries, store.getEntries)
 }
 
 export function usePiOutline() {

@@ -137,7 +137,7 @@ async function seedData(root: string) {
     }] })),
     writeFile(join(userData, 'settings.json'), JSON.stringify({ version: SETTINGS_SCHEMA_VERSION,
       settings: { ...DEFAULT_SETTINGS, locale: 'en-US',
-        appearance: { ...DEFAULT_SETTINGS.appearance, theme: 'dark' }, notifications: { desktop: false } } })),
+        appearance: { ...DEFAULT_SETTINGS.appearance, theme: 'dark' }, notifications: { desktop: false, sound: false } } })),
   ])
   return { pi, project, sessionFile, session, userData, agentDir, environment: linuxCanaryEnvironment(root, pi.env) }
 }

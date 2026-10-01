@@ -122,6 +122,84 @@ async function fixture() {
 }
 
 describe('LocalPiIntegrationService', () => {
+  it('runs bootstrap as one background integration operation and reloads only after new installs', async () => {
+    const work = await fixture()
+    const events: string[] = []
+    work.service.subscribe((operation) => events.push(`${operation.kind}:${operation.phase}`))
+    work.helperRun.mockResolvedValueOnce({
+      ...payload(),
+      defaultPackages: [{ packageName: 'pi-subagents', source: 'npm:pi-subagents@0.74.0', status: 'installed' }],
+      defaultPackagesChanged: true,
+    })
+    try {
+      const first = work.service.bootstrapDefaults()
+      expect(work.service.bootstrapDefaults()).toBe(first)
+      const result = await first
+      expect(work.helperRun).toHaveBeenCalledWith(expect.objectContaining({ action: 'bootstrap-defaults', scope: { kind: 'global' } }), expect.any(Function))
+      expect(result.runtimeSync).toBe('synchronized')
+      expect(result.snapshot.defaultPackages?.[0]?.status).toBe('installed')
+      expect(result.snapshot).not.toHaveProperty('defaultPackagesChanged')
+      expect(events).toEqual(['bootstrap-defaults:queued', 'bootstrap-defaults:running', 'bootstrap-defaults:succeeded'])
+      expect(work.reloadHosts).toHaveBeenCalledTimes(1)
+    } finally { await work.service.dispose() }
+  })
+
+  it('does not reload runtimes when the default package decisions were already recorded', async () => {
+    const work = await fixture()
+    work.helperRun.mockResolvedValueOnce({ ...payload(), defaultPackagesChanged: false })
+    try {
+      const result = await work.service.bootstrapDefaults()
+      expect(result.runtimeSync).toBe('not-requested')
+      expect(work.reloadHosts).not.toHaveBeenCalled()
+    } finally { await work.service.dispose() }
+  })
+
+  it('defers synchronization of new defaults while chat is busy without restarting it', async () => {
+    const work = await fixture()
+    work.helperRun.mockResolvedValueOnce({ ...payload(), defaultPackagesChanged: true })
+    work.reloadHosts.mockRejectedValueOnce(new Error('A conversation is streaming.'))
+    try {
+      const result = await work.service.bootstrapDefaults()
+      expect(result).toMatchObject({ runtimeSync: 'persisted-only', snapshot: { restartRequired: true } })
+      expect(work.restartHosts).not.toHaveBeenCalled()
+      expect(work.runtimeHost.restart).not.toHaveBeenCalled()
+    } finally { await work.service.dispose() }
+  })
+
+  it('retains an early bootstrap failure for the settings snapshot without retrying during load', async () => {
+    const work = await fixture()
+    work.helperRun.mockRejectedValueOnce(new Error('Global settings cannot be read.'))
+    try {
+      await expect(work.service.bootstrapDefaults()).rejects.toThrow('Global settings cannot be read.')
+      const snapshot = await work.service.load({ kind: 'global' })
+      expect(snapshot.diagnostics).toContainEqual(expect.objectContaining({
+        code: 'PI_DEFAULT_PACKAGES_BOOTSTRAP_FAILED',
+        message: 'Global settings cannot be read.',
+      }))
+      await expect(work.service.bootstrapDefaults()).rejects.toThrow('Global settings cannot be read.')
+      expect(work.helperRun).toHaveBeenCalledTimes(2)
+    } finally { await work.service.dispose() }
+  })
+
+  it('retains a synchronization marker if bootstrap fails after an install started', async () => {
+    const work = await fixture()
+    work.helperRun.mockImplementationOnce(async (_command, onProgress) => {
+      onProgress?.({ type: 'start', action: 'install', source: 'npm:pi-subagents@0.74.0' })
+      throw new Error('The helper exceeded its deadline.')
+    })
+    try {
+      await expect(work.service.bootstrapDefaults()).rejects.toThrow('deadline')
+      work.helperRun.mockResolvedValueOnce({ ...payload(), defaultPackages: [{
+        packageName: 'pi-subagents', source: 'npm:pi-subagents@0.74.0', status: 'installing',
+      }] })
+      const snapshot = await work.service.load({ kind: 'global' })
+      expect(snapshot.restartRequired).toBe(true)
+      expect(snapshot.defaultPackages?.[0]).toMatchObject({ status: 'failed', message: expect.stringContaining('deadline') })
+      expect(work.reloadHosts).not.toHaveBeenCalled()
+      expect(work.restartHosts).not.toHaveBeenCalled()
+    } finally { await work.service.dispose() }
+  })
+
   it('reports a bundled-SDK snapshot without touching the runtime', async () => {
     const { runtimeHost, service } = await fixture()
     try {

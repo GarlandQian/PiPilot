@@ -83,17 +83,18 @@ describe('contextual Inspector accessibility', () => {
     expect(markup).toContain('role="tablist"')
     expect(markup).toContain('role="tabpanel"')
     const views = markup.match(/<section[^>]*data-inspector-view="[^"]+"[^>]*>/gu) ?? []
-    expect(views).toHaveLength(2)
-    expect(views[0]).toContain('aria-label="inspector.tab.files"')
-    expect(views[0]).not.toContain('hidden=')
-    for (const view of views.slice(1)) expect(view).toContain('hidden=""')
+    expect(views).toHaveLength(3)
+    const files = views.find((view) => view.includes('data-inspector-view="files"'))
+    expect(files).toContain('aria-label="inspector.tab.files"')
+    expect(files).not.toContain('hidden=')
+    for (const view of views.filter((view) => view !== files)) expect(view).toContain('hidden=""')
     for (const tab of INSPECTOR_TABS) {
       expect(markup).toContain(`id="resource-tab-${tab}"`)
       expect(markup).toContain(`aria-controls="resource-view-${tab}"`)
       expect(markup).toContain(`id="resource-view-${tab}"`)
       expect(markup).toContain(`aria-labelledby="resource-tab-${tab}"`)
     }
-    expect(INSPECTOR_TABS).toEqual(['files', 'diff'])
+    expect(INSPECTOR_TABS).toEqual(['context', 'files', 'diff'])
     expect(isInspectorTab('terminal')).toBe(false)
     expect(isInspectorTab('outline')).toBe(false)
     expect(markup).not.toContain('inspector.tab.outline')

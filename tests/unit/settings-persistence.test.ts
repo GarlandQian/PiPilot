@@ -91,6 +91,16 @@ afterEach(() => {
 })
 
 describe('durable settings acknowledgements', () => {
+  it('persists completion sound independently of the desktop notification preference', async () => {
+    const { repository, path } = createRepository()
+    repository.initialize()
+    const changed = repository.update({ notifications: { sound: false } })
+    const acknowledgement = repository.whenPersisted(changed.revision)
+    repository.flush()
+    expect((await acknowledgement).settings.notifications).toEqual({ desktop: true, sound: false })
+    expect(JSON.parse(readFileSync(path, 'utf8')).settings.notifications).toEqual({ desktop: true, sound: false })
+  })
+
   it('acknowledges initialization and already durable revisions without another write', async () => {
     const { repository } = createRepository()
     const initialized = repository.initialize()

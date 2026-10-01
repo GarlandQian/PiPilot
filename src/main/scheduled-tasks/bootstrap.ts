@@ -1,5 +1,4 @@
 import { join } from 'node:path'
-import { Notification } from 'electron'
 import type { OfficialPiSessionCatalog } from '../conversations/official-pi-session-catalog'
 import type { PiRuntimeFrontend } from '../pi-host/pi-runtime-frontend'
 import type { WorkspaceRepository } from '../repositories/workspace-repository'
@@ -10,32 +9,27 @@ import { ExternalControlIdentityRepository } from '../external-control/identity-
 import { ConversationMcpOperationRegistry } from '../external-control/operation-registry'
 import { ScheduledTaskRepository } from './repository'
 import { ScheduledTaskService } from './service'
-import type { ScheduledRun } from '../../shared/scheduled-tasks'
+import { createScheduledFailureNotifier } from './notifications'
+import type { TaskNotificationService } from '../notifications/task-notification-service'
 
 export function createScheduledTaskFeature(options: {
   directory: string
   catalog: OfficialPiSessionCatalog
   runtime: PiRuntimeFrontend
   workspaces: WorkspaceRepository
-  desktopEnabled(): boolean
-  notificationBody(run: ScheduledRun): string
-  revealWindow(): void
+  notifications: Pick<TaskNotificationService, 'reportScheduledPreflightFailure'>
 }) {
   const identity = new ExternalControlIdentityRepository(join(options.directory, 'identity.json'))
   const inventory = new ConversationMcpInventoryService(options.workspaces, options.catalog, options.runtime, identity)
   const audit = new ConversationMcpAuditRepository(join(options.directory, 'operations.jsonl'))
   const control = new ConversationMcpControlService(inventory, options.runtime, new ConversationMcpOperationRegistry(), audit)
-  const native = new Set<Notification>()
+  // Scheduled prompts use the same Runtime as ordinary conversation prompts.
+  // TaskNotificationService observes their settled outcome and owns both
+  // banners and completion sound, including visibility and preference checks.
+  // Only pre-acceptance failures use the same service's scheduler fallback.
   const service = new ScheduledTaskService({
     repository: new ScheduledTaskRepository(join(options.directory, 'ledger.json')), inventory, control,
-    notify(run) {
-      if (!options.desktopEnabled() || !Notification.isSupported()) return
-      const notification = new Notification({ title: run.taskName, body: options.notificationBody(run) })
-      native.add(notification)
-      notification.once('click', options.revealWindow)
-      notification.once('close', () => native.delete(notification))
-      notification.show()
-    },
+    notify: createScheduledFailureNotifier(control, options.notifications),
   })
   service.initialize()
   return {
@@ -43,8 +37,6 @@ export function createScheduledTaskFeature(options: {
     async dispose() {
       await service.dispose()
       await control.dispose()
-      for (const notification of native) notification.close()
-      native.clear()
     },
   }
 }

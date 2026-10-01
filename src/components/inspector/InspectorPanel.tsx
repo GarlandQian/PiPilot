@@ -39,6 +39,7 @@ interface InspectorPanelProps {
   commandCall?: ToolCall | null
   onCloseCommand?: () => void
   sideChat?: React.ReactNode
+  contextPanel?: React.ReactNode
 }
 
 function errorCode(error: unknown) {
@@ -248,6 +249,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
   return <aside aria-label={t('inspector.title')} style={{ width: props.width, maxWidth: '100%' }} className="relative flex h-full min-w-0 flex-col border-l border-border bg-surface">
     <div data-inspector-views className="flex min-h-0 flex-1 flex-col gap-0">
       <InspectorToolbar activeView={activeTab} onViewChange={onActiveTabChange} onClose={props.onClose} onBack={onBack} workspaceName={activeTab === 'sidechat' ? t('inspector.tab.sidechat') : selectedProject?.name} onExpand={props.onExpand} expanded={props.expanded} hasSideChat={Boolean(props.sideChat)} />
+      <InspectorView view="context" activeView={activeTab}>{props.contextPanel}</InspectorView>
       {workspace && adapter ? <WorkspaceInspectorTabs
         key={workspace.id} adapter={adapter} workspaceId={workspace.id} workspaceName={workspace.name}
         tab={activeTab} onTabChange={onActiveTabChange} visible={visible} sessionKey={props.sessionKey}

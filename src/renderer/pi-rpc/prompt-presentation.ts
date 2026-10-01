@@ -47,7 +47,10 @@ export function parsePromptSkillEnvelope(text: string): PromptSkillEnvelope | nu
 }
 
 /** A readable tooltip without exposing the SDK envelope or changing its source. */
-export function promptDisplaySummary(text: string): string {
+export function promptDisplaySummary(text: string, planLabel: (title: string) => string = (title) => title): string {
+  const kickoff = parseConversationPlanKickoff(text)
+  if (kickoff) return planLabel(kickoff.title)
   const skill = parsePromptSkillEnvelope(text)
   return skill ? `${skill.name}${skill.userMessage ? ` · ${skill.userMessage}` : ''}` : text
 }
+import { parseConversationPlanKickoff } from '../../shared/conversation-task'

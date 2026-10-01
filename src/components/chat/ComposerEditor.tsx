@@ -67,6 +67,7 @@ export interface ComposerEditorHandle {
   ): boolean
   removeMentions(): boolean
   insertReferences(references: readonly PrecisionReference[]): boolean
+  appendPlainText(text: string): boolean
   replaceSlashArgumentCompletion(
     query: ComposerSlashArgumentQuery,
     value: string,
@@ -683,6 +684,15 @@ export const ComposerEditor = React.forwardRef<ComposerEditorHandle, ComposerEdi
         return chain.insertContent(added.map((reference) => ({
           type: 'paragraph', content: [{ type: PRECISION_REFERENCE_NODE, attrs: { reference } }, { type: 'text', text: ' ' }],
         }))).run()
+      },
+      appendPlainText(text) {
+        if (!editor.isEditable || !text.trim()) return false
+        exitSuggestion(editor.view, mentionPluginKey)
+        lastSuggestion.current = null
+        // Insert JSON text nodes, never parse a suggested prompt as HTML. Keep
+        // existing mentions/references and preserve undo history and attachments.
+        const content = plainTextToComposerDocument(text).content ?? []
+        return editor.chain().focus('end').insertContent(content).run()
       },
       replaceSlashArgumentCompletion(query, value) {
         if (revision.current !== query.documentRevision) return false

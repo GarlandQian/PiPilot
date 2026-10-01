@@ -2,19 +2,27 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { TooltipProvider } from '../../src/components/ui/tooltip'
+import { createConversationPlanKickoff } from '../../src/shared/conversation-task'
 import {
   UserMessageContent,
   userMessageImageSource,
 } from '../../src/components/chat/UserMessageContent'
 
 vi.mock('@/i18n', () => ({
-  useT: () => (key: string) => key,
+  useT: () => (key: string, params?: Record<string, string | number>) => key === 'taskContext.planKickoff' ? `继续已批准的计划：${params?.title}` : key,
 }))
 vi.mock('@/store/settings', () => ({
   useSettings: () => ({ appearance: { showLineNumbers: true, wordWrap: true } }),
 }))
 
 describe('UserMessageContent', () => {
+  it('shows the approved plan kickoff in the UI language without runtime instructions or identifiers', () => {
+    const text = createConversationPlanKickoff({ title: '**完成重构**', id: 'plan-1' }, '325bb64b-1779-4163-b44c-9179e8092a26')
+    const markup = renderToStaticMarkup(createElement(TooltipProvider, null, createElement(UserMessageContent, { text })))
+    expect(markup).toContain('继续已批准的计划：<strong>完成重构</strong>')
+    expect(markup).not.toMatch(/pipilot_update_task|plan-1|325bb64b|Do not ask/)
+    expect(text).toContain('pipilot_update_task')
+  })
   it('shows a skill badge and expandable Markdown instructions without losing the user message or image', () => {
     const text = '<skill name="review-helper" location="/fixture/skills/review-helper/SKILL.md">\n## Skill instructions\n\n- **Inspect** the files.\n</skill>\n\nPlease **review** [this change](https://example.test/change).'
     const markup = renderToStaticMarkup(createElement(TooltipProvider, null, createElement(UserMessageContent, {

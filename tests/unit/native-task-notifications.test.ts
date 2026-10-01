@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 
-const state = vi.hoisted(() => ({ options: [] as unknown[], clicks: [] as Array<() => void> }))
+const state = vi.hoisted(() => ({ options: [] as unknown[], clicks: [] as Array<() => void>, beep: vi.fn() }))
 vi.mock('electron', () => ({
+  shell: { beep: state.beep },
   Notification: class {
     static isSupported() { return true }
     constructor(options: unknown) { state.options.push(options) }
@@ -26,5 +27,8 @@ describe('native task notifications', () => {
     ])
     state.clicks[0]()
     expect(click).toHaveBeenCalledOnce()
+    expect(state.beep).not.toHaveBeenCalled()
+    english.playCompletionSound()
+    expect(state.beep).toHaveBeenCalledOnce()
   })
 })

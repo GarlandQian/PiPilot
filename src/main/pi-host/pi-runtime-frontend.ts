@@ -1,6 +1,9 @@
 import { realpathSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
 import type { ExternalControlRequestedMode } from '../../shared/external-control-mode'
+import { getConversationBranchEntries } from '../../shared/conversation-task'
+import { getGoalStateFromBranch, type GoalSnapshot } from '../../shared/goal-state'
+import { getPlanStateFromBranch, type PlanState } from '../../shared/plan-state'
 import {
   LOCAL_PI_RUNTIME_SESSION_PENDING_MAX,
   LOCAL_PI_RUNTIME_SESSION_STATUS_MAX_ITEMS,
@@ -26,6 +29,7 @@ import type {
   PiHostEventEnvelope,
   PiHostUiRequestEventEnvelope,
 } from '../../shared/pi-host-protocol'
+import { removeFailedConversationImport } from '../conversations/failed-conversation-import'
 import type { ConversationScopeResolver } from '../conversations/conversation-scope-resolver'
 import { PiHostControllerError } from './pi-host-controller'
 import {
@@ -80,11 +84,17 @@ export class PiRuntimeFrontendError extends Error {
   }
 }
 
+export interface PiRuntimeWorkflowState {
+  plan?: PlanState
+  goal?: GoalSnapshot | null
+}
+
 export interface PiRuntimeFrontendTarget {
   scope: ConversationScope
   sessionFile?: string
   forkSessionFile?: string
   selectionToken?: SessionCatalogSelectionToken
+  importHistory?: import('../../shared/conversation-import').ImportedConversationHistory
 }
 
 type SnapshotListener = (snapshot: LocalPiRuntimeSnapshot) => void
@@ -205,6 +215,7 @@ interface PreparedRuntimeTarget {
   scope: ProjectHostScope
   sessionFile?: string
   forkSessionFile?: string
+  importHistory?: import('../../shared/conversation-import').ImportedConversationHistory
 }
 
 interface RuntimePreparation {
@@ -693,6 +704,7 @@ export class PiRuntimeFrontend {
       descriptor = await this.pool.createRuntime(prepared.scope, {
         ...(prepared.sessionFile === undefined ? {} : { sessionFile: prepared.sessionFile }),
         ...(prepared.forkSessionFile === undefined ? {} : { forkSessionFile: prepared.forkSessionFile }),
+        ...(prepared.importHistory === undefined ? {} : { importHistory: prepared.importHistory }),
       })
       this.assertNotDisposed()
       this.assertSessionAvailable(prepared)
@@ -731,8 +743,9 @@ export class PiRuntimeFrontend {
     } catch (error) {
       if (descriptor) {
         const owned = runtime && this.runtimes.get(runtime.runtimeId) === runtime ? runtime.descriptor : descriptor
-        await this.pool.disposeRuntime(owned.runtimeId, owned.generation).catch(() => undefined)
+        const released = await this.pool.disposeRuntime(owned.runtimeId, owned.generation).then(() => true, () => false)
         this.dropCachedRuntime(descriptor.runtimeId)
+        if (prepared.importHistory && released) await removeFailedConversationImport(descriptor.sessionFile, descriptor.sessionId, prepared.importHistory.importId).catch(() => false)
       }
       throw this.toFrontendError(error)
     } finally {
@@ -884,6 +897,38 @@ export class PiRuntimeFrontend {
       throw new PiRuntimeFrontendError('PI_RUNTIME_OPERATION_FAILED', 'The side conversation transcript is no longer available.')
     }
     return localPiMessagesResponseDataSchema.parse(result.response.data)
+  }
+
+  /** Read plugin-owned workflows from the exact branch, including background Sessions. */
+  async getControlWorkflowState(handle: PiRuntimeControlHandle): Promise<PiRuntimeWorkflowState> {
+    const history = await this.getControlEntries(handle)
+    const branch = getConversationBranchEntries(history.entries, history.leafId)
+    const plan = branch ? getPlanStateFromBranch(branch) : null
+    const goal = branch ? getGoalStateFromBranch(branch) : null
+    if (!branch || plan === null || goal === null) {
+      throw new PiRuntimeFrontendError('PI_RUNTIME_OPERATION_FAILED', 'The conversation workflow state could not be verified.')
+    }
+    return { plan, goal: goal?.goal }
+  }
+
+  /** Read authoritative history without activating, rebinding or executing a Session. */
+  async getControlEntries(handle: PiRuntimeControlHandle) {
+    this.assertNotDisposed()
+    const runtime = this.requireControlRuntime(handle)
+    // Completion releases ordinary execution pins. Retain this exact Runtime
+    // while checking its workflow so idle-cache reclamation cannot race the read.
+    const lease = this.pinControlRuntime(runtime)
+    try {
+      const result = await this.pool.command(handle.runtimeId, { type: 'get_entries' }, handle.generation)
+      this.requireControlRuntime(handle)
+      if (this.runtimes.get(runtime.runtimeId) !== runtime || result.runtime.generation !== handle.generation ||
+          !result.response.success || result.response.command !== 'get_entries') {
+        throw new PiRuntimeFrontendError('PI_RUNTIME_OPERATION_FAILED', 'The conversation history is no longer available.')
+      }
+      return result.response.data
+    } finally {
+      this.releaseControlRuntime(lease)
+    }
   }
 
   async abortControlRuntime(
@@ -1724,6 +1769,7 @@ export class PiRuntimeFrontend {
        */
       if (
         attempt === 0 &&
+        target.importHistory === undefined &&
         (failure.recoverable || failure.code === 'PI_RUNTIME_HOST_RECOVERY_FAILED') &&
         (failure.code === 'PI_RUNTIME_CONFIRMATION_FAILED' ||
           failure.code === 'PI_RUNTIME_OPERATION_FAILED' ||
@@ -2305,7 +2351,7 @@ export class PiRuntimeFrontend {
   }
 
   private async prepareTarget(target: PiRuntimeFrontendTarget) {
-    if (target.sessionFile !== undefined && target.forkSessionFile !== undefined) {
+    if ([target.sessionFile, target.forkSessionFile, target.importHistory].filter((item) => item !== undefined).length > 1) {
       throw new PiRuntimeFrontendError(
         'PI_RUNTIME_INVALID_TARGET',
         'Pi session and fork sources are mutually exclusive.',
@@ -2321,6 +2367,7 @@ export class PiRuntimeFrontend {
       } satisfies ProjectHostScope,
       ...(target.sessionFile === undefined ? {} : { sessionFile: target.sessionFile }),
       ...(target.forkSessionFile === undefined ? {} : { forkSessionFile: target.forkSessionFile }),
+      ...(target.importHistory === undefined ? {} : { importHistory: target.importHistory }),
     }
   }
 

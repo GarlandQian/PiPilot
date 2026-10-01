@@ -962,6 +962,16 @@ export class OfficialPiSessionCatalog {
     }
   }
 
+  /** Resolve one rendered row for a read without consuming recovery tokens. */
+  async resolveReadTarget(
+    rawScope: ConversationScope,
+    rawSelectionToken: SessionCatalogSelectionToken,
+  ): Promise<OfficialPiSessionControlTarget> {
+    const selection = this.locateSelection(rawScope, rawSelectionToken)
+    await this.validateCachedSelection(selection)
+    return this.controlTargetFor(selection.cache, selection.row)
+  }
+
   async resolve(
     rawScope: ConversationScope,
     rawSelectionToken: SessionCatalogSelectionToken,

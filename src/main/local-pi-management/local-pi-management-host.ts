@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { isAbsolute, resolve } from 'node:path'
 import {
   piManagementHelperCommandSchema,
@@ -18,6 +18,28 @@ const DEFAULT_STDERR_BYTES = 16 * 1_024
 const DEFAULT_RECORD_COUNT = 2_000
 
 type SpawnProcess = typeof spawn
+
+/** Only call for a helper spawned by this host in its own process group. */
+export function terminatePiManagementProcess(
+  child: Pick<ChildProcessWithoutNullStreams, 'pid' | 'kill'>,
+  platform: NodeJS.Platform = process.platform,
+  runFile: typeof execFile = execFile,
+  signalGroup: typeof process.kill = process.kill.bind(process),
+) {
+  const pid = child.pid
+  if (pid === undefined || !Number.isSafeInteger(pid) || pid <= 0) return
+  if (platform === 'win32') {
+    runFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, () => undefined)
+    return
+  }
+  try {
+    // Group termination includes npm/git descendants and prevents timed-out
+    // installs from continuing to mutate files after a retry becomes possible.
+    signalGroup(-pid, 'SIGKILL')
+  } catch {
+    try { child.kill('SIGKILL') } catch { /* The owned helper already exited. */ }
+  }
+}
 
 export type LocalPiManagementHostErrorCode =
   | 'PI_MANAGEMENT_HELPER_INVALID'
@@ -60,7 +82,7 @@ function appendTail(current: Buffer, chunk: Buffer, limit: number) {
 }
 
 function mutation(command: PiManagementHelperCommand) {
-  return ['install', 'update', 'remove', 'set-retry', 'set-default-model'].includes(command.action)
+  return ['install', 'update', 'remove', 'set-retry', 'set-default-model', 'bootstrap-defaults'].includes(command.action)
 }
 
 export class LocalPiManagementHost {
@@ -138,6 +160,7 @@ export class LocalPiManagementHost {
             shell: false,
             stdio: ['pipe', 'pipe', 'pipe'],
             windowsHide: true,
+            detached: process.platform !== 'win32',
           },
         )
       } catch {
@@ -180,10 +203,10 @@ export class LocalPiManagementHost {
 
       const terminate = (error: LocalPiManagementHostError) => {
         failure ??= error
-        if (!child.killed) child.kill()
+        terminatePiManagementProcess(child)
         if (!killTimer) {
           killTimer = setTimeout(() => {
-            child.kill('SIGKILL')
+            terminatePiManagementProcess(child)
             forcedSettleTimer = setTimeout(settle, this.killGraceMs)
             forcedSettleTimer.unref()
           }, this.killGraceMs)
@@ -325,14 +348,14 @@ export class LocalPiManagementHost {
   async dispose() {
     this.disposed = true
     const active = [...this.active]
-    for (const child of active) child.kill()
+    for (const child of active) terminatePiManagementProcess(child)
     await Promise.all(active.map((child) => new Promise<void>((resolveDispose) => {
       if (child.exitCode !== null || child.signalCode !== null) {
         resolveDispose()
         return
       }
       const timer = setTimeout(() => {
-        child.kill('SIGKILL')
+        terminatePiManagementProcess(child)
         resolveDispose()
       }, this.killGraceMs)
       timer.unref()

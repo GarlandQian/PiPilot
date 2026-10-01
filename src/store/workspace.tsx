@@ -22,6 +22,7 @@ import {
 } from '@/shared/local-pi'
 import type { WorkspaceSnapshot } from '@/shared/schemas/workspace'
 import type { WorkspacePathSearchResult } from '@/shared/workspace-content'
+import type { ConversationImportCommitRequest } from '@/shared/conversation-import'
 import type { RecentProject, Session, Workspace } from '@/types/chat'
 import {
   deriveOfficialSessionState,
@@ -72,6 +73,7 @@ export interface WorkspaceActions {
   loadSessionCatalog(scope: ConversationScope, refresh?: boolean): Promise<void>
   ensureInputSession(signal: AbortSignal): Promise<ConversationActivationResult | null>
   newSession(scope: ConversationScope): Promise<void>
+  importSession(input: ConversationImportCommitRequest): Promise<void>
   openSession(
     scope: ConversationScope,
     selectionToken: SessionCatalogSelectionToken,
@@ -806,6 +808,16 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     }
   }, [adapter, applyActivation, applyRuntimeSnapshot, clearError, fail, refreshConversation])
 
+  const importSession = React.useCallback(async (input: ConversationImportCommitRequest) => {
+    if (!adapter) throw new Error('Session import is unavailable.')
+    const activation = await adapter.conversationImport.commit(input)
+    applyActivation(activation)
+    clearError()
+    // Import already committed a durable new session. A later refresh failure
+    // must not invite the user to import the same document again.
+    await refreshConversation(activation.scope, true).catch(fail)
+  }, [adapter, applyActivation, clearError, fail, refreshConversation])
+
   const openSession = React.useCallback(async (
     scope: ConversationScope,
     selectionToken: SessionCatalogSelectionToken,
@@ -1015,6 +1027,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     loadSessionCatalog,
     ensureInputSession,
     newSession,
+    importSession,
     openSession,
     openWorkspace,
     removeWorkspace,
@@ -1031,6 +1044,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     loadSessionCatalog,
     ensureInputSession,
     newSession,
+    importSession,
     openSession,
     openWorkspace,
     removeWorkspace,

@@ -2,6 +2,7 @@ import * as React from 'react'
 import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { PromptMarkdown } from './PromptMarkdown'
+import { parseConversationPlanKickoff } from '@/shared/conversation-task'
 import type { UserMessageImage } from '@/types/chat'
 
 const DISPLAYABLE_IMAGE_TYPES = new Set(['image/jpeg', 'image/png'])
@@ -31,10 +32,12 @@ export const UserMessageContent = React.memo(function UserMessageContent({
   images = [],
 }: UserMessageContentProps) {
   const t = useT()
+  const kickoff = parseConversationPlanKickoff(text)
+  const displayText = kickoff ? t('taskContext.planKickoff', { title: kickoff.title }) : text
   return (
     <div className={cn('space-y-2', !text && 'space-y-0')}>
       {text ? (
-        <PromptMarkdown text={text} />
+        <PromptMarkdown text={displayText} />
       ) : null}
       {images.length > 0 ? (
         <div

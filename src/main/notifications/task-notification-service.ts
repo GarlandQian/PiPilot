@@ -3,10 +3,11 @@ import { realpath } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import type { ConversationScope, OfficialPiSessionSummary } from '../../shared/conversation-scope'
 import type { LocalPiRuntimeSnapshot } from '../../shared/local-pi'
+import { MAX_SCHEDULED_RUNS } from '../../shared/scheduled-tasks'
 import type { TaskNotification, TaskNotificationPresentation, TaskNotificationSnapshot } from '../../shared/task-notifications'
 import { catalogIdentityForSession, type OfficialPiSessionCatalog } from '../conversations/official-pi-session-catalog'
 import { conversationScopeKey } from '../conversations/conversation-scope-resolver'
-import type { PiRuntimeFrontend } from '../pi-host/pi-runtime-frontend'
+import type { PiRuntimeControlSummary, PiRuntimeFrontend } from '../pi-host/pi-runtime-frontend'
 import { NotificationRepository, retainedNotifications, type StoredTaskNotification } from './notification-repository'
 
 type Kind = TaskNotification['kind']
@@ -18,19 +19,22 @@ interface ObservedRuntime {
   selectionToken?: string
   selected: boolean
   running: boolean
+  execution: number
   input: boolean
 }
 
 export interface NativeTaskNotificationAdapter {
   supported(): boolean
+  playCompletionSound(): void
   show(kind: Kind, onClick: () => void): { close(): void } | undefined
 }
 
 export interface TaskNotificationServiceOptions {
   filePath: string
-  runtime: Pick<PiRuntimeFrontend, 'subscribe' | 'getSnapshot' | 'listControlRuntimes'>
+  runtime: Pick<PiRuntimeFrontend, 'subscribe' | 'getSnapshot' | 'listControlRuntimes' | 'getControlWorkflowState'>
   catalog: Pick<OfficialPiSessionCatalog, 'listControlTargets' | 'revalidateControlTarget' | 'list' | 'resolve'>
   desktopEnabled(): boolean
+  soundEnabled(): boolean
   isWindowForeground(): boolean
   revealWindow(): void
   projectName?(scope: ConversationScope): string | undefined
@@ -57,6 +61,7 @@ export class TaskNotificationService {
   private readonly listeners = new Set<(snapshot: TaskNotificationSnapshot) => void>()
   private readonly observed = new Map<string, ObservedRuntime>()
   private readonly nativeHandles = new Map<string, { close(): void }>()
+  private readonly scheduledFailures = new Map<string, { conversationId: string; handle?: { close(): void } }>()
   private readonly metadataRequests = new Map<string, ReturnType<OfficialPiSessionCatalog['listControlTargets']>>()
   private readonly pathRequests = new Map<string, Promise<string>>()
   private readonly recordPaths = new WeakMap<StoredTaskNotification, Promise<void>>()
@@ -149,6 +154,29 @@ export class TaskNotificationService {
     return this.get()
   }
 
+  /** A failed preflight has no Runtime outcome to observe. Its exact target
+   * remains in the scheduler ledger, including when that target was deleted.
+   * Never fabricate a navigable conversation record or select another Session. */
+  reportScheduledPreflightFailure({ runId, conversationId }: { runId: string; conversationId: string }) {
+    if (this.disposed || this.scheduledFailures.has(runId)) return
+    const record: { conversationId: string; handle?: { close(): void } } = { conversationId }
+    this.scheduledFailures.set(runId, record)
+    while (this.scheduledFailures.size > MAX_SCHEDULED_RUNS) {
+      const oldest = this.scheduledFailures.keys().next().value
+      if (oldest === undefined) break
+      try { this.scheduledFailures.get(oldest)?.handle?.close() } catch { /* Best effort. */ }
+      this.scheduledFailures.delete(oldest)
+    }
+    // Failures are silent. Successful Runtime settlement is the sole sound source.
+    if (this.options.isWindowForeground() || !this.options.desktopEnabled() || !this.desktopSupported()) return
+    try {
+      record.handle = this.options.native.show('failed', () => {
+        if (this.disposed || this.scheduledFailures.get(runId) !== record) return
+        try { this.options.revealWindow() } catch { this.options.onDiagnostic?.() }
+      })
+    } catch { this.options.onDiagnostic?.() }
+  }
+
   async resolveTarget(id: string): Promise<OfficialPiSessionSummary> {
     try {
       const record = this.records.find(({ item }) => item.id === id)
@@ -196,7 +224,7 @@ export class TaskNotificationService {
       if (previous && !sameSession && previous.input) changed = this.resolveInput(previous) || changed
       const state: ObservedRuntime = sameSession ? previous : {
         scope: summary.scope, sessionId: summary.sessionId, sessionFile: summary.sessionFile, sourceSessionFile: summary.sessionFile,
-        selected: summary.selected, running: false, input: false,
+        selected: summary.selected, running: false, execution: 0, input: false,
       }
       state.scope = summary.scope
       state.sessionId = summary.sessionId
@@ -212,10 +240,14 @@ export class TaskNotificationService {
       state.input = input
       // Reads, queued work cancelled before execution, and standalone extension
       // questions can all retain an old outcome. Only execution arms completion.
-      if (summary.lifecycle !== 'idle' && summary.activity && summary.activity !== 'interaction') state.running = true
+      if (summary.lifecycle !== 'idle' && summary.activity && summary.activity !== 'interaction' && !state.running) {
+        state.running = true
+        state.execution += 1
+      }
       if (summary.lifecycle === 'idle' && state.running) {
         state.running = false
-        if (summary.outcome === 'completed' || summary.outcome === 'failed') this.add(summary.outcome, state, snapshot)
+        if (summary.outcome === 'failed') this.add('failed', state, snapshot)
+        else if (summary.outcome === 'completed') void this.confirmCompletion(key, state, summary, snapshot)
       }
     }
     for (const [key, state] of this.observed) {
@@ -228,6 +260,23 @@ export class TaskNotificationService {
       this.observed.delete(key)
     }
     if (changed) this.publish()
+  }
+
+  private async confirmCompletion(key: string, state: ObservedRuntime, summary: PiRuntimeControlSummary, snapshot: LocalPiRuntimeSnapshot) {
+    const execution = state.execution
+    try {
+      // Turn settlement is not Goal completion, nor approval of a saved plan.
+      // PiPilot metadata never owns the execution lifecycle.
+      const workflow = await this.options.runtime.getControlWorkflowState(summary)
+      if (this.disposed || this.observed.get(key) !== state || state.running || state.execution !== execution) return
+      if (workflow.plan?.enabled || workflow.plan?.awaitingAction || workflow.plan?.savedPlan) return
+      if (workflow.goal && workflow.goal.status !== 'complete') return
+      this.add('completed', state, snapshot)
+    } catch {
+      // A retiring/replaced runtime or unavailable task state must not produce
+      // a misleading completion. Failure notifications retain their own path.
+      if (!this.disposed) this.options.onDiagnostic?.()
+    }
   }
 
   private resolveInput(state: ObservedRuntime) {
@@ -257,6 +306,12 @@ export class TaskNotificationService {
     this.records.push(record)
     this.publish()
     void this.enrichMetadata(record)
+    // This is the live execution-to-idle edge, shared by interactive and
+    // scheduled Runtime work. Never derive sound from a restored snapshot,
+    // metadata updates, read-state changes or native notification delivery.
+    if (kind === 'completed' && !read && this.options.soundEnabled()) {
+      try { this.options.native.playCompletionSound() } catch { this.options.onDiagnostic?.() }
+    }
     if (!this.options.isWindowForeground() && this.options.desktopEnabled() && this.desktopSupported()) {
       try {
         const handle = this.options.native.show(kind, () => {
@@ -370,6 +425,8 @@ export class TaskNotificationService {
     this.detach = undefined
     for (const handle of this.nativeHandles.values()) { try { handle.close() } catch { /* Best effort. */ } }
     this.nativeHandles.clear()
+    for (const record of this.scheduledFailures.values()) { try { record.handle?.close() } catch { /* Best effort. */ } }
+    this.scheduledFailures.clear()
     this.listeners.clear()
     await Promise.all(this.records.map((record) => this.recordPaths.get(record)))
     await this.repository.flush()

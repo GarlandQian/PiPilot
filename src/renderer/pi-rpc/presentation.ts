@@ -731,15 +731,42 @@ function projectLiveTurns(
   if (state.isStreaming || state.isTurnActive) {
     if (responseGroup) responseGroup.streaming = true
   }
+  // Plan state restored from the branch can outlive the message that showed
+  // it (or the plan is still being drafted). The transcript is the only place
+  // a plan is shown and decided, so keep its card at the end.
+  const planMode = adapters.planMode
+  if (planMode && !projection.turns.some((turn) => turn.kind === 'plan' && turn.actions.length > 0)) {
+    projection.turns.push({
+      kind: 'plan',
+      id: `${prefix}:plan-state`,
+      markdown: planMode.markdown ?? '',
+      lifecycle: planMode.lifecycle,
+      ...(planMode.sourceEntryId ? { sourceEntryId: planMode.sourceEntryId } : {}),
+      actions: planMode.actions,
+    })
+  }
   appendResponseActions(projection, responseGroup, provenanceReady)
 
+  // Identical plan text is one plan: keep its latest position, but never drop
+  // the plugin's current actions just because a later copy was re-posted.
   const latestPlanIndexes = new Map<string, number>()
+  const currentPlans = new Map<string, Extract<Turn, { kind: 'plan' }>>()
   projection.turns.forEach((turn, index) => {
-    if (turn.kind === 'plan') latestPlanIndexes.set(turn.markdown, index)
+    if (turn.kind !== 'plan') return
+    latestPlanIndexes.set(turn.markdown, index)
+    if (turn.actions.length) currentPlans.set(turn.markdown, turn)
   })
-  const deduplicated = projection.turns.filter((turn, index) =>
-    turn.kind !== 'plan' || latestPlanIndexes.get(turn.markdown) === index)
-  return attachResponseActivities(deduplicated, state, adapters)
+  const deduplicated = projection.turns.flatMap((turn, index): Turn[] => {
+    if (turn.kind !== 'plan') return [turn]
+    if (latestPlanIndexes.get(turn.markdown) !== index) return []
+    const current = currentPlans.get(turn.markdown)
+    return [current && current !== turn ? { ...turn, lifecycle: current.lifecycle, actions: current.actions } : turn]
+  })
+  let lastPlanIndex = -1
+  deduplicated.forEach((turn, index) => { if (turn.kind === 'plan') lastPlanIndex = index })
+  const versioned = deduplicated.map((turn, index): Turn =>
+    turn.kind === 'plan' && index < lastPlanIndex ? { ...turn, superseded: true } : turn)
+  return attachResponseActivities(versioned, state, adapters)
 }
 
 export function projectLocalPiTurns(

@@ -9,6 +9,8 @@ import {
 } from '../../src/renderer/pi-rpc/adapters'
 import {
   PI_PACKAGE_ADAPTERS,
+  PI_PLAN_MODE_VERSION,
+  PI_GOAL_VERSION,
   compatibilityForPackage,
 } from '../../src/shared/pi-package-adapters'
 
@@ -76,14 +78,14 @@ describe('rich Pi adapter registry', () => {
   })
 
   it('requires the exact Plan package, version, command source, origin, and scope', () => {
-    const plan = packageSummary('@narumitw/pi-plan-mode', '0.50.1')
+    const plan = packageSummary('@narumitw/pi-plan-mode', PI_PLAN_MODE_VERSION)
     const capabilities = detectRichAdapterCapabilities({
       packages: [plan],
       commands: [planCommand(plan.source)],
     })
     expect(capabilities.planMode).toEqual(expect.objectContaining({
       id: 'plan-mode',
-      version: '0.50.1',
+      version: PI_PLAN_MODE_VERSION,
       packageSource: plan.source,
       commandSource: plan.source,
     }))
@@ -108,14 +110,14 @@ describe('rich Pi adapter registry', () => {
   })
 
   it('requires the exact Goal package, version, command source, origin, and scope', () => {
-    const goal = packageSummary('@narumitw/pi-goal', '0.52.2')
+    const goal = packageSummary('@narumitw/pi-goal', PI_GOAL_VERSION)
     const capabilities = detectRichAdapterCapabilities({
       packages: [goal],
       commands: [goalCommand(goal.source)],
     })
     expect(capabilities.goal).toEqual(expect.objectContaining({
       id: 'goal',
-      version: '0.52.2',
+      version: PI_GOAL_VERSION,
       packageSource: goal.source,
       commandSource: goal.source,
     }))
@@ -151,8 +153,8 @@ describe('rich Pi adapter registry', () => {
   })
 
   it('uses Pi package identity and project precedence for runtime adapter packages', () => {
-    const globalPlan = packageSummary('@narumitw/pi-plan-mode', '0.50.1', undefined, 'global')
-    const projectPlan = packageSummary('@narumitw/pi-plan-mode', '0.50.1', undefined, 'project')
+    const globalPlan = packageSummary('@narumitw/pi-plan-mode', PI_PLAN_MODE_VERSION, undefined, 'global')
+    const projectPlan = packageSummary('@narumitw/pi-plan-mode', PI_PLAN_MODE_VERSION, undefined, 'project')
     const projectOther = packageSummary('@example/other', '1.0.0', undefined, 'project')
     const globalOther = packageSummary('@example/other', '1.0.0', undefined, 'global')
     const merged = dedupeRuntimeAdapterPackages([
@@ -171,7 +173,7 @@ describe('rich Pi adapter registry', () => {
     }).planMode).toMatchObject({ commandScope: 'project' })
 
     const unsupportedProject = packageSummary('@narumitw/pi-plan-mode', '0.49.4', undefined, 'project')
-    const supportedGlobal = packageSummary('@narumitw/pi-plan-mode', '0.50.1', undefined, 'global')
+    const supportedGlobal = packageSummary('@narumitw/pi-plan-mode', PI_PLAN_MODE_VERSION, undefined, 'global')
     expect(detectRichAdapterCapabilities({
       packages: dedupeRuntimeAdapterPackages([supportedGlobal, unsupportedProject]),
       commands: [planCommand(supportedGlobal.source)],

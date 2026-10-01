@@ -1,4 +1,7 @@
 import { z } from 'zod'
+import { getConversationBranchEntries } from '@/shared/conversation-task'
+import { getGoalStateFromBranch } from '@/shared/goal-state'
+import { getPlanStateFromBranch, PLAN_MAX_MARKDOWN_CHARS, PLAN_STATE_ENTRY_TYPE } from '@/shared/plan-state'
 import type {
   LocalPiAgentMessage,
 } from '@/shared/local-pi'
@@ -6,10 +9,25 @@ import type { PiExtensionWidget } from '@/store/pi-rpc'
 import type { LocalPiProjectorState, LocalPiProjectedTool } from '../projector'
 import type { PlanModeCapability } from './registry'
 
-export const PLAN_MAX_MARKDOWN_CHARS = 50_000
+export { PLAN_MAX_MARKDOWN_CHARS, PLAN_STATE_ENTRY_TYPE } from '@/shared/plan-state'
 export const PLAN_STATUS_KEY = 'plan-mode' as const
 export const PLAN_WIDGET_KEY = 'plan-mode-plan' as const
 export const PLAN_CUSTOM_TYPE = 'proposed-plan' as const
+
+function currentPlanState(state: LocalPiProjectorState): { lifecycle: PlanLifecycle; markdown: string | null; entryId: string } | null | undefined {
+  const snapshot = state.entrySnapshot
+  if (!snapshot) return undefined
+  if (snapshot.sessionId !== state.sessionId || snapshot.generation !== state.generation) return null
+  const branch = getConversationBranchEntries(snapshot.entries, snapshot.leafId)
+  if (!branch) return null
+  const plan = getPlanStateFromBranch(branch)
+  if (plan === undefined || plan === null) return plan
+  const entryId = [...branch].reverse().find((entry) => entry.type === 'custom' && entry.customType === PLAN_STATE_ENTRY_TYPE)!.id
+  if (plan.enabled) return { lifecycle: plan.latestPlan ? 'ready' : 'planning', markdown: plan.latestPlan ?? null, entryId }
+  if (plan.activeImplementation) return { lifecycle: 'implementing', markdown: plan.activeImplementation.plan, entryId }
+  if (plan.savedPlan) return { lifecycle: 'saved', markdown: plan.savedPlan.plan, entryId }
+  return null
+}
 
 const planCompletionDetailsSchema = z.object({
   version: z.literal(1),
@@ -169,11 +187,22 @@ function actionIdsFor(lifecycle: PlanLifecycle, hasMarkdown: boolean): PlanActio
   if (lifecycle === 'planning') {
     actions.unshift('finalize')
   }
-  if (hasMarkdown) actions.unshift('show', 'revise')
+  if (hasMarkdown) actions.unshift('show')
+  if (hasMarkdown && (lifecycle === 'planning' || lifecycle === 'ready')) actions.push('revise')
   if (lifecycle === 'ready') actions.push('implement', 'save', 'export')
   if (lifecycle === 'saved') actions.push('implement', 'export')
   if (lifecycle === 'implementing') actions.push('show')
   return [...new Set(actions)]
+}
+
+function hasUnfinishedGoal(state: LocalPiProjectorState) {
+  const snapshot = state.entrySnapshot
+  if (!snapshot) return false
+  const branch = getConversationBranchEntries(snapshot.entries, snapshot.leafId)
+  if (!branch) return true
+  const goalState = getGoalStateFromBranch(branch)
+  if (goalState === null) return true
+  return Boolean(goalState?.goal && goalState.goal.status !== 'complete')
 }
 
 function completionFromTool(tool: LocalPiProjectedTool): PlanCompletionDetails | null {
@@ -188,6 +217,9 @@ export function projectPlanMode(
   context: { scopeKey: string; statuses?: Readonly<Record<string, string>>; widgets?: readonly PiExtensionWidget[] },
 ): PlanModeProjection | null {
   if (!capability || !state.sessionId || state.sessionId === 'none') return null
+  const persisted = currentPlanState(state)
+  // Explicit clearing, invalid state, or an unresolved branch supersedes old messages.
+  if (persisted === null) return null
   const statusValue = planStatus(context.statuses?.[PLAN_STATUS_KEY])
   const widget = widgetFor(
     context.widgets?.find((candidate) => candidate.key === PLAN_WIDGET_KEY),
@@ -228,10 +260,18 @@ export function projectPlanMode(
     }
   }
 
-  const lifecycle = statusValue
+  if (persisted) {
+    if (markdown !== persisted.markdown) sourceEntryId = persisted.entryId
+    markdown = persisted.markdown
+  }
+  const lifecycle = persisted?.lifecycle ?? (statusValue
     ? lifecycleForStatus(statusValue)
-    : customLifecycle ?? (markdown ? 'ready' : 'planning')
-  if (!statusValue && !customLifecycle && !markdown && !widget) return null
+    : customLifecycle ?? (markdown ? 'ready' : 'planning'))
+  if (!persisted && !statusValue && !customLifecycle && !markdown && !widget) return null
+  const goalUnfinished = hasUnfinishedGoal(state)
+  const planningEnabled = persisted
+    ? persisted.lifecycle === 'planning' || persisted.lifecycle === 'ready'
+    : statusValue === 'plan active' || statusValue === 'plan ready'
   return {
     capability,
     scopeKey: context.scopeKey,
@@ -244,7 +284,12 @@ export function projectPlanMode(
     customMessageKeys,
     statusValue,
     widget,
-    actions: actionIdsFor(lifecycle, Boolean(markdown)),
+    // The published saved-plan handoff does not acquire the Plan/Goal mutex.
+    // Keep GUI actions from starting different work over an unfinished Goal.
+    // Actual lifecycle and raw command behavior remain owned by the plugins.
+    actions: actionIdsFor(lifecycle, Boolean(markdown)).filter((action) =>
+      (action !== 'revise' || planningEnabled) &&
+      (!goalUnfinished || !['implement', 'revise', 'finalize'].includes(action))),
   }
 }
 

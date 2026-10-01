@@ -52,7 +52,7 @@ export interface AppSettings {
   appearance: AppearanceSettings
   composer: ComposerSettings
   terminal: TerminalSettings
-  notifications: { desktop: boolean }
+  notifications: { desktop: boolean; sound: boolean }
 }
 
 export interface AppSettingsPatch {
@@ -69,7 +69,7 @@ export interface PersistedSettingsDocument {
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  notifications: { desktop: true },
+  notifications: { desktop: true, sound: true },
   locale: 'system',
   appearance: {
     theme: 'system',
@@ -238,7 +238,8 @@ function isLegacyComposer(value: unknown) {
 
 function isMigratableSettings(value: unknown) {
   return isRecord(value) &&
-    (hasExactKeys(value, LEGACY_APP_KEYS) || (hasExactKeys(value, APP_KEYS) && isExactNotifications(value.notifications))) &&
+    (hasExactKeys(value, LEGACY_APP_KEYS) || (hasExactKeys(value, APP_KEYS) &&
+      (isExactNotifications(value.notifications) || isLegacyNotifications(value.notifications)))) &&
     LOCALES.includes(value.locale as Locale) &&
     (isExactAppearance(value.appearance) || isLegacyAppearance(value.appearance)) &&
     (isLegacyComposer(value.composer) || isExactComposer(value.composer)) &&
@@ -250,6 +251,11 @@ function isMigratableSettings(value: unknown) {
 }
 
 function isExactNotifications(value: unknown): value is AppSettings['notifications'] {
+  return isRecord(value) && hasExactKeys(value, ['desktop', 'sound']) &&
+    typeof value.desktop === 'boolean' && typeof value.sound === 'boolean'
+}
+
+function isLegacyNotifications(value: unknown) {
   return isRecord(value) && hasExactKeys(value, ['desktop']) && typeof value.desktop === 'boolean'
 }
 
@@ -284,7 +290,10 @@ export function sanitizeSettings(
 
   return {
     locale: oneOf(source.locale, LOCALES, fallback.locale),
-    notifications: { desktop: booleanOr(notifications.desktop, fallback.notifications.desktop) },
+    notifications: {
+      desktop: booleanOr(notifications.desktop, fallback.notifications.desktop),
+      sound: booleanOr(notifications.sound, fallback.notifications.sound),
+    },
     appearance: {
       theme: oneOf(appearance.theme, THEMES, fallback.appearance.theme),
       uiFontFamily: fontNameOr(appearance.uiFontFamily, fallback.appearance.uiFontFamily),

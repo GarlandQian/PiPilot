@@ -184,6 +184,15 @@ export type PiManagementModelsPayload = z.infer<
   typeof piManagementModelsPayloadSchema
 >
 
+export const piDefaultPackageSchema = z.object({
+  packageName: z.string().min(1).max(256),
+  source: boundedSourceSchema,
+  status: z.enum(['pending', 'installing', 'installed', 'existing', 'removed', 'failed']),
+  message: boundedMessageSchema.optional(),
+}).strict()
+
+export type PiDefaultPackage = z.infer<typeof piDefaultPackageSchema>
+
 export const piManagementSnapshotPayloadSchema = z
   .object({
     packages: z.array(piPackageSummarySchema).max(PI_INTEGRATION_PACKAGE_LIMIT),
@@ -196,6 +205,8 @@ export const piManagementSnapshotPayloadSchema = z
     // Present only when the helper answered a models settings command; the
     // remaining members are empty placeholders in that case.
     models: piManagementModelsPayloadSchema.optional(),
+    defaultPackages: z.array(piDefaultPackageSchema).max(20).optional(),
+    defaultPackagesChanged: z.boolean().optional(),
   })
   .strict()
 
@@ -225,6 +236,7 @@ export const piIntegrationSnapshotSchema = z
       .array(piIntegrationDiagnosticSchema)
       .max(PI_INTEGRATION_DIAGNOSTIC_LIMIT),
     checkedAt: z.number().int().nonnegative(),
+    defaultPackages: z.array(piDefaultPackageSchema).max(20).optional(),
   })
   .strict()
 
@@ -251,6 +263,7 @@ export const piIntegrationOperationKindSchema = z.enum([
   'check-updates',
   'set-retry',
   'restart',
+  'bootstrap-defaults',
 ])
 
 export type PiIntegrationOperationKind = z.infer<
@@ -312,6 +325,11 @@ export const piManagementHelperCommandSchema = z.discriminatedUnion('action', [
   z.object({
     ...piManagementHelperCommandBase,
     action: z.literal('snapshot'),
+  }).strict(),
+  z.object({
+    ...piManagementHelperCommandBase,
+    scope: z.object({ kind: z.literal('global') }).strict(),
+    action: z.literal('bootstrap-defaults'),
   }).strict(),
   z.object({
     ...piManagementHelperCommandBase,

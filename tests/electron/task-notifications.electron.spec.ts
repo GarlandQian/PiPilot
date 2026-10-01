@@ -42,7 +42,7 @@ async function launchFixture(testInfo: TestInfo, options: {
     settings: {
       ...DEFAULT_SETTINGS,
       locale: 'en-US',
-      notifications: { desktop: false },
+      notifications: { desktop: false, sound: false },
       appearance: { ...DEFAULT_SETTINGS.appearance, theme: 'light', reducedMotion: true },
     },
   }))
@@ -61,7 +61,10 @@ async function launchFixture(testInfo: TestInfo, options: {
     page.on('pageerror', (error) => errors.push(error.message))
     await page.setViewportSize({ width: 1440, height: 900 })
     await expect(page.locator('[data-model-thinking-trigger]')).toContainText('Fake Chat', { timeout: 20_000 })
-    await app.evaluate(({ app, BrowserWindow }) => {
+    await app.evaluate(({ app, BrowserWindow, shell }) => {
+      const state = globalThis as typeof globalThis & { __completionSounds: number }
+      state.__completionSounds = 0
+      Object.defineProperty(shell, 'beep', { configurable: true, value: () => { state.__completionSounds += 1 } })
       app.focus({ steal: true })
       const window = BrowserWindow.getAllWindows()[0]
       window?.focus()
@@ -158,10 +161,17 @@ test('keeps background completion unread until its exact task is opened, while v
     await expect.poll(() => page.evaluate(() => window.pipilot!.settings.get().then((value) => value.settings.notifications.desktop))).toBe(true)
     await desktop.click()
     await expect.poll(async () => JSON.parse(await readFile(join(userData, 'settings.json'), 'utf8')).settings.notifications.desktop).toBe(false)
+    const sound = page.getByRole('switch', { name: 'Task completion sound', exact: true })
+    await expect(sound).not.toBeChecked()
+    await sound.click()
+    await expect.poll(() => page.evaluate(() => window.pipilot!.settings.get().then((value) => value.settings.notifications.sound))).toBe(true)
+    await sound.click()
+    await expect.poll(async () => JSON.parse(await readFile(join(userData, 'settings.json'), 'utf8')).settings.notifications.sound).toBe(false)
     await page.reload()
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
     await page.getByRole('region', { name: 'Settings', exact: true }).getByRole('button', { name: 'General', exact: true }).click()
     await expect(desktop).not.toBeChecked()
+    await expect(sound).not.toBeChecked()
     await page.getByRole('button', { name: 'Sessions', exact: true }).click()
 
     await addProject(app, page, projectA)
@@ -169,6 +179,7 @@ test('keeps background completion unread until its exact task is opened, while v
     await addProject(app, page, projectB)
     const runtimeB = await seedTask(page, 'Selected reading task')
     await page.evaluate(() => window.pipilot!.notifications.clear())
+    await page.evaluate(() => window.pipilot!.settings.update({ notifications: { sound: true } }))
     await taskButton(page, 'Background completion task').click()
     await expectSelected(page, runtimeA)
     await submit(page, backgroundPrompt)
@@ -178,6 +189,7 @@ test('keeps background completion unread until its exact task is opened, while v
     release()
 
     const completed = await waitForNotification(page, runtimeA.sessionState!.sessionId, 'completed')
+    expect(await app.evaluate(() => (globalThis as typeof globalThis & { __completionSounds: number }).__completionSounds)).toBe(1)
     expect(completed.read).toBe(false)
     await expect(page.getByRole('button', { name: 'Notifications (1 unread)', exact: true })).toBeVisible()
     await expect(notificationPopover(page)).toHaveCount(0)
@@ -208,6 +220,7 @@ test('keeps background completion unread until its exact task is opened, while v
     await expectResponse(page, 'Complete while I am reading this task')
     const foreground = await waitForNotification(page, runtimeA.sessionState!.sessionId, 'completed')
     expect(foreground.read).toBe(true)
+    expect(await app.evaluate(() => (globalThis as typeof globalThis & { __completionSounds: number }).__completionSounds)).toBe(1)
     await expect(page.getByRole('button', { name: 'Notifications', exact: true })).toBeVisible()
     await expect(notificationPopover(page)).toHaveCount(0)
 

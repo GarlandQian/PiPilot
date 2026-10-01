@@ -5,6 +5,7 @@ import { ToolActivityRegion } from './ToolActivityRegion'
 import { ResponseActivityRow } from './ExtensionSurfaces'
 import { useFollowingViewport } from './useFollowingViewport'
 import { UserMessage, AgentMessage, ThinkingMessage, NoticeMessage, PlanModeMessage, ResponseActions, agentAnimationKey, type ThinkingDurationRegistry } from './ConversationMessages'
+import { REVEAL_PLAN_EVENT } from './plan-presentation'
 import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { createConversationResponseProjector, type ResponsePresentation, type ResponsePresentationSegment } from '@/renderer/pi-rpc/response-presentation'
@@ -28,6 +29,8 @@ interface MessageListProps {
   jumpRequest: ConversationJumpRequest | null
   status: AgentStatus
   onFork?: (entryId: string) => Promise<void>
+  onExportResponse?: (anchorEntryId: string) => void
+  onExportMessage?: (entryId: string) => void
   onPlanAction?: (
     action: Extract<Turn, { kind: 'plan' }>['actions'][number],
     revision?: string,
@@ -47,14 +50,13 @@ export interface ConversationJumpRequest {
 }
 
 const NO_TURN_KEYS: ReadonlySet<string> = new Set()
-const renderPrompt = (turn: Extract<Turn, { kind: 'user' }>) => <UserMessage turn={turn} />
 
 /** Completed rows receive stable data and flags while the live row advances. */
 const ConversationRow = React.memo(function ConversationRow({ response, anchorNodes, highlighted,
-  sessionKey, selectedSubagentId, subagentFocusRequest, onOpenSubagent, onOpenCommand, onPlanAction,
+  sessionKey, selectedSubagentId, subagentFocusRequest, onOpenSubagent, onOpenCommand, onPlanAction, onExportResponse, onExportMessage,
   animateAgentKeys, streamingAgentKeys, hiddenResponseActionIds, motionEnabled,
   onTypingChange, thinkingDurations, forkBusy, forkingId, onFork, canFork, searchRequest,
-}: Pick<MessageListProps, 'sessionKey' | 'selectedSubagentId' | 'subagentFocusRequest' | 'onOpenSubagent' | 'onOpenCommand' | 'onPlanAction'> & {
+}: Pick<MessageListProps, 'sessionKey' | 'selectedSubagentId' | 'subagentFocusRequest' | 'onOpenSubagent' | 'onOpenCommand' | 'onPlanAction' | 'onExportResponse' | 'onExportMessage'> & {
   response: ResponsePresentation
   anchorNodes: Map<string, HTMLDivElement>
   highlighted: boolean
@@ -71,6 +73,7 @@ const ConversationRow = React.memo(function ConversationRow({ response, anchorNo
   canFork: boolean
 }) {
   const t = useT()
+  const renderPrompt = React.useCallback((turn: Extract<Turn, { kind: 'user' }>) => <UserMessage turn={turn} onExport={onExportMessage} />, [onExportMessage])
   const toolSearch = React.useMemo<ToolSearchRequest | undefined>(() => searchRequest?.query && searchRequest.match?.role === 'toolResult'
     ? { sequence: searchRequest.sequence, query: searchRequest.query, toolCallId: searchRequest.match.toolCallId } : undefined, [searchRequest])
   const anchorRef = React.useCallback((node: HTMLDivElement | null) => {
@@ -83,7 +86,7 @@ const ConversationRow = React.memo(function ConversationRow({ response, anchorNo
       sessionKey={sessionKey} selectedSubagentId={selectedSubagentId} focusRequest={subagentFocusRequest} searchRequest={toolSearch} onOpenSubagent={onOpenSubagent} onOpenCommand={onOpenCommand} />
     const turn = item.turn
     switch (turn.kind) {
-      case 'user': return <UserMessage turn={turn} />
+      case 'user': return <UserMessage turn={turn} onExport={onExportMessage} />
       case 'agent': {
         const key = agentAnimationKey(turn)
         return <AgentMessage turn={turn} animationKey={key} animateOnMount={animateAgentKeys.has(key)}
@@ -94,7 +97,7 @@ const ConversationRow = React.memo(function ConversationRow({ response, anchorNo
       case 'plan': return <PlanModeMessage turn={turn} onAction={onPlanAction} />
       case 'activity': return <ResponseActivityRow activity={turn.activity} />
       case 'response-actions': return hiddenResponseActionIds.has(turn.id) ? null : <ResponseActions
-        turn={turn} forkBusy={forkBusy} forking={forkingId === turn.id} onFork={onFork} canFork={Boolean(turn.forkEntryId && canFork)} />
+        turn={turn} forkBusy={forkBusy} forking={forkingId === turn.id} onFork={onFork} canFork={Boolean(turn.forkEntryId && canFork)} onExportResponse={onExportResponse} />
       default: return null
     }
   }
@@ -117,6 +120,8 @@ export function MessageList({
   jumpRequest,
   status,
   onFork,
+  onExportResponse,
+  onExportMessage,
   onPlanAction,
   selectedSubagentId,
   subagentFocusRequest,
@@ -257,6 +262,27 @@ export function MessageList({
     return jumpRequest.query ? highlightSearchText(target, jumpRequest.query) : undefined
   }, [anchorNodes, jumpRequest, ready, sessionKey, motionEnabled, pauseFollowing])
 
+  // "View plan" from the composer capsule or the Overview scrolls to the one
+  // current plan card instead of duplicating it elsewhere.
+  React.useEffect(() => {
+    if (!ready) return
+    let flashTimer: ReturnType<typeof setTimeout> | null = null
+    const reveal = () => {
+      const card = contentRef.current?.querySelector<HTMLElement>('[data-plan-card][data-plan-current="true"]')
+      if (!card) return
+      pauseFollowing()
+      card.scrollIntoView({ block: 'start', behavior: motionEnabled ? 'smooth' : 'auto' })
+      card.setAttribute('data-plan-flash', '')
+      if (flashTimer) clearTimeout(flashTimer)
+      flashTimer = setTimeout(() => { card.removeAttribute('data-plan-flash'); flashTimer = null }, 1_600)
+    }
+    window.addEventListener(REVEAL_PLAN_EVENT, reveal)
+    return () => {
+      window.removeEventListener(REVEAL_PLAN_EVENT, reveal)
+      if (flashTimer) clearTimeout(flashTimer)
+    }
+  }, [ready, motionEnabled, pauseFollowing])
+
   const fork = React.useCallback((
     turn: Extract<Turn, { kind: 'response-actions' }>,
   ) => {
@@ -320,6 +346,8 @@ export function MessageList({
               onOpenSubagent={onOpenSubagent}
               onOpenCommand={onOpenCommand}
               onPlanAction={onPlanAction}
+              onExportResponse={onExportResponse}
+              onExportMessage={onExportMessage}
               animateAgentKeys={response.segments.some((item) => item.kind === 'turn' && item.turn.kind === 'agent' && animateAgentKeys.has(agentAnimationKey(item.turn))) ? animateAgentKeys : NO_TURN_KEYS}
               streamingAgentKeys={response.segments.some((item) => item.kind === 'turn' && item.turn.kind === 'agent' && streamingAgentKeys.has(agentAnimationKey(item.turn))) ? streamingAgentKeys : NO_TURN_KEYS}
               hiddenResponseActionIds={response.segments.some((item) => item.kind === 'turn' && hiddenResponseActionIds.has(item.turn.id)) ? hiddenResponseActionIds : NO_TURN_KEYS}

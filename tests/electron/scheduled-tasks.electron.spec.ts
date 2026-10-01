@@ -13,7 +13,7 @@ test('runs a saved schedule in the background, preserves history and never repla
   await Promise.all([userData, projectPath].map((path) => mkdir(path, { recursive: true })))
   const cwd = await realpath(projectPath)
   await writeFile(join(userData, 'settings.json'), JSON.stringify({ version: SETTINGS_SCHEMA_VERSION, settings: {
-    ...DEFAULT_SETTINGS, locale: 'en-US', notifications: { desktop: false }, appearance: { ...DEFAULT_SETTINGS.appearance, reducedMotion: true },
+    ...DEFAULT_SETTINGS, locale: 'en-US', notifications: { desktop: false, sound: false }, appearance: { ...DEFAULT_SETTINGS.appearance, reducedMotion: true },
   } }))
   const prompt = 'Scheduled background verification'
   const failedPrompt = 'Scheduled provider failure'
@@ -32,9 +32,12 @@ test('runs a saved schedule in the background, preserves history and never repla
     app = await electron.launch({ args: [resolve(process.cwd())], env: { ...process.env, ...fixture.env,
       PIPILOT_E2E_USER_DATA: userData, PIPILOT_E2E_DISABLE_AUTO_RESTART: '1' } })
     // Exercise the real notification decision while suppressing OS banners.
-    await app.evaluate(({ Notification }) => {
-      const state = globalThis as typeof globalThis & { __scheduledNotifications: { title: string; body: string }[] }
+    await app.evaluate(({ Notification, shell }) => {
+      const state = globalThis as typeof globalThis & { __scheduledNotifications: { title: string; body: string }[]; __scheduledSounds: number; __scheduledBackground: boolean }
       state.__scheduledNotifications = []
+      state.__scheduledSounds = 0
+      state.__scheduledBackground = false
+      Object.defineProperty(shell, 'beep', { configurable: true, value: () => { state.__scheduledSounds += 1 } })
       Object.defineProperty(Notification, 'isSupported', { configurable: true, value: () => true })
       Object.defineProperty(Notification.prototype, 'show', { configurable: true, value: function (this: { title: string; body: string }) {
         state.__scheduledNotifications.push({ title: this.title, body: this.body })
@@ -42,9 +45,14 @@ test('runs a saved schedule in the background, preserves history and never repla
     })
     const page = await app.firstWindow()
     await page.waitForLoadState('domcontentloaded')
+    await app.evaluate(({ BrowserWindow }) => {
+      const state = globalThis as typeof globalThis & { __scheduledBackground: boolean }
+      const window = BrowserWindow.getAllWindows()[0]!
+      Object.defineProperty(window, 'isFocused', { configurable: true, value: () => !state.__scheduledBackground })
+    })
     page.on('pageerror', (error) => errors.push(error.message))
     await page.setViewportSize({ width: 1440, height: 1000 })
-    await page.evaluate(() => window.pipilot!.settings.update({ notifications: { desktop: true } }))
+    await page.evaluate(() => window.pipilot!.settings.update({ notifications: { desktop: false, sound: false } }))
     return page
   }
   const seed = async (page: Page, name: string) => {
@@ -90,6 +98,15 @@ test('runs a saved schedule in the background, preserves history and never repla
     await sheet.getByLabel('Start time (this computer’s local time)', { exact: true }).fill(localFuture)
     await sheet.getByRole('button', { name: 'Save task', exact: true }).click()
     await expect(sheet).toHaveCount(0)
+    await page.evaluate(() => window.pipilot!.settings.update({ notifications: { desktop: true, sound: true } }))
+    await app!.evaluate(() => {
+      const state = globalThis as typeof globalThis & { __scheduledNotifications: { title: string; body: string }[]; __scheduledSounds: number; __scheduledBackground: boolean }
+      // Seed conversations are unrelated completed runs. Start the capture at
+      // the first actual schedule so a duplicate schedule outcome still fails.
+      state.__scheduledNotifications = []
+      state.__scheduledSounds = 0
+      state.__scheduledBackground = true
+    })
     await panel.getByRole('button', { name: 'Run now', exact: true }).click()
     try { await expect.poll(() => page.evaluate(async () => (await window.pipilot!.scheduledTasks.get()).runs[0]?.status), { timeout: 20_000 }).toBe('completed') }
     catch (error) {
@@ -121,10 +138,11 @@ test('runs a saved schedule in the background, preserves history and never repla
     expect(failed.finalResponse).toBeUndefined()
     await expect(panel.getByText('[Empty assistant message]', { exact: true })).toHaveCount(0)
     await expect(panel).toContainText('Fixture provider rejected this scheduled request.')
-    expect(await app!.evaluate(() => (globalThis as typeof globalThis & { __scheduledNotifications: { title: string; body: string }[] }).__scheduledNotifications.filter((item) => item.title === 'Scheduled fixture').map((item) => item.body))).toEqual([
-      'Scheduled task completed. View its response in PiPilot.',
-      'Scheduled task needs attention. Check its run history in PiPilot.',
+    await expect.poll(() => app!.evaluate(() => (globalThis as typeof globalThis & { __scheduledNotifications: { title: string; body: string }[] }).__scheduledNotifications)).toEqual([
+      { title: 'PiPilot', body: 'A task has completed.' },
+      { title: 'PiPilot', body: 'A task has failed.' },
     ])
+    expect(await app!.evaluate(() => (globalThis as typeof globalThis & { __scheduledSounds: number }).__scheduledSounds)).toBe(1)
     await editPrompt(cancelledPrompt)
     await panel.getByRole('button', { name: 'Run now', exact: true }).click()
     await expect.poll(() => fixture.prompts.filter((value) => value === cancelledPrompt).length).toBe(1)

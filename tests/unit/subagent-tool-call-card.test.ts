@@ -6,6 +6,7 @@ import { SubagentExecutionPanel } from '../../src/components/inspector/SubagentE
 import { TooltipProvider } from '../../src/components/ui/tooltip'
 import { presentToolCall } from '../../src/renderer/pi-rpc/tool-presenters'
 import type { ToolCall } from '../../src/types/chat'
+import { CONVERSATION_TASK_TOOL_NAME } from '../../src/shared/conversation-task'
 
 vi.mock('@/i18n', () => ({
   useT: () => (key: string, params?: Record<string, string | number>) => {
@@ -88,6 +89,20 @@ function renderTimelineCard() {
 }
 
 describe('ToolCallCard subagent details', () => {
+  it('shows successful task metadata as a compact semantic row while preserving failed details', () => {
+    const createCall = (failed: boolean) => presentToolCall({
+      id: 'task-state', name: CONVERSATION_TASK_TOOL_NAME,
+      args: { summary: 'Internal snapshot body' }, phase: 'complete',
+      resultText: failed ? 'Only the user can approve a proposed plan.' : 'Saved conversation task.', isError: failed,
+    })
+    const success = renderToStaticMarkup(createElement(TooltipProvider, null, createElement(ToolCallCard, { call: createCall(false) })))
+    expect(success).toContain('taskContext.toolUpdated')
+    expect(success).not.toMatch(/pipilot_update_task|Internal snapshot body|tool.arguments/)
+    const failure = renderToStaticMarkup(createElement(TooltipProvider, null, createElement(ToolCallCard, { call: createCall(true) })))
+    expect(failure).toContain('Only the user can approve')
+    expect(failure).toContain('tool.status.failed')
+    expect(failure).not.toContain('data-task-state-update')
+  })
   it('renders the cleaned task as Markdown without the generic JSON tree', () => {
     const markup = renderSubagentCard()
 

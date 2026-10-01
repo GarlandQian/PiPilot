@@ -1,4 +1,6 @@
 import { realpathSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { importedConversationHistorySchema, type ImportedConversationHistory } from '../../shared/conversation-import'
 import { isAbsolute, join, resolve } from 'node:path'
 import {
   type AgentSessionEvent,
@@ -34,6 +36,9 @@ import {
 import { RuntimeExtensionUiBridge } from './runtime-extension-ui-bridge'
 import { RuntimeDelivery } from './runtime-delivery'
 import { createRuntimeNativeMcpExtensions } from './runtime-native-mcp'
+import { PIPILOT_CONVERSATION_TASK_EXTENSION } from './runtime-conversation-task'
+import { appendImportedConversationHistory, importedConversationState } from './runtime-conversation-import'
+import { removeFailedConversationImport } from '../conversations/failed-conversation-import'
 import {
   PIPILOT_RUNTIME_MESSAGE_SANITIZER_EXTENSION,
   PIPILOT_RUNTIME_MESSAGE_SANITIZER_EXTENSION_PATH,
@@ -70,6 +75,7 @@ export interface RuntimeTarget {
   sessionDir?: string
   sessionFile?: string
   forkSessionFile?: string
+  importHistory?: ImportedConversationHistory
 }
 
 export interface RuntimeDescriptor {
@@ -226,6 +232,7 @@ export class RuntimeManager {
       ...(resourceLoaderOptions ?? {}),
       extensionFactories: [
         ...createRuntimeNativeMcpExtensions(this.agentDir),
+        PIPILOT_CONVERSATION_TASK_EXTENSION,
         ...(resourceLoaderOptions?.extensionFactories ?? []),
         PIPILOT_RUNTIME_MESSAGE_SANITIZER_EXTENSION,
       ],
@@ -350,7 +357,7 @@ export class RuntimeManager {
     const sessionDir = target.sessionDir === undefined
       ? undefined
       : requireAbsolutePath('sessionDir', target.sessionDir)
-    if (target.sessionFile !== undefined && target.forkSessionFile !== undefined) {
+    if ([target.sessionFile, target.forkSessionFile, target.importHistory].filter((item) => item !== undefined).length > 1) {
       throw new RuntimeManagerError(
         'RUNTIME_TARGET_INVALID',
         'Runtime session and fork sources are mutually exclusive.',
@@ -368,6 +375,7 @@ export class RuntimeManager {
       sessionDir,
       ...(sessionFile === undefined ? {} : { sessionFile }),
       ...(forkSessionFile === undefined ? {} : { forkSessionFile }),
+      ...(target.importHistory === undefined ? {} : { importHistory: importedConversationHistorySchema.parse({ ...target.importHistory, importId: target.importHistory.importId ?? randomUUID() }) }),
     }, effectiveTimeoutMs)
     this.pendingCreations.add(creation)
     try {
@@ -389,11 +397,25 @@ export class RuntimeManager {
     // longer exists. SessionManager.forkFrom() writes the child for this
     // Host's canonical cwd; Main validates both the source capability and the
     // resulting child before exposing the activation.
-    const sessionManager = target.sessionFile !== undefined
+    let resumedImport: SessionManager | undefined
+    if (target.importHistory?.importId) {
+      if ([...this.runtimes.values()].some((entry) => entry.runtime.session.sessionId === target.importHistory!.importId)) throw new RuntimeManagerError('RUNTIME_ALREADY_EXISTS', 'This imported conversation is already open.')
+      const existing = SessionManager.findById(this.cwd, target.importHistory.importId, target.sessionDir)
+      if (existing) {
+        this.assertSessionCwd(existing)
+        const imported = SessionManager.open(existing, target.sessionDir)
+        const state = importedConversationState(imported, target.importHistory)
+        if (state === 'unrelated') throw new RuntimeManagerError('RUNTIME_TARGET_INVALID', 'The import identity belongs to another conversation.')
+        if (state === 'complete') resumedImport = imported
+        else if (!await removeFailedConversationImport(existing, imported.getSessionId(), target.importHistory.importId)) throw new RuntimeManagerError('RUNTIME_TARGET_INVALID', 'The interrupted import could not be recovered safely.')
+      }
+    }
+    const sessionManager = resumedImport ?? (target.sessionFile !== undefined
       ? SessionManager.open(target.sessionFile, target.sessionDir)
       : target.forkSessionFile !== undefined
         ? SessionManager.forkFrom(target.forkSessionFile, this.cwd, target.sessionDir)
-        : SessionManager.create(this.cwd, target.sessionDir)
+        : SessionManager.create(this.cwd, target.sessionDir, target.importHistory?.importId ? { id: target.importHistory.importId } : undefined))
+    let importPrepared = false
     const createRuntime: CreateAgentSessionRuntimeFactory = async ({
       cwd,
       agentDir,
@@ -405,6 +427,11 @@ export class RuntimeManager {
         agentDir,
         resourceLoaderOptions: this.resourceLoaderOptions,
       })
+      if (target.importHistory && nextSessionManager === sessionManager && !importPrepared) {
+        if (!resumedImport) appendImportedConversationHistory(sessionManager, target.importHistory)
+        else if (sessionManager.getSessionName() !== target.importHistory.title) sessionManager.appendSessionInfo(target.importHistory.title)
+        importPrepared = true
+      }
       const result = await createAgentSessionFromServices({
         services,
         sessionManager: nextSessionManager,
@@ -439,7 +466,9 @@ export class RuntimeManager {
         } catch {
           // The utility-process owner is the final reclamation boundary.
         }
-      }, () => undefined)
+      }, async () => {
+        if (target.importHistory) await removeFailedConversationImport(sessionManager.getSessionFile() ?? null, sessionManager.getSessionId(), target.importHistory.importId).catch(() => false)
+      })
       throw error
     }
 

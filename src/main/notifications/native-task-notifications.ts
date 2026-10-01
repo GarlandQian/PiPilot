@@ -1,4 +1,4 @@
-import { Notification } from 'electron'
+import { Notification, shell } from 'electron'
 import type { TaskNotification } from '../../shared/task-notifications'
 import type { NativeTaskNotificationAdapter } from './task-notification-service'
 
@@ -6,6 +6,10 @@ import type { NativeTaskNotificationAdapter } from './task-notification-service'
 export function createNativeTaskNotifications(getLocale: () => string): NativeTaskNotificationAdapter {
   return {
     supported: () => Notification.isSupported(),
+    // Electron owns the system sound on macOS, Windows and Linux. Main-process
+    // delivery works while hidden and does not require renderer user activation.
+    // Keep native banners silent so one execution has only one sound source.
+    playCompletionSound: () => shell.beep(),
     show(kind: TaskNotification['kind'], onClick: () => void) {
       const chinese = getLocale().toLowerCase().startsWith('zh')
       const body = chinese

@@ -34,7 +34,7 @@ async function launch(testInfo: TestInfo) {
   await writeFile(join(project, 'tracked.txt'), 'source checkout remains dirty\n')
   await writeFile(join(project, 'parent-only.txt'), 'source untracked file\n')
   await writeFile(join(userData, 'settings.json'), JSON.stringify({ version: SETTINGS_SCHEMA_VERSION, settings: {
-    ...DEFAULT_SETTINGS, locale: 'en-US', notifications: { desktop: false },
+    ...DEFAULT_SETTINGS, locale: 'en-US', notifications: { desktop: false, sound: false },
     appearance: { ...DEFAULT_SETTINGS.appearance, reducedMotion: true, theme: 'light' },
   } }))
   const fixture = await startPiSdkFixture({ agentDir })

@@ -25,6 +25,20 @@ export interface LocalPiMessageOrigin {
   forkEntryId: string | null
 }
 
+/** SDK custom entries can arrive before ordinary message entries are fetched.
+ * Advancing the incremental cursor past such a gap makes its parent unreachable.
+ */
+export function canAppendLocalPiEntry(snapshot: LocalPiEntrySnapshot, entry: LocalPiSessionEntry): boolean {
+  return entry.parentId === null || snapshot.entries.some((candidate) => candidate.id === entry.parentId)
+}
+
+export function appendLocalPiEntryEvent(snapshot: LocalPiEntrySnapshot, entry: LocalPiSessionEntry): LocalPiEntrySnapshot {
+  if (!canAppendLocalPiEntry(snapshot, entry) || snapshot.entries.some((candidate) => candidate.id === entry.id)) return snapshot
+  // An event proves ancestry, not that all intervening entries were read. Only
+  // get_entries may advance the cursor, including when another branch changed.
+  return { ...snapshot, entries: [...snapshot.entries, entry], leafId: entry.id }
+}
+
 export function mergeLocalPiEntrySnapshot(
   previous: LocalPiEntrySnapshot | null,
   page: LocalPiEntrySnapshotPage,
@@ -32,17 +46,18 @@ export function mergeLocalPiEntrySnapshot(
   const canAppend = page.append &&
     previous?.generation === page.generation &&
     previous.sessionId === page.sessionId
+  const pageIds = new Set(page.entries.map((entry) => entry.id))
   const entries = canAppend
-    ? [...previous.entries, ...page.entries]
+    ? [...previous.entries.filter((entry) => !pageIds.has(entry.id)), ...page.entries]
     : [...page.entries]
-  const lastEntry = entries[entries.length - 1]
+  const lastReadEntry = page.entries[page.entries.length - 1]
 
   return {
     generation: page.generation,
     sessionId: page.sessionId,
     entries,
     leafId: page.leafId,
-    cursor: lastEntry?.id ?? null,
+    cursor: lastReadEntry?.id ?? (canAppend ? previous.cursor : null),
   }
 }
 

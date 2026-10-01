@@ -104,7 +104,12 @@ export class ConversationNavigationRepository {
     this.revision += 1
     this.persistSafely()
     const snapshot = this.snapshot()
-    for (const listener of this.listeners) listener(snapshot)
+    for (const listener of this.listeners) {
+      // Selection is already committed in memory. A closed renderer or other
+      // observer must not turn successful session creation into a retryable
+      // operation failure (which could create or strand a second import).
+      try { listener(snapshot) } catch { /* Isolate notification consumers. */ }
+    }
     return snapshot
   }
 
@@ -143,7 +148,7 @@ export class ConversationNavigationRepository {
     try {
       this.persistNow()
     } catch {
-      this.onDiagnostic('write-failed')
+      try { this.onDiagnostic('write-failed') } catch { /* A diagnostic sink cannot undo in-memory navigation. */ }
     }
   }
 

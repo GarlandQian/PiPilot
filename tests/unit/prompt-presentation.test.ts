@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parsePromptSkillEnvelope, promptDisplaySummary } from '../../src/renderer/pi-rpc/prompt-presentation'
+import { createConversationPlanKickoff, parseConversationPlanKickoff } from '../../src/shared/conversation-task'
 
 const name = 'review-helper'
 const location = '/fixture/skills/review-helper/SKILL.md'
@@ -47,5 +48,20 @@ describe('prompt skill presentation', () => {
     const text = `<skill name="${name}" location="${location}">\n${skillContent}\n</skill>\n\n${userMessage}`
 
     expect(parsePromptSkillEnvelope(text)).toEqual({ name, location, content: skillContent, userMessage })
+  })
+})
+describe('plan kickoff presentation', () => {
+  const plan = { id: 'plan-1', title: 'Build "feature"\nand verify' }
+  const prompt = createConversationPlanKickoff(plan, '325bb64b-1779-4163-b44c-9179e8092a26')
+
+  it('recognizes only the complete generated prompt and leaves runtime text unchanged', () => {
+    expect(parseConversationPlanKickoff(prompt)).toEqual({ title: plan.title, planId: plan.id })
+    expect(promptDisplaySummary(prompt, (title) => `继续：${title}`)).toBe(`继续：${plan.title}`)
+    expect(promptDisplaySummary(prompt)).toBe(plan.title)
+    expect(prompt).toContain('[PiPilot continuation 325bb64b-1779-4163-b44c-9179e8092a26]')
+    for (const text of [`Quoted: ${prompt}`, `${prompt}\nDo something else`, prompt.replace('within its existing scope', 'outside its existing scope'), `\`\`\`\n${prompt}\n\`\`\``, prompt.replace('325bb64b-1779-4163-b44c-9179e8092a26', 'not-a-nonce')]) {
+      expect(parseConversationPlanKickoff(text)).toBeNull()
+      expect(promptDisplaySummary(text)).toBe(text)
+    }
   })
 })

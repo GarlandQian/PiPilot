@@ -246,7 +246,7 @@ export function PendingMessageRail({
             <span className="shrink-0 text-caption font-medium tabular-nums text-foreground">
               {t(queue.paused ? 'composer.pendingPausedCount' : 'composer.pendingCount', { count: presentation.count })}
             </span>
-            <span className="min-w-0 flex-1 truncate text-caption text-muted-foreground" title={promptDisplaySummary(nextSummary)}>
+            <span className="min-w-0 flex-1 truncate text-caption text-muted-foreground" title={promptDisplaySummary(nextSummary, (title) => t('taskContext.planKickoff', { title }))}>
               <PromptInlineMarkdown text={nextSummary} />
             </span>
             {presentation.nextImageCount > 0 ? (

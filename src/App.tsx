@@ -28,8 +28,14 @@ import { useStartWriting } from '@/components/frame/useStartWriting'
 import { useTaskNotificationNavigation } from '@/components/frame/useTaskNotificationNavigation'
 import { ConversationNotices } from '@/components/chat/ConversationNotices'
 import { ConversationSearchDialog } from '@/components/chat/ConversationSearchDialog'
+import { ConversationExportDialog } from '@/components/chat/ConversationExportDialog'
+import { ConversationImportDialog } from '@/components/chat/ConversationImportDialog'
+import { ConversationContextPanel } from '@/components/inspector/ConversationContextPanel'
+import { revealCurrentPlan } from '@/components/chat/plan-presentation'
+import type { ConversationExportTarget } from '@/shared/conversation-export'
 import { PrecisionReferencesProvider } from '@/components/precision/PrecisionReferences'
-import type { OfficialPiSessionSummary } from '@/shared/conversation-scope'
+import type { ConversationScope, OfficialPiSessionSummary } from '@/shared/conversation-scope'
+import type { ConversationImportCommitRequest } from '@/shared/conversation-import'
 import type { ConversationSearchMatch } from '@/shared/conversation-search'
 import { CommandPalette } from '@/components/frame/CommandPalette'
 import { SessionsPanel } from '@/components/frame/SessionsPanel'
@@ -44,6 +50,7 @@ import {
   Composer,
   type ComposerCommandCatalogState,
   type ComposerMentionInsertionRequest,
+  type ComposerTextInsertionRequest,
   type ComposerQueueState,
 } from '@/components/chat/Composer'
 import { ExtensionUiDialog } from '@/components/chat/ExtensionUiDialog'
@@ -147,6 +154,11 @@ export default function App() {
   const [integrationsTab, setIntegrationsTab] = React.useState<IntegrationsTabId>('overview')
   const [searchScope, setSearchScope] = React.useState<'current' | 'all'>('current')
   const [searchOpen, setSearchOpen] = React.useState(false)
+  const [exportTarget, setExportTarget] = React.useState<ConversationExportTarget | null>(null)
+  const [exportName, setExportName] = React.useState('')
+  const [importScope, setImportScope] = React.useState<ConversationScope | null>(null)
+  const [composerTextInsertionRequest, setComposerTextInsertionRequest] = React.useState<ComposerTextInsertionRequest | null>(null)
+  const composerTextInsertionSequence = React.useRef(0)
   const [sideQuestion, setSideQuestion] = React.useState<SideQuestionRequest | null>(null)
   const [pendingSearchJump, setPendingSearchJump] = React.useState<{ session: OfficialPiSessionSummary; entryId: string; query: string; match: ConversationSearchMatch; selectionRevision: number } | null>(null)
   const [renamingToken, setRenamingToken] = React.useState<string | null>(null)
@@ -154,11 +166,11 @@ export default function App() {
     openingSession, switching, selectionRevision, abandonSessionOpening,
     requestSwitch, requestSessionOpening,
   } = useSessionOpening({ workspace, pi, transcriptLoading })
-  const [inspectorTab, setInspectorTab] = React.useState<InspectorTab>('files')
+  const [inspectorTab, setInspectorTab] = React.useState<InspectorTab>('context')
   const [resourceExpanded, setResourceExpanded] = React.useState(false)
   const [terminalOpen, setTerminalOpen] = React.useState(false)
   const toggleTerminal = React.useCallback(() => setTerminalOpen((open) => !open), [])
-  const previousResourceTab = React.useRef<InspectorTab>('files')
+  const previousResourceTab = React.useRef<InspectorTab>('context')
   const [inspectorContainer] = React.useState(() => {
     const container = document.createElement('div')
     container.className = 'h-full min-h-0'
@@ -258,6 +270,30 @@ export default function App() {
   ])
   const compactFeedback = useConversationOperationFeedback(operationOwnerKey)
   const paletteStopFeedback = useConversationOperationFeedback(operationOwnerKey)
+  React.useEffect(() => { setExportTarget((current) => current && 'selectionToken' in current ? current : null) }, [operationOwnerKey])
+
+  const exportConversation = React.useCallback((selection: ConversationExportTarget['selection'] = { kind: 'conversation' }) => {
+    if (!conversationReady || !conversation.sessionId || !pi.runtime) return
+    setExportName(pi.session?.sessionName ?? '')
+    setExportTarget({ scope: workspace.activeScope, generation: pi.runtime.generation, sessionId: conversation.sessionId, selection })
+  }, [conversationReady, conversation, pi.runtime, pi.session?.sessionName, workspace.activeScope])
+  const exportCatalogConversation = React.useCallback((item: SidebarConversationItem) => {
+    setExportName(item.summary.name?.trim() || item.summary.preview.trim() || t('sidebar.session.untitled'))
+    setExportTarget({ scope: item.summary.scope, selectionToken: item.summary.selectionToken, selection: { kind: 'conversation' } })
+  }, [t])
+  const commitImportedConversation = React.useCallback((input: ConversationImportCommitRequest) => new Promise<void>((resolve, reject) => {
+    setRail('sessions')
+    requestSwitch(async () => {
+      try { await workspace.importSession(input); resolve() }
+      catch (error) { reject(error) }
+    })
+  }), [requestSwitch, setRail, workspace])
+  const suggestNextAction = React.useCallback((text: string) => {
+    if (!conversationReady) return
+    setResourceExpanded(false)
+    setCompactInspectorOpen(false)
+    setComposerTextInsertionRequest({ text, scopeKey: composerScopeKey, sequence: ++composerTextInsertionSequence.current })
+  }, [conversationReady, composerScopeKey, setCompactInspectorOpen])
 
   React.useEffect(() => {
     setInspectorPreview((current) => (
@@ -313,6 +349,17 @@ export default function App() {
       sequence: ++conversationJumpSequence.current,
     })
   }, [conversationSessionKey])
+  const navigateContextRecord = React.useCallback((entryId: string) => {
+    setResourceExpanded(false)
+    setCompactInspectorOpen(false)
+    navigateConversationOutline(entryId)
+  }, [navigateConversationOutline, setCompactInspectorOpen])
+  const revealPlanFromOverview = React.useCallback(() => {
+    setResourceExpanded(false)
+    setCompactInspectorOpen(false)
+    // Let a collapsing overlay inspector get out of the way before scrolling.
+    requestAnimationFrame(revealCurrentPlan)
+  }, [setCompactInspectorOpen])
   const navigateSearch = React.useCallback((entryId: string, query: string, match: ConversationSearchMatch) => {
     if (!conversationSessionKey) return
     setConversationJump({ sessionKey: conversationSessionKey, entryId, query, match, sequence: ++conversationJumpSequence.current })
@@ -595,6 +642,10 @@ export default function App() {
       onCloseSubagent={closeSubagentExecution}
       commandCall={selectedCommandCall}
       onCloseCommand={closeCommandExecution}
+      contextPanel={<ConversationContextPanel key={conversationSessionKey ?? 'unselected'} presentation={conversation}
+        planMode={extension.planMode} goalMode={extension.goalMode}
+        onRevealPlan={revealPlanFromOverview} onGoalAction={runGoalAction}
+        onNavigate={navigateContextRecord} onSuggest={suggestNextAction} />}
       sideChat={sideQuestion ? <SideConversationsPanel request={sideQuestion} ownerKey={`${conversationScopeKey(workspace.activeScope)}:${workspace.activeSessionId ?? 'unselected'}`} ready={conversationReady}
         visible={conversationWorkspace && inspectorTab === 'sidechat' && (compactConversation ? compactInspectorVisible : panelLayout.inspectorOpen)} /> : undefined}
     />
@@ -609,6 +660,9 @@ export default function App() {
         askSideQuestion={conversationReady ? askSideQuestion : undefined}
         workspaceId={workspace.activeScope.kind === 'project' ? workspace.activeScope.workspaceId : null}>
       <ConversationSearchDialog open={searchOpen} onOpenChange={setSearchOpen} initialScope={searchScope} onNavigate={navigateSearch} onOpenResult={openSearchResult} />
+      <ConversationExportDialog target={exportTarget} conversationName={exportName} onClose={() => setExportTarget(null)} />
+      {importScope && <ConversationImportDialog initialScope={importScope} projects={workspace.recentProjects}
+        onCommit={commitImportedConversation} onClose={() => setImportScope(null)} />}
       <div className="flex h-screen w-full min-w-0 flex-col overflow-hidden bg-window text-foreground">
         {nativeOpenFailed ? <div role="alert" className="app-drag flex min-h-9 shrink-0 items-center gap-2 border-b border-border bg-surface py-1.5 pr-3 pl-4 text-caption text-destructive mac:pl-[calc(var(--traffic-light-gutter)+8px)]">
           <span className="flex-1">{t('notifications.openFailed')}</span>
@@ -645,6 +699,8 @@ export default function App() {
                 isOpeningSessionRow={isOpeningSessionRow}
                 navigationRevision={selectionRevision}
                 onSelect={openConversation}
+                onExport={exportCatalogConversation}
+                onImport={setImportScope}
                 onNewPrimary={newPrimarySession}
                 onNewProjectless={() => {
                   requestSwitch(() => workspace.newSession({ kind: 'projectless' }))
@@ -779,6 +835,8 @@ export default function App() {
               jumpRequest={conversationJump}
               status={pi.status}
               onFork={actions.fork}
+              onExportResponse={(anchorEntryId) => exportConversation({ kind: 'response', anchorEntryId })}
+              onExportMessage={(entryId) => exportConversation({ kind: 'message', entryId })}
               onPlanAction={runPlanAction}
               selectedSubagentId={inspectorTab === 'subagent' && (compactConversation ? compactInspectorOpen : panelLayout.inspectorOpen)
                 ? selectedSubagentCall?.id ?? null : null}
@@ -816,6 +874,7 @@ export default function App() {
               queue={conversationReady ? pi.queue : EMPTY_COMPOSER_QUEUE}
               draftReplacement={conversationReady ? extension.draftReplacement : null}
               mentionInsertionRequest={composerMentionInsertionRequest}
+              textInsertionRequest={composerTextInsertionRequest}
               focusRequest={focusRequest}
               scopeKey={composerScopeKey}
               draftKey={`${conversationScopeKey(workspace.activeScope)}:${workspace.activeSessionId ?? 'unselected'}`}

@@ -57,6 +57,7 @@ export interface FixtureStreamWriter {
   thinking(text: string): void
   writeTool(args: { path: string; content: string }): void
   codemodeTool?(code: string): void
+  toolCall?(call: { id: string; name: string; arguments: Record<string, unknown> }): void
   finish(tool: boolean): void
 }
 
@@ -104,6 +105,14 @@ export function createFixtureStreamWriter(
             index: 0,
             ...(index === 0 ? { id: FIXTURE_CODEMODE_CALL_ID, type: 'function' } : {}),
             function: { ...(index === 0 ? { name: 'codemode' } : {}), arguments: part },
+          }],
+        }))
+      },
+      toolCall: (call) => {
+        pieces(JSON.stringify(call.arguments)).forEach((part, index) => chunk({
+          role: 'assistant', tool_calls: [{ index: 0,
+            ...(index === 0 ? { id: call.id, type: 'function' } : {}),
+            function: { ...(index === 0 ? { name: call.name } : {}), arguments: part },
           }],
         }))
       },

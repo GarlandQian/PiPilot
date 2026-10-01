@@ -7,6 +7,7 @@ import type {
   WorkspaceRemoveResult,
   WindowSnapshot,
 } from './ipc/contracts'
+import type { ConversationImportCommitRequest, ConversationImportPreviewRequest, ConversationImportPreviewResult } from './conversation-import'
 import type {
   WorkspaceChooseResult,
   WorkspacePinnedResult,
@@ -81,6 +82,7 @@ import type { ApplicationShutdownDecision, ApplicationShutdownEvent } from './ap
 import type { TaskNotificationPresentation, TaskNotificationSnapshot } from './task-notifications'
 import type { OfficialPiSessionSummary } from './conversation-scope'
 import type { ConversationSearchInput, ConversationSearchResult } from './conversation-search'
+import type { ConversationExportRequest, ConversationExportResult } from './conversation-export'
 import type { ScheduledTaskInput, ScheduledTasksSnapshot, ScheduledTarget } from './scheduled-tasks'
 
 export interface PiPilotApiError extends AppError {
@@ -88,6 +90,12 @@ export interface PiPilotApiError extends AppError {
 }
 
 export interface PiPilotApi {
+  readonly conversationExport: { save(input: ConversationExportRequest): Promise<ConversationExportResult> }
+  readonly conversationImport: {
+    preview(input: ConversationImportPreviewRequest): Promise<ConversationImportPreviewResult>
+    commit(input: ConversationImportCommitRequest): Promise<ConversationActivationResult>
+    discard(input: { token: string }): Promise<{ discarded: true }>
+  }
   readonly conversationSearch: { find(input: ConversationSearchInput): Promise<ConversationSearchResult> }
   readonly projectWorkflows: import('./project-workflows').ProjectWorkflowsApi
   readonly sideConversations: import('./side-conversations').SideConversationsApi

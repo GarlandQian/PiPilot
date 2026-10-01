@@ -5,10 +5,18 @@ import type {
 } from './pi-integrations'
 
 export const PI_SUBAGENTS_PACKAGE = 'pi-subagents' as const
+export const PI_SUBAGENTS_VERSION = '0.74.0' as const
 export const PI_PLAN_MODE_PACKAGE = '@narumitw/pi-plan-mode' as const
-export const PI_PLAN_MODE_VERSION = '0.50.1' as const
+export const PI_PLAN_MODE_VERSION = '0.58.3' as const
 export const PI_GOAL_PACKAGE = '@narumitw/pi-goal' as const
-export const PI_GOAL_VERSION = '0.52.2' as const
+export const PI_GOAL_VERSION = '0.54.8' as const
+
+/** Initial recommendations only; existing sources, versions and filters win. */
+export const PI_RECOMMENDED_PACKAGES = [
+  { packageName: PI_PLAN_MODE_PACKAGE, source: `npm:${PI_PLAN_MODE_PACKAGE}@${PI_PLAN_MODE_VERSION}` },
+  { packageName: PI_SUBAGENTS_PACKAGE, source: `npm:${PI_SUBAGENTS_PACKAGE}@${PI_SUBAGENTS_VERSION}` },
+  { packageName: PI_GOAL_PACKAGE, source: `npm:${PI_GOAL_PACKAGE}@${PI_GOAL_VERSION}` },
+] as const
 
 export type PiPackageAdapterId = 'subagents' | 'plan-mode' | 'goal'
 

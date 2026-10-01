@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import { conversationSearchContract } from '../shared/ipc/conversation-search-contracts'
+import { conversationExportContract } from '../shared/ipc/conversation-export-contracts'
+import { conversationImportCommitContract, conversationImportDiscardContract, conversationImportPreviewContract } from '../shared/ipc/conversation-import-contracts'
 import { createProjectWorkflowsApi } from './project-workflows'
 import { createSideConversationsApi } from './side-conversations'
 import { createScheduledTasksApi } from './scheduled-tasks-api'
@@ -227,6 +229,12 @@ const externalControlSubscription = createSubscription(
 )
 
 const api: PiPilotApi = {
+  conversationExport: { save: (input) => invoke(conversationExportContract, { context: createContext(), input }) },
+  conversationImport: {
+    preview: (input) => invoke(conversationImportPreviewContract, { context: createContext(), input }),
+    commit: (input) => invoke(conversationImportCommitContract, { context: createContext(), input }),
+    discard: (input) => invoke(conversationImportDiscardContract, { context: createContext(), input }),
+  },
   conversationSearch: { find: (input) => invoke(conversationSearchContract, { context: createContext(), input }) },
   projectWorkflows: createProjectWorkflowsApi(invoke, createContext),
   sideConversations: createSideConversationsApi(invoke, createContext),
