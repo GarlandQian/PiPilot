@@ -250,6 +250,8 @@ describe('scheduled task dispatch ledger', () => {
   })
 
   it('retains bounded history across deletion without dropping an active reservation', async () => {
+    // Exercise the real 500-entry retention boundary. Cloning and validating
+    // all 505 dispatches can exceed Vitest's default 5s on Windows runners.
     const h = harness()
     await h.service.save(h.input({ enabled: false }))
     const task = h.service.get().tasks[0]
@@ -260,7 +262,7 @@ describe('scheduled task dispatch ledger', () => {
     expect(h.service.get().tasks).toHaveLength(0)
     expect(h.service.get().runs).toHaveLength(500)
     expect(h.service.get().runs.every((run) => run.taskName === task.name)).toBe(true)
-  })
+  }, 20_000)
 })
 
 describe('schedule clock rules', () => {

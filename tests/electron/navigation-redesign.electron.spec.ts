@@ -52,10 +52,12 @@ async function addProject(app: ElectronApplication, page: Page, path: string) {
     })
   }, path)
   await page.getByRole('button', { name: 'Add project folder', exact: true }).click()
+  // A new project starts a Pi host; use the same bounded startup budget as
+  // the initial model load instead of the default 5s UI assertion timeout.
   await expect.poll(async () => {
     const runtime = await page.evaluate(() => window.pipilot!.localPi.runtime.status())
     return { cwd: runtime.cwd, state: runtime.state }
-  }).toEqual({ cwd: path, state: 'ready' })
+  }, { timeout: 20_000 }).toEqual({ cwd: path, state: 'ready' })
   await expect(page.locator('[data-model-thinking-trigger]')).toContainText('Fake Chat')
 }
 
