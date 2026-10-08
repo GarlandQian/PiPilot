@@ -199,7 +199,7 @@ jobs:
         if: ${{ matrix.platform == 'linux' }}
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends rpm
+          sudo apt-get install --yes --no-install-recommends rpm xdg-utils
       - name: Build package
         run: ${{ matrix.command }}
         env:
