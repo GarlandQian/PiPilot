@@ -82,19 +82,12 @@ nsis:
 
 linux:
   artifactName: ${productName}-${version}-linux-${arch}.${ext}
+  # The release matrix selects one native architecture with --x64 or --arm64.
+  # Per-target arch lists would add both architectures despite that CLI selection.
   target:
-    - target: AppImage
-      arch:
-        - x64
-        - arm64
-    - target: deb
-      arch:
-        - x64
-        - arm64
-    - target: rpm
-      arch:
-        - x64
-        - arm64
+    - AppImage
+    - deb
+    - rpm
   icon: build/icons/linux
   category: Development
   executableName: pipilot

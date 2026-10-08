@@ -211,7 +211,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          package="release/PiPilot-${{ needs.preflight.outputs.version }}-linux-${{ matrix.arch }}.rpm"
+          package="$(node -p "'release/' + require('./release/${{ matrix.inventory }}-manifest.json').files.find(file => file.name.endsWith('.rpm')).name")"
           test "$(rpm -qp --queryformat '%{NAME}' "$package")" = pipilot
           test "$(rpm -qp --queryformat '%{VERSION}' "$package")" = '${{ needs.preflight.outputs.version }}'
           expected_arch=x86_64

@@ -163,6 +163,24 @@ afterEach(async () => {
 })
 
 describe('release assembly validation', () => {
+  it.each(['x64', 'arm64'])('builds Linux packages only for the selected %s runner architecture', async (architecture) => {
+    const require = createRequire(import.meta.url)
+    const builderRequire = createRequire(require.resolve('electron-builder'))
+    const libraryRequire = createRequire(builderRequire.resolve('app-builder-lib'))
+    const { normalizeOptions } = require('electron-builder/out/builder')
+    const { computeArchToTargetNamesMap } = builderRequire('app-builder-lib/out/targets/targetFactory')
+    const { Platform } = builderRequire('app-builder-lib')
+    const { Arch } = libraryRequire('builder-util')
+    const configuration = libraryRequire('js-yaml').load(await readFile('electron-builder.yml', 'utf8'))
+    const options = normalizeOptions({ linux: [], [architecture]: true })
+    const targets = computeArchToTargetNamesMap(options.targets.get(Platform.LINUX), {
+      platformSpecificBuildOptions: configuration.linux,
+    }, Platform.LINUX)
+
+    expect([...targets.keys()]).toEqual([Arch[architecture]])
+    expect(targets.get(Arch[architecture])).toEqual(['AppImage', 'deb', 'rpm'])
+  })
+
   it('renders exact package links and only the selected version changes', async () => {
     const fixture = await createReleaseFixture()
     const notes = renderReleaseNotes({
