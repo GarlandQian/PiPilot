@@ -6,6 +6,8 @@ import {
 } from '@/components/settings/settings-navigation'
 import type { IntegrationsTabId } from '@/components/settings/IntegrationsSettings'
 import type { MessageKey } from '@/i18n'
+import { APP_SHORTCUTS } from './app-shortcuts'
+import type { ShortcutSpec } from './keyboard-shortcuts'
 
 /**
  * Handlers the command palette needs from the app frame. `App` satisfies
@@ -23,13 +25,24 @@ export interface CommandContext {
   openIntegrationsTab(tab: IntegrationsTabId): void
   stopGeneration(): void
   selectSession(item: SidebarConversationItem): void
+  /** A project is open, so review and files are available. */
+  projectOpen: boolean
+  toggleBottomPanel(): void
+  toggleTerminal(): void
+  openReview(): void
+  searchFiles(): void
+  toggleFileTree(): void
+  cycleLayout(): void
+  toggleFullView(): void
+  toggleSummary(): void
 }
 
 export interface AppCommand {
   id: string
   titleKey: MessageKey
   hintKey?: MessageKey
-  shortcut?: string
+  /** A primary-modifier key ("B" is ⌘B / Ctrl+B), or a full shortcut. */
+  shortcut?: string | ShortcutSpec
   /** Extra search terms matched by cmdk in addition to the localized title. */
   keywords?: string
   /** Commands without an enabled predicate are always available. */
@@ -67,9 +80,67 @@ export const ACTION_COMMANDS: readonly AppCommand[] = [
   {
     id: 'action:toggle-inspector',
     titleKey: 'palette.command.toggleInspector',
-    shortcut: 'J',
-    keywords: 'panel files terminal diff',
+    shortcut: APP_SHORTCUTS.switchChatAndTabs,
+    keywords: 'panel tabs right side',
     run: (ctx) => ctx.toggleInspector(),
+  },
+  {
+    id: 'action:toggle-bottom-panel',
+    titleKey: 'palette.command.toggleBottomPanel',
+    shortcut: APP_SHORTCUTS.toggleBottomPanel,
+    keywords: 'panel bottom dock',
+    run: (ctx) => ctx.toggleBottomPanel(),
+  },
+  {
+    id: 'action:toggle-terminal',
+    titleKey: 'palette.command.toggleTerminal',
+    shortcut: APP_SHORTCUTS.toggleTerminal,
+    keywords: 'shell console',
+    run: (ctx) => ctx.toggleTerminal(),
+  },
+  {
+    id: 'action:open-review',
+    titleKey: 'palette.command.openReview',
+    shortcut: APP_SHORTCUTS.openReview,
+    keywords: 'diff changes git review stage',
+    enabled: (ctx) => ctx.projectOpen,
+    run: (ctx) => ctx.openReview(),
+  },
+  {
+    id: 'action:search-files',
+    titleKey: 'palette.command.searchFiles',
+    shortcut: APP_SHORTCUTS.searchFiles,
+    keywords: 'open file find',
+    enabled: (ctx) => ctx.projectOpen,
+    run: (ctx) => ctx.searchFiles(),
+  },
+  {
+    id: 'action:toggle-file-tree',
+    titleKey: 'palette.command.toggleFileTree',
+    shortcut: APP_SHORTCUTS.toggleFileTree,
+    keywords: 'files explorer tree',
+    enabled: (ctx) => ctx.projectOpen,
+    run: (ctx) => ctx.toggleFileTree(),
+  },
+  {
+    id: 'action:cycle-layout',
+    titleKey: 'palette.command.cycleLayout',
+    shortcut: APP_SHORTCUTS.cycleLayout,
+    keywords: 'layout split full view hide tabs',
+    run: (ctx) => ctx.cycleLayout(),
+  },
+  {
+    id: 'action:toggle-full-view',
+    titleKey: 'palette.command.toggleFullView',
+    shortcut: APP_SHORTCUTS.toggleFullView,
+    keywords: 'maximize expand tabs',
+    run: (ctx) => ctx.toggleFullView(),
+  },
+  {
+    id: 'action:toggle-summary',
+    titleKey: 'palette.command.toggleSummary',
+    keywords: 'overview plan sources branch',
+    run: (ctx) => ctx.toggleSummary(),
   },
   {
     id: 'action:stop-generation',

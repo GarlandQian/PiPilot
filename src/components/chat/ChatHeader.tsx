@@ -1,3 +1,4 @@
+import type * as React from 'react'
 import {
   TbArrowsMinimize,
   TbDots,
@@ -8,6 +9,7 @@ import {
   TbLoader2,
   TbTerminal2,
   TbSearch,
+  TbListDetails,
 } from 'react-icons/tb'
 import { ConversationNavigation } from './ConversationNavigation'
 import type { AgentStatus, ConversationOutlineItem } from '@/types/chat'
@@ -27,7 +29,9 @@ import {
   formatTokenKilounits,
 } from '@/renderer/pi-rpc/session-stats-format'
 import type { PiSessionStats } from '@/store/pi-rpc'
-import { cn } from '@/lib/utils'
+import type { WorkspaceChangeTotals } from '@/components/inspector/WorkspacePanel'
+import { APP_SHORTCUTS } from '@/lib/app-shortcuts'
+import { formatShortcut } from '@/lib/keyboard-shortcuts'
 
 export interface ChatHeaderProps {
   ownerKey?: string | null
@@ -46,8 +50,30 @@ export interface ChatHeaderProps {
   onSearch?: () => void
   onNewConversation?: () => void
   onShowChanges?: () => void
+  /** Uncommitted lines, shown as Codex's +N −M review button. */
+  changeTotals?: WorkspaceChangeTotals | null
+  summaryOpen?: boolean
+  onToggleSummary?: () => void
+  /** Open-in-editor and commit menus, in their own capsule. */
+  gitControls?: React.ReactNode
   terminalOpen?: boolean
   onToggleTerminal?: () => void
+}
+
+/** A toolbar button with its name (and shortcut) in a tooltip. */
+function ToolbarButton({ label, shortcut, pressed, onClick, children, ...props }: {
+  label: string
+  shortcut?: string
+  pressed?: boolean
+  onClick?: () => void
+  children: React.ReactNode
+} & Omit<React.ComponentProps<typeof Button>, 'onClick' | 'children'>) {
+  return <Tooltip>
+    <TooltipTrigger asChild>
+      <Button variant="ghost" size="icon-sm" aria-label={label} aria-pressed={pressed} onClick={onClick} {...props}>{children}</Button>
+    </TooltipTrigger>
+    <TooltipContent side="bottom">{label}{shortcut ? <span className="ml-2 text-muted-foreground">{shortcut}</span> : null}</TooltipContent>
+  </Tooltip>
 }
 
 export function ChatHeader({
@@ -67,6 +93,10 @@ export function ChatHeader({
   onSearch,
   onNewConversation,
   onShowChanges,
+  changeTotals,
+  summaryOpen = false,
+  onToggleSummary,
+  gitControls,
   terminalOpen,
   onToggleTerminal,
 }: ChatHeaderProps) {
@@ -81,9 +111,13 @@ export function ChatHeader({
       })
   const costLabel = stats ? formatSessionCost(stats.cost, locale, true) : null
   const hasDetails = Boolean(branch || contextLabel || costLabel)
+  const reviewCounts = changeTotals?.gitAvailable && changeTotals.files > 0 ? changeTotals : null
+  const reviewLabel = reviewCounts
+    ? t('header.reviewChanges', { count: reviewCounts.files, added: reviewCounts.added, deleted: reviewCounts.deleted })
+    : t('header.showChanges')
 
   return (
-    <header className="app-drag toolbar-material flex h-(--frame-header-h) min-w-0 shrink-0 items-center gap-2.5 pr-3 pl-5">
+    <header className="app-drag toolbar-material flex h-(--frame-header-h) min-w-0 shrink-0 items-center gap-2.5 pr-3 titlebar-leading-[20px]">
       <div className="min-w-0 flex-1">
         <h1 className="truncate text-[calc(var(--app-font-size)+2px)] leading-tight font-bold text-foreground">{title}</h1>
         <div className="flex min-w-0 items-center gap-1.5 text-micro leading-tight text-muted-foreground">
@@ -97,11 +131,9 @@ export function ChatHeader({
       </span> : null}
 
       {/* macOS 27 toolbar: related items share one Liquid Glass capsule. */}
-      <div className="glass flex shrink-0 items-center gap-0.5 rounded-full p-[3px] [&_[data-slot=button]]:rounded-full [&_[data-slot=button]]:text-foreground/80 [&_[data-slot=button]:hover]:bg-(--glass-hover) [&_[data-slot=button]:hover]:text-foreground">
+      <div className="glass toolbar-group">
         {onSearch ? <Button variant="ghost" size="icon-sm" onClick={onSearch} aria-label={t('conversationSearch.title')} title={t('conversationSearch.title')}><TbSearch aria-hidden /></Button> : null}
         {onNavigate ? <ConversationNavigation ownerKey={ownerKey} items={outline} onNavigate={onNavigate} /> : null}
-        {onShowChanges ? <Button variant="ghost" size="icon-sm" onClick={onShowChanges} aria-label={t('header.showChanges')} title={t('header.showChanges')}><TbFileDiff aria-hidden /></Button> : null}
-        {onToggleTerminal ? <Button variant="ghost" size="icon-sm" className={terminalOpen ? 'bg-fill-strong text-primary!' : undefined} onClick={onToggleTerminal} aria-label={t('terminal.drawer.title')} title={t('terminal.drawer.title')} aria-expanded={terminalOpen} aria-controls="workspace-terminal-drawer"><TbTerminal2 aria-hidden /></Button> : null}
         {sessionVisible && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -148,22 +180,25 @@ export function ChatHeader({
           </DropdownMenu>
         )}
       </div>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={inspectorOpen ? t('header.collapsePanel') : t('header.expandPanel')}
-            onClick={onToggleInspector}
-            className={cn('glass size-[34px] hover:bg-(--glass-fill) hover:brightness-[0.97] dark:hover:brightness-125', inspectorOpen ? 'text-primary hover:text-primary' : 'text-foreground/80')}
-          >
-            <TbLayoutSidebarRight className="size-[18px]" aria-hidden />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent side="bottom">
-          {inspectorOpen ? t('header.collapsePanel') : t('header.expandPanel')}
-        </TooltipContent>
-      </Tooltip>
+      {gitControls}
+      {/* Codex's trailing group: review (+N −M), summary, terminal, side panel. */}
+      <div className="glass toolbar-group">
+        {onShowChanges ? <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="ghost" size={reviewCounts ? 'sm' : 'icon-sm'} onClick={onShowChanges} aria-label={reviewLabel} data-review-button
+              className={reviewCounts ? 'gap-1 px-2 font-mono text-caption tabular-nums' : undefined}>
+              {reviewCounts ? <><span className="text-success">+{reviewCounts.added}</span><span className="text-destructive">−{reviewCounts.deleted}</span></> : <TbFileDiff aria-hidden />}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">{reviewLabel}<span className="ml-2 text-muted-foreground">{formatShortcut(APP_SHORTCUTS.openReview)}</span></TooltipContent>
+        </Tooltip> : null}
+        {onToggleSummary ? <ToolbarButton label={t('summary.title')} pressed={summaryOpen} onClick={onToggleSummary} data-summary-trigger aria-expanded={summaryOpen}><TbListDetails aria-hidden /></ToolbarButton> : null}
+        {onToggleTerminal ? <ToolbarButton label={t('terminal.drawer.title')} shortcut={formatShortcut(APP_SHORTCUTS.toggleTerminal)} pressed={terminalOpen} onClick={onToggleTerminal}
+          aria-expanded={terminalOpen} aria-controls="workspace-terminal-drawer"><TbTerminal2 aria-hidden /></ToolbarButton> : null}
+        <ToolbarButton label={inspectorOpen ? t('header.collapsePanel') : t('header.expandPanel')} shortcut={formatShortcut(APP_SHORTCUTS.switchChatAndTabs)} pressed={inspectorOpen} onClick={onToggleInspector}>
+          <TbLayoutSidebarRight className="size-[18px]" aria-hidden />
+        </ToolbarButton>
+      </div>
     </header>
   )
 }

@@ -83,7 +83,8 @@ export function terminalShortcut(
 ): 'find' | 'copy' | 'paste' | undefined {
   if (event.isComposing || event.keyCode === 229 || event.altKey) return undefined
   const key = event.key.toLowerCase()
-  if ((event.metaKey || event.ctrlKey) && key === 'f') return 'find'
+  // ⇧⌘F belongs to the window (full view), not to the terminal's find.
+  if ((event.metaKey || event.ctrlKey) && !event.shiftKey && key === 'f') return 'find'
   const clipboardModifier = event.metaKey || (event.ctrlKey && event.shiftKey)
   if (clipboardModifier && key === 'c') return 'copy'
   if ((clipboardModifier && key === 'v') || (event.shiftKey && !event.ctrlKey && !event.metaKey && key === 'insert')) return 'paste'

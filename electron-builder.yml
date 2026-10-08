@@ -36,9 +36,10 @@ electronLanguages:
   - en-US
   - zh-CN
 
-artifactName: ${productName}-${version}-${arch}.${ext}
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}
 
 mac:
+  artifactName: ${productName}-${version}-macos-${arch}.${ext}
   target:
     - target: dmg
       arch:
@@ -62,6 +63,7 @@ dmg:
   backgroundColor: '#17181c'
 
 win:
+  artifactName: ${productName}-${version}-windows-${arch}.${ext}
   target:
     - target: nsis
       arch:
@@ -78,6 +80,7 @@ nsis:
   deleteAppDataOnUninstall: false
 
 linux:
+  artifactName: ${productName}-${version}-linux-${arch}.${ext}
   target:
     - target: AppImage
       arch:

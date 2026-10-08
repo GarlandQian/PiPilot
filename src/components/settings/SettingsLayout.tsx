@@ -112,7 +112,7 @@ export function SettingsLayout({
       aria-label={t(metadata.labelKey)}
     >
       {/* Unified toolbar, like a System Settings pane title. */}
-      <header className="app-drag toolbar-material absolute inset-x-0 top-0 z-30 flex h-(--frame-header-h) items-center gap-2 pr-4 pl-3">
+      <header className="app-drag toolbar-material absolute inset-x-0 top-0 z-30 flex h-(--frame-header-h) items-center gap-2 pr-4 titlebar-leading-[12px]">
         {compact && onBack ? (
           <Button
             ref={compactBackRef}

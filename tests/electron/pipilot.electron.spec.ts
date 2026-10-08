@@ -32,28 +32,34 @@ function workspaceFileViewer(inspector: Locator, path: string) {
 }
 
 async function expectInspectorResourceTabNavigation(inspector: Locator) {
-  const tabs = inspector.getByRole('tablist', { name: 'Switch inspector view', exact: true })
+  // Nothing is fixed in the side panel (Codex): Files and Review open as tabs.
+  const page = inspector.page()
+  await selectInspectorView(inspector, 'Files')
+  const tabs = inspector.getByRole('tablist', { name: 'Right panel', exact: true })
   await expect(tabs).toBeVisible()
-  await expect(tabs.getByRole('tab')).toHaveText(['Overview', 'Files', 'Changes'])
-  for (const name of ['Terminal', 'Agents', 'Output', 'Raw history', 'Pi shell', 'Outline']) {
-    await expect(tabs.getByRole('tab', { name, exact: true })).toHaveCount(0)
-  }
+  const files = tabs.getByRole('tab', { name: 'Files', exact: true })
+  await files.click({ button: 'right' })
+  const closeOthers = page.getByRole('menuitem', { name: 'Close other tabs', exact: true })
+  if (await closeOthers.isVisible().catch(() => false)) await closeOthers.click()
+  else await page.keyboard.press('Escape')
+  await expect(tabs.getByRole('tab')).toHaveText(['Files'])
+  await selectInspectorView(inspector, 'Review')
+  await expect(tabs.getByRole('tab')).toHaveText(['Files', 'Review'])
   await expect(inspector.getByRole('button', { name: 'Switch inspector view', exact: true })).toHaveCount(0)
 
-  const files = tabs.getByRole('tab', { name: 'Files', exact: true })
-  const changes = tabs.getByRole('tab', { name: 'Changes', exact: true })
-  await files.focus()
+  const review = tabs.getByRole('tab', { name: 'Review', exact: true })
+  await files.click()
   await expect(files).toHaveAttribute('aria-selected', 'true')
   await files.press('ArrowRight')
-  await expect(changes).toBeFocused()
-  await expect(changes).toHaveAttribute('aria-selected', 'true')
-  await expect(inspector.getByRole('tabpanel', { name: 'Changes', exact: true })).toBeVisible()
+  await expect(review).toBeFocused()
+  await expect(review).toHaveAttribute('aria-selected', 'true')
+  await expect(inspector.getByRole('tabpanel', { name: 'Review', exact: true })).toBeVisible()
   await expect(inspector.getByRole('tabpanel', { name: 'Files', exact: true })).toHaveCount(0)
-  await changes.press('ArrowLeft')
+  await review.press('ArrowLeft')
   await expect(files).toBeFocused()
   await expect(files).toHaveAttribute('aria-selected', 'true')
   await expect(inspector.getByRole('tabpanel', { name: 'Files', exact: true })).toBeVisible()
-  await expect(inspector.getByRole('tabpanel', { name: 'Changes', exact: true })).toHaveCount(0)
+  await expect(inspector.getByRole('tabpanel', { name: 'Review', exact: true })).toHaveCount(0)
 }
 
 async function selectWorkspaceFromSystemDialog(
@@ -393,7 +399,7 @@ test('supports real clipboard editing in Composer and standard text inputs', asy
     })).toBeAttached()
 
     await page.keyboard.press(`${shortcutModifier}+k`)
-    const paletteInput = page.getByPlaceholder('Type a command or search sessions…')
+    const paletteInput = page.getByPlaceholder('Type a command or search conversations…')
     await expect(paletteInput).toBeFocused()
     await electronApp.evaluate(
       ({ clipboard }, text) => clipboard.writeText(text),
@@ -1105,7 +1111,7 @@ test('recovers a projectless Pi Host after a one-shot fatal extension shutdown',
   }
 })
 
-test('asks for a project in Files and Changes independently of conversation navigation', async ({}, testInfo) => {
+test('offers Files and Review only with a project, independently of conversation navigation', async ({}, testInfo) => {
   test.setTimeout(30_000)
   const userDataPath = testInfo.outputPath('user-data')
   await mkdir(userDataPath, { recursive: true })
@@ -1132,18 +1138,17 @@ test('asks for a project in Files and Changes independently of conversation navi
     await page.waitForLoadState('domcontentloaded')
     await page.setViewportSize({ width: 1_440, height: 900 })
     const inspector = page.getByRole('complementary', { name: 'Inspector' })
-    for (const view of ['Files', 'Changes'] as const) {
-      await selectInspectorView(inspector, view)
-      const activePanel = inspector.getByRole('tabpanel', { name: view, exact: true })
-      await expect(inspector.getByRole('tabpanel')).toHaveCount(1)
-      await expect(inspector.getByRole('tab')).toHaveCount(3)
-      await expect(inspector.getByRole('tabpanel', { includeHidden: true })).toHaveCount(3)
-      const activeTab = inspector.getByRole('tab', { name: view, exact: true })
-      await expect(activeTab).toHaveAttribute('aria-selected', 'true')
-      await expect(activePanel).toHaveAttribute('id', (await activeTab.getAttribute('aria-controls'))!)
-      await expect(activePanel.getByText('Select a project to browse its files and changes.', { exact: true }))
-        .toBeVisible()
-    }
+    // Without a project there is nothing to review or browse: no +N −M, and ⇧⌘E does nothing.
+    await expect(page.locator('[data-review-button]')).toHaveCount(0)
+    await page.keyboard.press('ControlOrMeta+Shift+E')
+    await expect(inspector).toHaveCount(0)
+    await page.getByRole('button', { name: 'Expand panel', exact: true }).click()
+    const launcher = inspector.locator('[data-panel-launcher]')
+    await expect(launcher).toBeVisible()
+    await expect(launcher.getByRole('button', { name: /^Terminal/ })).toBeVisible()
+    await expect(launcher.getByRole('button', { name: /^Review/ })).toHaveCount(0)
+    await expect(launcher.getByRole('button', { name: /^Files/ })).toHaveCount(0)
+    await expect(inspector.getByRole('tab')).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Navigate conversation', exact: true })).toBeDisabled()
     await expect(inspector.getByText('Working tree', { exact: true })).toHaveCount(0)
   } finally {
@@ -1274,7 +1279,7 @@ test('searches conversation turns, navigates by keyboard, and inserts file-tree 
     await searchedSourceFile.click()
     const searchedViewer = workspaceFileViewer(inspector, 'src/example.ts')
     await expect(searchedViewer).toContainText('export const example = true')
-    await searchedViewer.getByRole('button', { name: 'Back', exact: true }).click()
+    await inspector.getByRole('tab', { name: 'Files', exact: true }).click()
     await inspector.getByRole('button', { name: 'Clear file search', exact: true }).click()
 
     const sourceFolder = inspector.getByRole('button').filter({ hasText: /^src$/u })
@@ -1560,48 +1565,51 @@ test('keeps open file selection through tree navigation and compact frame transi
     await expect(page.getByText('The preview is ready.', { exact: true })).toBeVisible()
 
     const inspector = page.getByRole('complementary', { name: 'Inspector' })
-    const openFiles = inspector.getByRole('combobox', { name: 'Open files', exact: true })
+    // Opened files are tabs in the side panel's strip; Files shows the tree.
+    const filesTab = inspector.getByRole('tab', { name: 'Files', exact: true })
+    const fileTab = (name: string) => inspector.getByRole('tab', { name, exact: true })
+    const openFileTabs = inspector.locator('[data-panel-tab^="file:"]')
     const sourceViewer = workspaceFileViewer(inspector, 'src/example.ts')
     const markdownViewer = workspaceFileViewer(inspector, 'README.md')
 
-    await test.step('retain file A after Back, open file B, and select and close individual readers', async () => {
+    await test.step('retain file A behind Files, open file B, and switch and close individual tabs', async () => {
       await selectInspectorView(inspector, 'Files')
       await inspector.getByRole('button').filter({ hasText: /^src$/u }).click()
       await inspector.getByRole('button').filter({ hasText: /^example\.ts$/u }).click()
       await expect(sourceViewer).toContainText('export const example = true')
-      await expect(openFiles).toHaveValue('src/example.ts')
-      await expect(openFiles.locator('option')).toHaveCount(2)
+      await expect(fileTab('example.ts')).toHaveAttribute('aria-selected', 'true')
+      await expect(openFileTabs).toHaveCount(1)
 
-      await sourceViewer.getByRole('button', { name: 'Back', exact: true }).click()
+      await filesTab.click()
       await expect(sourceViewer).toHaveCount(0)
-      await expect(openFiles).toHaveValue('.')
-      await expect(openFiles.locator('option')).toHaveCount(2)
+      await expect(filesTab).toHaveAttribute('aria-selected', 'true')
+      await expect(openFileTabs).toHaveCount(1)
       await inspector.getByRole('button').filter({ hasText: /^README\.md$/u }).click()
       await expect(markdownViewer.getByRole('heading', { name: 'Responsive preview fixture', exact: true })).toBeVisible()
-      await expect(openFiles.locator('option')).toHaveCount(3)
-      await expect(openFiles).toHaveValue('README.md')
+      await expect(openFileTabs).toHaveCount(2)
+      await expect(fileTab('README.md')).toHaveAttribute('aria-selected', 'true')
 
-      await openFiles.selectOption('src/example.ts')
+      await fileTab('example.ts').click()
       await expect(sourceViewer).toContainText('export const example = true')
       await expect(markdownViewer).toHaveCount(0)
-      await openFiles.selectOption('README.md')
+      await fileTab('README.md').click()
       await expect(markdownViewer.getByRole('heading', { name: 'Responsive preview fixture', exact: true })).toBeVisible()
-      await markdownViewer.getByRole('button', { name: 'Close', exact: true }).click()
-      await expect(openFiles).toHaveValue('src/example.ts')
-      await expect(openFiles.locator('option')).toHaveCount(2)
-      await sourceViewer.getByRole('button', { name: 'Back', exact: true }).click()
+      await inspector.getByRole('button', { name: 'Close README.md', exact: true }).click()
+      await expect(fileTab('example.ts')).toHaveAttribute('aria-selected', 'true')
+      await expect(openFileTabs).toHaveCount(1)
+      await filesTab.click()
       await inspector.getByRole('button').filter({ hasText: /^README\.md$/u }).click()
-      await openFiles.selectOption('src/example.ts')
-      await sourceViewer.getByRole('button', { name: 'Close', exact: true }).click()
-      await expect(openFiles.locator('option')).toHaveCount(2)
-      await expect(openFiles).toHaveValue('README.md')
+      await fileTab('example.ts').click()
+      await inspector.getByRole('button', { name: 'Close example.ts', exact: true }).click()
+      await expect(openFileTabs).toHaveCount(1)
+      await expect(fileTab('README.md')).toHaveAttribute('aria-selected', 'true')
       await expect(markdownViewer).toBeVisible()
     })
 
     await test.step('refresh from disk without losing the active file, Source mode, or reading position', async () => {
-      const sourceModeTab = markdownViewer.getByRole('tab', { name: 'Source', exact: true })
+      const sourceModeTab = markdownViewer.getByRole('button', { name: 'Source', exact: true })
       await sourceModeTab.click()
-      const sourceDocument = markdownViewer.getByRole('tabpanel', { name: 'Source', exact: true })
+      const sourceDocument = markdownViewer.locator('[data-file-source]')
       await expect(sourceDocument).toContainText('Fixture source line 80: original disk content.')
       const scrollTopBeforeRefresh = await sourceDocument.evaluate((element) => {
         element.scrollTop = 640
@@ -1613,16 +1621,17 @@ test('keeps open file selection through tree navigation and compact frame transi
         'Fixture source line 80: original disk content.',
         'Fixture source line 80: refreshed disk content.',
       ))
-      await markdownViewer.getByRole('button', { name: 'Refresh', exact: true }).click()
+      await markdownViewer.getByRole('button', { name: 'More', exact: true }).click()
+      await page.getByRole('menuitem', { name: 'Refresh', exact: true }).click()
       await expect(sourceDocument).toContainText('Fixture source line 80: refreshed disk content.')
       await expect(sourceDocument).not.toContainText('Fixture source line 80: original disk content.')
-      await expect(sourceModeTab).toHaveAttribute('aria-selected', 'true')
-      await expect(openFiles).toHaveValue('README.md')
-      await expect(openFiles.locator('option')).toHaveCount(2)
+      await expect(sourceModeTab).toHaveAttribute('aria-pressed', 'true')
+      await expect(fileTab('README.md')).toHaveAttribute('aria-selected', 'true')
+      await expect(openFileTabs).toHaveCount(1)
       await expect.poll(() => sourceDocument.evaluate((element) => element.scrollTop))
         .toBeCloseTo(scrollTopBeforeRefresh, 0)
 
-      await markdownViewer.getByRole('tab', { name: 'Preview', exact: true }).click()
+      await markdownViewer.getByRole('button', { name: 'Preview', exact: true }).click()
       await expect(markdownViewer.getByRole('heading', {
         name: 'Responsive preview fixture',
         exact: true,
@@ -1639,9 +1648,9 @@ test('keeps open file selection through tree navigation and compact frame transi
       name: 'Responsive preview fixture',
       exact: true,
     })).toBeVisible()
-    await expect(openFiles).toHaveValue('README.md')
-    await restoredViewer.getByRole('button', { name: 'Close', exact: true }).click()
-    await expect(openFiles).toHaveCount(0)
+    await expect(restoredInspector.getByRole('tab', { name: 'README.md', exact: true })).toHaveAttribute('aria-selected', 'true')
+    await restoredInspector.getByRole('button', { name: 'Close README.md', exact: true }).click()
+    await expect(restoredInspector.locator('[data-panel-tab^="file:"]')).toHaveCount(0)
     await expect(restoredInspector.getByRole('button').filter({ hasText: /^README\.md$/u }))
       .toBeVisible()
   } finally {
@@ -1731,8 +1740,8 @@ test('restores a populated inactive project and starts a new session from its me
       exact: true,
     })).toBeVisible({ timeout: 20_000 })
 
-    await page.getByRole('button', { name: 'New general chat', exact: true }).click()
-    await expect(page.getByRole('button', { name: 'New general chat', exact: true }))
+    await page.getByRole('button', { name: 'New chat', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'New chat', exact: true }))
       .toBeVisible()
 
     await expect.poll(() => page.evaluate(() => {
@@ -1767,7 +1776,7 @@ test('restores a populated inactive project and starts a new session from its me
     await projectActions.focus()
     await expect(projectActions).toBeFocused()
     await page.keyboard.press('Enter')
-    const newSessionItem = page.getByRole('menuitem', { name: 'New session', exact: true })
+    const newSessionItem = page.getByRole('menuitem', { name: 'New task', exact: true })
     await expect(newSessionItem).toBeFocused()
     await page.keyboard.press('Enter')
 
@@ -1863,8 +1872,8 @@ test('removes an active project without deleting files or stopping its running s
     await projectActions.click()
     await page.getByRole('menuitem', { name: 'Remove project', exact: true }).click()
     const dialog = page.getByRole('alertdialog', { name: 'Remove project?' })
-    await expect(dialog).toContainText('The project folder and its Pi sessions will remain on disk.')
-    await expect(dialog).toContainText('Running background sessions will continue.')
+    await expect(dialog).toContainText('The project folder and its conversations stay on disk.')
+    await expect(dialog).toContainText('Conversations running in the background will continue.')
     await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
     await expect(projectActions).toBeVisible()
 
@@ -2134,7 +2143,6 @@ test('opens a persisted project session on the first click while Pi initializes'
     await expect(page.getByText('Loading conversation…', { exact: true })).toBeVisible()
     const inspector = page.getByRole('complementary', { name: 'Inspector' })
     await expect(inspector.getByText('Loading Pi session data…', { exact: true })).toHaveCount(0)
-    await expect(inspector.locator('[data-workspace-tree-row="available.txt"]')).toBeVisible()
 
     await expect(page.getByText('Selected session history response', { exact: true }))
       .toBeVisible({ timeout: 20_000 })
@@ -2159,6 +2167,9 @@ test('opens a persisted project session on the first click while Pi initializes'
     await expect(page.getByText('No session selected', { exact: true })).toHaveCount(0)
     await expect(inspector.getByText('No Pi session selected', { exact: true })).toHaveCount(0)
     await expect(page.getByText('Operation failed', { exact: true })).toHaveCount(0)
+    // The opened conversation keeps its own tabs (Codex); its files are one shortcut away.
+    await selectInspectorView(page, 'Files')
+    await expect(inspector.locator('[data-workspace-tree-row="available.txt"]')).toBeVisible()
 
     await expect(page.evaluate(() => window.pipilot!.localPi.runtime.status()))
       .resolves.toMatchObject({
@@ -2401,18 +2412,25 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
     }).click()
     await page.getByRole('option', { name: /Fake Reasoning/ }).click()
     await expect(page.getByRole('button', {
-      name: /Model Fake Reasoning, thinking .*; click to change/u,
+      name: /Model Fake Reasoning, reasoning effort .*; click to change/u,
     })).toBeVisible()
     await page.getByRole('button', {
-      name: /Model Fake Reasoning, thinking .*; click to change/u,
+      name: /Model Fake Reasoning, reasoning effort .*; click to change/u,
     }).click()
     await page.screenshot({
       path: testInfo.outputPath('model-thinking-picker-desktop-light.png'),
     })
-    await page.getByRole('option', { name: /High/ }).click()
+    // Reasoning effort is a slider over the model's own levels, under the models.
+    const effort = page.getByRole('slider', { name: 'Reasoning effort', exact: true })
+    await effort.focus()
+    await effort.press('Home')
+    for (let step = 0; step < 8 && (await effort.getAttribute('aria-valuetext')) !== 'High'; step += 1) await effort.press('ArrowRight')
+    await expect(effort).toHaveAttribute('aria-valuetext', 'High')
+    // Keyboard steps settle first, then one change reaches Pi; the panel stays open.
     await expect(page.getByRole('button', {
-      name: 'Model Fake Reasoning, thinking High; click to change',
+      name: 'Model Fake Reasoning, reasoning effort High; click to change',
     })).toBeVisible()
+    await page.keyboard.press('Escape')
     await expect.poll(() => page.evaluate(() => (
       window.pipilot!.localPi.runtime.command({ type: 'get_state' })
     ))).toMatchObject({
@@ -2420,7 +2438,7 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
       data: { thinkingLevel: 'high' },
     })
     await page.getByRole('button', {
-      name: /Model Fake Reasoning, thinking .*; click to change/u,
+      name: /Model Fake Reasoning, reasoning effort .*; click to change/u,
     }).click()
     await page.getByRole('option', { name: /Fake Fast/ }).click()
     await expect(page.getByRole('button', {
@@ -2981,7 +2999,8 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
       await expect(transcriptLog.getByText('Selected session history response', { exact: true }))
         .toHaveCount(0)
       await expect(inspector.getByText('Loading Pi session data…', { exact: true })).toHaveCount(0)
-      // Project-owned resources remain readable while another session hydrates.
+      // Each conversation keeps its own tabs; project files stay readable while it hydrates.
+      await selectInspectorView(inspector, 'Files')
       await expect(inspector.getByText('example.ts', { exact: true })).toBeVisible()
       await selectInspectorView(inspector, 'Changes')
       await expect(inspector.getByText('Loading Pi session data…', { exact: true })).toHaveCount(0)
@@ -2989,7 +3008,9 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
         .toBeVisible()
       await expect(page.getByRole('button', { name: 'Navigate conversation', exact: true })).toBeDisabled()
       await expect(page.getByRole('dialog', { name: 'Navigate conversation', exact: true })).toHaveCount(0)
-      await selectInspectorView(inspector, 'Files')
+      // Leave only Files open, so closing later tabs returns to it.
+      await inspector.getByRole('button', { name: 'Close Review', exact: true }).click()
+      await expect(inspector.getByRole('tab', { name: 'Files', exact: true })).toHaveAttribute('aria-selected', 'true')
       await expect(mentionMenu).toHaveCount(0)
       await expect(mentionAtoms).toHaveCount(0)
       await expect(composer).toHaveText('')
@@ -3139,10 +3160,12 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
     )
     await expect(subagentPanel).toBeVisible()
     await expect(transcriptLog).toBeVisible()
-    for (const name of ['Files', 'Changes', 'Terminal', 'Agents', 'Output']) {
+    // A child conversation opens as its own closable tab (Codex side panel).
+    await expect(inspector.getByRole('tab', { name: 'Agents', exact: true })).toHaveAttribute('aria-selected', 'true')
+    for (const name of ['Terminal', 'Output']) {
       await expect(inspector.getByRole('tab', { name, exact: true })).toHaveCount(0)
     }
-    await expect(inspector.getByRole('button', { name: 'Back to project resources', exact: true })).toBeVisible()
+    await expect(inspector.getByRole('button', { name: 'Close Agents', exact: true })).toBeVisible()
     await expect(subagentPanel.getByText('Read-only child conversation', { exact: true })).toBeVisible()
     const subagentTaskDisclosure = subagentPanel.getByRole('button', {
       name: /^Task/u,
@@ -3162,18 +3185,18 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
     await expect(execution.getByText('pnpm test', { exact: true })).toBeVisible()
     await expect(execution.getByText('Focused checks passed.', { exact: true })).toBeVisible()
     await expect(execution.getByRole('heading', { name: 'Done', exact: true })).toBeVisible()
-    await inspector.getByRole('button', { name: 'Back to project resources', exact: true }).click()
+    await inspector.getByRole('button', { name: 'Close Agents', exact: true }).click()
     await expect(subagentPanel).not.toBeVisible()
     await subagentCall.click()
     await expect(subagentTaskDisclosure).toHaveAttribute('aria-expanded', 'false')
     await subagentTaskDisclosure.click()
     await expect(subagentTaskDisclosure).toHaveAttribute('aria-expanded', 'true')
     await expect(execution.getByRole('heading', { name: 'Done', exact: true })).toBeVisible()
-    await inspector.getByRole('button', { name: 'Expand resource', exact: true }).click()
+    await inspector.getByRole('button', { name: 'Full view', exact: true }).click()
     await expect(subagentPanel).toBeVisible()
     await expect(transcriptLog).not.toBeVisible()
     await page.screenshot({ path: testInfo.outputPath('subagent-resource-expanded-light.png') })
-    await inspector.getByRole('button', { name: 'Back to conversation', exact: true }).click()
+    await inspector.getByRole('button', { name: 'Exit full view', exact: true }).click()
     await expect(transcriptLog).toBeVisible()
     await expect(page.getByText(/Run fan-out|Async workflow|subagent_wait/iu)).toHaveCount(0)
     await expect(page.getByText(/project\/tasks\/private/iu)).toHaveCount(0)
@@ -3212,42 +3235,44 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
     const openCommandOutput = shellCard.getByRole('button', { name: 'Open output in workspace', exact: true })
     await openCommandOutput.click()
     const commandPanel = inspector.locator('[data-command-execution-panel]')
-    const resourceToolbar = inspector.locator('[data-inspector-views] > header')
+    // The right dock's header: its tab strip, then full view and close.
+    const resourceToolbar = inspector.locator(':scope > header')
     await expect(commandPanel).toBeVisible()
     await expect(transcriptLog).toBeVisible()
     await expect(shellCard).toBeVisible()
-    for (const name of ['Files', 'Changes', 'Terminal', 'Agents', 'Output']) {
-      await expect(resourceToolbar.getByRole('tab', { name, exact: true })).toHaveCount(0)
-    }
-    await expect(resourceToolbar.getByRole('button', { name: 'Back to project resources', exact: true })).toBeVisible()
+    await expect(resourceToolbar.getByRole('tab', { name: 'Output', exact: true })).toHaveAttribute('aria-selected', 'true')
+    await expect(resourceToolbar.getByRole('button', { name: 'Close Output', exact: true })).toBeVisible()
     await expect(commandPanel.getByRole('heading', { name: 'Checks', exact: true })).toBeVisible()
     await expect(commandPanel.getByRole('button', { name: 'Open output in workspace', exact: true })).toHaveCount(0)
     const resourceOutputSearch = commandPanel.getByRole('searchbox', { name: 'Search output', exact: true })
     await resourceOutputSearch.fill('checks')
     await expect(commandPanel.locator('mark')).toHaveCount(2)
-    await resourceToolbar.getByRole('button', { name: 'Back to project resources', exact: true }).click()
+    await resourceToolbar.getByRole('button', { name: 'Close Output', exact: true }).click()
     await expect(commandPanel).not.toBeVisible()
     await openCommandOutput.click()
     await expect(resourceOutputSearch).toHaveValue('')
     await resourceOutputSearch.fill('checks')
     await expect(commandPanel.locator('mark')).toHaveCount(2)
-    await resourceToolbar.getByRole('button', { name: 'Expand resource', exact: true }).click()
+    await resourceToolbar.getByRole('button', { name: 'Full view', exact: true }).click()
     await expect(commandPanel).toBeVisible()
     await expect(transcriptLog).not.toBeVisible()
     await page.screenshot({ path: testInfo.outputPath('command-resource-expanded-light.png') })
-    await resourceToolbar.getByRole('button', { name: 'Back to conversation', exact: true }).click()
+    await resourceToolbar.getByRole('button', { name: 'Exit full view', exact: true }).click()
     await expect(transcriptLog).toBeVisible()
     await expect(commandPanel).toBeVisible()
     await commandPanel.focus()
     await commandPanel.press('Escape')
     await expect(commandPanel).toHaveCount(0)
-    await expect(inspector.getByRole('tab', { name: 'Files', exact: true })).toBeFocused()
+    // Focus returns to the tab now in front: the neighbour of the closed one.
+    await expect(inspector.getByRole('tab', { selected: true })).toBeFocused()
     await expect(shellCard).toBeVisible()
     await openCommandOutput.click()
     await expect(commandPanel).toBeVisible()
-    await resourceToolbar.getByRole('button', { name: 'Back to project resources', exact: true }).click()
+    await resourceToolbar.getByRole('button', { name: 'Close Output', exact: true }).click()
     await expect(commandPanel).toHaveCount(0)
-    await expect(inspector.getByRole('tab', { name: 'Files', exact: true })).toBeFocused()
+    await expect(inspector.getByRole('tab', { selected: true })).toBeFocused()
+    // With another tab in front, the agent's card brings its tab back as it was.
+    await inspector.getByRole('tab', { name: 'Files', exact: true }).click()
     await subagentCall.click()
     await expect(subagentTaskDisclosure).toHaveAttribute('aria-expanded', 'true')
     await page.screenshot({ path: testInfo.outputPath('subagent-details-desktop-light.png') })
@@ -3274,16 +3299,16 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
       .toHaveAttribute('aria-expanded', 'true')
     await page.screenshot({ path: testInfo.outputPath('subagent-details-minimum-dark.png') })
 
-    // Detail Back retains the resource drawer; Close restores its entry point.
-    await compactSubagentInspector.getByRole('button', { name: 'Back to project resources', exact: true }).click()
+    // Closing the detail tab retains the resource drawer; Close panel restores its entry point.
+    await compactSubagentInspector.getByRole('button', { name: 'Close Agents', exact: true }).click()
     await expect(compactSubagentInspector).toBeVisible()
-    await expect(compactSubagentInspector.getByRole('tab')).toHaveText(['Overview', 'Files', 'Changes'])
+    await expect(compactSubagentInspector.getByRole('tab')).toHaveText(['Files'])
     await compactSubagentInspector.getByRole('button', { name: 'Close panel', exact: true }).click()
     await expect(compactSubagentInspector).toHaveCount(0)
     await expect(subagentCall).toBeFocused()
     await openCommandOutput.click()
     await expect(compactSubagentInspector.locator('[data-command-execution-panel]')).toBeVisible()
-    await compactSubagentInspector.getByRole('button', { name: 'Back to project resources', exact: true }).click()
+    await compactSubagentInspector.getByRole('button', { name: 'Close Output', exact: true }).click()
     await expect(compactSubagentInspector).toBeVisible()
     await expect(compactSubagentInspector.getByRole('tab', { name: 'Files', exact: true })).toHaveAttribute('aria-selected', 'true')
     await compactSubagentInspector.getByRole('button', { name: 'Close panel', exact: true }).click()
@@ -3311,31 +3336,23 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
     await inspector.getByRole('button').filter({ hasText: /^example\.ts$/u }).click()
     const sourceViewer = workspaceFileViewer(inspector, 'src/example.ts')
     await expect(sourceViewer).toBeVisible()
-    await expect(sourceViewer).toContainText('typescript')
     await expect(sourceViewer).toContainText('export const example = true')
-    const sourceLineNumbers = sourceViewer.locator('.code-line-no > span')
+    // Every line is numbered, and two-digit numbers never wrap their row.
+    const sourceLineNumbers = sourceViewer.locator('[data-file-source] [data-gutter] [data-column-number]')
     await expect(sourceLineNumbers).toHaveCount(19)
-    const sourceLineNumberMetrics = await sourceViewer.locator('.code-line-no').evaluate((gutter) => {
-      const ninthLine = gutter.children.item(8)
-      const tenthLine = gutter.children.item(9)
+    const sourceLineNumberMetrics = await sourceLineNumbers.evaluateAll((rows) => {
+      const [ninthLine, tenthLine] = [rows[8], rows[9]]
       if (!(ninthLine instanceof HTMLElement) || !(tenthLine instanceof HTMLElement)) {
         throw new Error('Expected the ninth and tenth source line numbers.')
       }
       return {
-        flexShrink: getComputedStyle(gutter).flexShrink,
-        whiteSpace: getComputedStyle(gutter).whiteSpace,
         ninthText: ninthLine.textContent,
         tenthText: tenthLine.textContent,
         ninthHeight: ninthLine.getBoundingClientRect().height,
         tenthHeight: tenthLine.getBoundingClientRect().height,
       }
     })
-    expect(sourceLineNumberMetrics).toMatchObject({
-      flexShrink: '0',
-      whiteSpace: 'nowrap',
-      ninthText: '9',
-      tenthText: '10',
-    })
+    expect(sourceLineNumberMetrics).toMatchObject({ ninthText: '9', tenthText: '10' })
     expect(sourceLineNumberMetrics.tenthHeight).toBeCloseTo(
       sourceLineNumberMetrics.ninthHeight,
       1,
@@ -3349,7 +3366,7 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
     await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains('dark')))
       .toBe(false)
     await expect(page.getByRole('dialog')).toHaveCount(0)
-    await sourceViewer.getByRole('button', { name: 'Back', exact: true }).click()
+    await inspector.getByRole('tab', { name: 'Files', exact: true }).click()
 
     await inspector.getByRole('button').filter({ hasText: /^README\.md$/u }).click()
     const markdownViewer = workspaceFileViewer(inspector, 'README.md')
@@ -3357,11 +3374,11 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
       name: 'Workspace viewer fixture',
       exact: true,
     })).toBeVisible()
-    // The file selector retains both readers; closing source selects its neighbor.
-    await markdownViewer.getByRole('combobox', { name: 'Open files', exact: true }).selectOption('src/example.ts')
-    await sourceViewer.getByRole('button', { name: 'Close', exact: true }).click()
+    // Both readers stay open as tabs; closing source selects its neighbor.
+    await inspector.getByRole('tab', { name: 'example.ts', exact: true }).click()
+    await inspector.getByRole('button', { name: 'Close example.ts', exact: true }).click()
     await expect(markdownViewer).toBeVisible()
-    await markdownViewer.getByRole('tab', { name: 'Source', exact: true }).click()
+    await markdownViewer.getByRole('button', { name: 'Source', exact: true }).click()
     await expect(markdownViewer).toContainText('# Workspace viewer fixture')
     await page.screenshot({ path: testInfo.outputPath('workspace-file-viewer-desktop-light.png') })
     await page.setViewportSize({ width: 1_100, height: 680 })
@@ -3383,7 +3400,7 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
       .toBe(false)
     await page.setViewportSize(desktopViewport)
     await expect(inspector).toBeVisible()
-    await markdownViewer.getByRole('button', { name: 'Close', exact: true }).click()
+    await inspector.getByRole('button', { name: 'Close README.md', exact: true }).click()
     await expect(inspector.getByRole('button').filter({ hasText: /^README\.md$/u }))
       .toBeVisible()
 
@@ -3552,11 +3569,10 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
       .last()
     await projectSessionRow.getByRole('button', { name: 'More actions' }).click()
     await expect(page.getByRole('menuitem', { name: 'Fork', exact: true })).toHaveCount(0)
-    await page.getByRole('menuitem', { name: 'Delete', exact: true }).click()
-    const deleteDialog = page.getByRole('alertdialog', { name: 'Delete session?' })
-    await expect(deleteDialog).toContainText('move it to Trash')
-    await deleteDialog.getByRole('button', { name: 'Cancel', exact: true }).click()
-    await expect(deleteDialog).toHaveCount(0)
+    // Codex keeps Delete behind Archive; the archived list owns it.
+    await expect(page.getByRole('menuitem', { name: 'Archive', exact: true })).toBeVisible()
+    await expect(page.getByRole('menuitem', { name: 'Delete', exact: true })).toHaveCount(0)
+    await page.keyboard.press('Escape')
 
     await responseFork.click()
     await expect(page.getByText('Loading conversation…', { exact: true })).toBeVisible()
@@ -3625,7 +3641,7 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
       name: `Project actions for ${projectName}`,
       exact: true,
     }).click()
-    await page.getByRole('menuitem', { name: 'New session', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'New task', exact: true }).click()
     await expect.poll(() => page.evaluate(async () => (
       (await window.pipilot!.localPi.runtime.status()).sessionState?.sessionId
     )), { timeout: 20_000 }).not.toBe('real-sdk-session')
@@ -3650,7 +3666,7 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
       .last()
     await runningSessionRow.getByRole('button', { name: 'More actions' }).click()
     await page.getByRole('menuitem', { name: 'Rename', exact: true }).click()
-    const renameInput = page.getByRole('textbox', { name: 'Rename session' })
+    const renameInput = page.getByRole('textbox', { name: 'Rename conversation' })
     await renameInput.fill('Renamed project session')
     await renameInput.press('Enter')
     const renamedProjectSession = page.getByRole('region', { name: 'Projects', exact: true }).getByRole('button', {
@@ -3668,8 +3684,7 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
     await expect(lastChangedFile).toBeAttached()
     await firstChangedFile.scrollIntoViewIfNeeded()
     await expect(firstChangedFile).toBeVisible()
-    // The inspector opens on Overview, so this is the first syntax-highlighted
-    // surface of the run and pays the highlighter's cold start.
+    // The highlighter may still be cold for this many files.
     await expect(firstChangedFile).toContainText('export const change1 = 1', { timeout: 20_000 })
     await lastChangedFile.scrollIntoViewIfNeeded()
     await expect(lastChangedFile).toBeVisible()
@@ -3811,6 +3826,7 @@ test('launches a sandboxed shell with a narrow validated bridge', { tag: '@integ
         'conversationExport',
         'conversationImport',
         'conversationSearch',
+        'editors',
         'externalControl',
         'files',
         'localPi',
@@ -3918,7 +3934,7 @@ test('launches a sandboxed shell with a narrow validated bridge', { tag: '@integ
     await page.getByRole('option', { name: 'Fira Code', exact: true }).click()
     await page.getByRole('slider', { name: 'UI font size', exact: true }).press('End')
     await page.getByRole('slider', { name: 'Code font size', exact: true }).press('End')
-    await page.getByRole('radio', { name: 'Comfortable', exact: true }).click()
+    await page.getByRole('combobox', { name: 'Density', exact: true }).selectOption('comfortable')
     await page.getByRole('switch', { name: 'Reduce motion', exact: true }).click()
     await expect.poll(() => page.evaluate(() => {
       const root = document.documentElement
@@ -3950,15 +3966,18 @@ test('launches a sandboxed shell with a narrow validated bridge', { tag: '@integ
     await expect(terminalFontPreview).toHaveAttribute('data-terminal-effective-font-family', /Fira Code/)
 
     await page.getByRole('button', { name: 'Appearance', exact: true }).click()
-    await page.getByRole('button', { name: 'Sessions', exact: true }).click()
+    await page.getByRole('button', { name: 'Back to app', exact: true }).click()
+    // The side panel starts hidden (Codex); its resize handle comes with it.
+    await page.getByRole('button', { name: 'Expand panel', exact: true }).click()
     const resizeHandle = page.getByRole('separator', {
       name: 'Resize inspector: arrow keys to adjust, double-click to reset',
     })
     await resizeHandle.focus()
     await resizeHandle.press('ArrowLeft')
-    await expect(resizeHandle).toHaveAttribute('aria-valuenow', '376')
+    await expect(resizeHandle).toHaveAttribute('aria-valuenow', '416')
     await resizeHandle.press('Home')
-    await expect(resizeHandle).toHaveAttribute('aria-valuenow', '360')
+    await expect(resizeHandle).toHaveAttribute('aria-valuenow', '400')
+    await page.getByRole('button', { name: 'Close panel', exact: true }).click()
 
     for (const factor of [1.25, 1.5]) {
       await electronApp.evaluate(({ BrowserWindow }, zoomFactor) => {
@@ -3968,7 +3987,7 @@ test('launches a sandboxed shell with a narrow validated bridge', { tag: '@integ
       await page.getByRole('button', { name: 'Settings', exact: true }).click()
       await page.getByRole('button', { name: 'Appearance', exact: true }).click()
       await expect(page.getByRole('main', { name: 'Appearance' })).toBeVisible()
-      await page.getByRole('button', { name: 'Sessions', exact: true }).click()
+      await page.getByRole('button', { name: 'Back to app', exact: true }).click()
     }
     await electronApp.evaluate(({ BrowserWindow }) => {
       BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(1)

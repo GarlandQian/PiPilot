@@ -107,7 +107,7 @@ test('keeps the unified desktop workspace usable with the official Pi configurat
     await input.press('Backspace')
     await expect(input).toHaveText('')
     await page.locator('[data-model-thinking-trigger]').click()
-    await expect(page.getByRole('combobox')).toBeVisible()
+    await expect(page.getByRole('listbox', { name: 'Models', exact: true })).toBeVisible()
     await page.screenshot({ path: testInfo.outputPath('desktop-models.png'), animations: 'disabled' })
     await page.keyboard.press('Escape')
 

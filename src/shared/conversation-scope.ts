@@ -101,6 +101,8 @@ export const officialPiSessionSummarySchema = z
     sessionId: z.string().min(1).max(256),
     name: z.string().min(1).max(SESSION_CATALOG_NAME_LIMIT).optional(),
     preview: z.string().max(SESSION_CATALOG_PREVIEW_LIMIT),
+    // Clean first-line title of the first message, derived before whitespace is collapsed.
+    title: z.string().min(1).max(SESSION_CATALOG_PREVIEW_LIMIT).optional(),
     createdAt: z.iso.datetime(),
     modifiedAt: z.iso.datetime(),
     selectionToken: sessionCatalogSelectionTokenSchema,

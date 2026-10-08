@@ -14,7 +14,7 @@ export interface PrecisionReference {
   startLine?: number
   endLine?: number
   side?: 'additions' | 'deletions'
-  stage?: 'staged' | 'unstaged'
+  stage?: 'staged' | 'unstaged' | 'branch' | 'commit'
   revision?: string
   comment?: string
   stale?: boolean
@@ -35,7 +35,7 @@ export function isPrecisionReference(value: unknown): value is PrecisionReferenc
   if (item.comment !== undefined && (typeof item.comment !== 'string' || item.comment.length > MAX_REVIEW_COMMENT)) return false
   if (item.stale !== undefined && typeof item.stale !== 'boolean') return false
   if (item.side !== undefined && item.side !== 'additions' && item.side !== 'deletions') return false
-  if (item.stage !== undefined && item.stage !== 'staged' && item.stage !== 'unstaged') return false
+  if (item.stage !== undefined && item.stage !== 'staged' && item.stage !== 'unstaged' && item.stage !== 'branch' && item.stage !== 'commit') return false
   if (item.startLine !== undefined || item.endLine !== undefined) {
     if (!Number.isSafeInteger(item.startLine) || !Number.isSafeInteger(item.endLine) ||
       (item.startLine as number) < 1 || (item.endLine as number) < (item.startLine as number)) return false

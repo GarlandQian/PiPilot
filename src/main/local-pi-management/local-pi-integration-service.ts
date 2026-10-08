@@ -285,6 +285,19 @@ export class LocalPiIntegrationService {
     return test
   }
 
+  /** One completion from one configured model; nothing joins any conversation. */
+  async completeText(input: { providerId: string; modelId: string; systemPrompt: string; prompt: string; maxTokens: number }) {
+    this.assertActive()
+    const scope: PiIntegrationScope = { kind: 'global' }
+    const target = await this.captureTarget(scope)
+    const payload = await this.runHelper(target, { action: 'complete-text', operationId: this.createId(), ...input })
+    const completion = this.requireModelsPayload(payload).completion
+    if (!completion) {
+      throw new LocalPiIntegrationError('PI_MANAGEMENT_HELPER_PROTOCOL_ERROR', 'The Pi management helper did not return a completion.')
+    }
+    return completion.text
+  }
+
   setRetryEnabled(scope: PiIntegrationScope, enabled: boolean) {
     return this.enqueueOperation('set-retry', scope, undefined, async (operation) => {
       const target = await this.requireTarget(operation.scope)
@@ -594,7 +607,8 @@ export class LocalPiIntegrationService {
       | { action: 'set-retry'; operationId: string; enabled: boolean }
       | { action: 'models-defaults'; operationId: string }
       | { action: 'set-default-model'; operationId: string; providerId: string; modelId: string }
-      | { action: 'test-model'; operationId: string; content: string; providerId: string; modelId: string },
+      | { action: 'test-model'; operationId: string; content: string; providerId: string; modelId: string }
+      | { action: 'complete-text'; operationId: string; providerId: string; modelId: string; systemPrompt: string; prompt: string; maxTokens: number },
     onProgress?: (progress: PiManagementProgress) => void,
   ) {
     const command = {

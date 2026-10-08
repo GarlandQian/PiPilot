@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { realpath, stat } from 'node:fs/promises'
+import { join } from 'node:path'
 import type { IPty, IPtyForkOptions, IWindowsPtyForkOptions } from 'node-pty'
 import {
   TERMINAL_OUTPUT_EVENT_LIMIT,
@@ -27,6 +29,7 @@ import { PIPILOT_VERSION } from '../../shared/build-info'
 import type { TerminalSettings } from '../../shared/settings'
 import {
   mergeTerminalEnvironment,
+  terminalLocaleEnvironment,
   TerminalProfileDiscovery,
   wslWorkingDirectory,
   type ResolvedShellProfile,
@@ -104,6 +107,9 @@ interface TerminalRecord {
 }
 
 export interface TerminalServiceOptions extends TerminalDiscoveryOptions {
+  /** The system's language (such as zh-CN), for a terminal that inherited no locale. */
+  systemLocale?: () => string
+  localeExists?: (name: string) => boolean
   getTerminalSettings?: () => TerminalSettings
   resolveShell?: () => Promise<ShellLaunch> | ShellLaunch
   spawnPty?: SpawnPty
@@ -496,7 +502,11 @@ export class TerminalService {
 
   private async resolveShellProfiles(): Promise<ResolvedShellProfile[]> {
     const settings = this.options.getTerminalSettings?.()
-    const profiles = await this.discovery.discover(settings?.profiles ?? [])
+    const automatic = settings?.defaultProfileId ? undefined : await this.resolveDefaultShell().catch(() => undefined)
+    const profiles = await this.discovery.discover(settings?.profiles ?? [], {
+      files: automatic ? [automatic.file] : [],
+      ids: settings?.defaultProfileId ? [settings.defaultProfileId] : [],
+    })
     if (settings?.defaultProfileId) {
       const selected = profiles.find((profile) => profile.id === settings.defaultProfileId)
       if (selected) selected.isDefault = true
@@ -507,10 +517,9 @@ export class TerminalService {
         unavailableReason: settings.defaultProfileId.startsWith('wsl:') ? 'distribution-unavailable' : 'executable-not-found',
       })
     } else {
-      const defaultShell = await this.resolveDefaultShell().catch(() => undefined)
-      const selected = defaultShell && profiles.find((profile) => profile.source === 'detected' && (this.platform === 'win32'
-        ? profile.launch?.file.toLowerCase() === defaultShell.file.toLowerCase()
-        : profile.launch?.file === defaultShell.file))
+      const selected = automatic && profiles.find((profile) => profile.source === 'detected' && (this.platform === 'win32'
+        ? profile.launch?.file.toLowerCase() === automatic.file.toLowerCase()
+        : profile.launch?.file === automatic.file))
       if (selected) selected.isDefault = true
     }
     return profiles.sort((left, right) => Number(right.isDefault) - Number(left.isDefault))
@@ -553,7 +562,10 @@ export class TerminalService {
   }
 
   private buildEnvironment(cwd: string, overrides: Record<string, string | null> = {}) {
-    return mergeTerminalEnvironment(mergeTerminalEnvironment(this.environment, overrides, this.platform), {
+    const inherited = mergeTerminalEnvironment(this.environment, overrides, this.platform)
+    return mergeTerminalEnvironment(inherited, {
+      ...terminalLocaleEnvironment(inherited, this.platform, this.options.systemLocale?.(),
+        this.options.localeExists ?? ((name) => existsSync(join('/usr/share/locale', name)))),
       PWD: cwd,
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',

@@ -92,7 +92,7 @@ export const RealTerminalPanel = React.forwardRef<RealTerminalPanelHandle, RealT
   const searchTimerRef = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const matchesRef = React.useRef<TerminalSearchMatch[]>([])
   const selectedMatchRef = React.useRef(-1)
-  const [initialized, setInitialized] = React.useState(visible)
+  const [initialized, setInitialized] = React.useState(false)
   const [status, setStatus] = React.useState<TerminalStatus>('starting')
   const [dimensions, setDimensions] = React.useState({ cols: 80, rows: 24 })
   const [generation, setGeneration] = React.useState(0)
@@ -231,9 +231,24 @@ export const RealTerminalPanel = React.forwardRef<RealTerminalPanelHandle, RealT
     return () => clearTimeout(searchTimerRef.current)
   }, [searchOpen, searchQuery, refreshSearch])
 
+  // The emulator measures its font when it opens: wait until its tab's dock
+  // has attached it and given it a size (a dock can attach it later in the same commit).
   React.useLayoutEffect(() => {
-    if (visible) setInitialized(true)
-  }, [visible])
+    const container = containerRef.current
+    if (!visible || initialized || !container) return
+    const laidOut = () => container.isConnected && container.clientWidth > 0 && container.clientHeight > 0
+    if (laidOut()) {
+      setInitialized(true)
+      return
+    }
+    const observer = new ResizeObserver(() => {
+      if (!laidOut()) return
+      observer.disconnect()
+      setInitialized(true)
+    })
+    observer.observe(container)
+    return () => observer.disconnect()
+  }, [visible, initialized])
 
   React.useLayoutEffect(() => {
     const container = containerRef.current
@@ -275,6 +290,25 @@ export const RealTerminalPanel = React.forwardRef<RealTerminalPanelHandle, RealT
     terminal.loadAddon(fitAddon)
     terminal.open(container)
     terminal.textarea?.setAttribute('aria-label', translateRef.current('inspector.terminal.interactiveInput'))
+    // In screen-reader mode xterm takes typed text only from key presses and
+    // IME compositions. Text an input method commits directly (Pinyin's "，。",
+    // dictation, the emoji picker) would never reach the shell: pass it on.
+    const textarea = terminal.textarea
+    // A key press's own input event is dispatched in the same task; later text is not from it.
+    let keyPressed = false
+    const onKeyDown = () => { keyPressed = false }
+    const onKeyPress = () => {
+      keyPressed = true
+      setTimeout(() => { keyPressed = false })
+    }
+    const onCommittedText = (event: Event) => {
+      const input = event as InputEvent
+      if (input.inputType !== 'insertText' || input.isComposing || !input.data || keyPressed) return
+      terminal.input(input.data)
+    }
+    textarea?.addEventListener('keydown', onKeyDown, true)
+    textarea?.addEventListener('keypress', onKeyPress, true)
+    textarea?.addEventListener('input', onCommittedText)
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
 
@@ -393,6 +427,9 @@ export const RealTerminalPanel = React.forwardRef<RealTerminalPanelHandle, RealT
     return () => {
       disposed = true
       running = false
+      textarea?.removeEventListener('keydown', onKeyDown, true)
+      textarea?.removeEventListener('keypress', onKeyPress, true)
+      textarea?.removeEventListener('input', onCommittedText)
       cancelAnimationFrame(resizeFrame)
       clearTimeout(searchTimerRef.current)
       observer.disconnect()
@@ -426,6 +463,22 @@ export const RealTerminalPanel = React.forwardRef<RealTerminalPanelHandle, RealT
     if (!visible) terminalRef.current?.blur()
     else if (autoFocus && !searchOpenRef.current) focus()
   }, [visible, autoFocus, focus])
+
+  // xterm caches each text style's glyph widths; any measured while this tab
+  // was hidden are zero and show as letter-spaced text. Measure again on show
+  // (an equivalent font weight is enough to make it drop the cache).
+  React.useEffect(() => {
+    const terminal = terminalRef.current
+    if (!terminal || !visible) return
+    const frame = requestAnimationFrame(() => {
+      if (!containerRef.current?.clientWidth) return
+      const weight = terminal.options.fontWeight ?? 'normal'
+      terminal.options.fontWeight = weight === 'normal' ? 400 : 'normal'
+      terminal.options.fontWeight = weight
+      terminal.refresh(0, terminal.rows - 1)
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [visible, initialized, generation])
 
   React.useLayoutEffect(() => {
     const terminal = terminalRef.current

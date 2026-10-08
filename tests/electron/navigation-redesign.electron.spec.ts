@@ -11,10 +11,36 @@ function taskRow(page: Page, name: string) {
     .getByRole('button', { name, exact: true })
 }
 
-async function taskMenu(page: Page, name: string) {
-  const row = taskRow(page, name)
+function pinnedRow(page: Page, name: string) {
+  return page.locator('[data-session-list="pinned"]')
+    .getByRole('button', { name, exact: true })
+}
+
+function archivedRow(page: Page, name: string) {
+  return page.locator('[data-session-list="archived"]')
+    .getByRole('button', { name, exact: true })
+}
+
+async function taskMenu(page: Page, name: string, row = taskRow(page, name)) {
   await row.hover()
   await row.locator('..').getByRole('button', { name: 'More actions', exact: true }).click()
+}
+
+/** Codex keeps Archived behind the sidebar's Organize menu. */
+async function openArchived(page: Page) {
+  await page.getByRole('button', { name: 'Organize and sort', exact: true }).click()
+  await page.getByRole('menuitem', { name: /^Archived tasks/u }).click()
+}
+
+/** Deleting starts from an archived task, as in Codex. */
+async function archiveAndDelete(page: Page, name: string) {
+  const row = taskRow(page, name)
+  await row.hover()
+  await row.locator('..').getByRole('button', { name: 'Archive', exact: true }).click()
+  await openArchived(page)
+  const archived = archivedRow(page, name)
+  await archived.hover()
+  await archived.locator('..').getByRole('button', { name: 'Delete', exact: true }).click()
 }
 
 async function addProject(app: ElectronApplication, page: Page, path: string) {
@@ -84,8 +110,18 @@ test('restores an existing project task and persists pin/archive without deletin
 
     await addProject(app, page, projectA)
     const first = await seedTask(page, 'Keep the original archive needle', 'Remembered task')
+    // Show in Finder reveals the project folder; main resolves the path from its ID.
+    await app.evaluate(({ shell }) => {
+      const state = globalThis as typeof globalThis & { __revealed?: string[] }
+      state.__revealed = []
+      Object.defineProperty(shell, 'showItemInFolder', { configurable: true, value: (path: string) => { state.__revealed!.push(path) } })
+    })
+    await page.getByRole('button', { name: `Project actions for ${basename(projectA)}`, exact: true }).click()
+    await page.getByRole('menuitem', { name: /^Show in (?:Finder|File Explorer|File Manager)$/u }).click()
+    await expect.poll(() => app!.evaluate(() => (globalThis as typeof globalThis & { __revealed?: string[] }).__revealed))
+      .toEqual([projectA])
     const scopeA = (await page.evaluate(() => window.pipilot!.conversation.get())).activeScope
-    await page.getByRole('button', { name: `New session in ${basename(projectA)}`, exact: true }).click()
+    await page.getByRole('button', { name: `New task in ${basename(projectA)}`, exact: true }).click()
     await seedTask(page, 'A newer task remains available', 'Newer task')
     await taskRow(page, 'Remembered task').click()
     await expect.poll(async () => (await page.evaluate(() => window.pipilot!.localPi.runtime.status()))
@@ -95,7 +131,11 @@ test('restores an existing project task and persists pin/archive without deletin
 
     await addProject(app, page, projectB)
     await seedTask(page, 'Keep another project selected', 'Other project task')
-    await page.getByRole('button', { name: `Resume a task in ${basename(projectA)}`, exact: true }).click()
+    // Codex: a project row only opens and closes; its tasks open directly.
+    await page.getByRole('button', { name: `Collapse project ${basename(projectA)}`, exact: true }).click()
+    await expect(taskRow(page, 'Remembered task')).toHaveCount(0)
+    await page.getByRole('button', { name: `Expand project ${basename(projectA)}`, exact: true }).click()
+    await taskRow(page, 'Remembered task').click()
     await expect.poll(async () => (await page.evaluate(() => window.pipilot!.localPi.runtime.status()))
       .sessionState?.sessionId).toBe(first.sessionState!.sessionId)
     const resumedCatalog = await page.evaluate((scope) => window.pipilot!.sessionCatalog.list(scope), scopeA)
@@ -106,15 +146,16 @@ test('restores an existing project task and persists pin/archive without deletin
     await expect.poll(async () => (await page.evaluate(() => window.pipilot!.notifications.get()))
       .items.find((item) => item.sessionId === first.sessionState!.sessionId)?.read).toBe(true)
 
+    // Pinning moves a task out of its project into Pinned.
     await taskMenu(page, 'Remembered task')
-    await page.getByRole('menuitem', { name: 'Pin task', exact: true }).click()
-    await taskRow(page, 'Newer task').click()
-    await taskMenu(page, 'Remembered task')
-    await page.getByRole('menuitem', { name: 'Archive task', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Pin', exact: true }).click()
     await expect(taskRow(page, 'Remembered task')).toHaveCount(0)
-    await expect(page.locator('[data-session-list="focus"]').getByRole('button', {
-      name: 'Remembered task', exact: true,
-    })).toHaveCount(0)
+    await expect(pinnedRow(page, 'Remembered task')).toBeVisible()
+    await taskRow(page, 'Newer task').click()
+    await taskMenu(page, 'Remembered task', pinnedRow(page, 'Remembered task'))
+    await page.getByRole('menuitem', { name: 'Archive', exact: true }).click()
+    await expect(pinnedRow(page, 'Remembered task')).toHaveCount(0)
+    await expect(taskRow(page, 'Remembered task')).toHaveCount(0)
 
     // Renderer reload preserves organization and the remembered project expansion.
     await page.getByRole('button', { name: `Collapse project ${basename(projectB)}`, exact: true }).click()
@@ -126,39 +167,37 @@ test('restores an existing project task and persists pin/archive without deletin
     await expect(page.getByRole('button', { name: `Expand project ${basename(projectB)}`, exact: true }))
       .toHaveAttribute('aria-expanded', 'false')
 
-    await page.getByRole('textbox', { name: 'Search sessions', exact: true }).fill('archive needle')
-    await expect(taskRow(page, 'Remembered task')).toBeVisible()
-    await taskMenu(page, 'Remembered task')
-    await expect(page.getByRole('menuitem', { name: 'Unpin task', exact: true })).toBeVisible()
-    await expect(page.getByRole('menuitem', { name: 'Restore task', exact: true })).toBeVisible()
-    await page.keyboard.press('Escape')
-    await page.getByRole('textbox', { name: 'Search sessions', exact: true }).fill('')
-    // Archived tasks is a checkbox item in the sidebar's View Options menu.
-    await page.getByRole('button', { name: 'View Options', exact: true }).click()
-    await page.getByRole('menuitemcheckbox', { name: 'Archived tasks', exact: true }).click()
-    await expect(taskRow(page, 'Remembered task')).toBeVisible()
-    await taskRow(page, 'Remembered task').click()
+    // Archived tasks stay openable; unarchiving returns them to their project.
+    await openArchived(page)
+    await expect(archivedRow(page, 'Remembered task')).toBeVisible()
+    await archivedRow(page, 'Remembered task').click()
     await expect.poll(async () => (await page.evaluate(() => window.pipilot!.localPi.runtime.status()))
       .sessionState?.sessionId).toBe(first.sessionState!.sessionId)
-    await taskMenu(page, 'Remembered task')
-    await page.getByRole('menuitem', { name: 'Restore task', exact: true }).click()
-    await expect(taskRow(page, 'Remembered task')).toHaveCount(0)
-    // Archived tasks is a checkbox item in the sidebar's View Options menu.
-    await page.getByRole('button', { name: 'View Options', exact: true }).click()
-    await page.getByRole('menuitemcheckbox', { name: 'Archived tasks', exact: true }).click()
+    await archivedRow(page, 'Remembered task').click({ button: 'right' })
+    await page.getByRole('menuitem', { name: 'Unarchive', exact: true }).click()
+    await expect(archivedRow(page, 'Remembered task')).toHaveCount(0)
+    await page.getByRole('button', { name: 'Archived tasks', exact: true }).click()
     await expect(taskRow(page, 'Remembered task')).toHaveAttribute('aria-current', 'page')
 
-    // The task occurs in both Focus and its project, but rename owns one input.
     await taskMenu(page, 'Remembered task')
     await page.getByRole('menuitem', { name: 'Rename', exact: true }).click()
-    const rename = page.getByRole('textbox', { name: 'Rename session', exact: true })
+    const rename = page.getByRole('textbox', { name: 'Rename conversation', exact: true })
     await expect(rename).toHaveCount(1)
-    await rename.fill('Restored pinned task')
+    await rename.fill('Restored task')
     await rename.press('Enter')
-    await expect(taskRow(page, 'Restored pinned task')).toBeVisible()
-    await taskMenu(page, 'Restored pinned task')
-    await expect(page.getByRole('menuitem', { name: 'Unpin task', exact: true })).toBeVisible()
+    await expect(taskRow(page, 'Restored task')).toBeVisible()
+    await taskMenu(page, 'Restored task')
+    await expect(page.getByRole('menuitem', { name: 'Pin', exact: true })).toBeVisible()
+    // The open task is already read; another task can be marked unread and back.
+    await expect(page.getByRole('menuitem', { name: 'Mark as unread', exact: true })).toHaveCount(0)
     await page.keyboard.press('Escape')
+    const newer = taskRow(page, 'Newer task').locator('..')
+    await taskMenu(page, 'Newer task')
+    await page.getByRole('menuitem', { name: 'Mark as unread', exact: true }).click()
+    await expect(newer.locator('[data-session-indicator="unread"]')).toHaveCount(1)
+    await taskMenu(page, 'Newer task')
+    await page.getByRole('menuitem', { name: 'Mark as read', exact: true }).click()
+    await expect(newer.locator('[data-session-indicator="unread"]')).toHaveCount(0)
     const finalCatalog = await page.evaluate((scope) => window.pipilot!.sessionCatalog.list(scope), scopeA)
     expect(finalCatalog.rows.map((row) => row.sessionId).sort())
       .toEqual(originalCatalog.rows.map((row) => row.sessionId).sort())
@@ -197,7 +236,7 @@ test('deletes the named background task while preserving the active task, then c
     await expect(page.locator('[data-model-thinking-trigger]')).toContainText('Fake Chat', { timeout: 20_000 })
     await addProject(app, page, project)
     const first = await seedTask(page, 'The background A transcript', 'Background task A')
-    await page.getByRole('button', { name: `New session in ${basename(project)}`, exact: true }).click()
+    await page.getByRole('button', { name: `New task in ${basename(project)}`, exact: true }).click()
     const second = await seedTask(page, 'The active B transcript must survive', 'Active task B')
     const scope = (await page.evaluate(() => window.pipilot!.conversation.get())).activeScope
     if (!first.sessionFile || !second.sessionFile) throw new Error('The isolated tasks did not persist their session files.')
@@ -213,14 +252,15 @@ test('deletes the named background task while preserving the active task, then c
     const conversation = page.getByRole('log', { name: 'Conversation' })
     await composer.fill('Keep the active B draft')
     await expect(taskRow(page, 'Active task B')).toHaveAttribute('aria-current', 'page')
-    await taskMenu(page, 'Background task A')
-    await page.getByRole('menuitem', { name: 'Delete', exact: true }).click()
-    const dialog = page.getByRole('alertdialog', { name: 'Delete session?', exact: true })
+    await archiveAndDelete(page, 'Background task A')
+    const dialog = page.getByRole('alertdialog', { name: 'Delete conversation?', exact: true })
     await expect(dialog).toContainText('Delete "Background task A"?')
-    await expect(dialog).not.toContainText('This is the active session')
+    await expect(dialog).not.toContainText('This is the open conversation')
     expect((await page.evaluate(() => window.pipilot!.localPi.runtime.status())).sessionFile).toBe(second.sessionFile)
     await dialog.getByRole('button', { name: 'Delete', exact: true }).click()
     await expect(dialog).toBeHidden()
+    await expect(archivedRow(page, 'Background task A')).toHaveCount(0)
+    await page.getByRole('button', { name: 'Archived tasks', exact: true }).click()
     await expect(taskRow(page, 'Background task A')).toHaveCount(0)
     await expect(taskRow(page, 'Active task B')).toHaveAttribute('aria-current', 'page')
     await expect(composer).toHaveText('Keep the active B draft')
@@ -239,12 +279,13 @@ test('deletes the named background task while preserving the active task, then c
       .toEqual(['Active task B'])
 
     // Delete the active row separately: only this action may clear its transcript.
-    await taskMenu(page, 'Active task B')
-    await page.getByRole('menuitem', { name: 'Delete', exact: true }).click()
+    await archiveAndDelete(page, 'Active task B')
     await expect(dialog).toContainText('Delete "Active task B"?')
-    await expect(dialog).toContainText('This is the active session')
+    await expect(dialog).toContainText('This is the open conversation')
     await dialog.getByRole('button', { name: 'Delete', exact: true }).click()
     await expect(dialog).toBeHidden()
+    await expect(archivedRow(page, 'Active task B')).toHaveCount(0)
+    await page.getByRole('button', { name: 'Archived tasks', exact: true }).click()
     await expect(taskRow(page, 'Active task B')).toHaveCount(0)
     await expect(page.locator('[data-conversation-welcome]')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Start writing', exact: true })).toBeVisible()

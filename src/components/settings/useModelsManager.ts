@@ -4,14 +4,13 @@ import { createModelsConfigAdapter, type ModelsConfigAdapter } from '@/renderer/
 import { structuredProviderSupported, type ModelsConfigModel, type ModelsConfigProvider, type ModelsConfigSnapshot } from '@/shared/models-config'
 import { parseModelsConfigDocument, rawModelsProviderDefinition, removeModelsProvider, renameModelsProvider, upsertModelsProvider } from '@/shared/models-config-schema'
 import { useConfigurationDocument } from '@/store/configuration-documents'
-import type { ConfigurationDocument } from '@/renderer/configuration-documents'
+import { isConfigDocumentDirty, type ConfigurationDocument } from '@/renderer/configuration-documents'
 import { useConfigApplyStatus } from './useConfigApplyStatus'
 import { definitionFromFormValues, formValueFromModel, formValueFromProvider, type ModelFormValue, type ProviderFormValue } from './models-form-model'
 import { modelTestSuccess, settleModelTest, type ModelTestStates } from './models-test-state'
+import { applyQuickAdd, type QuickAddValue } from './models-quick-add'
 
-type ProviderDialogState =
-  | { mode: 'add' }
-  | { mode: 'edit'; provider: ModelsConfigProvider }
+type ProviderDialogState = { mode: 'edit'; provider: ModelsConfigProvider }
 
 type ModelDialogState =
   | { providerId: string; mode: 'add' }
@@ -75,6 +74,8 @@ export function useModelsManager(document: ConfigurationDocument<ModelsConfigSna
   const [error, setError] = React.useState<string | null>(null)
   const [status, setStatus] = React.useState<string | null>(null)
   const [providerDialog, setProviderDialog] = React.useState<ProviderDialogState | null>(null)
+  const [quickAddOpen, setQuickAddOpen] = React.useState(false)
+  const persistQueued = React.useRef(false)
   const [modelDialog, setModelDialog] = React.useState<ModelDialogState | null>(null)
   const [removeProviderId, setRemoveProviderId] = React.useState<string | null>(null)
   const [removeModel, setRemoveModel] = React.useState<{
@@ -110,6 +111,30 @@ export function useModelsManager(document: ConfigurationDocument<ModelsConfigSna
     setError(null)
     setStatus(null)
     await document.save(restart)
+  }
+
+  /**
+   * Form edits take effect at once: save and apply (Pi waits for busy
+   * sessions). Called from the user's own actions only, never from the Quit
+   * transaction, which commits form drafts and saves them itself.
+   */
+  const persist = async () => {
+    if (!adapter) return
+    if (document.getSnapshot().phase !== 'idle') {
+      persistQueued.current = true
+      return
+    }
+    if (!isConfigDocumentDirty(document.getSnapshot())) return
+    await document.save(true)
+    if (persistQueued.current) {
+      persistQueued.current = false
+      if (isConfigDocumentDirty(document.getSnapshot())) await document.save(true)
+    }
+  }
+  const editAndPersist = (next: string) => {
+    if (!updateDraft(next)) return false
+    void persist()
+    return true
   }
 
   const setDefault = async (providerId: string, modelId: string) => {
@@ -171,27 +196,39 @@ export function useModelsManager(document: ConfigurationDocument<ModelsConfigSna
 
   const submitProviderForm = (value: ProviderFormValue) => {
     try {
+      if (!providerDialog) return false
       let next = draftText
-      if (providerDialog?.mode === 'edit') {
-        const provider = providerDialog.provider
-        const rawExisting = rawModelsProviderDefinition(draftText, provider.id)
-        const definition = definitionFromFormValues(
-          value,
-          provider.models.map((model) => formValueFromModel(model)),
-          rawExisting,
-        )
-        if (value.id !== provider.id) {
-          next = renameModelsProvider(next, provider.id, value.id)
-        }
-        next = upsertModelsProvider(next, value.id, definition)
-      } else {
-        next = upsertModelsProvider(next, value.id, definitionFromFormValues(value, []))
+      const provider = providerDialog.provider
+      const rawExisting = rawModelsProviderDefinition(draftText, provider.id)
+      const definition = definitionFromFormValues(
+        value,
+        provider.models.map((model) => formValueFromModel(model)),
+        rawExisting,
+      )
+      if (value.id !== provider.id) {
+        next = renameModelsProvider(next, provider.id, value.id)
       }
+      next = upsertModelsProvider(next, value.id, definition)
       if (!updateDraft(next)) return false
       setError(null)
       setSelectedProviderId(value.id)
       setSelectedCustomModels(new Set())
       setProviderDialog(null)
+      return true
+    } catch {
+      setError(t('settings.models.editFailed'))
+      return false
+    }
+  }
+
+  const submitQuickAdd = (value: QuickAddValue) => {
+    try {
+      const result = applyQuickAdd(draftText, parsed.providers, value)
+      if (!updateDraft(result.text)) return false
+      setError(null)
+      setSelectedProviderId(result.providerId)
+      setSelectedCustomModels(new Set())
+      setQuickAddOpen(false)
       return true
     } catch {
       setError(t('settings.models.editFailed'))
@@ -247,7 +284,7 @@ export function useModelsManager(document: ConfigurationDocument<ModelsConfigSna
 
   const removeProvider = (providerId: string) => {
     try {
-      updateDraft(removeModelsProvider(draftText, providerId))
+      editAndPersist(removeModelsProvider(draftText, providerId))
       setError(null)
     } catch {
       setError(t('settings.models.editFailed'))
@@ -266,7 +303,7 @@ export function useModelsManager(document: ConfigurationDocument<ModelsConfigSna
         models,
         rawModelsProviderDefinition(draftText, provider.id),
       )
-      updateDraft(upsertModelsProvider(draftText, provider.id, definition))
+      editAndPersist(upsertModelsProvider(draftText, provider.id, definition))
       setError(null)
     } catch {
       setError(t('settings.models.editFailed'))
@@ -298,7 +335,7 @@ export function useModelsManager(document: ConfigurationDocument<ModelsConfigSna
       // replacement key explicitly in the provider form.
       delete definition.apiKey
       const next = upsertModelsProvider(draftText, id, definition)
-      updateDraft(next)
+      editAndPersist(next)
       setSelectedProviderId(id)
       setSelectedCustomModels(new Set())
       setStatus(t('settings.models.providerDuplicated'))
@@ -332,7 +369,7 @@ export function useModelsManager(document: ConfigurationDocument<ModelsConfigSna
           ),
         )
       }
-      updateDraft(next)
+      editAndPersist(next)
       setSelectedCustomModels((previous) => new Set([...previous].filter((selection) =>
         decodeModelSelectionKey(selection)?.[0] !== targetProviderId)))
       setStatus(t('settings.models.modelsDeleted'))
@@ -342,18 +379,23 @@ export function useModelsManager(document: ConfigurationDocument<ModelsConfigSna
     }
   }
 
+  const storedKey = (providerId: string) => {
+    const key = rawModelsProviderDefinition(draftText, providerId)?.apiKey
+    return typeof key === 'string' && key ? key : undefined
+  }
+
   const isDefault = (providerId: string, modelId: string) =>
     snapshot?.defaultProvider === providerId && snapshot?.defaultModel === modelId
 
   return {
     snapshot, draftText, revision, view, dirty, phase, documentError, savedApply, apply,
     available: Boolean(adapter), loading, saving, reloadOpen, setReloadOpen,
-    error, status, providerDialog, setProviderDialog, modelDialog, setModelDialog,
+    error, status, providerDialog, setProviderDialog, modelDialog, setModelDialog, quickAddOpen, setQuickAddOpen,
     removeProviderId, setRemoveProviderId, removeModel, setRemoveModel, defaultBusy,
     selectedProviderId, selectProvider, selectedCustomModels, modelTests, parsed, hasAdvancedFields,
-    load, save, setDefault, testModel, submitProviderForm, submitModelForm, removeProvider,
+    load, save, persist, setDefault, testModel, submitProviderForm, submitModelForm, submitQuickAdd, removeProvider,
     removeModelFromProvider, toggleCustomModel, duplicateProvider, deleteSelectedModels,
-    isDefault, setView, updateDraft,
+    isDefault, setView, updateDraft, storedKey, listRemote: adapter?.listRemote,
   }
 }
 

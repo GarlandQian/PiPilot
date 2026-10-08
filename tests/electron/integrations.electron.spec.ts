@@ -161,7 +161,7 @@ test('manages bundled Pi SDK integrations and MCP drafts across responsive Setti
     }
     const projectScope = activeScope.activeScope
     await page.getByRole('region', { name: 'Projects', exact: true })
-      .getByRole('button', { name: 'New session in workspace', exact: true }).click()
+      .getByRole('button', { name: 'New task in workspace', exact: true }).click()
     await expect(page.getByRole('button', {
       name: 'Current model Fake Chat, click to switch',
     })).toBeVisible({ timeout: 15_000 })

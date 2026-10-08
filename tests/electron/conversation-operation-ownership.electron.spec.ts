@@ -19,7 +19,7 @@ async function seedNamedConversation(page: Page, name: string) {
   await page.evaluate((title) => window.pipilot!.localPi.runtime.command({
     type: 'set_session_name', name: title,
   }), name)
-  await expect(page.getByRole('region', { name: 'General chats', exact: true })
+  await expect(page.getByRole('region', { name: 'Chats', exact: true })
     .getByRole('button', { name, exact: true })).toBeVisible()
 }
 
@@ -78,11 +78,11 @@ export default function modelOperationGate(pi) {
     await expect(page.locator('[data-model-action-error]')).toHaveCount(0)
     await page.keyboard.press('Escape')
     await seedNamedConversation(page, 'Operation owner A')
-    await page.getByRole('button', { name: 'New general chat', exact: true }).click()
+    await page.getByRole('button', { name: 'New chat', exact: true }).click()
     await expect(modelTrigger).toContainText('Fake Chat', { timeout: 20_000 })
     await expect(page.locator('[data-conversation-action-error]')).toHaveCount(0)
     await seedNamedConversation(page, 'Operation owner B')
-    const generalChats = page.getByRole('region', { name: 'General chats', exact: true })
+    const generalChats = page.getByRole('region', { name: 'Chats', exact: true })
     const ownerA = generalChats.getByRole('button', { name: 'Operation owner A', exact: true })
     const ownerB = generalChats.getByRole('button', { name: 'Operation owner B', exact: true })
 
@@ -133,7 +133,7 @@ export default function modelOperationGate(pi) {
     await expect(composer).toHaveAttribute('aria-invalid', 'false')
     expect(fixture.prompts).not.toContain(unconfirmedDraft)
     await modelTrigger.click()
-    await expect(page.getByRole('option', { name: 'High', exact: true })).toBeEnabled()
+    await expect(page.getByRole('slider', { name: 'Reasoning effort', exact: true })).toBeEnabled()
     await page.screenshot({ path: testInfo.outputPath('model-picker-desktop-light.png') })
   } finally {
     await writeFile(join(gateDir, 'fake-fast.release'), 'release')

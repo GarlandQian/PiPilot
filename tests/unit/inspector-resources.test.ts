@@ -228,7 +228,7 @@ describe('inspector workspace resources', () => {
     expect(controller.getSnapshot().activePath).toBe('extra.ts')
   })
 
-  it('refuses a ninth unfinished file until one closes instead of evicting pending reads', async () => {
+  it('refuses one more unfinished file until one closes instead of evicting pending reads', async () => {
     const pending = deferred()
     const read = vi.fn(() => pending.promise)
     const controller = new InspectorResourcesController(workspaceId, read)
@@ -237,7 +237,7 @@ describe('inspector workspace resources', () => {
     await settle()
     expect(controller.open('extra.ts')).toBe(false)
     expect(controller.getSnapshot().atCapacity).toBe(true)
-    expect(controller.getSnapshot().activePath).toBe('7.ts')
+    expect(controller.getSnapshot().activePath).toBe(`${INSPECTOR_MAX_OPEN_FILES - 1}.ts`)
     expect(read).toHaveBeenCalledTimes(INSPECTOR_MAX_OPEN_FILES)
     controller.close('0.ts')
     expect(controller.open('extra.ts')).toBe(true)

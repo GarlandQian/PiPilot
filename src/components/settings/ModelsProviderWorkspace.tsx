@@ -29,7 +29,8 @@ export function ModelsProviderWorkspace({ manager }: { manager: ModelsManager })
   const visibleSelectedCount = visibleSelections.filter((key) => manager.selectedCustomModels.has(key)).length
   const allVisibleSelected = visibleSelections.length > 0 && visibleSelectedCount === visibleSelections.length
   const clearSearch = () => { setQuery(''); searchRef.current?.focus() }
-  const addProvider = () => { setQuery(''); manager.setProviderDialog({ mode: 'add' }) }
+  // Codex-simple: endpoint, key and models in one sheet.
+  const addProvider = () => { setQuery(''); manager.setQuickAddOpen(true) }
 
   return <div className="mac-group-raw min-w-0 p-3.5" data-model-provider-workspace>
     <div className="mb-3.5 flex flex-wrap items-center gap-2.5">
@@ -47,13 +48,13 @@ export function ModelsProviderWorkspace({ manager }: { manager: ModelsManager })
         {query ? <Button variant="ghost" size="icon-xs" className="absolute right-1 top-1/2 size-5 -translate-y-1/2"
           aria-label={t('settings.models.workspace.clearSearch')} onClick={clearSearch}><TbX aria-hidden /></Button> : null}
       </div>
-      <Button size="sm" disabled={disabled} onClick={addProvider}><TbPlus aria-hidden />{t('settings.models.addProvider')}</Button>
+      <Button size="sm" disabled={disabled} onClick={addProvider}><TbPlus aria-hidden />{t('settings.models.quickAdd.open')}</Button>
     </div>
     {manager.parsed.providers.length === 0 ? <div className="flex min-h-64 flex-col items-center justify-center gap-2 px-4 py-8 text-center">
       <TbServer className="mb-1 size-9 text-muted-foreground/70" aria-hidden />
       <h3 className="text-title">{t('settings.models.noProviders')}</h3>
       <p className="max-w-md text-caption leading-relaxed text-muted-foreground">{t('settings.models.workspace.emptyDescription')}</p>
-      <Button variant="ghost" disabled={disabled} onClick={addProvider}>{t('settings.models.addProvider')}<TbArrowRight aria-hidden /></Button>
+      <Button variant="ghost" disabled={disabled} onClick={addProvider}>{t('settings.models.quickAdd.open')}<TbArrowRight aria-hidden /></Button>
     </div> : results.length === 0 ? <div className="py-12 text-center text-caption text-muted-foreground" role="status">
       <p>{t('settings.models.workspace.noMatches')}</p>
       <Button variant="ghost" className="mt-2" onClick={clearSearch}>{t('settings.models.workspace.clearSearch')}</Button>
@@ -99,7 +100,7 @@ export function ModelsProviderWorkspace({ manager }: { manager: ModelsManager })
         {!structuredProviderSupported(provider) ? <p className="mt-3 text-micro text-muted-foreground">{t('settings.models.formAdvancedNotice')}</p> : null}
         <div className="mt-6 flex flex-wrap items-center gap-3 border-b border-border pb-2.5">
           <h4 className="mr-auto text-caption font-semibold">{t('settings.models.workspace.models')}</h4>
-          <Button variant="outline" size="sm" disabled={disabled} onClick={() => { setQuery(''); manager.setModelDialog({ providerId: provider.id, mode: 'add' }) }}><TbPlus aria-hidden />{t('settings.models.addModel')}</Button>
+          <Button variant="outline" size="sm" disabled={disabled} aria-label={t('settings.models.addModelTo', { name: provider.name || provider.id })} onClick={() => { setQuery(''); manager.setModelDialog({ providerId: provider.id, mode: 'add' }) }}><TbPlus aria-hidden />{t('settings.models.addModelShort')}</Button>
         </div>
         {provider.models.length > 0 ? <div className="flex flex-wrap items-center gap-2 py-3 text-micro text-muted-foreground">
           <Checkbox checked={allVisibleSelected ? true : visibleSelectedCount > 0 ? 'indeterminate' : false} disabled={disabled || visibleSelections.length === 0}

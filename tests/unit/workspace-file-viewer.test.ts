@@ -6,6 +6,7 @@ import { TooltipProvider } from '../../src/components/ui/tooltip'
 import type { WorkspaceFilePreview } from '../../src/shared/workspace-content'
 
 vi.mock('@/i18n', () => ({
+  useLocale: () => 'en-US',
   useT: () => (key: string, params?: Record<string, string | number>) => {
     if (!params) return key
     return Object.entries(params).reduce(
@@ -17,8 +18,9 @@ vi.mock('@/i18n', () => ({
 
 vi.mock('@/store/settings', () => ({
   useSettings: () => ({
-    appearance: { showLineNumbers: true, wordWrap: true },
+    appearance: { showLineNumbers: true, wordWrap: true, monoFontFamily: '', codeFontSize: 12, codeLigatures: false },
   }),
+  useUpdateSettings: () => ({ update: () => undefined }),
 }))
 
 const previewBase = {
@@ -26,10 +28,7 @@ const previewBase = {
   fingerprint: 'a'.repeat(64),
 }
 
-const callbacks = {
-  onBack: () => undefined,
-  onClose: () => undefined,
-}
+const callbacks = {}
 
 function renderViewer(path: string, preview: WorkspaceFilePreview, loading = false, props: Partial<WorkspaceFileViewerProps> = {}) {
   return renderToStaticMarkup(createElement(
@@ -56,14 +55,17 @@ describe('WorkspaceFileViewer', () => {
     })
 
     expect(markup).toContain('data-workspace-file-viewer')
-    expect(markup).toContain('role="tablist"')
+    // One header row: the path, then Preview / Source as a pressed pair.
+    expect(markup).toMatch(/<button[^>]*aria-pressed="true"[^>]*>inspector.preview.mode.preview<\/button>/u)
+    expect(markup).toContain('docs')
+    expect(markup).toContain('README.md')
     expect(markup).toContain('inspector.preview.mode.preview')
     expect(markup).toContain('inspector.preview.mode.source')
     expect(markup).toContain('<h1>Heading</h1>')
     expect(markup).not.toContain('role="dialog"')
   })
 
-  it('renders recognized source through the highlighted code controls', () => {
+  it('renders source in the line-numbered code view, with the file menu in the header', () => {
     const markup = renderViewer('src/example.ts', {
       ...previewBase,
       path: 'src/example.ts',
@@ -72,11 +74,9 @@ describe('WorkspaceFileViewer', () => {
       content: 'const answer: number = 42\n',
     })
 
-    expect(markup).toContain('typescript')
-    expect(markup).toContain('hljs-keyword')
-    expect(markup).toContain('md.toggleLineNumbers')
-    expect(markup).toContain('md.toggleWrap')
-    expect(markup).toContain('md.copy')
+    expect(markup).toContain('data-file-source')
+    expect(markup).toContain('aria-label="inspector.preview.more"')
+    expect(markup).not.toContain('inspector.preview.mode.source')
   })
 
   it('shows loading instead of stale content during a replacement request', () => {
@@ -92,18 +92,15 @@ describe('WorkspaceFileViewer', () => {
     expect(markup).not.toContain('Stale heading')
   })
 
-  it('exposes refresh on a ready preview and keeps its document visible during refresh', () => {
+  it('keeps the document visible while it refreshes', () => {
     const preview = {
       ...previewBase, path: 'README.md', kind: 'text' as const, size: 21, content: '# Last loaded heading',
     }
-    const ready = renderViewer('README.md', preview, false, { onRefresh: () => undefined })
-    expect(ready).toMatch(/<button[^>]*aria-label="common.refresh"[^>]*>/u)
     const refreshing = renderViewer('README.md', preview, false, { refreshing: true, onRefresh: () => undefined })
     expect(refreshing).toContain('<h1>Last loaded heading</h1>')
     expect(refreshing).toContain('aria-busy="true"')
-    expect(refreshing).toMatch(/<button[^>]*aria-label="common.refresh"[^>]*disabled=""/u)
     expect(refreshing).toContain('inspector.preview.mode.source')
-    expect(refreshing).toContain('inspector.preview.loading')
+    expect(refreshing).toContain('aria-label="inspector.preview.loading"')
   })
 
   it('retains the last loaded document and shows a retryable alert when refresh fails', () => {

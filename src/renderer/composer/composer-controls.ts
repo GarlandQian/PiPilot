@@ -151,3 +151,28 @@ export function projectPendingRail(
     items,
   }
 }
+
+export interface ReasoningSliderPresentation {
+  /** Index of the selected level, or -1 when none applies. */
+  index: number
+  /** Labels fit under every mark only up to five stops. */
+  labelEachStop: boolean
+  /** The slow, token-hungry end of the scale. */
+  costly: boolean
+}
+
+/**
+ * The reasoning slider moves over exactly the levels the current model
+ * supports, in their given order; it never mixes in model choice.
+ */
+export function projectReasoningSlider(
+  levels: readonly LocalPiThinkingLevel[],
+  level: LocalPiThinkingLevel | null,
+): ReasoningSliderPresentation {
+  const index = level ? levels.indexOf(level) : -1
+  return {
+    index,
+    labelEachStop: levels.length <= 5,
+    costly: level === 'xhigh' || level === 'max',
+  }
+}

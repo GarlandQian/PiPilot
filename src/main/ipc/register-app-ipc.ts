@@ -10,6 +10,8 @@ import {
   settingsUpdateContract,
   shellOpenExternalContract,
   windowGetStateContract,
+  windowExitFullScreenContract,
+  windowCloseContract,
   type AppInfo,
 } from '../../shared/ipc/contracts'
 import type { SettingsRepository } from '../repositories/settings-repository'
@@ -50,6 +52,22 @@ export function registerAppIpc({
       mode: app.isPackaged ? 'production' : 'development',
     }
     return info
+  })
+
+  registerValidatedHandler(windowExitFullScreenContract, isTrustedSender, () => {
+    const window = getMainWindow()
+    if (!window || window.isDestroyed()) {
+      throw new MainProcessError('WINDOW_UNAVAILABLE', 'The main window is unavailable.')
+    }
+    if (window.isFullScreen()) window.setFullScreen(false)
+    return { focused: window.isFocused(), fullScreen: window.isFullScreen(), maximized: window.isMaximized() }
+  })
+
+  registerValidatedHandler(windowCloseContract, isTrustedSender, () => {
+    const window = getMainWindow()
+    if (!window || window.isDestroyed()) return { closed: false }
+    window.close()
+    return { closed: true }
   })
 
   registerValidatedHandler(windowGetStateContract, isTrustedSender, () => {

@@ -35,7 +35,7 @@ function ResourceList({ items, onNavigate }: { items: readonly ConversationResou
   return <ul className="space-y-px">
     {items.slice(0, limit).map((item) => <li key={item.path}>
       <button className="group flex w-full min-w-0 items-start gap-2 rounded-md px-2 py-1.5 text-left hover:bg-fill focus-visible:focus-ring" onClick={() => onNavigate(item.entryId)} title={`${item.path} · ${t('taskContext.viewRecord')}`}>
-        <TbFile className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
+        <TbFile className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
         <span className="min-w-0 flex-1"><span className="block break-words text-caption [overflow-wrap:anywhere]">{item.path}</span><span className="text-micro text-muted-foreground">{t(`taskContext.file.${item.action}`)}</span></span>
         <TbArrowUpRight className="mt-0.5 size-3 shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100" aria-hidden />
       </button>

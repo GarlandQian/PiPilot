@@ -18,6 +18,12 @@ describe('terminal font resolution', () => {
     expect(DEFAULT_TERMINAL_FONT_STACK).toContain('"Microsoft YaHei"')
     expect(DEFAULT_TERMINAL_FONT_STACK).toContain('"WenQuanYi Micro Hei Mono"')
     expect(DEFAULT_TERMINAL_FONT_STACK.endsWith('monospace')).toBe(true)
+    // Built-in monospace fonts of macOS, Windows and Linux come before any CJK fallback.
+    const cjk = DEFAULT_TERMINAL_FONT_STACK.indexOf('"Sarasa Mono SC"')
+    for (const builtIn of ['Menlo', 'Consolas', '"DejaVu Sans Mono"']) {
+      expect(DEFAULT_TERMINAL_FONT_STACK.indexOf(builtIn)).toBeGreaterThan(-1)
+      expect(DEFAULT_TERMINAL_FONT_STACK.indexOf(builtIn)).toBeLessThan(cjk)
+    }
   })
 
   it('quotes one local family and strips CSS fragments before falling back', () => {

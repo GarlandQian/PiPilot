@@ -32,6 +32,34 @@ export function environmentValue(environment: NodeJS.ProcessEnv, name: string, p
   return key === undefined ? undefined : environment[key]
 }
 
+/** A locale that already reads and writes UTF-8 (en_US.UTF-8, C.UTF-8, zh_CN.utf8, ja_JP.eucJP …). */
+function isMultibyteLocale(value: string | undefined) {
+  return Boolean(value && /\.(utf-?8|euc)/iu.test(value))
+}
+
+/**
+ * An app opened from the Dock or a desktop launcher inherits no LANG, so the
+ * shell runs in the C locale and prints "中文.txt" as "????.txt" (Terminal.app
+ * and VS Code set one for the same reason). Unless the user chose a locale,
+ * give the terminal a UTF-8 one in the system's language.
+ */
+export function terminalLocaleEnvironment(
+  environment: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+  systemLocale: string | undefined,
+  localeExists: (name: string) => boolean,
+): Record<string, string> {
+  if (platform === 'win32') return {}
+  if (environment.LC_ALL || environment.LC_CTYPE || isMultibyteLocale(environment.LANG)) return {}
+  // Linux distributions generate few locales; C.UTF-8 is the one always there.
+  if (platform !== 'darwin') return { LANG: 'C.UTF-8' }
+  // "zh-Hans-CN" → zh_CN: the region is the two-letter subtag, after any script.
+  const [language, ...subtags] = (systemLocale ?? '').split(/[-_]/u)
+  const region = subtags.find((subtag) => /^[a-z]{2}$/iu.test(subtag))
+  const name = language && region ? `${language.toLowerCase()}_${region.toUpperCase()}.UTF-8` : ''
+  return { LANG: name && localeExists(name) ? name : 'en_US.UTF-8' }
+}
+
 export function mergeTerminalEnvironment(
   inherited: NodeJS.ProcessEnv,
   overrides: Record<string, string | null>,
@@ -74,6 +102,12 @@ export function parseWslDistributions(output: string | Buffer) {
     .map((line) => line.trim())
     .filter((line) => line.length > 0 && line.length <= 128 && !/[\0\r\n\\/]/.test(line)))].slice(0, 64)
 }
+
+/**
+ * Shells every macOS/Linux install lists in /etc/shells that people rarely
+ * use interactively. They appear only when one is the user's login shell.
+ */
+const LEGACY_SHELLS = new Set(['sh', 'csh', 'tcsh', 'ksh', 'dash'])
 
 export class TerminalProfileDiscovery {
   readonly platform: NodeJS.Platform
@@ -143,11 +177,15 @@ export class TerminalProfileDiscovery {
     try { listed = await (this.options.readShellsFile?.() ?? readFile('/etc/shells', 'utf8')) } catch { /* Optional inventory. */ }
     const registered = listed.split(/\r?\n/).map((line) => line.split('#')[0].trim())
       .filter((line) => posix.isAbsolute(line)).slice(0, 128)
+    const login = this.env('SHELL') ?? ''
     const candidates = [...new Set([
-      this.env('SHELL') ?? '', ...registered,
-      ...['zsh', 'bash', 'sh', 'fish', 'nu'].flatMap((command) => this.candidates(command, [`/bin/${command}`, `/usr/bin/${command}`, `/usr/local/bin/${command}`, `/opt/homebrew/bin/${command}`])),
+      login, ...registered,
+      ...['zsh', 'bash', 'fish', 'nu', 'pwsh', 'elvish', 'xonsh'].flatMap((command) => this.candidates(command, [`/bin/${command}`, `/usr/bin/${command}`, `/usr/local/bin/${command}`, `/opt/homebrew/bin/${command}`])),
     ])]
-    return candidates.map((candidate) => ({ label: posix.basename(candidate), candidates: [candidate], args: ['-l'] }))
+    return candidates.map((candidate) => ({
+      label: posix.basename(candidate), candidates: [candidate], args: ['-l'],
+      legacy: candidate !== login && LEGACY_SHELLS.has(posix.basename(candidate)),
+    }))
   }
 
   private async wslProfiles(): Promise<ResolvedShellProfile[]> {
@@ -171,18 +209,31 @@ export class TerminalProfileDiscovery {
     } catch { return [] }
   }
 
-  async discover(custom: TerminalCustomProfile[] = []): Promise<ResolvedShellProfile[]> {
-    const definitions = await (this.platform === 'win32' ? this.windowsDefinitions() : this.unixDefinitions())
+  /** `keep` names shells listed even if legacy: the default shell and a chosen profile. */
+  async discover(custom: TerminalCustomProfile[] = [], keep: { files?: readonly string[]; ids?: readonly string[] } = {}): Promise<ResolvedShellProfile[]> {
+    const definitions: { label: string; candidates: string[]; args: string[]; legacy?: boolean }[] =
+      await (this.platform === 'win32' ? this.windowsDefinitions() : this.unixDefinitions())
+    const keptFiles = new Set(keep.files?.map((file) => this.identity(file)))
+    const keptIds = new Set(keep.ids)
     const profiles: ResolvedShellProfile[] = []
     const seen = new Set<string>()
     for (const definition of definitions) {
       for (const candidate of definition.candidates) {
         const file = await this.executable(candidate)
         if (!file || seen.has(this.identity(file))) continue
+        const id = stableId('detected', this.identity(file))
+        if (definition.legacy && !keptIds.has(id) && !keptFiles.has(this.identity(file)) && !keptFiles.has(this.identity(candidate))) continue
         seen.add(this.identity(file))
         const label = definition.label.slice(0, 128) || this.path.basename(file)
-        profiles.push({ id: stableId('detected', this.identity(file)), label, isDefault: false, source: 'detected', executable: file, args: definition.args, available: true, launch: { file, args: definition.args, label } })
+        profiles.push({ id, label, isDefault: false, source: 'detected', executable: file, args: definition.args, available: true, launch: { file, args: definition.args, label } })
       }
+    }
+    // The same shell installed twice (system bash and Homebrew bash, PowerShell 7
+    // and a preview) is told apart by where it lives.
+    const labels = new Map<string, number>()
+    for (const profile of profiles) labels.set(profile.label, (labels.get(profile.label) ?? 0) + 1)
+    for (const profile of profiles) {
+      if ((labels.get(profile.label) ?? 0) > 1) profile.label = `${profile.label} · ${this.path.dirname(profile.executable)}`.slice(0, 128)
     }
     profiles.push(...await this.wslProfiles())
     for (const profile of custom) profiles.push(await this.resolveCustom(profile))

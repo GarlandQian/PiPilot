@@ -54,7 +54,7 @@ test('searches message content and saved sessions, and asks a side question whil
     await expect(search.getByRole('button').filter({ hasText: 'All checks passed' })).toHaveCount(1)
     await search.getByRole('textbox', { name: 'Search message content' }).press('Enter')
     await expect(conversation.locator('[data-conversation-search-result] mark')).toHaveText('All checks passed')
-    await page.getByRole('button', { name: 'Search conversation content…', exact: true }).click()
+    await page.getByRole('button', { name: 'Search', exact: true }).click()
     search = page.getByRole('dialog', { name: 'Search conversations', exact: true })
     await search.getByRole('textbox', { name: 'Search message content' }).fill('Distinctive archive needle')
     const match = search.getByRole('button').filter({ hasText: 'Distinctive archive needle' })

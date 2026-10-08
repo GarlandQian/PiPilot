@@ -62,21 +62,6 @@ export function useWorkbenchNavigation() {
   const toggleContextPanel = React.useCallback(() => dispatch({ type: 'toggle-context-panel' }), [])
   const setPaletteOpen = React.useCallback((open: boolean) => dispatch({ type: 'palette', open }), [])
   const openPalette = React.useCallback(() => setPaletteOpen(true), [setPaletteOpen])
-  const toggleInspector = React.useCallback(() => {
-    if (compactConversation) {
-      setCompactInspectorOpen((current) => {
-        if (!current) {
-          compactInspectorReturnFocusRef.current = document.activeElement instanceof HTMLElement
-            ? document.activeElement
-            : null
-        }
-        return !current
-      })
-    } else {
-      setPanelLayout((current) => ({ ...current, inspectorOpen: !current.inspectorOpen }))
-    }
-  }, [compactConversation])
-
   React.useEffect(() => {
     if (!compactConversation) setCompactInspectorOpen(false)
   }, [compactConversation])
@@ -87,9 +72,6 @@ export function useWorkbenchNavigation() {
       if (key === 'b') {
         event.preventDefault()
         toggleContextPanel()
-      } else if (key === 'j') {
-        event.preventDefault()
-        toggleInspector()
       } else if (key === 'k') {
         event.preventDefault()
         setPaletteOpen(!frameNav.paletteOpen)
@@ -101,7 +83,7 @@ export function useWorkbenchNavigation() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [frameNav.paletteOpen, setPaletteOpen, setRail, toggleContextPanel, toggleInspector])
+  }, [frameNav.paletteOpen, setPaletteOpen, setRail, toggleContextPanel])
 
   return {
     frameNav,
@@ -123,6 +105,5 @@ export function useWorkbenchNavigation() {
     setPaletteOpen,
     openPalette,
     toggleContextPanel,
-    toggleInspector,
   }
 }

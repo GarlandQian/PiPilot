@@ -107,8 +107,9 @@ function terminalPanel(page: Page, terminalId: string) {
   return page.locator(`[data-terminal-id="${terminalId}"][data-terminal-status]`)
 }
 
+/** The bottom dock showing terminals: their tabs in its strip, their tools in its header (Codex). */
 function terminalWorkspace(page: Page) {
-  return page.locator('[data-terminal-drawer] [data-terminal-workspace]:visible')
+  return page.locator('[data-terminal-drawer]:visible')
 }
 
 async function activeTerminal(page: Page) {
@@ -144,6 +145,13 @@ async function terminalAction(page: Page, action: string) {
   await page.getByRole('menuitem', { name: action, exact: true }).click()
 }
 
+/** Each conversation keeps its own tabs (Codex); a new one shows its terminal on request. */
+async function showTerminal(page: Page) {
+  const drawer = page.locator('#workspace-terminal-drawer[data-terminal-drawer]')
+  if (!await drawer.isVisible()) await page.getByRole('button', { name: 'Terminal', exact: true }).click()
+  await expect(drawer).toBeVisible()
+}
+
 async function openTerminalSettings(page: Page) {
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
   await page.getByRole('region', { name: 'Settings', exact: true })
@@ -154,7 +162,7 @@ async function openTerminalSettings(page: Page) {
 }
 
 async function returnToTerminals(page: Page) {
-  await page.getByRole('button', { name: 'Sessions', exact: true }).click()
+  await page.getByRole('button', { name: 'Back to app', exact: true }).click()
   const drawer = page.locator('#workspace-terminal-drawer[data-terminal-drawer]')
   if (!await drawer.isVisible()) await page.getByRole('button', { name: 'Terminal', exact: true }).click()
   await expect(drawer).toBeVisible()
@@ -274,6 +282,9 @@ test('preserves named terminals and viewport across hiding, tabs and projects, a
 
     await addProject(app, page, projectB)
     await expect(first.panel).toBeHidden()
+    // Each conversation keeps its own tabs (Codex): the new one opens its terminal on request.
+    await expect(drawer).toBeHidden()
+    await toggle.click()
     const otherProject = await activeTerminal(page)
     expect(otherProject.terminalId).not.toBe(first.terminalId)
     expect(otherProject.terminalId).not.toBe(second.terminalId)
@@ -291,8 +302,10 @@ test('preserves named terminals and viewport across hiding, tabs and projects, a
     expect(staleWrite).toBe('TERMINAL_STALE_SCOPE')
     await Promise.all([releaseOutput(projectA, 'A1', 'background'), releaseOutput(projectA, 'A2', 'background')])
 
-    await page.getByRole('button', { name: `New session in ${basename(projectA)}`, exact: true }).click()
+    await page.getByRole('button', { name: `New task in ${basename(projectA)}`, exact: true }).click()
     await expect.poll(() => page.evaluate(async () => (await window.pipilot!.localPi.runtime.status()).cwd)).toBe(projectA)
+    await expect(drawer).toBeHidden()
+    await toggle.click()
     await expect(drawer.getByRole('tab', { name: 'Build watcher', exact: true })).toHaveAttribute('aria-selected', 'true')
     await expect(first.panel).toBeVisible()
     await expectRenderedOutput(page, first.panel, 'PIPILOT_A1_background_OUTPUT')
@@ -320,17 +333,21 @@ test('preserves named terminals and viewport across hiding, tabs and projects, a
     await drawer.getByRole('tab', { name: 'Test watcher', exact: true }).click()
     await drawer.getByRole('tab', { name: 'Build watcher', exact: true }).click()
     const previousSession = await page.evaluate(async () => (await window.pipilot!.localPi.runtime.status()).sessionState?.sessionId)
-    await page.getByRole('button', { name: `New session in ${basename(projectA)}`, exact: true }).click()
+    await page.getByRole('button', { name: `New task in ${basename(projectA)}`, exact: true }).click()
     await expect.poll(() => page.evaluate(async (previous) => {
       const current = (await window.pipilot!.localPi.runtime.status()).sessionState?.sessionId
       return Boolean(current && current !== previous)
     }, previousSession)).toBe(true)
-    await expect(first.panel).toHaveAttribute('data-terminal-status', 'exited')
+    // The new task has no terminal tab yet; its project's terminals are untouched.
+    await expect(drawer).toBeHidden()
     expect((await listTerminals(page)).map(({ terminalId, status }) => ({ terminalId, status }))).toEqual([
       { terminalId: first.terminalId, status: 'exited' },
       { terminalId: second.terminalId, status: 'running' },
     ])
     expect((await terminalSnapshot(page, first.terminalId)).replay).toBe(exited.replay)
+    await toggle.click()
+    await expect(drawer.getByRole('tab', { name: 'Build watcher', exact: true })).toHaveAttribute('aria-selected', 'true')
+    await expect(first.panel).toHaveAttribute('data-terminal-status', 'exited')
     await terminalAction(page, 'Restart terminal')
     const restarted = await activeTerminal(page)
     expect(restarted.terminalId).not.toBe(first.terminalId)
@@ -471,12 +488,14 @@ test('uses the global profile for new terminals across projects and preserves an
 
     // The default is global, while every PTY still starts in its owning project.
     await addProject(app, page, projectB)
+    await showTerminal(page)
     const otherProject = await activeTerminal(page)
     expect(otherProject.shell).toBe(customProfile.name)
     await expectShellProfile(page, otherProject, 'CUSTOM_B', 'original-global-profile', projectB, true)
     expect(await shellIsAlive(alternatePid)).toBe(true)
-    await page.getByRole('button', { name: `New session in ${basename(projectA)}`, exact: true }).click()
+    await page.getByRole('button', { name: `New task in ${basename(projectA)}`, exact: true }).click()
     await expect.poll(() => page.evaluate(async () => (await window.pipilot!.localPi.runtime.status()).cwd)).toBe(projectA)
+    await showTerminal(page)
     await expect(alternate.panel).toBeVisible()
 
     const replacementProfile = {
@@ -517,7 +536,8 @@ test('uses the global profile for new terminals across projects and preserves an
     await expect(terminalPanel(page, replacement.terminalId)).toHaveCount(0)
     await expect.poll(() => shellIsAlive(replacementPid)).toBe(false)
     expect(await listTerminals(page)).toEqual([])
-    await expect(drawer).toBeVisible()
+    // Closing the last terminal closes its tab, and the then-empty bottom panel.
+    await expect(drawer).toBeHidden()
     expect(errors).toEqual([])
   } finally {
     await fixture.close()
@@ -596,8 +616,9 @@ test('keeps six terminals alive across projects until only the selected terminal
     try { process.kill(pid, 0); return true } catch { return false }
   }), pids)
   const switchProject = async (project: string) => {
-    await page.getByRole('button', { name: `New session in ${basename(project)}`, exact: true }).click()
+    await page.getByRole('button', { name: `New task in ${basename(project)}`, exact: true }).click()
     await expect.poll(() => page.evaluate(async () => (await window.pipilot!.localPi.runtime.status()).cwd)).toBe(project)
+    await showTerminal(page)
   }
 
   try {
@@ -635,6 +656,7 @@ test('keeps six terminals alive across projects until only the selected terminal
     // background shell or changing the scope that owns each terminal.
     await addProject(app, page, projectB)
     await expect(first.panel).toBeHidden()
+    await showTerminal(page)
     const sixth = await activeTerminal(page)
     const sixthPid = await probeShell(sixth, 'B1', 'CREATED')
     expect(new Set([...projectPids, sixthPid]).size).toBe(6)
@@ -722,8 +744,8 @@ test('resizes and restores the drawer, searches native output, and fits light an
     // Persisted height must survive a renderer reload, with the same live PTYs.
     await page.reload()
     await expect(page.locator('[data-model-thinking-trigger]')).toContainText('Fake Chat', { timeout: 20_000 })
-    await expect(drawer).toBeHidden()
-    await toggle.click()
+    // The conversation remembers its terminal tab and reattaches to the live PTYs.
+    await expect(drawer).toBeVisible()
     await expect(pasted.panel).toHaveAttribute('data-terminal-status', 'running')
     await expect.poll(async () => (await drawer.boundingBox())!.height).toBeCloseTo(resizedHeight, 0)
     expect((await listTerminals(page)).map(({ terminalId }) => terminalId)).toEqual([first.terminalId, pasted.terminalId])

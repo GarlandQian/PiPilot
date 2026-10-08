@@ -1,3 +1,4 @@
+import type { ExternalEditor } from './external-editors'
 import type {
   AppError,
   AppInfo,
@@ -6,6 +7,7 @@ import type {
   SettingsSnapshot,
   WorkspaceRemoveResult,
   WindowSnapshot,
+  AppCommand,
 } from './ipc/contracts'
 import type { ConversationImportCommitRequest, ConversationImportPreviewRequest, ConversationImportPreviewResult } from './conversation-import'
 import type {
@@ -17,9 +19,18 @@ import type {
 import type {
   WorkspaceChangeStage,
   WorkspaceDiffFile,
+  WorkspaceBranchDiffSnapshot,
   WorkspaceDiffSnapshot,
   WorkspaceDirectorySnapshot,
   WorkspaceFilePreview,
+  WorkspaceFileMedia,
+  WorkspaceExistingFiles,
+  WorkspaceCommitList,
+  WorkspaceCommitDiffSnapshot,
+  WorkspaceDiffSides,
+  WorkspaceGitStatus,
+  WorkspaceCommitRequest,
+  WorkspaceCommitResult,
   WorkspacePathSearchResult,
 } from './workspace-content'
 import type {
@@ -63,6 +74,7 @@ import type {
   ModelsConfigSnapshot,
   ModelsConfigTarget,
   ModelsConfigTestResult,
+  ModelsRemoteListResult,
 } from './models-config'
 import type {
   PiIntegrationOperation,
@@ -153,6 +165,8 @@ export interface PiPilotApi {
     saveAndRestart(target: ModelsConfigTarget, content: string, expectedFingerprint: string): Promise<ModelsConfigSaveResult>
     setDefault(providerId: string, modelId: string): Promise<ModelsConfigSetDefaultResult>
     test(target: ModelsConfigTarget, content: string, providerId: string, modelId: string): Promise<ModelsConfigTestResult>
+    /** The models an endpoint offers, listed with the key being entered. */
+    listRemote(request: { baseUrl: string; api: string; apiKey?: string }): Promise<ModelsRemoteListResult>
   }
   readonly conversation: {
     get(): Promise<ConversationNavigationSnapshot>
@@ -184,16 +198,47 @@ export interface PiPilotApi {
     open(workspaceId: string): Promise<WorkspaceSwitchResult>
     remove(workspaceId: string): Promise<WorkspaceRemoveResult>
     setPinned(workspaceId: string, pinned: boolean): Promise<WorkspacePinnedResult>
+    /** Shows the project folder in Finder (File Explorer, file manager). */
+    reveal(workspaceId: string): Promise<void>
     subscribe(listener: (snapshot: WorkspaceSnapshot) => void): () => void
   }
   readonly files: {
     list(workspaceId: string, path: string): Promise<WorkspaceDirectorySnapshot>
     preview(workspaceId: string, path: string): Promise<WorkspaceFilePreview>
+    /** An image or PDF, whole. */
+    media(workspaceId: string, path: string): Promise<WorkspaceFileMedia>
+    /** Which of these paths are still files (for restoring file tabs). */
+    exist(workspaceId: string, paths: readonly string[]): Promise<WorkspaceExistingFiles>
+    /** Show a project file in Finder / File Explorer. */
+    reveal(workspaceId: string, path: string): Promise<void>
     search(workspaceId: string, query: string): Promise<WorkspacePathSearchResult>
   }
   readonly changes: {
     list(workspaceId: string): Promise<WorkspaceDiffSnapshot>
-    read(workspaceId: string, path: string, stage?: WorkspaceChangeStage): Promise<WorkspaceDiffFile>
+    /** The branch's work since it left the default branch (read-only). */
+    listBranch(workspaceId: string): Promise<WorkspaceBranchDiffSnapshot>
+    read(workspaceId: string, path: string, stage?: WorkspaceChangeStage, commit?: string): Promise<WorkspaceDiffFile>
+    /** Recent commits, for the Commit scope. */
+    listCommits(workspaceId: string): Promise<WorkspaceCommitList>
+    /** One commit's files against its parent (read-only). */
+    listCommit(workspaceId: string, commit: string): Promise<WorkspaceCommitDiffSnapshot>
+    /** Both sides of a reviewed file, for expanding unchanged lines. */
+    sides(workspaceId: string, path: string, stage: WorkspaceChangeStage, options?: { commit?: string; previousPath?: string }): Promise<WorkspaceDiffSides>
+    /** Branch, upstream and what a commit would include. */
+    status(workspaceId: string): Promise<WorkspaceGitStatus>
+    /** Commit, then optionally push and open a pull request. */
+    commit(workspaceId: string, request: WorkspaceCommitRequest): Promise<WorkspaceCommitResult>
+    /** A commit message for what the commit would contain, from the given model. */
+    suggestMessage(workspaceId: string, input: { providerId: string; modelId: string; includeUnstaged: boolean; locale: 'zh-CN' | 'en-US' }): Promise<string>
+    /** Stage, unstage or discard; returns the refreshed change list. */
+    apply(workspaceId: string, action: 'stage' | 'unstage' | 'discard', changes: readonly { path: string; stage: 'staged' | 'unstaged'; revision: string }[]): Promise<WorkspaceDiffSnapshot>
+    /** The same, for one hunk of one file. */
+    applyHunk(workspaceId: string, action: 'stage' | 'unstage' | 'discard', change: { path: string; stage: 'staged' | 'unstaged'; revision: string }, hunk: number): Promise<WorkspaceDiffSnapshot>
+  }
+  /** Apps that open project files: detected editors, the default app, the file manager. */
+  readonly editors: {
+    list(): Promise<ExternalEditor[]>
+    open(workspaceId: string, editorId: string, target?: { path?: string; line?: number }): Promise<void>
   }
   readonly terminal: {
     listShellProfiles(): Promise<TerminalShellProfile[]>
@@ -213,6 +258,8 @@ export interface PiPilotApi {
     getInfo(): Promise<AppInfo>
     subscribeShutdown(listener: (event: ApplicationShutdownEvent) => void): () => void
     respondToShutdown(shutdownId: string, decision: ApplicationShutdownDecision): Promise<{ accepted: boolean }>
+    /** Application-menu commands handled by the renderer (New Task, Settings…). */
+    subscribeCommands(listener: (command: AppCommand) => void): () => void
   }
   readonly shell: { openExternal(url: string): Promise<void> }
   readonly settings: {
@@ -221,5 +268,11 @@ export interface PiPilotApi {
     subscribe(listener: (snapshot: SettingsSnapshot) => void): () => void
     update(patch: AppSettingsPatch): Promise<SettingsSnapshot>
   }
-  readonly window: { getState(): Promise<WindowSnapshot> }
+  readonly window: {
+    getState(): Promise<WindowSnapshot>
+    subscribe(listener: (state: WindowSnapshot) => void): () => void
+    exitFullScreen(): Promise<WindowSnapshot>
+    /** Close the window (⌘W when no tab is left to close). */
+    close(): Promise<void>
+  }
 }

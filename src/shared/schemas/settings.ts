@@ -37,6 +37,7 @@ export const terminalSettingsSchema = z
     fontSize: z.number().int().min(TERMINAL_FONT_SIZE_MIN).max(TERMINAL_FONT_SIZE_MAX),
     defaultProfileId: terminalShellProfileIdSchema.nullable(),
     profiles: terminalCustomProfilesSchema,
+    location: z.enum(['bottom', 'panel']),
   })
   .strict()
 

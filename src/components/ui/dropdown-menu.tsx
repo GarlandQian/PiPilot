@@ -48,7 +48,7 @@ function DropdownMenuContent({
         sideOffset={sideOffset}
         className={cn(
           menuContentClass,
-          "max-h-(--radix-dropdown-menu-content-available-height) min-w-[12rem] origin-(--radix-dropdown-menu-content-transform-origin)",
+          "max-h-(--radix-dropdown-menu-content-available-height) min-w-[200px] origin-(--radix-dropdown-menu-content-transform-origin)",
           className
         )}
         {...props}
@@ -222,16 +222,20 @@ function DropdownMenuSubContent({
   className,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.SubContent>) {
+  // Portaled like the root content: nested inside it, the parent menu's
+  // scroll container would clip the submenu out of sight.
   return (
-    <DropdownMenuPrimitive.SubContent
-      data-slot="dropdown-menu-sub-content"
-      className={cn(
-        menuContentClass,
-        "min-w-[10rem] origin-(--radix-dropdown-menu-content-transform-origin)",
-        className
-      )}
-      {...props}
-    />
+    <DropdownMenuPrimitive.Portal>
+      <DropdownMenuPrimitive.SubContent
+        data-slot="dropdown-menu-sub-content"
+        className={cn(
+          menuContentClass,
+          "min-w-[160px] origin-(--radix-dropdown-menu-content-transform-origin)",
+          className
+        )}
+        {...props}
+      />
+    </DropdownMenuPrimitive.Portal>
   )
 }
 

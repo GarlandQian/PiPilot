@@ -172,7 +172,7 @@ test('keeps background completion unread until its exact task is opened, while v
     await page.getByRole('region', { name: 'Settings', exact: true }).getByRole('button', { name: 'General', exact: true }).click()
     await expect(desktop).not.toBeChecked()
     await expect(sound).not.toBeChecked()
-    await page.getByRole('button', { name: 'Sessions', exact: true }).click()
+    await page.getByRole('button', { name: 'Back to app', exact: true }).click()
 
     await addProject(app, page, projectA)
     const runtimeA = await seedTask(page, 'Background completion task')

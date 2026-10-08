@@ -4,9 +4,9 @@ import { resolveSidebarSessionIndicatorState } from '../../src/components/layout
 import {
   isSidebarSessionRunning,
   isNewBackgroundResult,
-  preferredProjectSession,
-  presentPrioritySessions,
+  presentPinnedSessions,
   presentSidebarSessions,
+  sidebarProjectIndicator,
   sortSidebarProjects,
 } from '../../src/components/layout/session-navigation'
 import type { SidebarConversationItem } from '../../src/components/layout/SessionList'
@@ -92,16 +92,18 @@ function conversation(
 }
 
 describe('sidebar navigation views', () => {
-  it('restores the selected or remembered project task, then the latest, and never invents an empty task', () => {
-    const older = { ...conversation('Older', 'completed', '2026-09-01T00:00:00.000Z'), organizationKey: 'older' }
-    const recent = { ...conversation('Recent', 'completed'), organizationKey: 'recent' }
-    const archived = { ...conversation('Archived', 'completed', '2026-09-10T00:00:00.000Z'), archived: true, organizationKey: 'archived' }
-    expect(preferredProjectSession([older, recent, archived], 'older')).toBe(older)
-    expect(preferredProjectSession([older, recent, archived], 'missing')).toBe(recent)
-    expect(preferredProjectSession([older, recent, archived], 'archived')).toBe(recent)
-    expect(preferredProjectSession([older, { ...recent, selected: true }], 'older')?.summary.name).toBe('Recent')
-    expect(preferredProjectSession([archived])).toBeUndefined()
-    expect(preferredProjectSession([])).toBeUndefined()
+  it('summarizes a collapsed project by its most urgent hidden task', () => {
+    const quiet = conversation('Quiet', 'completed')
+    const running = conversation('Working', 'running')
+    const unread = { ...conversation('Result', 'completed'), unread: true }
+    const waiting = { ...conversation('Approval', 'running'), needsAttention: true }
+    expect(sidebarProjectIndicator([quiet])).toBe('none')
+    expect(sidebarProjectIndicator([quiet, unread])).toBe('unread')
+    expect(sidebarProjectIndicator([unread, running])).toBe('running')
+    expect(sidebarProjectIndicator([running, conversation('Broken', 'failed')])).toBe('failed')
+    expect(sidebarProjectIndicator([running, waiting])).toBe('attention')
+    // Archived and already-open results stay quiet.
+    expect(sidebarProjectIndicator([{ ...running, archived: true }, { ...unread, selected: true }])).toBe('none')
   })
 
   it('keeps archived tasks retrievable without hiding active or unread work', () => {
@@ -114,17 +116,14 @@ describe('sidebar navigation views', () => {
     expect(presentSidebarSessions(items, { query: '', filter: 'all', sort: 'name' }).items).toEqual([unread, running])
     expect(presentSidebarSessions(items, { query: '', filter: 'archived', sort: 'name' }).items).toHaveLength(4)
     expect(presentSidebarSessions(items, { query: 'needle', filter: 'all', sort: 'name' }).items).toEqual([preview])
-    expect(presentSidebarSessions(items, { query: '', filter: 'attention', sort: 'name' }).items).toEqual([unread])
   })
 
-  it('puts attention and running work across projects ahead of selected and pinned idle tasks', () => {
+  it('moves pinned tasks out of their lists into Pinned, as Codex does', () => {
     const pinned = { ...conversation('Pinned', 'completed'), pinned: true }
-    const selected = { ...conversation('Selected', 'completed'), selected: true }
-    const running = conversation('Running', 'running')
-    const failed = conversation('Failed', 'failed')
     const quiet = conversation('Quiet', 'completed')
-    expect(presentPrioritySessions([pinned, quiet, selected, running, failed])).toEqual([failed, running, selected, pinned])
-    expect(presentSidebarSessions([quiet, pinned], { query: '', filter: 'all', sort: 'name' }).items[0]).toBe(pinned)
+    const archivedPin = { ...conversation('Old pin', 'completed'), pinned: true, archived: true }
+    expect(presentPinnedSessions([quiet, pinned, archivedPin], 'recent')).toEqual([pinned])
+    expect(presentSidebarSessions([quiet, pinned], { query: '', filter: 'all', sort: 'name' }).items).toEqual([quiet])
   })
 
   it('marks only observed background completions as new results', () => {
@@ -138,7 +137,7 @@ describe('sidebar navigation views', () => {
     expect(isNewBackgroundResult({ ...result, status: 'cancelled' }, 'running')).toBe(false)
   })
 
-  it('keeps historical and completed sessions in All, and limits Running to active work', () => {
+  it('keeps historical and completed sessions in the list', () => {
     const items = [
       conversation('Historic', 'released'),
       conversation('Done', 'completed'),
@@ -150,9 +149,6 @@ describe('sidebar navigation views', () => {
     expect(presentSidebarSessions(items, {
       query: '', filter: 'all', sort: 'recent',
     }).items).toHaveLength(6)
-    expect(presentSidebarSessions(items, {
-      query: '', filter: 'running', sort: 'name',
-    }).items.map((item) => item.summary.name)).toEqual(['Queued', 'Working'])
     expect(isSidebarSessionRunning({
       ...conversation('Stopped', 'released'), status: 'running',
     })).toBe(false)
@@ -183,14 +179,11 @@ describe('sidebar navigation views', () => {
     expect(firstPage.hasMore).toBe(true)
   })
 
-  it('finds loaded sessions by project name while retaining the Running restriction', () => {
+  it('finds loaded sessions by project name', () => {
     const items = [conversation('Done', 'released'), conversation('Active', 'running')]
     expect(presentSidebarSessions(items, {
       query: 'pilot', filter: 'all', sort: 'name', projectName: 'PiPilot',
     }).items).toHaveLength(2)
-    expect(presentSidebarSessions(items, {
-      query: 'pilot', filter: 'running', sort: 'name', projectName: 'PiPilot',
-    }).items).toEqual([items[1]])
   })
 
   it('sorts session titles naturally without changing selection ownership or the catalog', () => {
@@ -205,6 +198,10 @@ describe('sidebar navigation views', () => {
     expect(presentSidebarSessions(items, {
       query: '', filter: 'all', sort: 'recent',
     }).items).toEqual([items[2], items[0], items[1]])
+    items[1].summary.createdAt = '2026-09-09T00:00:00.000Z'
+    expect(presentSidebarSessions(items, {
+      query: '', filter: 'all', sort: 'created',
+    }).items[0]).toBe(items[1])
     expect(items.map((item) => item.summary.name)).toEqual(['Task 10', 'Task 2', 'Task 1'])
   })
 

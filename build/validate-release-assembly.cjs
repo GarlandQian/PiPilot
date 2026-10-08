@@ -193,6 +193,11 @@ for (const platform of platforms) {
   if (packageFiles.length !== expectedPackageCounts[platform]) {
     throw new Error(`${manifestFile} package inventory mismatch`)
   }
+  for (const name of packageFiles) {
+    if (!name.startsWith(`PiPilot-${expectedVersion}-${platform}-`)) {
+      throw new Error(`${manifestFile} package must identify its version and platform: ${name}`)
+    }
+  }
   for (const extension of expectedPackageExtensions[platform]) {
     if (!packageFiles.some((name) => name.endsWith(extension))) {
       throw new Error(`${manifestFile} is missing a ${extension} package`)

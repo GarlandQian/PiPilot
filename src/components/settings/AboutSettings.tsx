@@ -82,7 +82,8 @@ export function AboutSettings() {
               : snapshot?.state === 'error'
                 ? update.errorMessage ?? t('applicationUpdate.status.error')
                 : t('settings.about.loading'))
-  const canCheck = snapshot?.state === 'idle' || snapshot?.state === 'current'
+  const canCheck = snapshot?.state === 'idle' || snapshot?.state === 'current' ||
+    snapshot?.state === 'available' || (snapshot?.state === 'error' && snapshot.recoverable)
   const canRetry = (snapshot?.state === 'error' && snapshot.recoverable) || (requestFailed && update.mode === 'electron')
 
   const runInstall = React.useCallback(async (confirmActiveWork: boolean) => {
@@ -179,15 +180,18 @@ export function AboutSettings() {
           </div>
         )}
         <div className="flex flex-wrap items-center gap-2 pt-2">
-          {(canCheck || canRetry) && (
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={update.busy}
-              onClick={canRetry ? retryUpdate : () => void update.check()}
-            >
-              <TbRefresh aria-hidden />
-              {t(canRetry ? 'applicationUpdate.retry' : 'applicationUpdate.check')}
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={update.busy || update.mode !== 'electron' || !canCheck}
+            onClick={() => void update.check()}
+          >
+            <TbRefresh className={snapshot?.state === 'checking' ? 'animate-spin' : undefined} aria-hidden />
+            {t('applicationUpdate.check')}
+          </Button>
+          {canRetry && (
+            <Button variant="outline" size="sm" disabled={update.busy} onClick={retryUpdate}>
+              <TbRefresh aria-hidden />{t('applicationUpdate.retry')}
             </Button>
           )}
           {snapshot?.state === 'available' && snapshot.policy.capability === 'manual-release' && (

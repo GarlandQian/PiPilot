@@ -42,7 +42,7 @@ test('retains target-owned MCP drafts through project A/B/A and semantic tab nav
     await page.setViewportSize({ width: 1_440, height: 900 })
     await addProject(app, page, projectA)
     await page.getByRole('region', { name: 'Projects', exact: true })
-      .getByRole('button', { name: 'New session in project-A', exact: true }).click()
+      .getByRole('button', { name: 'New task in project-A', exact: true }).click()
     await expect(page.getByRole('button', { name: 'Project actions for project-A', exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
     await page.locator('[data-context-panel-nav-id="integrations"]').click()
@@ -82,7 +82,7 @@ test('retains target-owned MCP drafts through project A/B/A and semantic tab nav
     await settings.getByRole('button', { name: 'Current project', exact: true }).click()
     await expect(editor).toHaveValue(draftA)
 
-    await page.getByRole('button', { name: 'Sessions', exact: true }).click()
+    await page.getByRole('button', { name: 'Back to app', exact: true }).click()
     await addProject(app, page, projectB)
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
     await expect(settings.getByText('project-B', { exact: true })).toBeVisible()
@@ -91,9 +91,9 @@ test('retains target-owned MCP drafts through project A/B/A and semantic tab nav
     const draftB = '{ "mcpServers": {}, "future": "B" }\n'
     await editor.fill(draftB)
 
-    await page.getByRole('button', { name: 'Sessions', exact: true }).click()
+    await page.getByRole('button', { name: 'Back to app', exact: true }).click()
     await page.getByRole('region', { name: 'Projects', exact: true })
-      .getByRole('button', { name: 'New session in project-A', exact: true }).click()
+      .getByRole('button', { name: 'New task in project-A', exact: true }).click()
     await expect.poll(() => page.evaluate(async () => (await window.pipilot!.localPi.runtime.status()).cwd), { timeout: 20_000 }).toBe(projectA)
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
     await expect(settings.getByText('project-A', { exact: true })).toBeVisible()

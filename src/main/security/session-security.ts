@@ -12,7 +12,8 @@ export const PRODUCTION_CSP = [
   "object-src 'none'",
   "base-uri 'none'",
   "form-action 'none'",
-  "frame-src 'none'",
+  // PDFs open in Chromium's viewer from a blob the renderer made.
+  "frame-src blob:",
   "frame-ancestors 'none'",
   "worker-src 'none'",
 ].join('; ')

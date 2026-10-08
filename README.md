@@ -10,7 +10,7 @@ terminals, models, and Pi extensions.
 Pi continues to own its sessions, configuration, and resources. PiPilot provides the desktop
 experience and does not create a parallel agent runtime or migrate Pi data into a private format.
 
-**Source version:** 0.3.2 · [Download releases](https://github.com/GarlandQian/PiPilot/releases)
+**Source version:** 0.3.3 · [Download releases](https://github.com/GarlandQian/PiPilot/releases)
 
 [![CI](https://github.com/GarlandQian/PiPilot/actions/workflows/ci.yml/badge.svg)](https://github.com/GarlandQian/PiPilot/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2f3437.svg)](LICENSE)
@@ -133,13 +133,19 @@ Download a build from [GitHub Releases](https://github.com/GarlandQian/PiPilot/r
 Installers are currently unsigned. macOS builds are not notarized, so macOS may ask you to approve
 the app before opening it. Windows may show a SmartScreen or unknown-publisher warning.
 
+Installer filenames include the version, system (`macos`, `windows`, or `linux`), and architecture,
+for example `PiPilot-0.3.3-macos-arm64.dmg`. Linux targets may use `x86_64` or `amd64` for x64.
+All supported desktop packages check for stable updates 15 seconds after startup and every 12 hours
+while running. You can also select **Settings → About → Check for updates**.
+
 Windows setup lets you choose the installation directory. Windows NSIS and Linux AppImage builds
 automatically check for newer stable releases; you choose when to download and confirm when to
 restart and install. Active work and unsaved configuration are checked before restart. Windows
 updates reuse the existing installation directory and preserve Pi settings and sessions. Downloads
 are verified against the official updater metadata; Windows packages remain unsigned.
 
-macOS and Linux DEB builds use manual downloads. Older Windows builds with manual updates need one
+macOS and Linux DEB builds automatically check for updates and offer manual downloads and installation.
+Older Windows builds with manual updates need one
 manual installation to enable the in-app update flow. Updates require a higher version number;
 replacing assets under the same release version does not trigger an update.
 

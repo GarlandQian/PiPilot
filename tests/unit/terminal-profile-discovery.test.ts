@@ -1,17 +1,27 @@
 import { describe, expect, it, vi } from 'vitest'
-import { mergeTerminalEnvironment, parseWslDistributions, TerminalProfileDiscovery, wslWorkingDirectory } from '../../src/main/terminal/terminal-profile-discovery'
+import { mergeTerminalEnvironment, parseWslDistributions, TerminalProfileDiscovery, terminalLocaleEnvironment, wslWorkingDirectory } from '../../src/main/terminal/terminal-profile-discovery'
 
 describe('TerminalProfileDiscovery', () => {
   it('discovers arbitrary login shells, /etc/shells entries and PATH/Homebrew shells with stable per-install IDs', async () => {
-    const installed = new Set(['/opt/custom/my-shell', '/usr/local/bin/fish', '/opt/homebrew/bin/nu', '/tools/fish', '/bin/sh'])
+    const installed = new Set(['/opt/custom/my-shell', '/usr/local/bin/fish', '/opt/homebrew/bin/nu', '/tools/fish', '/bin/zsh'])
+    const legacy = ['/bin/sh', '/bin/csh', '/bin/tcsh', '/bin/ksh', '/bin/dash']
     const discovery = new TerminalProfileDiscovery({
       platform: 'darwin', environment: { SHELL: '/opt/custom/my-shell', PATH: 'relative:/tools:/usr/local/bin' },
-      readShellsFile: async () => '# login shells\n/bin/sh\n/opt/custom/my-shell\n/not-installed\nrelative\n',
-      resolveExecutable: async (candidate) => installed.has(candidate) ? candidate : undefined,
+      readShellsFile: async () => `# login shells\n${legacy.join('\n')}\n/bin/zsh\n/opt/custom/my-shell\n/not-installed\nrelative\n`,
+      resolveExecutable: async (candidate) => installed.has(candidate) || legacy.includes(candidate) ? candidate : undefined,
     })
     const profiles = await discovery.discover()
+    // The shells macOS ships but nobody picks (csh, ksh, …) stay out of the list.
     expect(profiles.map(({ executable }) => executable).sort()).toEqual([...installed].sort())
     expect(new Set(profiles.map(({ id }) => id)).size).toBe(installed.size)
+    // The default shell and a chosen profile stay listed even when legacy.
+    const kept = await discovery.discover([], { files: ['/bin/sh'] })
+    expect(kept.map(({ executable }) => executable)).toContain('/bin/sh')
+    expect(kept.map(({ executable }) => executable)).not.toContain('/bin/ksh')
+    const ksh = (await discovery.discover([], { files: ['/bin/ksh'] })).find(({ executable }) => executable === '/bin/ksh')!
+    expect((await discovery.discover([], { ids: [ksh.id] })).map(({ executable }) => executable)).toContain('/bin/ksh')
+    // Two fish installs are told apart by location.
+    expect(profiles.filter(({ label }) => label.startsWith('fish')).map(({ label }) => label).sort()).toEqual(['fish · /tools', 'fish · /usr/local/bin'])
     expect(profiles.every(({ id, source, available, args }) => id.startsWith('detected:') && source === 'detected' && available && args[0] === '-l')).toBe(true)
     const originalFish = profiles.find(({ executable }) => executable === '/tools/fish')!
     installed.delete('/usr/local/bin/fish')
@@ -44,7 +54,8 @@ describe('TerminalProfileDiscovery', () => {
     })
     const profiles = await discovery.discover()
     expect(profiles.filter(({ source }) => source === 'detected').map(({ executable }) => executable).sort()).toEqual([cmd, powershell, pwsh7, pwshPreview, gitBash].sort())
-    expect(profiles.filter(({ label }) => label === 'PowerShell')).toHaveLength(2)
+    expect(profiles.filter(({ label }) => label.startsWith('PowerShell · ')).map(({ label }) => label).sort())
+      .toEqual([`PowerShell · ${pwsh7.replace(/\\pwsh\.exe$/u, '')}`, `PowerShell · ${pwshPreview.replace(/\\pwsh\.exe$/u, '')}`].sort())
     expect(profiles.find(({ label }) => label === 'Git Bash')).toMatchObject({ args: ['--login', '-i'] })
     expect(probe).toHaveBeenCalledWith(wsl, ['--list', '--quiet'])
     const distros = profiles.filter(({ source }) => source === 'wsl')
@@ -123,5 +134,25 @@ describe('terminal environment merging', () => {
 
   it('keeps Unix environment names case-sensitive', () => {
     expect(mergeTerminalEnvironment({ PATH: '/bin', path: '/other' }, { path: null }, 'linux')).toEqual({ PATH: '/bin' })
+  })
+})
+
+describe('terminal locale', () => {
+  const exists = (names: string[]) => (name: string) => names.includes(name)
+
+  it('gives a terminal launched without a locale a UTF-8 one in the system language', () => {
+    expect(terminalLocaleEnvironment({}, 'darwin', 'zh-CN', exists(['zh_CN.UTF-8']))).toEqual({ LANG: 'zh_CN.UTF-8' })
+    expect(terminalLocaleEnvironment({ LANG: '' }, 'darwin', 'zh-Hans-CN', exists(['zh_CN.UTF-8']))).toEqual({ LANG: 'zh_CN.UTF-8' })
+    expect(terminalLocaleEnvironment({}, 'darwin', 'zh-Hans', exists(['zh_CN.UTF-8']))).toEqual({ LANG: 'en_US.UTF-8' })
+    expect(terminalLocaleEnvironment({ LANG: 'C' }, 'darwin', 'en', exists([]))).toEqual({ LANG: 'en_US.UTF-8' })
+    expect(terminalLocaleEnvironment({}, 'linux', 'zh-CN', exists(['zh_CN.UTF-8']))).toEqual({ LANG: 'C.UTF-8' })
+  })
+
+  it('keeps a locale the user chose, and leaves Windows alone', () => {
+    expect(terminalLocaleEnvironment({ LANG: 'zh_CN.UTF-8' }, 'darwin', 'en-US', exists(['en_US.UTF-8']))).toEqual({})
+    expect(terminalLocaleEnvironment({ LANG: 'C.utf8' }, 'linux', 'en-US', exists([]))).toEqual({})
+    expect(terminalLocaleEnvironment({ LC_ALL: 'C' }, 'linux', 'en-US', exists([]))).toEqual({})
+    expect(terminalLocaleEnvironment({ LC_CTYPE: 'UTF-8' }, 'darwin', 'en-US', exists([]))).toEqual({})
+    expect(terminalLocaleEnvironment({}, 'win32', 'zh-CN', exists([]))).toEqual({})
   })
 })

@@ -37,6 +37,7 @@ import {
   readSessionDirectoryBatches,
   yieldCatalogScan,
 } from './official-pi-session-scan'
+import { conversationTitleFromText } from '../../shared/conversation-title'
 
 export const currentOfficialPiSessionHeaderSchema = z
   .object({
@@ -124,6 +125,7 @@ interface ParsedCandidate {
   name?: string
   prefixDigest?: string
   preview: string
+  title?: string
   selectionMode: 'open' | 'recover'
   sessionId: string
 }
@@ -605,6 +607,7 @@ async function parseCandidate(
   let header: CurrentOfficialPiSessionHeader | undefined
   let name: string | undefined
   let preview = ''
+  let title = ''
   let lastActivityTime: number | undefined
 
   const parseLine = (rawLine: string) => {
@@ -648,6 +651,7 @@ async function parseCandidate(
     if (text === undefined) return
     if (!preview && role === 'user') {
       preview = normalizeVisibleText(text, SESSION_CATALOG_PREVIEW_LIMIT)
+      title = normalizeVisibleText(conversationTitleFromText(text), SESSION_CATALOG_PREVIEW_LIMIT)
     }
 
     const messageTimestamp = rawEntry.message.timestamp
@@ -770,6 +774,7 @@ async function parseCandidate(
     ...(name ? { name } : {}),
     ...(prefixDigest ? { prefixDigest } : {}),
     preview,
+    ...(title ? { title } : {}),
     selectionMode,
     sessionId: header.id,
   }
@@ -1319,6 +1324,7 @@ export class OfficialPiSessionCatalog {
           sessionId: candidate.sessionId,
           ...(candidate.name ? { name: candidate.name } : {}),
           preview: candidate.preview,
+          ...(candidate.title ? { title: candidate.title } : {}),
           createdAt: candidate.createdAt,
           modifiedAt: candidate.modifiedAt,
           selectionToken,

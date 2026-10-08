@@ -8,7 +8,7 @@ export const sideReferenceSchema = z.object({
   label: z.string().min(1).max(2_048), text: z.string().min(1).max(20_000),
   path: z.string().max(2_048).optional(), startLine: z.number().int().positive().optional(),
   endLine: z.number().int().positive().optional(), side: z.enum(['additions', 'deletions']).optional(),
-  stage: z.enum(['staged', 'unstaged']).optional(), revision: z.string().max(256).optional(),
+  stage: z.enum(['staged', 'unstaged', 'branch', 'commit']).optional(), revision: z.string().max(256).optional(),
   comment: z.string().max(4_000).optional(), stale: z.boolean().optional(),
 }).strict().refine((value) => (value.startLine === undefined && value.endLine === undefined) ||
   (value.startLine !== undefined && value.endLine !== undefined && value.endLine >= value.startLine), 'Invalid line range')

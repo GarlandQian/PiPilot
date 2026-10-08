@@ -2,7 +2,7 @@ import * as React from 'react'
 import { ContextMenu as ContextMenuPrimitive } from 'radix-ui'
 
 import { cn } from '@/lib/utils'
-import { menuContentClass, menuItemClass } from './menu-styles'
+import { menuContentClass, menuItemClass, menuSeparatorClass } from './menu-styles'
 
 function ContextMenu({
   ...props
@@ -52,7 +52,7 @@ function ContextMenuContent({
         collisionPadding={collisionPadding}
         className={cn(
           menuContentClass,
-          'max-h-(--radix-context-menu-content-available-height) min-w-48 origin-(--radix-context-menu-content-transform-origin) motion-reduce:animate-none',
+          'max-h-(--radix-context-menu-content-available-height) min-w-[200px] origin-(--radix-context-menu-content-transform-origin) motion-reduce:animate-none',
           className,
         )}
         {...props}
@@ -61,18 +61,36 @@ function ContextMenuContent({
   )
 }
 
+/** Same rows as DropdownMenuItem, so a row's ⋯ menu and right-click menu look alike. */
 function ContextMenuItem({
   className,
+  variant = 'default',
   ...props
-}: React.ComponentProps<typeof ContextMenuPrimitive.Item>) {
+}: React.ComponentProps<typeof ContextMenuPrimitive.Item> & {
+  variant?: 'default' | 'destructive'
+}) {
   return (
     <ContextMenuPrimitive.Item
       data-slot="context-menu-item"
+      data-variant={variant}
       className={cn(
         menuItemClass,
-        '[&_svg]:size-3.5',
+        'data-[variant=destructive]:text-destructive data-[variant=destructive]:*:[svg]:text-destructive! data-[variant=destructive]:data-[highlighted]:bg-destructive data-[variant=destructive]:data-[highlighted]:text-white data-[variant=destructive]:data-[highlighted]:*:[svg]:text-white!',
         className,
       )}
+      {...props}
+    />
+  )
+}
+
+function ContextMenuSeparator({
+  className,
+  ...props
+}: React.ComponentProps<typeof ContextMenuPrimitive.Separator>) {
+  return (
+    <ContextMenuPrimitive.Separator
+      data-slot="context-menu-separator"
+      className={cn(menuSeparatorClass, className)}
       {...props}
     />
   )
@@ -82,5 +100,6 @@ export {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuSeparator,
   ContextMenuTrigger,
 }

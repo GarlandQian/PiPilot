@@ -145,7 +145,13 @@ test('keeps overview scoped, preserves drafts and routes plugin actions through 
   const composer = page.getByRole('textbox', { name: 'Message input', exact: true })
   const transcript = page.getByRole('log', { name: 'Conversation', exact: true })
   const context = page.locator('[data-conversation-context]')
-  // The plan is shown and decided only in the transcript; Overview and the
+  // The summary is a card over the trailing edge (Codex); it closes when you work elsewhere.
+  const summary = page.locator('[data-conversation-summary]')
+  const showSummary = async () => {
+    if (!await summary.isVisible().catch(() => false)) await page.locator('[data-summary-trigger]').click()
+    await expect(summary).toBeVisible()
+  }
+  // The plan is shown and decided only in the transcript; the summary and the
   // composer capsule just point to it.
   const planCard = transcript.locator('[data-plan-card][data-plan-current="true"]')
   const planCapsule = page.getByRole('status', { name: 'Plan is waiting for your approval', exact: true })
@@ -160,7 +166,7 @@ test('keeps overview scoped, preserves drafts and routes plugin actions through 
     const projects = page.getByRole('region', { name: 'Projects', exact: true })
     await projects.getByRole('button', { name: 'Context task', exact: true }).click()
     await expect(transcript).toContainText('Ready for review')
-    await page.getByRole('tab', { name: 'Overview', exact: true }).click()
+    await showSummary()
     await expect(context).toContainText('Report ready.')
     await expect(context.locator('[data-plan-summary]')).toContainText('Waiting for your approval')
     await expect(context).not.toContainText('Verify the report and record the result.')
@@ -173,6 +179,7 @@ test('keeps overview scoped, preserves drafts and routes plugin actions through 
     await expect(planCapsule).toHaveCount(0)
     // Recognised plugins don't also echo their raw status lines above the composer.
     await expect(page.getByText(/^(?:plan-mode|goal): /u)).toHaveCount(0)
+    await showSummary()
     await expect(context.getByRole('button', { name: 'Approve and start', exact: true })).toHaveCount(0)
     await expect(context.locator('[data-goal-summary]')).toContainText('Paused')
     await expect(context.getByRole('button', { name: /REPORT\.md Written/ })).toBeVisible()
@@ -193,7 +200,9 @@ test('keeps overview scoped, preserves drafts and routes plugin actions through 
     await composer.pressSequentially(' @notes')
     await page.locator('[data-slot="command"][aria-label="Files and Skills"]').getByRole('option', { name: /notes\.md/ }).click()
     await page.locator('input[type="file"]').setInputFiles({ name: 'draft.png', mimeType: 'image/png', buffer: Buffer.from(PNG_FIXTURE_BASE64, 'base64') })
+    await showSummary()
     await context.getByRole('button', { name: 'Review the report', exact: true }).click()
+    await expect(summary).toBeHidden()
     await expect(composer).toContainText('Keep my draft')
     await expect(composer).toContainText('Review REPORT.md and suggest improvements.')
     await expect(page.locator('[data-composer-mention-kind="file"]')).toHaveCount(1)
@@ -240,7 +249,9 @@ test('keeps overview scoped, preserves drafts and routes plugin actions through 
     expect(await readFile(otherExportPath, 'utf8')).not.toContain('Prepare a checked')
     await expect(projects.getByRole('button', { name: 'Context task', exact: true })).toHaveAttribute('aria-current', 'page')
     await expect(transcript).toContainText('Ready for review')
+    await showSummary()
     await expect(context).toContainText('Report ready.')
+    await page.keyboard.press('Escape')
     await expect(composer).toContainText('Keep my draft')
     expect(fixture.prompts).toHaveLength(0)
 
@@ -272,12 +283,14 @@ test('keeps overview scoped, preserves drafts and routes plugin actions through 
     // Selecting another session must clear task details immediately.
     await projects.getByRole('button', { name: 'Other context', exact: true }).click()
     await expect(transcript).toContainText('Unrelated answer without task data.')
+    await showSummary()
     await expect(context).not.toContainText('Report ready.')
     await expect(context.getByRole('button', { name: 'Approve and start', exact: true })).toHaveCount(0)
     await expect(context.locator('[data-plan-summary], [data-goal-summary]')).toHaveCount(0)
     await expect(context.getByRole('button', { name: /^Outputs/ })).toHaveCount(0)
     await expect(context).toContainText('No summary yet.')
     await projects.getByRole('button', { name: 'Context task', exact: true }).click()
+    await showSummary()
     await expect(context).toContainText('Report ready.')
     await expect(composer).toContainText('Keep my draft')
     await expect(page.locator('[data-composer-mention-kind="file"]')).toHaveCount(1)
@@ -302,6 +315,7 @@ test('keeps overview scoped, preserves drafts and routes plugin actions through 
     await page.screenshot({ path: testInfo.outputPath('conversation-plan-ready-light.png'), animations: 'disabled' })
     expect(fixture.prompts).toHaveLength(0)
     await planCapsule.getByRole('button', { name: 'Start implementation', exact: true }).click()
+    await showSummary()
     await expect(context).toContainText('Report verified.', { timeout: 20_000 })
     await expect(context.locator('[data-plan-summary]')).toContainText('Following the plan')
     await expect(planCapsule).toHaveCount(0)
@@ -325,15 +339,14 @@ test('keeps overview scoped, preserves drafts and routes plugin actions through 
     await expect(page.locator('html')).toHaveClass(/dark/)
     await page.screenshot({ path: testInfo.outputPath('conversation-context-desktop-dark.png'), animations: 'disabled' })
 
-    // Minimum supported window: task pane becomes a drawer without document overflow.
+    // Minimum supported window: the summary card still fits without document overflow.
     await page.setViewportSize({ width: 1100, height: 680 })
-    await page.getByRole('button', { name: 'Expand panel', exact: true }).click()
-    const drawer = page.getByRole('dialog', { name: 'Inspector', exact: true })
-    await expect(drawer).toBeVisible()
-    await expect(drawer.getByRole('region', { name: 'Conversation summary', exact: true })).toBeVisible()
+    await showSummary()
+    await expect(summary.getByRole('region', { name: 'Conversation summary', exact: true })).toBeVisible()
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true)
     await page.screenshot({ path: testInfo.outputPath('conversation-context-minimum-dark.png'), animations: 'disabled' })
-    await drawer.getByRole('button', { name: 'Close panel', exact: true }).click()
+    await summary.getByRole('button', { name: 'Close', exact: true }).click()
+    await expect(summary).toBeHidden()
     expect(errors).toEqual([])
   } catch (error) {
     await page.screenshot({ path: testInfo.outputPath('conversation-task-failure.png') }).catch(() => undefined)

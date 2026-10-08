@@ -5,6 +5,7 @@ import {
   normalizeRunningSubmitPreference,
   projectModelThinkingTrigger,
   projectPendingRail,
+  projectReasoningSlider,
 } from '../../src/renderer/composer/composer-controls'
 
 describe('Composer submit controls', () => {
@@ -168,5 +169,17 @@ describe('Composer submit controls', () => {
       losslessMutationAvailable: false,
       items: [],
     })
+  })
+})
+
+describe('reasoning slider', () => {
+  it('steps over only the levels the model supports, labelling each when they fit', () => {
+    expect(projectReasoningSlider(['off', 'low', 'medium', 'high'], 'medium')).toEqual({ index: 2, labelEachStop: true, costly: false })
+    const all = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
+    expect(projectReasoningSlider(all, 'xhigh')).toEqual({ index: 5, labelEachStop: false, costly: true })
+    expect(projectReasoningSlider(all, 'max').costly).toBe(true)
+    // A level the model no longer offers has no position on the scale.
+    expect(projectReasoningSlider(['low', 'high'], 'medium').index).toBe(-1)
+    expect(projectReasoningSlider(['low', 'high'], null).index).toBe(-1)
   })
 })

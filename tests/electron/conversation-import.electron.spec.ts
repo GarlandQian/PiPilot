@@ -156,7 +156,8 @@ test('imports exported history and images into a separate project conversation w
     expect(JSON.stringify(imported.entries)).not.toContain('Private source reasoning')
     expect(fixture.prompts).toHaveLength(0)
     expect(await readFile(sessionPath, 'utf8')).toBe(originalBytes)
-    await page.getByRole('tab', { name: 'Overview', exact: true }).click()
+    await page.locator('[data-summary-trigger]').click()
+    await expect(page.locator('[data-conversation-summary]')).toBeVisible()
     await expect(page.locator('[data-plan-summary]')).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Approve and start', exact: true })).toHaveCount(0)
     await page.screenshot({ path: testInfo.outputPath('imported-history-light.png'), animations: 'disabled' })
@@ -179,8 +180,10 @@ test('imports an ordinary Markdown file as inert background through the global m
     await writeFile(oversizedPath, '# Large background\n\n' + 'x'.repeat(6 * 1024 * 1024))
     const originalFiles = await readdir(sessionDirectory)
     await chooseFile(app, oversizedPath)
-    await page.getByRole('button', { name: 'New conversation options', exact: true }).click()
-    await page.getByRole('menuitem', { name: 'Import conversation from Markdown…', exact: true }).click()
+    // File › Import Conversation… imports into the current scope.
+    await app.evaluate(({ Menu }) => Menu.getApplicationMenu()?.items
+      .find((item) => item.label === 'File')?.submenu?.items
+      .find((item) => item.label === 'Import Conversation…')?.click())
     const importDialog = page.getByRole('dialog', { name: 'Import conversation from Markdown…', exact: true })
     await expect(importDialog.getByRole('alert')).toContainText('This document exceeds the import limits.')
     await expect(importDialog.getByRole('button', { name: 'Create conversation', exact: true })).toBeDisabled()
@@ -194,7 +197,7 @@ test('imports an ordinary Markdown file as inert background through the global m
     await expect(importDialog.getByRole('textbox', { name: 'Conversation name', exact: true })).toHaveValue('Background brief')
     await importDialog.getByRole('textbox', { name: 'Conversation name', exact: true }).fill('Document notes')
     await importDialog.getByRole('combobox', { name: 'Add to', exact: true }).click()
-    await page.getByRole('option', { name: 'General chat', exact: true }).click()
+    await page.getByRole('option', { name: 'Chat', exact: true }).click()
     await page.evaluate(() => window.pipilot!.settings.update({ appearance: { theme: 'dark' } }))
     await expect(page.locator('html')).toHaveClass(/dark/)
     await page.setViewportSize({ width: 1100, height: 680 })

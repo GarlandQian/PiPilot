@@ -1,3 +1,5 @@
+import { goalModeShortcut, PLAN_MODE_SHORTCUT } from '@/lib/app-shortcuts'
+import { matchesShortcut } from '@/lib/keyboard-shortcuts'
 import type { MessageKey } from '@/i18n'
 import type { GoalModeProjection, PlanModeProjection } from '@/renderer/pi-rpc/adapters'
 import type { LocalPiSlashCommand } from '@/shared/local-pi'
@@ -77,9 +79,13 @@ export function composerPlaceholderKey(input: {
   return input.conversationEmpty ? 'composer.placeholder.new' : 'composer.placeholder.reply'
 }
 
-/** ⌘⇧P / ⌘⇧G (Ctrl+Shift elsewhere) toggle a mode from anywhere in the conversation. */
-export function composerModeShortcut(event: Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'shiftKey' | 'altKey'>): ComposerMode | null {
-  if (!(event.metaKey || event.ctrlKey) || !event.shiftKey || event.altKey) return null
-  const key = event.key.toLowerCase()
-  return key === 'p' ? 'plan' : key === 'g' ? 'goal' : null
+/**
+ * ⇧⌘P / ⇧⌘G toggle a mode from anywhere in the conversation. On Windows and
+ * Linux plan mode is Ctrl+Shift+P and goal mode Ctrl+Alt+G, because
+ * Ctrl+Shift+G opens the review tab there.
+ */
+export function composerModeShortcut(event: Pick<KeyboardEvent, 'key' | 'code' | 'metaKey' | 'ctrlKey' | 'shiftKey' | 'altKey'>, platformHint?: string): ComposerMode | null {
+  if (matchesShortcut(event, PLAN_MODE_SHORTCUT, platformHint)) return 'plan'
+  if (matchesShortcut(event, goalModeShortcut(platformHint), platformHint)) return 'goal'
+  return null
 }

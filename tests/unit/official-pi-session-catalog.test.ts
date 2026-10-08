@@ -615,7 +615,7 @@ describe('OfficialPiSessionCatalog', () => {
         writeSession(duplicateFile, {
           cwd: fixture.cwd,
           id: duplicateId,
-          preview: 'second prompt',
+          preview: '# Second prompt\n\nWith **details** below.\n\n---',
           activityAt: Date.UTC(2026, 7, 8, 2, 0, 0),
         }),
         writeSession(mismatchFile, {
@@ -647,10 +647,13 @@ describe('OfficialPiSessionCatalog', () => {
         duplicateId,
         duplicateId,
       ])
-      expect(result.rows[0]?.preview).toBe('second prompt')
+      expect(result.rows[0]?.preview).toBe('# Second prompt With **details** below. ---')
+      // The title keeps the first line's meaning without its Markdown syntax.
+      expect(result.rows[0]?.title).toBe('Second prompt')
       expect(result.rows[1]).toMatchObject({
         name: 'latest name',
         preview: 'first user prompt',
+        title: 'first',
       })
       expect(new Set(result.rows.map((row) => row.selectionToken)).size).toBe(2)
       const serializedResult = JSON.stringify(result)

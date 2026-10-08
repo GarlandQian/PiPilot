@@ -43,14 +43,21 @@ test('keeps the compact conversation usable until Inspector is explicitly opened
       return status.state
     }).toBe('ready')
 
-    await expect(page.getByRole('button', { name: 'Collapse panel', exact: true }))
+    // A new conversation has no tabs yet, so the side panel starts put away (Codex).
+    await expect(page.getByRole('button', { name: 'Expand panel', exact: true }))
       .toBeVisible()
     await expect(page.getByRole('complementary', { name: 'Inspector', exact: true }))
+      .toHaveCount(0)
+    await page.getByRole('button', { name: 'Expand panel', exact: true }).click()
+    await expect(page.getByRole('complementary', { name: 'Inspector', exact: true }).locator('[data-panel-launcher]'))
       .toBeVisible()
+    await page.getByRole('button', { name: 'Collapse panel', exact: true }).click()
+    await expect(page.getByRole('complementary', { name: 'Inspector', exact: true }))
+      .toHaveCount(0)
 
     await expect(page.getByRole('button', { name: 'Activity', exact: true })).toHaveCount(0)
-    await expect(page.getByRole('button', { name: 'Sessions', exact: true }))
-      .toHaveAttribute('aria-current', 'page')
+    await expect(page.getByRole('button', { name: 'Settings', exact: true }))
+      .not.toHaveAttribute('aria-current', 'page')
 
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
     const settingsNavigationWide = page.getByRole('region', { name: 'Settings', exact: true })
@@ -69,7 +76,7 @@ test('keeps the compact conversation usable until Inspector is explicitly opened
     await integrationsPage.getByRole('button', { name: 'JSON', exact: true }).click()
     const mcpDraft = '// Retain this unsaved MCP document\n{ "mcpServers": {} }\n'
     await integrationsPage.getByRole('textbox', { name: 'JSON', exact: true }).fill(mcpDraft)
-    await page.getByRole('button', { name: 'Sessions', exact: true }).click()
+    await page.getByRole('button', { name: 'Back to app', exact: true }).click()
     await expect(page.getByRole('textbox', { name: 'JSON', exact: true })).toHaveCount(0)
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
     await expect(integrationsPage.getByRole('textbox', { name: 'JSON', exact: true })).toHaveValue(mcpDraft)
@@ -79,7 +86,7 @@ test('keeps the compact conversation usable until Inspector is explicitly opened
     await expect(settingsNavigationWide.getByRole('button', { name: 'Integrations', exact: true })).not.toHaveAttribute('aria-current', 'page')
     await page.mouse.move(1_400, 800)
     await page.screenshot({ path: testInfo.outputPath('settings-models-light-wide.png'), animations: 'disabled' })
-    await page.getByRole('button', { name: 'Sessions', exact: true }).click()
+    await page.getByRole('button', { name: 'Back to app', exact: true }).click()
     await page.screenshot({ path: testInfo.outputPath('conversation-light-wide.png') })
 
     await page.setViewportSize({ width: 640, height: 760 })
@@ -112,7 +119,7 @@ test('keeps the compact conversation usable until Inspector is explicitly opened
     await expect(settingsNavigation.getByRole('button', { name: 'Models', exact: true }))
       .toBeFocused()
 
-    await page.getByRole('button', { name: 'Sessions', exact: true }).click()
+    await page.getByRole('button', { name: 'Back to app', exact: true }).click()
     await expect(composer).toBeVisible()
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
     await expect(settingsNavigation).toBeVisible()

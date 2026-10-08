@@ -58,9 +58,9 @@ test('preserves file reading and PTY identity while navigating and refreshing wo
     await expect(fileRow).toBeVisible()
     await expect(tree.locator('[data-workspace-tree-row="src/nested"]')).toHaveAttribute('aria-expanded', 'true')
     await fileRow.click()
-    const fileSelector = page.locator('[data-workspace-file-viewer]:visible').getByRole('combobox', { name: 'Open files', exact: true })
-    await expect(fileSelector).toHaveValue('src/nested/entry.ts')
-    await fileSelector.selectOption('.')
+    // Opened files are tabs; Files returns to the tree.
+    await expect(page.getByRole('tab', { name: 'entry.ts', exact: true })).toHaveAttribute('aria-selected', 'true')
+    await page.getByRole('tab', { name: 'Files', exact: true }).click()
     const search = tree.getByRole('textbox', { name: 'Search workspace files', exact: true })
     await search.fill('entry.ts')
     const searchRow = tree.locator('[data-workspace-search-row="src/nested/entry.ts"]')
@@ -73,12 +73,13 @@ test('preserves file reading and PTY identity while navigating and refreshing wo
     await expect(search).toBeFocused()
     await expect(fileRow).toBeVisible()
 
-    await selectInspectorView(page, 'Changes')
-    await page.getByRole('button', { name: 'Find a changed file', exact: true }).click()
-    await page.getByRole('combobox', { name: 'Search changed files…', exact: true }).fill('entry.ts')
-    await page.getByRole('option').filter({ hasText: 'src/nested/entry.ts' }).click()
-    await expect(page.locator('[data-diff-path="src/nested/entry.ts"]')).toBeFocused()
-    await expect(page.locator('[data-diff-path="src/nested/entry.ts"]')).not.toHaveAttribute('aria-busy', 'true')
+    await selectInspectorView(page, 'Review')
+    const changed = page.locator('[data-diff-path="src/nested/entry.ts"]')
+    await expect(changed).toBeVisible()
+    await expect(changed).not.toHaveAttribute('aria-busy', 'true')
+    // A changed file's name opens it in its tab (Codex).
+    await changed.locator('[data-diff-file-header]').getByRole('button', { name: 'src/nested/entry.ts', exact: true }).click()
+    await expect(page.getByRole('tab', { name: 'entry.ts', exact: true })).toHaveAttribute('aria-selected', 'true')
 
     await selectInspectorView(page, 'Terminal')
     const drawer = page.locator('[data-terminal-drawer]')
@@ -91,7 +92,7 @@ test('preserves file reading and PTY identity while navigating and refreshing wo
       if (!terminal || terminals.length !== 1) throw new Error('Expected one active terminal')
       return window.pipilot!.terminal.attach(navigation.activeScope, terminal.terminalId, terminal.cols, terminal.rows)
     })
-    await page.locator('[data-terminal-workspace]:visible').getByRole('button', { name: 'Clear terminal display', exact: true }).click()
+    await drawer.getByRole('button', { name: 'Clear terminal display', exact: true }).click()
     const afterClear = await page.evaluate(async ({ scope, terminalId }) => {
       const terminal = (await window.pipilot!.terminal.list(scope)).find((candidate) => candidate.terminalId === terminalId)
       if (!terminal) throw new Error('Clearing removed the terminal')

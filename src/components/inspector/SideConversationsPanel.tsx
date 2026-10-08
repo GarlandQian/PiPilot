@@ -13,15 +13,18 @@ interface SideThread extends SideQuestionRequest { snapshot?: SideConversationSn
 const running = (value?: SideConversationSnapshot) => value?.status === 'starting' || value?.status === 'running'
 const errorText = (value: unknown) => value && typeof value === 'object' && 'message' in value ? String(value.message) : String(value)
 
-/** Recent side questions are independent official sessions; closing a view never aborts one. */
+/**
+ * Recent side questions are independent official sessions; closing a view
+ * never aborts one. Opened without a selection (⌥⌘S) it explains how to ask.
+ */
 export function SideConversationsPanel({ request, ownerKey, ready, visible }: {
-  request: SideQuestionRequest; ownerKey: string; ready: boolean; visible: boolean
+  request: SideQuestionRequest | null; ownerKey: string; ready: boolean; visible: boolean
 }) {
   const t = useT()
   const [threads, setThreads] = React.useState<SideThread[]>([])
   const threadsRef = React.useRef(threads)
   threadsRef.current = threads
-  const [selected, setSelected] = React.useState(request.id)
+  const [selected, setSelected] = React.useState(request?.id ?? '')
   const alive = React.useRef(true)
   const requests = React.useRef(new Set<string>())
   const accepted = React.useRef(new Map<string, string>())
@@ -41,7 +44,7 @@ export function SideConversationsPanel({ request, ownerKey, ready, visible }: {
     }
   }, [])
   React.useEffect(() => {
-    if (requests.current.has(request.id)) return
+    if (!request || requests.current.has(request.id)) return
     requests.current.add(request.id)
     setThreads((items) => [...items, { ...request, text: '', busy: false }])
     setSelected(request.id)

@@ -3,7 +3,7 @@ import {
   type WorkspaceFilePreview,
 } from '@/shared/workspace-content'
 
-export const INSPECTOR_MAX_OPEN_FILES = 8
+export const INSPECTOR_MAX_OPEN_FILES = 24
 
 /** Files belong to a workspace; sessionKey is optional request provenance only. */
 export interface InspectorPreviewState {
@@ -93,6 +93,11 @@ export class InspectorResourcesController {
     this.publish({ files, activePath: path, atCapacity: false })
     if (!existing || reload || (existing.phase === 'loading' && !this.pending.has(path))) this.read(path)
     return true
+  }
+
+  /** Forget files whose tabs have all closed. */
+  readonly retain = (paths: ReadonlySet<string>) => {
+    for (const file of this.snapshot.files) if (!paths.has(file.path)) this.close(file.path)
   }
 
   readonly showTree = () => {

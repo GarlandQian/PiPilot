@@ -163,6 +163,15 @@ export const modelsConfigTestResultSchema = z
   })
   .strict()
 
+/** Models an endpoint offers, for picking them while adding it. */
+export const modelsRemoteListResultSchema = z
+  .object({
+    models: z.array(z.object({ id: z.string().min(1).max(256), name: z.string().min(1).max(256).optional() }).strict()).max(2_000),
+  })
+  .strict()
+
+export type ModelsRemoteListResult = z.infer<typeof modelsRemoteListResultSchema>
+
 export type ModelsConfigTestResult = z.infer<
   typeof modelsConfigTestResultSchema
 >

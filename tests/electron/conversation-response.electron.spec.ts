@@ -74,7 +74,7 @@ test('restores in-flight thinking and text across repeated conversation switches
     page.on('pageerror', (error) => pageErrors.push(error.message))
     await page.setViewportSize({ width: 1440, height: 900 })
     await expect(page.locator('[data-model-thinking-trigger]')).toContainText('Fake Chat', { timeout: 20_000 })
-    const chats = page.getByRole('region', { name: 'General chats', exact: true })
+    const chats = page.getByRole('region', { name: 'Chats', exact: true })
     const ownerA = chats.getByRole('button', { name: titleA, exact: true })
     const ownerB = chats.getByRole('button', { name: titleB, exact: true })
     for (const title of [titleA, titleB]) {
@@ -87,7 +87,7 @@ test('restores in-flight thinking and text across repeated conversation switches
       expect(named.success).toBe(true)
       await expect(chats.getByRole('button', { name: title, exact: true })).toBeVisible()
       if (title === titleA) {
-        await page.getByRole('button', { name: 'New general chat', exact: true }).click()
+        await page.getByRole('button', { name: 'New chat', exact: true }).click()
         await expect(page.locator('[data-conversation-welcome]')).toBeVisible()
       }
     }
@@ -237,7 +237,7 @@ test('preserves live work reading, text identity, and final actions across settl
     const named = await page.evaluate(() => window.pipilot!.localPi.runtime.command({ type: 'set_session_name', name: 'Response reading fixture' }))
     expect(named.success).toBe(true)
     await expect(page.getByRole('button', { name: 'Response reading fixture', exact: true }).first()).toBeVisible()
-    await page.getByRole('button', { name: 'New general chat', exact: true }).click()
+    await page.getByRole('button', { name: 'New chat', exact: true }).click()
     await expect(page.locator('[data-conversation-welcome]')).toBeVisible()
     await page.getByRole('button', { name: 'Response reading fixture', exact: true }).first().click()
     await expect(answer).toContainText(`Fixture response: ${prompt}`)

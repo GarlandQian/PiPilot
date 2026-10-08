@@ -1,6 +1,7 @@
 import type { BrowserWindow } from 'electron'
 import {
   modelsConfigGetDefaultsContract,
+  modelsConfigListRemoteContract,
   modelsConfigLoadContract,
   modelsConfigSaveAndRestartContract,
   modelsConfigSaveContract,
@@ -11,6 +12,7 @@ import {
   ModelsConfigError,
   type ModelsConfigController,
 } from '../models-config/models-config-service'
+import { listRemoteModels, RemoteModelListError } from '../models-config/remote-model-list'
 import type { ApplicationUrlPolicy } from '../security/url-policy'
 import {
   createTrustedSenderValidator,
@@ -70,6 +72,14 @@ export function registerModelsConfigIpc({
     modelsConfigGetDefaultsContract,
     isTrustedSender,
     () => controller.defaults().catch(mapModelsConfigError),
+  )
+  registerValidatedHandler(
+    modelsConfigListRemoteContract,
+    isTrustedSender,
+    ({ baseUrl, api, apiKey }) => listRemoteModels({ baseUrl, api, apiKey }).catch((error: unknown) => {
+      if (error instanceof RemoteModelListError) throw new MainProcessError(error.code, error.message)
+      throw new MainProcessError('MODELS_LIST_UNREACHABLE', 'The endpoint could not be reached.')
+    }),
   )
   registerValidatedHandler(
     modelsConfigTestContract,

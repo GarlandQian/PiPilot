@@ -1,4 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { join, resolve } from 'node:path'
 import { _electron as electron, expect, test } from '@playwright/test'
 import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from '../../src/shared/settings'
@@ -71,7 +73,9 @@ test('edits and tests models through the provider workspace without losing the a
     await expect(dialog).toBeHidden()
     await expect(row).toContainText('Updated Chat')
     await expect(row.getByRole('status')).toHaveCount(0)
-    expect(JSON.parse(await readFile(modelPath, 'utf8')).providers.fixture.models[0].name).toBe('Fake Chat')
+    // Form edits are saved and applied at once.
+    await expect.poll(async () => JSON.parse(await readFile(modelPath, 'utf8')).providers.fixture.models[0].name).toBe('Updated Chat')
+    await expect(main.getByRole('status').filter({ hasText: /^Saved$/u })).toBeVisible()
 
     await main.getByRole('button', { name: 'JSON', exact: true }).click()
     const editor = main.getByRole('textbox', { name: 'JSON', exact: true })
@@ -95,10 +99,50 @@ test('edits and tests models through the provider workspace without losing the a
         await page.screenshot({ path: testInfo.outputPath(`models-workspace-${theme}-${width}.png`), animations: 'disabled' })
       }
     }
-    await main.getByRole('button', { name: 'Save', exact: true }).click()
-    await expect.poll(async () => JSON.parse(await readFile(modelPath, 'utf8')).providers.fixture.models[0].name).toBe('Updated Chat')
-    await expect(main.getByRole('status').filter({ hasText: /^Saved$/u })).toBeVisible()
-    await expect(main.getByRole('button', { name: 'Apply configuration', exact: true })).toBeEnabled()
+
+    // Add model is one step: address and key, then the endpoint's own list.
+    const gateway = createServer((request, response) => {
+      if (request.url === '/v1/models' && request.headers.authorization === 'Bearer list-key') {
+        response.writeHead(200, { 'content-type': 'application/json' })
+          .end(JSON.stringify({ object: 'list', data: [{ id: 'gateway-small' }, { id: 'gateway-large' }] }))
+        return
+      }
+      response.writeHead(401, { 'content-type': 'application/json' }).end('{"error":"unauthorized"}')
+    })
+    await new Promise<void>((done) => gateway.listen(0, '127.0.0.1', done))
+    try {
+      const endpoint = `http://127.0.0.1:${(gateway.address() as AddressInfo).port}/v1`
+      await main.getByRole('button', { name: 'Add model', exact: true }).click()
+      const sheet = page.getByRole('dialog', { name: 'Add model', exact: true })
+      await sheet.getByRole('textbox', { name: 'Base URL', exact: true }).fill(endpoint)
+      // A local server is listed without a key; this one refuses, and says so.
+      await expect(sheet.locator('[data-quick-add-listing="error"]')).toContainText('The key was rejected (HTTP 401)')
+      await sheet.getByLabel('API key', { exact: true }).fill('list-key')
+      await expect(sheet.locator('[data-quick-add-remote="gateway-large"]')).toBeVisible()
+      await expect(sheet.getByRole('status').filter({ hasText: '2 models · 2 selected' })).toBeVisible()
+      await page.screenshot({ path: testInfo.outputPath('models-quick-add.png'), animations: 'disabled' })
+      await sheet.getByRole('button', { name: 'Add 2 models', exact: true }).click()
+      await expect(sheet).toBeHidden()
+      const providerId = `local-${(gateway.address() as AddressInfo).port}`
+      await expect.poll(async () => JSON.parse(await readFile(modelPath, 'utf8')).providers[providerId]).toEqual({
+        baseUrl: endpoint, api: 'openai-completions', apiKey: 'list-key', models: [{ id: 'gateway-small' }, { id: 'gateway-large' }],
+      })
+      await expect(workspace.locator(`[data-model-provider-detail="${providerId}"]`)).toBeVisible()
+
+      // The same address adds to that provider, listing with its saved key.
+      await main.getByRole('button', { name: 'Add model', exact: true }).click()
+      await sheet.getByRole('textbox', { name: 'Base URL', exact: true }).fill(`${endpoint}/`)
+      await expect(sheet.locator(`[data-quick-add-existing="${providerId}"]`)).toBeVisible()
+      await expect(sheet.locator('[data-quick-add-remote="gateway-small"]')).toContainText('Already added')
+      await sheet.getByRole('textbox', { name: 'Model IDs', exact: true }).fill('gateway-extra')
+      await sheet.getByRole('textbox', { name: 'Model IDs', exact: true }).press('Enter')
+      await sheet.getByRole('button', { name: 'Add', exact: true }).click()
+      await expect(sheet).toBeHidden()
+      await expect.poll(async () => JSON.parse(await readFile(modelPath, 'utf8')).providers[providerId].models.map((model: { id: string }) => model.id))
+        .toEqual(['gateway-small', 'gateway-large', 'gateway-extra'])
+    } finally {
+      await new Promise((done) => gateway.close(done))
+    }
     expect(errors).toEqual([])
   } finally {
     await closeFixtureApplication(app)

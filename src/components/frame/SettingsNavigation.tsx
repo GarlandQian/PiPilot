@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { TbSearch, TbX } from 'react-icons/tb'
+import { TbChevronLeft, TbSearch, TbX } from 'react-icons/tb'
 import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -7,10 +7,11 @@ import { Input } from '@/components/ui/input'
 import { SettingsIconTile } from '@/components/settings/common'
 import { SETTINGS_GROUPS, type SettingsSectionId } from '@/components/settings/settings-navigation'
 
-/** System Settings sidebar: search field, colored icon tiles, accent selection. */
-export function SettingsNavigation({ section, onSelect }: {
+/** System Settings sidebar: back to the app (Codex), search field, colored icon tiles. */
+export function SettingsNavigation({ section, onSelect, onBack }: {
   section: SettingsSectionId
   onSelect(section: SettingsSectionId): void
+  onBack?: () => void
 }) {
   const t = useT()
   const [query, setQuery] = React.useState('')
@@ -32,6 +33,11 @@ export function SettingsNavigation({ section, onSelect }: {
     buttons[next]?.focus()
   }}>
     <h2 className="sr-only">{t('rail.settings')}</h2>
+    {onBack ? <button type="button" onClick={onBack}
+      className="flex h-[30px] w-full items-center gap-1 rounded-[8px] px-1.5 text-left text-app text-foreground/90 outline-none hover:bg-fill focus-visible:focus-ring">
+      <TbChevronLeft className="size-4 text-muted-foreground" aria-hidden />
+      {t('settings.backToApp')}
+    </button> : null}
     <div className="relative">
       <TbSearch className="pointer-events-none absolute left-2 top-1/2 z-10 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />
       <Input ref={inputRef} value={query} onChange={(event) => setQuery(event.target.value)} className="h-7 rounded-full bg-fill pl-7 pr-7 text-app shadow-none dark:bg-fill focus-visible:bg-control" aria-label={t('settings.redesign.search')} placeholder={t('settings.redesign.search')} onKeyDown={(event) => {
@@ -48,11 +54,9 @@ export function SettingsNavigation({ section, onSelect }: {
           {group.sections.map((item) => {
             const active = section === item.id
             return <li key={item.id}>
-              {/* macOS 27: neutral selection pill; only the active row gets its colored icon. */}
+              {/* System Settings: every row has its colored tile; selection is a neutral pill. */}
               <button type="button" data-context-panel-nav-id={item.id} aria-current={active ? 'page' : undefined} aria-label={t(item.labelKey)} onClick={() => onSelect(item.id)} className={cn('flex h-[30px] w-full items-center gap-2 rounded-[10px] px-1.5 text-left outline-none focus-visible:focus-ring', active ? 'bg-source-list-selected font-medium text-foreground' : 'text-foreground/85 hover:bg-fill')}>
-                {active
-                  ? <SettingsIconTile section={item} />
-                  : <span aria-hidden className="flex size-5 shrink-0 items-center justify-center text-muted-foreground"><item.icon className="size-4" /></span>}
+                <SettingsIconTile section={item} />
                 <span className="min-w-0 flex-1 truncate text-app">{t(item.labelKey)}</span>
               </button>
             </li>

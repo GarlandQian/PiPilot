@@ -2,7 +2,6 @@ import * as React from 'react'
 import { TbCheck, TbRefresh } from 'react-icons/tb'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { SettingSection, SettingRow } from './common'
 import { AppearanceFontField } from './AppearanceFontField'
@@ -87,9 +86,12 @@ export function AppearanceSettings() {
     </SettingSection>
     <SettingSection title={t('settings.redesign.reading')}>
       <SettingRow label={t('settings.appearance.density')} desc={t('settings.appearance.densityDesc')}>
-        <RadioGroup value={appearance.density} onValueChange={(value) => { if (value === 'compact' || value === 'comfortable') updateAppearance({ density: value }) }} className="flex flex-wrap gap-4">
-          {(['comfortable', 'compact'] as const).map((value) => <label key={value} className="flex cursor-pointer items-center gap-2 text-caption"><RadioGroupItem value={value} aria-label={t(`settings.appearance.density.${value}`)} />{t(`settings.appearance.density.${value}`)}</label>)}
-        </RadioGroup>
+        <select className="mac-select" value={appearance.density} aria-label={t('settings.appearance.density')} onChange={(event) => {
+          const value = event.target.value
+          if (value === 'compact' || value === 'comfortable') updateAppearance({ density: value })
+        }}>
+          {(['comfortable', 'compact'] as const).map((value) => <option key={value} value={value}>{t(`settings.appearance.density.${value}`)}</option>)}
+        </select>
       </SettingRow>
       {(['reducedMotion', 'codeLigatures', 'wordWrap', 'showLineNumbers', 'compactToolCards'] as const).map((field) => <SettingRow key={field} label={t(`settings.appearance.${field}`)} desc={t(`settings.appearance.${field}Desc`)}>
         <Switch checked={appearance[field]} onCheckedChange={(value) => updateAppearance({ [field]: value })} aria-label={t(`settings.appearance.${field}`)} />

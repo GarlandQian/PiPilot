@@ -46,6 +46,16 @@ export function TerminalSettings() {
 
   return (
     <>
+      {/* Codex: terminals open under the conversation or as side panel tabs. */}
+      <SettingSection title={t('settings.terminal.location')} desc={t('settings.terminal.locationDesc')}>
+        <SettingRow label={t('settings.terminal.location')}>
+          <select aria-label={t('settings.terminal.location')} className="mac-select w-full sm:w-56" value={terminal.location}
+            onChange={(event) => updateTerminal({ location: event.target.value === 'panel' ? 'panel' : 'bottom' })}>
+            <option value="bottom">{t('settings.terminal.location.bottom')}</option>
+            <option value="panel">{t('settings.terminal.location.panel')}</option>
+          </select>
+        </SettingRow>
+      </SettingSection>
       <TerminalProfilesSettings />
       <SettingSection
         title={t('settings.terminal.title')}
@@ -55,7 +65,7 @@ export function TerminalSettings() {
         <figure className="mac-group-raw min-w-0 p-3.5!" data-terminal-font-preview data-terminal-font-family={terminal.fontFamily || 'system'} data-terminal-effective-font-family={effectiveStack}>
           <div className="overflow-hidden rounded-[10px] bg-sidebar shadow-[0_0_0_0.5px_var(--color-border),0_4px_14px_-4px_rgb(0_0_0/0.18)]">
           <figcaption className="relative flex h-7 items-center justify-center border-b border-border/70 text-micro font-medium text-muted-foreground">
-            <span className="absolute left-2.5 flex gap-1.5" aria-hidden><span className="size-2.5 rounded-full bg-[#ff5f57]" /><span className="size-2.5 rounded-full bg-[#febc2e]" /><span className="size-2.5 rounded-full bg-[#28c840]" /></span>
+            <span className="absolute left-2.5 hidden gap-1.5 mac:flex" aria-hidden><span className="size-2.5 rounded-full bg-[#ff5f57]" /><span className="size-2.5 rounded-full bg-[#febc2e]" /><span className="size-2.5 rounded-full bg-[#28c840]" /></span>
             <span className="flex items-center gap-1.5"><TbTerminal2 className="size-3.5" aria-hidden />{t('settings.terminal.preview')}</span>
           </figcaption>
           <div className="px-4 py-4" style={{ fontFamily: effectiveStack, fontSize: terminal.fontSize }}>

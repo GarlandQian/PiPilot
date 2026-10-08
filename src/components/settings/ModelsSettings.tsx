@@ -15,6 +15,7 @@ import { ConfigurationDocumentError, ConfigurationDocumentUnavailable, Configura
 import { formValueFromModel, formValueFromProvider } from './models-form-model'
 import { ModelsModelFormDialog } from './ModelsModelFormDialog'
 import { ModelsProviderFormDialog } from './ModelsProviderFormDialog'
+import { ModelsQuickAddDialog } from './ModelsQuickAddDialog'
 import { ModelsProviderWorkspace } from './ModelsProviderWorkspace'
 import { ModelsRuntimeSettings } from './ModelsRuntimeSettings'
 import { useModelsManager } from './useModelsManager'
@@ -52,12 +53,13 @@ function ModelsDocumentSettings({ document, operationOwnerKey, active }: {
             onClick={() => setView(candidate)}>{candidate === 'json' ? <TbCode className="size-3.5" aria-hidden /> : null}{t(`settings.models.mode.${candidate}`)}</button>)}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {snapshot ? <span className={cn('mr-1 text-micro', dirty ? 'text-warning' : 'text-muted-foreground')} role="status">{t(dirty ? 'settings.document.unsaved' : 'settings.models.workspace.saved')}</span> : null}
+          {snapshot ? <span className={cn('mr-1 text-micro', dirty && !saving ? 'text-warning' : 'text-muted-foreground')} role="status">{t(saving ? 'settings.models.workspace.saving' : dirty ? 'settings.document.unsaved' : 'settings.models.workspace.saved')}</span> : null}
           <Button variant="ghost" size="icon-sm" disabled={!manager.available || loading || saving} aria-label={t('common.refresh')} onClick={() => void load(true)}><TbRefresh className={loading ? 'animate-spin' : ''} aria-hidden /></Button>
-          <Button variant="outline" size="sm" disabled={!dirty || !parsed.valid || loading || saving} onClick={() => void save(false)}>{t('common.save')}</Button>
-          <Button size="sm" disabled={!snapshot || apply.status?.state === 'superseded' || !parsed.valid || loading || saving} onClick={() => void save(true)}>
+          {/* The form saves and applies each edit itself; the JSON editor keeps explicit buttons. */}
+          {view === 'json' ? <Button variant="outline" size="sm" disabled={!dirty || !parsed.valid || loading || saving} onClick={() => void save(false)}>{t('common.save')}</Button> : null}
+          {view === 'json' || dirty ? <Button size="sm" disabled={!snapshot || apply.status?.state === 'superseded' || !parsed.valid || loading || saving} onClick={() => void save(true)}>
             {saving ? <TbLoader2 className="animate-spin" aria-hidden /> : null}{t(dirty ? 'settings.models.saveRestart' : 'settings.configApply.retry')}
-          </Button>
+          </Button> : null}
         </div>
       </div>
       <ConfigApplyNotice status={apply.status} readFailed={apply.readFailed} />
@@ -80,13 +82,21 @@ function ModelsDocumentSettings({ document, operationOwnerKey, active }: {
       <ModelsProviderFormDialog
         open={providerDialog !== null}
         onOpenChange={(open) => !open && setProviderDialog(null)}
-        mode={providerDialog?.mode === 'edit' ? 'edit' : 'add'}
-        initial={providerDialog?.mode === 'edit'
-          ? formValueFromProvider(providerDialog.provider)
-          : undefined}
-        hasApiKey={providerDialog?.mode === 'edit' ? providerDialog.provider.hasApiKey : false}
+        initial={providerDialog ? formValueFromProvider(providerDialog.provider) : undefined}
+        hasApiKey={providerDialog?.provider.hasApiKey ?? false}
         existingIds={parsed.providers.map((provider) => provider.id)}
         onSubmit={submitProviderForm}
+        onSaved={() => void manager.persist()}
+      />
+
+      <ModelsQuickAddDialog
+        open={manager.quickAddOpen}
+        onOpenChange={manager.setQuickAddOpen}
+        providers={parsed.providers}
+        listRemote={manager.listRemote}
+        storedKey={manager.storedKey}
+        onSubmit={manager.submitQuickAdd}
+        onAdded={() => void manager.persist()}
       />
 
       {modelDialog && (
@@ -103,6 +113,7 @@ function ModelsDocumentSettings({ document, operationOwnerKey, active }: {
               ?.models.map((model) => model.id) ?? []
           }
           onSubmit={submitModelForm}
+          onSaved={() => void manager.persist()}
         />
       )}
 

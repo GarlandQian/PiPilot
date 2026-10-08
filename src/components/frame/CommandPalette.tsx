@@ -35,7 +35,7 @@ import {
   type SessionCommandEntry,
 } from '@/lib/commands'
 import { groupModelsByProvider } from '@/lib/model-groups'
-import { primaryShortcut } from '@/lib/keyboard-shortcuts'
+import { formatShortcut, primaryShortcut } from '@/lib/keyboard-shortcuts'
 import { cn } from '@/lib/utils'
 import { type PiRpcModel, usePiRpcActions, usePiRuntime } from '@/store/pi-rpc'
 import { Button } from '@/components/ui/button'
@@ -137,7 +137,7 @@ export function CommandPalette({ open, onOpenChange, ctx, sessions }: CommandPal
         <Icon aria-hidden />
         <span className="truncate">{t(command.titleKey)}</span>
         {command.shortcut
-          ? <CommandShortcut>{primaryShortcut(command.shortcut)}</CommandShortcut>
+          ? <CommandShortcut>{typeof command.shortcut === 'string' ? primaryShortcut(command.shortcut) : formatShortcut(command.shortcut)}</CommandShortcut>
           : command.hintKey
             ? <CommandShortcut className="tracking-normal">{t(command.hintKey)}</CommandShortcut>
             : null}

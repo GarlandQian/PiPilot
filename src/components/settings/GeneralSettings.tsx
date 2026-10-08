@@ -1,11 +1,13 @@
 import * as React from 'react'
+import { useEditorName } from '@/components/inspector/OpenInEditorButton'
+import { useExternalEditors } from '@/renderer/external-editors'
 import { TbCpu, TbRefresh } from 'react-icons/tb'
 import { Button } from '@/components/ui/button'
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Switch } from '@/components/ui/switch'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { SettingRow, SettingSection } from './common'
 import { useT } from '@/i18n'
+import { primaryShiftShortcut, primaryShortcut } from '@/lib/keyboard-shortcuts'
 import { cn } from '@/lib/utils'
 import { SUPPORTED_PI_VERSION, type LocalPiRuntimeSnapshot } from '@/shared/local-pi'
 import { useSettings, useUpdateSettings } from '@/store/settings'
@@ -19,6 +21,18 @@ interface GeneralSettingsProps {
   onRestart(): void
 }
 
+/** The app "Open in" uses first; it also changes to whichever one opened a file last. */
+function DefaultEditorSelect() {
+  const t = useT()
+  const { editors, preferred, setPreferred } = useExternalEditors()
+  const nameOf = useEditorName()
+  const choices = editors.filter((editor) => editor.kind !== 'file-manager')
+  return <select className="mac-select" value={preferred?.id ?? ''} aria-label={t('settings.general.defaultEditor')} disabled={!choices.length}
+    onChange={(event) => { if (event.target.value) setPreferred(event.target.value) }}>
+    {choices.map((editor) => <option key={editor.id} value={editor.id}>{nameOf(editor)}</option>)}
+  </select>
+}
+
 export function GeneralSettings({ restartBusy, restartMessage, restartAvailable, runtimeState, onRestart }: GeneralSettingsProps) {
   const t = useT()
   const { composer, notifications } = useSettings()
@@ -28,28 +42,31 @@ export function GeneralSettings({ restartBusy, restartMessage, restartAvailable,
   const notificationHintId = React.useId()
   const runtimeFailed = runtimeState === 'crashed' || runtimeState === 'error'
   const runtimePending = runtimeState === 'starting' || runtimeState === 'replacing'
-  const choiceClass = 'flex items-center gap-2 text-app'
   return <>
     <SettingSection title={t('settings.general.composer')} desc={t('settings.general.composerDesc')}>
       <SettingRow label={t('settings.general.sendShortcut')} desc={t('settings.general.sendShortcutDesc')}>
-        <RadioGroup value={composer.sendShortcut} aria-label={t('settings.general.sendShortcut')} onValueChange={(value) => {
+        {/* A row-level choice is a pop-up button, as in System Settings. */}
+        <select className="mac-select" value={composer.sendShortcut} aria-label={t('settings.general.sendShortcut')} onChange={(event) => {
+          const value = event.target.value
           if (value === 'enter' || value === 'mod-enter') update({ composer: { sendShortcut: value } })
-        }} className="flex flex-col gap-2">
-          {(['enter', 'mod-enter'] as const).map((value) => {
-            const label = t(value === 'enter' ? 'settings.general.sendShortcut.enter' : 'settings.general.sendShortcut.modEnter')
-            return <label key={value} className={choiceClass}><RadioGroupItem value={value} aria-label={label} /><span>{label}</span></label>
-          })}
-        </RadioGroup>
+        }}>
+          <option value="enter">{t('settings.general.sendShortcut.enter')}</option>
+          <option value="mod-enter">{t('settings.general.sendShortcut.modEnter', { shortcut: primaryShortcut('Enter') })}</option>
+        </select>
       </SettingRow>
-      <SettingRow label={t('settings.general.runningSubmit')} desc={t('settings.general.runningSubmitDesc')}>
-        <RadioGroup value={composer.runningSubmit} aria-label={t('settings.general.runningSubmit')} onValueChange={(value) => {
+      <SettingRow label={t('settings.general.runningSubmit')} desc={t('settings.general.runningSubmitDesc', { shortcut: primaryShiftShortcut('Enter') })}>
+        <select className="mac-select" value={composer.runningSubmit} aria-label={t('settings.general.runningSubmit')} onChange={(event) => {
+          const value = event.target.value
           if (value === 'queue' || value === 'steer') update({ composer: { runningSubmit: value } })
-        }} className="flex flex-col gap-2">
-          {(['queue', 'steer'] as const).map((value) => {
-            const label = t(value === 'queue' ? 'settings.general.runningSubmit.queue' : 'settings.general.runningSubmit.steer')
-            return <label key={value} className={choiceClass}><RadioGroupItem value={value} aria-label={label} /><span>{label}</span></label>
-          })}
-        </RadioGroup>
+        }}>
+          <option value="queue">{t('settings.general.runningSubmit.queue')}</option>
+          <option value="steer">{t('settings.general.runningSubmit.steer')}</option>
+        </select>
+      </SettingRow>
+    </SettingSection>
+    <SettingSection title={t('settings.general.editor')} desc={t('settings.general.editorDesc')}>
+      <SettingRow label={t('settings.general.defaultEditor')} desc={t('settings.general.defaultEditorDesc')}>
+        <DefaultEditorSelect />
       </SettingRow>
     </SettingSection>
     <SettingSection title={t('settings.general.notifications')} desc={t('settings.general.notificationsDesc')}>

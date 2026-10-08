@@ -32,6 +32,8 @@ interface ModelsModelFormDialogProps {
   existingIds: readonly string[]
   /** Called with the form value only when every field is valid. */
   onSubmit: (value: ModelFormValue) => boolean | void
+  /** The button (not the Quit transaction) submitted it: save and apply. */
+  onSaved?: () => void
 }
 
 const DEFAULT_VALUE: ModelFormValue = {
@@ -64,6 +66,7 @@ export function ModelsModelFormDialog({
   initial,
   existingIds,
   onSubmit,
+  onSaved,
 }: ModelsModelFormDialogProps) {
   const t = useT()
   const [draft, setDraft] = React.useState<ModelFormValue>({ ...DEFAULT_VALUE })
@@ -204,7 +207,7 @@ export function ModelsModelFormDialog({
         submitLabel={t(mode === 'add'
           ? 'settings.models.form.submitAdd'
           : 'settings.models.form.submitEdit')}
-        onSubmit={() => { handleSubmit() }}
+        onSubmit={() => { if (handleSubmit()) onSaved?.() }}
         disabled={shutdownLocked}
       >
         <div className="flex flex-col gap-6">

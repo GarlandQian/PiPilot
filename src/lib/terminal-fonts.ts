@@ -7,6 +7,17 @@ export const DEFAULT_TERMINAL_FONT_STACK = [
   '"Cascadia Code"',
   '"Fira Code"',
   'Consolas',
+  // Each platform's built-in monospace, ahead of the CJK fallbacks: a terminal
+  // must never measure its cells with a proportional font (PingFang SC on macOS).
+  'Menlo',
+  'Monaco',
+  '"Cascadia Mono"',
+  '"DejaVu Sans Mono"',
+  '"Liberation Mono"',
+  '"Ubuntu Mono"',
+  // Prompt symbols (Powerline, Nerd Font icons) when one of these is installed.
+  '"Symbols Nerd Font Mono"',
+  '"MesloLGS NF"',
   '"Sarasa Mono SC"',
   '"Noto Sans Mono CJK SC"',
   '"PingFang SC"',

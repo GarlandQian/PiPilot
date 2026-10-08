@@ -783,7 +783,7 @@ describe('TerminalService', () => {
   it('does not advertise missing Unix shells and revalidates a selected shell before creating', async () => {
     const root = await temporaryDirectory('terminal-unix-profiles')
     const configuredShell = '/tools/test-shell'
-    let shInstalled = true
+    let bashInstalled = true
     const spawnPty = vi.fn(() => new FakePty(80, 24))
     const service = new TerminalService(
       () => firstScope,
@@ -791,18 +791,18 @@ describe('TerminalService', () => {
       {
         platform: 'linux',
         environment: { SHELL: configuredShell, PATH: '' },
-        resolveExecutable: async (candidate) => candidate === configuredShell || candidate === '/bin/sh' && shInstalled ? candidate : undefined,
+        resolveExecutable: async (candidate) => candidate === configuredShell || candidate === '/bin/bash' && bashInstalled ? candidate : undefined,
         spawnPty,
       },
     )
     const profiles = await service.listShellProfiles()
     expect(profiles).toEqual([
       expect.objectContaining({ id: expect.stringMatching(/^detected:/), label: 'test-shell', isDefault: true }),
-      expect.objectContaining({ id: expect.stringMatching(/^detected:/), label: 'sh', isDefault: false }),
+      expect.objectContaining({ id: expect.stringMatching(/^detected:/), label: 'bash', isDefault: false }),
     ])
     await service.create(firstScope, 80, 24, profiles[1].id)
-    expect(spawnPty.mock.calls[0]).toEqual(['/bin/sh', ['-l'], expect.objectContaining({ cwd: await realpath(root) })])
-    shInstalled = false
+    expect(spawnPty.mock.calls[0]).toEqual(['/bin/bash', ['-l'], expect.objectContaining({ cwd: await realpath(root) })])
+    bashInstalled = false
     await expect(service.create(firstScope, 80, 24, profiles[1].id)).rejects.toMatchObject({ code: 'TERMINAL_SHELL_UNAVAILABLE' })
     expect(spawnPty).toHaveBeenCalledTimes(1)
     await service.dispose()

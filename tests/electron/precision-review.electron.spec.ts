@@ -7,6 +7,7 @@ import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from '../../src/shared/sett
 import { closeFixtureApplication } from './close-fixture-application'
 import { inspectorDetailsSessionEntries } from './inspector-details-fixture'
 import { startPiSdkFixture } from './pi-sdk-fixture'
+import { selectInspectorView } from './select-inspector-view'
 
 const run = promisify(execFile)
 const originalFile = 'export const first = 1\nexport const second = 2\nexport const third = 3\n'
@@ -84,10 +85,12 @@ test('quotes message, exact file lines and command output as durable snapshots w
     await quote(message, message.locator('p').first(), 'history response')
     await expect(composer(page).locator('[data-precision-reference="message"]')).toHaveCount(1)
 
-    await inspector(page).getByRole('tab', { name: 'Files', exact: true }).click()
+    await selectInspectorView(page, 'Files')
     await inspector(page).locator('[data-workspace-tree-row="example.ts"]').click()
     const reader = inspector(page).locator('[data-workspace-file-viewer]:visible')
-    await quote(reader, reader.locator('code').last(), 'export const second = 20')
+    // Source files are quoted by their line numbers, as in Codex.
+    await reader.locator('[data-column-number="2"]').first().click()
+    await reader.locator('[data-file-line-actions]').getByRole('button', { name: 'Quote selection', exact: true }).click()
     await expect(composer(page).locator('[data-precision-reference="file"]')).toContainText('example.ts:2')
     await writeFile(join(project, 'example.ts'), changedFile.replace('second = 20', 'second = 200'))
     await expect(reader).toContainText('second = 200', { timeout: 12_000 })
@@ -146,10 +149,9 @@ test('reviews actual diff lines with durable isolated comments, stale evidence a
   test.setTimeout(120_000)
   const { app, page, fixture, project, errors } = await start(testInfo)
   try {
-    await inspector(page).getByRole('tab', { name: 'Changes', exact: true }).click()
+    await selectInspectorView(page, 'Review')
     const diff = inspector(page).locator('[data-diff-id="unstaged:example.ts"]')
     const summary = inspector(page).locator('[data-diff-review-summary]')
-    await expect(summary).toContainText('including edits made outside this task')
     await expect(diff).not.toHaveAttribute('aria-busy', 'true')
     await addComment(diff, 'addition', 2, 'Keep the second public export stable.', 3)
     await addComment(diff, 'deletion', 2, 'Explain why the old value changed.')
@@ -165,13 +167,15 @@ test('reviews actual diff lines with durable isolated comments, stale evidence a
     await expect(summary).toContainText('Add a compatibility test for the second export.')
     await composer(page).fill('Please apply this review carefully.')
 
-    await page.getByRole('button', { name: 'New session in Precision project', exact: true }).click()
+    await page.getByRole('button', { name: 'New task in Precision project', exact: true }).click()
     await expect(composer(page)).toHaveText('')
     await composer(page).fill('Create isolated review B')
     await page.locator('[data-composer-submit]').click()
     await expect(page.getByRole('log', { name: 'Conversation', exact: true })).toContainText('Fixture response: Create isolated review B')
     await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0)
     expect(await page.evaluate(() => window.pipilot!.localPi.runtime.command({ type: 'set_session_name', name: 'Review B' }))).toMatchObject({ success: true })
+    // A new task starts with its own (empty) tabs.
+    await selectInspectorView(page, 'Review')
     await expect(summary.locator('[data-review-comment]')).toHaveCount(0)
     await addComment(diff, 'addition', 3, 'Only belongs to review B.')
     await session(page, 'Existing project session').click()
@@ -179,7 +183,7 @@ test('reviews actual diff lines with durable isolated comments, stale evidence a
     await expect(summary).not.toContainText('Only belongs to review B.')
     await expect(composer(page)).toContainText('Please apply this review carefully.')
     await page.reload()
-    await inspector(page).getByRole('tab', { name: 'Changes', exact: true }).click()
+    await selectInspectorView(page, 'Review')
     await expect(summary.locator('[data-review-comment]')).toHaveCount(2)
 
     // A newer working-tree revision must not silently retarget either old/new-side comment.
@@ -211,7 +215,7 @@ test('reviews actual diff lines with durable isolated comments, stale evidence a
     await page.reload()
     await expect(composer(page).locator('[data-precision-reference="diff"]')).toHaveCount(2)
     await session(page, 'Review B').click()
-    await inspector(page).getByRole('tab', { name: 'Changes', exact: true }).click()
+    await selectInspectorView(page, 'Review')
     await expect(summary.locator('[data-review-comment]')).toHaveCount(1)
     await expect(summary).toContainText('Only belongs to review B.')
     await expect(composer(page).locator('[data-precision-reference]')).toHaveCount(0)

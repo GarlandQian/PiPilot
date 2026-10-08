@@ -36,7 +36,8 @@ import {
   DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { primaryShortcut } from '@/lib/keyboard-shortcuts'
+import { enterKey, formatShortcut, primaryShiftShortcut, primaryShortcut } from '@/lib/keyboard-shortcuts'
+import { goalModeShortcut, PLAN_MODE_SHORTCUT } from '@/lib/app-shortcuts'
 import type { GoalModeProjection, PlanModeProjection } from '@/renderer/pi-rpc/adapters'
 import {
   COMPOSER_MODE_BLOCK_KEYS,
@@ -1582,7 +1583,7 @@ function SessionComposer({
         ? 'composer.runNow'
         : 'composer.send')
   const SubmitIcon = TbArrowUp
-  const sendKey = sendShortcut === 'enter' ? '↩' : primaryShortcut('↩')
+  const sendKey = sendShortcut === 'enter' ? enterKey() : primaryShortcut('↩')
   const submitTip = (kind: typeof submitMode.kind) => t(kind === 'steer' ? 'composer.submitTip.steer' : 'composer.submitTip.queue')
 
   const placeholder = t(composerPlaceholderKey({ mode: modeIntent, planActive, isStreaming, conversationEmpty }))
@@ -1629,7 +1630,7 @@ function SessionComposer({
         </span>
         {on
           ? <TbCheck className="size-4 stroke-[2.6]" aria-hidden />
-          : <DropdownMenuShortcut>{primaryShortcut(mode === 'plan' ? '⇧P' : '⇧G')}</DropdownMenuShortcut>}
+          : <DropdownMenuShortcut>{formatShortcut(mode === 'plan' ? PLAN_MODE_SHORTCUT : goalModeShortcut())}</DropdownMenuShortcut>}
       </DropdownMenuItem>
     )
   }
@@ -1845,15 +1846,15 @@ function SessionComposer({
               <Tooltip>
                 <TooltipTrigger asChild>
                   <DropdownMenuTrigger asChild>
-                    <button
-                      type="button"
+                    <Button
+                      variant="ghost"
                       disabled={!connected}
                       aria-label={t('composer.add')}
                       data-composer-add
-                      className="grid size-[32px] shrink-0 place-items-center rounded-full text-foreground/70 outline-none transition-colors duration-(--duration-fast) hover:bg-fill-strong hover:text-foreground focus-visible:focus-ring disabled:opacity-40 data-[state=open]:bg-fill-strong data-[state=open]:text-foreground motion-reduce:transition-none"
+                      className="size-[32px] p-0"
                     >
                       <TbPlus className="size-[18px] stroke-[2.2]" aria-hidden />
-                    </button>
+                    </Button>
                   </DropdownMenuTrigger>
                 </TooltipTrigger>
                 <TooltipContent>{t('composer.add')}</TooltipContent>
@@ -2027,7 +2028,7 @@ function SessionComposer({
                         <span>{submitTip(submitMode.kind)}</span>
                         <kbd className="justify-self-end font-sans opacity-70">{sendKey}</kbd>
                         <span>{submitTip(alternateMode.kind)}</span>
-                        <kbd className="justify-self-end font-sans opacity-70">{primaryShortcut('⇧↩')}</kbd>
+                        <kbd className="justify-self-end font-sans opacity-70">{primaryShiftShortcut('Enter')}</kbd>
                       </span>
                     ) : submitLabel}
                   </TooltipContent>

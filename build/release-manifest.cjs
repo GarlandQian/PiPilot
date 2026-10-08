@@ -68,6 +68,11 @@ const observedArchitectures = [...new Set(
     ),
   ),
 )].sort()
+for (const name of packageNames) {
+  if (!name.startsWith(`PiPilot-${version}-${platform}-`)) {
+    throw new Error(`${platform} package must identify its version and platform: ${name}`)
+  }
+}
 if (observedArchitectures.join(',') !== expectedArchitectures.slice().sort().join(',')) {
   throw new Error(`${platform} release architecture inventory mismatch: expected ${expectedArchitectures.join(', ')}, found ${observedArchitectures.join(', ') || 'none'}`)
 }

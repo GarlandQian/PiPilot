@@ -64,7 +64,8 @@ export async function createMainWindow({
           visualEffectState: 'followWindow' as const,
           backgroundColor: '#00000000',
         }
-      : { backgroundColor: '#1e1e1f' }),
+      // Windows and Linux keep the native frame; the menu bar appears on Alt.
+      : { backgroundColor: '#1e1e1f', autoHideMenuBar: true }),
     webPreferences: {
       allowRunningInsecureContent: false,
       contextIsolation: true,
@@ -74,6 +75,8 @@ export async function createMainWindow({
       nodeIntegration: false,
       nodeIntegrationInSubFrames: false,
       nodeIntegrationInWorker: false,
+      // Chromium's PDF viewer, for PDFs in file tabs.
+      plugins: true,
       preload: join(mainOutputDirectory, '../preload/index.cjs'),
       safeDialogs: true,
       sandbox: true,

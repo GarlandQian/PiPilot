@@ -35,11 +35,15 @@ export interface AppearanceSettings {
   glassTint: number
 }
 
+/** Where terminals open: the drawer under the conversation, or tabs in the side panel (Codex). */
+export type TerminalLocation = 'bottom' | 'panel'
+
 export interface TerminalSettings {
   fontFamily: string
   fontSize: number
   defaultProfileId: string | null
   profiles: TerminalCustomProfile[]
+  location: TerminalLocation
 }
 
 export interface ComposerSettings {
@@ -94,6 +98,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     fontSize: 13,
     defaultProfileId: null,
     profiles: [],
+    location: 'bottom',
   },
 }
 
@@ -102,6 +107,7 @@ const THEMES: readonly ThemeMode[] = ['system', 'light', 'dark']
 const DENSITIES: readonly Density[] = ['compact', 'comfortable']
 const COMPOSER_SEND_SHORTCUTS: readonly ComposerSendShortcut[] = ['enter', 'mod-enter']
 const RUNNING_SUBMIT_PREFERENCES: readonly RunningSubmitPreference[] = ['queue', 'steer']
+const TERMINAL_LOCATIONS: readonly TerminalLocation[] = ['bottom', 'panel']
 const LEGACY_APP_KEYS = ['locale', 'appearance', 'composer', 'terminal'] as const
 const APP_KEYS = [...LEGACY_APP_KEYS, 'notifications'] as const
 const LEGACY_APPEARANCE_KEYS = [
@@ -118,7 +124,8 @@ const LEGACY_APPEARANCE_KEYS = [
   'compactToolCards',
 ] as const
 const APPEARANCE_KEYS = [...LEGACY_APPEARANCE_KEYS, 'glassTint'] as const
-const TERMINAL_KEYS = ['fontFamily', 'fontSize', 'defaultProfileId', 'profiles'] as const
+const PROFILE_TERMINAL_KEYS = ['fontFamily', 'fontSize', 'defaultProfileId', 'profiles'] as const
+const TERMINAL_KEYS = [...PROFILE_TERMINAL_KEYS, 'location'] as const
 const LEGACY_TERMINAL_KEYS = ['fontFamily', 'fontSize'] as const
 const COMPOSER_KEYS = ['sendShortcut', 'runningSubmit'] as const
 const LEGACY_COMPOSER_KEYS = ['sendShortcut'] as const
@@ -205,6 +212,11 @@ function isAppearanceFields(value: Record<string, unknown>) {
 
 function isExactTerminal(value: unknown): value is TerminalSettings {
   if (!isRecord(value) || !hasExactKeys(value, TERMINAL_KEYS)) return false
+  return isProfileTerminal(value) && TERMINAL_LOCATIONS.includes(value.location as TerminalLocation)
+}
+
+/** Settings written before the terminal location existed. */
+function isProfileTerminal(value: Record<string, unknown>) {
   return isTerminalTypography(value) &&
     terminalShellProfileIdSchema.nullable().safeParse(value.defaultProfileId).success &&
     terminalCustomProfilesSchema.safeParse(value.profiles).success
@@ -244,6 +256,10 @@ function isMigratableSettings(value: unknown) {
     (isExactAppearance(value.appearance) || isLegacyAppearance(value.appearance)) &&
     (isLegacyComposer(value.composer) || isExactComposer(value.composer)) &&
     (isExactTerminal(value.terminal) || (
+      isRecord(value.terminal) &&
+      hasExactKeys(value.terminal, PROFILE_TERMINAL_KEYS) &&
+      isProfileTerminal(value.terminal)
+    ) || (
       isRecord(value.terminal) &&
       hasExactKeys(value.terminal, LEGACY_TERMINAL_KEYS) &&
       isTerminalTypography(value.terminal)
@@ -355,6 +371,7 @@ export function sanitizeSettings(
       fontSize: terminalFontSizeOr(terminal.fontSize, fallback.terminal.fontSize),
       defaultProfileId: defaultProfile.success ? defaultProfile.data : fallback.terminal.defaultProfileId,
       profiles: profiles.success ? profiles.data : structuredClone(fallback.terminal.profiles),
+      location: oneOf(terminal.location, TERMINAL_LOCATIONS, fallback.terminal.location),
     },
   }
 }

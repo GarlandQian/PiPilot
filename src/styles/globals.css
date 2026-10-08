@@ -11,6 +11,8 @@
 @custom-variant dark (&:is(.dark *));
 /* Only when running with native macOS chrome (see public/theme-bootstrap.js). */
 @custom-variant mac (&:where([data-platform='darwin'] *));
+/* macOS with the window's traffic lights showing (not in full screen). */
+@custom-variant mac-windowed (&:where([data-platform='darwin']:not([data-fullscreen='true']) *));
 @custom-variant not-mac (&:where(:root:not([data-platform='darwin']) *));
 
 /* ==================================================================
@@ -196,6 +198,10 @@
   /* Traffic lights sit at x=18 and span 60pt on macOS 26+ (three 14pt lights,
      9pt apart); toolbar items start ~14pt after the green light. */
   --traffic-light-gutter: 92px;
+}
+/* Full screen hides the traffic lights, so their inset would only leave a gap. */
+:root[data-platform='darwin'][data-fullscreen='true'] {
+  --traffic-light-gutter: 14px;
   /* Native vibrancy by default; the tinted half of Liquid Glass frosts it over. */
   --color-source-list: color-mix(in srgb, var(--source-list-solid) max(0%, calc((var(--glass-tint) - 0.5) * 170%)), transparent);
 }
@@ -312,6 +318,20 @@
 /* Leaves room for the inset traffic lights on macOS. */
 @utility traffic-light-gutter {
   padding-left: var(--traffic-light-gutter);
+}
+
+/* Horizontally scrolling strips (tab bars) scroll by trackpad without a bar. */
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* A page toolbar at the window's left edge clears the title-bar buttons
+   that stay behind when the sidebar is hidden (ActivityRail sets the var). */
+@utility titlebar-leading-* {
+  padding-left: max(--value([length]), calc(var(--titlebar-leading, 0px) + 10px));
 }
 
 @layer base {
@@ -540,26 +560,26 @@
   }
 
   /* ============ scrollbars ============
-     macOS keeps the native overlay scrollbars (they fade out and follow the
-     system "Show scroll bars" preference). Other platforms get slim, rounded
-     overlay-style thumbs that imitate them. */
-  :root:not([data-platform='darwin']) ::-webkit-scrollbar {
+     macOS overlay scrollbars stay native (they fade out on their own). When
+     macOS keeps them always visible, and on other platforms, draw slim
+     rounded thumbs on a clear track instead of Chromium's wide legacy bars. */
+  :root:is(:not([data-platform='darwin']), [data-scrollbars='legacy']) :not(.scrollbar-probe)::-webkit-scrollbar {
     width: 11px;
     height: 11px;
     background: transparent;
   }
-  :root:not([data-platform='darwin']) ::-webkit-scrollbar-track,
-  :root:not([data-platform='darwin']) ::-webkit-scrollbar-corner {
+  :root:is(:not([data-platform='darwin']), [data-scrollbars='legacy']) :not(.scrollbar-probe)::-webkit-scrollbar-track,
+  :root:is(:not([data-platform='darwin']), [data-scrollbars='legacy']) :not(.scrollbar-probe)::-webkit-scrollbar-corner {
     background: transparent;
   }
-  :root:not([data-platform='darwin']) ::-webkit-scrollbar-thumb {
+  :root:is(:not([data-platform='darwin']), [data-scrollbars='legacy']) :not(.scrollbar-probe)::-webkit-scrollbar-thumb {
     background: var(--color-scrollbar);
     background-clip: padding-box;
     border: 3px solid transparent;
     border-radius: 999px;
     min-height: 32px;
   }
-  :root:not([data-platform='darwin']) ::-webkit-scrollbar-thumb:hover {
+  :root:is(:not([data-platform='darwin']), [data-scrollbars='legacy']) :not(.scrollbar-probe)::-webkit-scrollbar-thumb:hover {
     background: var(--color-scrollbar-hover);
     background-clip: padding-box;
     border-width: 2px;
@@ -584,6 +604,33 @@
   input[type='range'] {
     accent-color: var(--color-primary);
   }
+}
+
+/* ==================================================================
+   Toolbar groups: every toolbar button sits in a Liquid Glass capsule.
+   Related buttons share one; a lone toggle gets its own (macOS 27).
+   Use together with the `glass` utility.
+   ================================================================== */
+.toolbar-group {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 2px;
+  border-radius: 999px;
+  padding: 3px;
+}
+.toolbar-group [data-slot='button'] {
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--color-foreground) 80%, transparent);
+}
+.toolbar-group [data-slot='button']:hover {
+  background: var(--glass-hover);
+  color: var(--color-foreground);
+}
+/* A toggle that is on, or a menu that is open, looks pressed, not tinted. */
+.toolbar-group [data-slot='button']:is([aria-pressed='true'], [data-state='open']) {
+  background: var(--color-fill-strong);
+  color: var(--color-foreground);
 }
 
 /* ==================================================================

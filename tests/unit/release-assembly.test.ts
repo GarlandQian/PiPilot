@@ -37,27 +37,32 @@ const platformPolicy: Record<Platform, {
 async function createReleaseFixture(options: {
   invalidWindowsSha512?: boolean
   omitLinuxDebMetadata?: boolean
+  omitMacosPlatform?: boolean
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'pipilot-release-assembly-'))
   temporaryDirectories.push(root)
   const version = PIPILOT_VERSION
   const assets: Record<Platform, string[]> = {
     macos: [
-      `PiPilot-${version}-arm64.dmg`,
-      `PiPilot-${version}-arm64.zip`,
-      `PiPilot-${version}-x64.dmg`,
-      `PiPilot-${version}-x64.zip`,
+      `PiPilot-${version}-macos-arm64.dmg`,
+      `PiPilot-${version}-macos-arm64.zip`,
+      `PiPilot-${version}-macos-x64.dmg`,
+      `PiPilot-${version}-macos-x64.zip`,
     ],
     windows: [
-      `PiPilot-${version}-x64.exe`,
-      `PiPilot-${version}-x64.exe.blockmap`,
+      `PiPilot-${version}-windows-x64.exe`,
+      `PiPilot-${version}-windows-x64.exe.blockmap`,
       'latest.yml',
     ],
     linux: [
-      `PiPilot-${version}-x86_64.AppImage`,
-      `PiPilot-${version}-amd64.deb`,
+      `PiPilot-${version}-linux-x86_64.AppImage`,
+      `PiPilot-${version}-linux-amd64.deb`,
       'latest-linux.yml',
     ],
+  }
+
+  if (options.omitMacosPlatform) {
+    assets.macos = assets.macos.map((name) => name.replace('-macos-', '-'))
   }
 
   for (const name of [...assets.macos, ...assets.windows, ...assets.linux]) {
@@ -92,19 +97,19 @@ async function createReleaseFixture(options: {
 
   await writeMetadata(
     'latest.yml',
-    [`PiPilot-${version}-x64.exe`],
-    `PiPilot-${version}-x64.exe`,
+    [`PiPilot-${version}-windows-x64.exe`],
+    `PiPilot-${version}-windows-x64.exe`,
     options.invalidWindowsSha512,
   )
   await writeMetadata(
     'latest-linux.yml',
     options.omitLinuxDebMetadata
-      ? [`PiPilot-${version}-x86_64.AppImage`]
+      ? [`PiPilot-${version}-linux-x86_64.AppImage`]
       : [
-          `PiPilot-${version}-x86_64.AppImage`,
-          `PiPilot-${version}-amd64.deb`,
+          `PiPilot-${version}-linux-x86_64.AppImage`,
+          `PiPilot-${version}-linux-amd64.deb`,
         ],
-    `PiPilot-${version}-x86_64.AppImage`,
+    `PiPilot-${version}-linux-x86_64.AppImage`,
   )
 
   for (const platform of Object.keys(assets) as Platform[]) {
@@ -161,10 +166,10 @@ describe('release assembly validation', () => {
     temporaryDirectories.push(root)
     const version = PIPILOT_VERSION
     const packages = [
-      `PiPilot-${version}-arm64.dmg`,
-      `PiPilot-${version}-arm64.zip`,
-      `PiPilot-${version}-x64.dmg`,
-      `PiPilot-${version}-x64.zip`,
+      `PiPilot-${version}-macos-arm64.dmg`,
+      `PiPilot-${version}-macos-arm64.zip`,
+      `PiPilot-${version}-macos-x64.dmg`,
+      `PiPilot-${version}-macos-x64.zip`,
     ]
     await Promise.all([
       ...packages.map((name) => writeFile(join(root, name), `fixture:${name}`)),
@@ -195,6 +200,17 @@ describe('release assembly validation', () => {
     )
 
     expect(JSON.parse(result.stdout)).toEqual({ version: fixture.version, assets: 16 })
+  })
+
+  it('rejects packages without a system identifier even when their checksums match', async () => {
+    const fixture = await createReleaseFixture({ omitMacosPlatform: true })
+    await expect(execFileAsync(
+      process.execPath,
+      ['build/validate-release-assembly.cjs', fixture.root, fixture.version],
+      { cwd: process.cwd() },
+    )).rejects.toMatchObject({
+      stderr: expect.stringContaining('package must identify its version and platform'),
+    })
   })
 
   it('rejects updater metadata whose SHA-512 does not match the installer', async () => {

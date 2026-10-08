@@ -66,13 +66,20 @@ describe('composer modes', () => {
     expect(composerPlaceholderKey({ ...base, mode: 'plan', conversationEmpty: true })).toBe('composer.placeholder.plan')
   })
 
-  it('maps only primary+Shift+P/G to mode shortcuts', () => {
+  it('maps ⇧⌘P / ⇧⌘G on macOS, and keeps goal mode off the review shortcut elsewhere', () => {
     const key = (key: string, extra: Partial<KeyboardEvent> = {}) =>
-      ({ key, metaKey: true, ctrlKey: false, shiftKey: true, altKey: false, ...extra })
-    expect(composerModeShortcut(key('P'))).toBe('plan')
-    expect(composerModeShortcut(key('g', { metaKey: false, ctrlKey: true }))).toBe('goal')
-    expect(composerModeShortcut(key('p', { shiftKey: false }))).toBeNull()
-    expect(composerModeShortcut(key('p', { altKey: true }))).toBeNull()
-    expect(composerModeShortcut(key('k'))).toBeNull()
+      ({ key, code: `Key${key.toUpperCase()}`, metaKey: true, ctrlKey: false, shiftKey: true, altKey: false, ...extra })
+    const mac = 'Macintosh'
+    const windows = 'Windows NT 10.0'
+    expect(composerModeShortcut(key('P'), mac)).toBe('plan')
+    expect(composerModeShortcut(key('g'), mac)).toBe('goal')
+    // ⌃⇧G is the review tab on macOS.
+    expect(composerModeShortcut(key('g', { metaKey: false, ctrlKey: true }), mac)).toBeNull()
+    expect(composerModeShortcut(key('p', { shiftKey: false }), mac)).toBeNull()
+    expect(composerModeShortcut(key('p', { altKey: true }), mac)).toBeNull()
+    expect(composerModeShortcut(key('k'), mac)).toBeNull()
+    expect(composerModeShortcut(key('P', { metaKey: false, ctrlKey: true }), windows)).toBe('plan')
+    expect(composerModeShortcut(key('g', { metaKey: false, ctrlKey: true }), windows)).toBeNull()
+    expect(composerModeShortcut(key('g', { metaKey: false, ctrlKey: true, shiftKey: false, altKey: true }), windows)).toBe('goal')
   })
 })

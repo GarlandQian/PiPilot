@@ -128,7 +128,7 @@ describe('renderer layout preferences', () => {
     })
     expect(normalizePanelLayout({ contextPanelWidth: Number.NaN })).toEqual({
       contextPanelWidth: 240,
-      inspectorWidth: 360,
+      inspectorWidth: 400,
       inspectorOpen: true,
     })
   })

@@ -38,6 +38,7 @@ import {
   mcpConfigRestartContract,
   mcpConfigSaveContract,
   modelsConfigGetDefaultsContract,
+  modelsConfigListRemoteContract,
   modelsConfigLoadContract,
   modelsConfigSaveAndRestartContract,
   modelsConfigSaveContract,
@@ -75,16 +76,35 @@ import {
   terminalResizeContract,
   workspaceChangedEventSchema,
   workspaceChooseContract,
+  workspaceDiffApplyContract,
+  workspaceDiffApplyHunkContract,
+  workspaceDiffListBranchContract,
   workspaceDiffListContract,
   workspaceDiffReadContract,
   workspaceFilePreviewContract,
+  workspaceFileMediaContract,
+  workspaceFileRevealContract,
+  workspaceFilesExistContract,
+  workspaceDiffListCommitsContract,
+  workspaceDiffListCommitContract,
+  workspaceDiffSidesContract,
+  workspaceGitStatusContract,
+  workspaceGitCommitContract,
+  workspaceGitSuggestMessageContract,
+  editorsListContract,
+  editorsOpenContract,
   workspaceFilesListContract,
   workspaceFilesSearchContract,
   workspaceGetContract,
   workspaceOpenContract,
   workspaceRemoveContract,
   workspaceSetPinnedContract,
+  workspaceRevealContract,
   windowGetStateContract,
+  windowExitFullScreenContract,
+  windowCloseContract,
+  windowSnapshotSchema,
+  appCommandEventSchema,
 } from '../shared/ipc/contracts'
 import type { PiPilotApi, PiPilotApiError } from '../shared/pipilot-api'
 import type { ConversationScope, SessionCatalogCursor, SessionCatalogSelectionToken } from '../shared/conversation-scope'
@@ -150,6 +170,20 @@ function createSubscription<T>(
 }
 
 type SettingsListener = (snapshot: SettingsSnapshot) => void
+const windowStateSubscription = createSubscription(
+  ipcChannels.windowStateChanged,
+  (raw) => {
+    const result = windowSnapshotSchema.safeParse(raw)
+    return result.success ? result.data : undefined
+  },
+)
+const appCommandSubscription = createSubscription(
+  ipcChannels.appCommand,
+  (raw) => {
+    const result = appCommandEventSchema.safeParse(raw)
+    return result.success ? result.data.command : undefined
+  },
+)
 const shutdownSubscription = createSubscription(
   ipcChannels.appShutdownRequested,
   (raw) => {
@@ -291,6 +325,7 @@ const api: PiPilotApi = {
   },
   modelsConfig: {
     getDefaults: (target) => invoke(modelsConfigGetDefaultsContract, { context: createContext(), target }),
+    listRemote: (request) => invoke(modelsConfigListRemoteContract, { context: createContext(), ...request }),
     load: (target) => invoke(modelsConfigLoadContract, { context: createContext(), target }),
     save: (target, content, expectedFingerprint) => invoke(modelsConfigSaveContract, { context: createContext(), target, content, expectedFingerprint }),
     saveAndRestart: (target, content, expectedFingerprint) => invoke(modelsConfigSaveAndRestartContract, { context: createContext(), target, content, expectedFingerprint }),
@@ -327,16 +362,35 @@ const api: PiPilotApi = {
     open: (workspaceId) => invoke(workspaceOpenContract, { context: createContext(), workspaceId }),
     remove: (workspaceId) => invoke(workspaceRemoveContract, { context: createContext(), workspaceId }),
     setPinned: (workspaceId, pinned) => invoke(workspaceSetPinnedContract, { context: createContext(), workspaceId, pinned }),
+    reveal: async (workspaceId) => { await invoke(workspaceRevealContract, { context: createContext(), workspaceId }) },
     subscribe: workspaceSubscription.subscribe,
   },
   files: {
     list: (workspaceId, path) => invoke(workspaceFilesListContract, { context: createContext(), workspaceId, path }),
     preview: (workspaceId, path) => invoke(workspaceFilePreviewContract, { context: createContext(), workspaceId, path }),
+    media: (workspaceId, path) => invoke(workspaceFileMediaContract, { context: createContext(), workspaceId, path }),
+    exist: (workspaceId, paths) => invoke(workspaceFilesExistContract, { context: createContext(), workspaceId, paths: [...paths] }),
+    reveal: async (workspaceId, path) => { await invoke(workspaceFileRevealContract, { context: createContext(), workspaceId, path }) },
     search: (workspaceId, query) => invoke(workspaceFilesSearchContract, { context: createContext(), workspaceId, query }),
   },
   changes: {
     list: (workspaceId) => invoke(workspaceDiffListContract, { context: createContext(), workspaceId }),
-    read: (workspaceId, path, stage = 'unstaged') => invoke(workspaceDiffReadContract, { context: createContext(), workspaceId, path, stage }),
+    listBranch: (workspaceId) => invoke(workspaceDiffListBranchContract, { context: createContext(), workspaceId }),
+    read: (workspaceId, path, stage = 'unstaged', commit) => invoke(workspaceDiffReadContract, { context: createContext(), workspaceId, path, stage, ...(commit ? { commit } : {}) }),
+    listCommits: (workspaceId) => invoke(workspaceDiffListCommitsContract, { context: createContext(), workspaceId }),
+    listCommit: (workspaceId, commit) => invoke(workspaceDiffListCommitContract, { context: createContext(), workspaceId, commit }),
+    sides: (workspaceId, path, stage, options = {}) => invoke(workspaceDiffSidesContract, { context: createContext(), workspaceId, path, stage, ...(options.commit ? { commit: options.commit } : {}), ...(options.previousPath ? { previousPath: options.previousPath } : {}) }),
+    status: (workspaceId) => invoke(workspaceGitStatusContract, { context: createContext(), workspaceId }),
+    commit: (workspaceId, request) => invoke(workspaceGitCommitContract, { context: createContext(), workspaceId, request }),
+    suggestMessage: async (workspaceId, input) => (await invoke(workspaceGitSuggestMessageContract, { context: createContext(), workspaceId, ...input })).message,
+    apply: (workspaceId, action, changes) => invoke(workspaceDiffApplyContract, { context: createContext(), workspaceId, action, changes: [...changes] }),
+    applyHunk: (workspaceId, action, change, hunk) => invoke(workspaceDiffApplyHunkContract, { context: createContext(), workspaceId, action, change, hunk }),
+  },
+  editors: {
+    list: async () => (await invoke(editorsListContract, { context: createContext() })).editors,
+    open: async (workspaceId, editorId, target = {}) => {
+      await invoke(editorsOpenContract, { context: createContext(), workspaceId, editorId, ...(target.path ? { path: target.path } : {}), ...(target.line ? { line: target.line } : {}) })
+    },
   },
   terminal: {
     listShellProfiles: () => invoke(terminalListShellProfilesContract, { context: createContext() }),
@@ -358,6 +412,7 @@ const api: PiPilotApi = {
     respondToShutdown: (shutdownId, decision) => invoke(appShutdownRespondContract, {
       context: createContext(), shutdownId, decision,
     }),
+    subscribeCommands: appCommandSubscription.subscribe,
   },
   shell: { openExternal: async (url) => { await invoke(shellOpenExternalContract, { context: createContext(), url }) } },
   settings: {
@@ -366,7 +421,12 @@ const api: PiPilotApi = {
     subscribe: settingsSubscription.subscribe as (listener: SettingsListener) => () => void,
     update: (patch) => invoke(settingsUpdateContract, { context: createContext(), patch }),
   },
-  window: { getState: () => invoke(windowGetStateContract, { context: createContext() }) },
+  window: {
+    getState: () => invoke(windowGetStateContract, { context: createContext() }),
+    subscribe: windowStateSubscription.subscribe,
+    exitFullScreen: () => invoke(windowExitFullScreenContract, { context: createContext() }),
+    close: async () => { await invoke(windowCloseContract, { context: createContext() }) },
+  },
 }
 
 contextBridge.exposeInMainWorld('pipilot', api)

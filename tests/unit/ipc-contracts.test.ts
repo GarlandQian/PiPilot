@@ -875,6 +875,7 @@ function darkSettingsForEvent() {
       fontSize: 13,
       defaultProfileId: null,
       profiles: [],
+      location: 'bottom',
     },
   }
 }

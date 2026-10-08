@@ -8,6 +8,7 @@ import {
   type usePiRuntime,
 } from '@/store/pi-rpc'
 import { conversationScopeKey, type useWorkspaceStore } from '@/store/workspace'
+import { sidebarConversationTitle } from '@/components/layout/session-navigation'
 
 interface SessionOpening {
   operationId: number
@@ -126,7 +127,7 @@ export function useSessionOpening({
       scopeKey: conversationScopeKey(item.summary.scope),
       selectionToken: item.summary.selectionToken,
       activation: null,
-      title: item.summary.name?.trim() || item.summary.preview.trim() || t('sidebar.session.untitled'),
+      title: sidebarConversationTitle(item.summary, t('sidebar.session.untitled')),
       error: null,
       hydration,
       resolveHydration,

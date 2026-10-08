@@ -177,6 +177,8 @@ export const piManagementModelsPayloadSchema = z
     defaultModel: z.string().min(1).max(256).optional(),
     settingsUpdated: z.boolean().optional(),
     test: modelsConfigTestResultSchema.optional(),
+    /** A one-off completion (for example a suggested commit message). */
+    completion: z.object({ text: z.string().max(16_000) }).strict().optional(),
   })
   .strict()
 
@@ -354,6 +356,15 @@ export const piManagementHelperCommandSchema = z.discriminatedUnion('action', [
     action: z.literal('set-default-model'),
     providerId: z.string().min(1).max(256),
     modelId: z.string().min(1).max(256),
+  }).strict(),
+  z.object({
+    ...piManagementHelperCommandBase,
+    action: z.literal('complete-text'),
+    providerId: z.string().min(1).max(256),
+    modelId: z.string().min(1).max(256),
+    systemPrompt: z.string().max(8_000),
+    prompt: z.string().min(1).max(64_000),
+    maxTokens: z.number().int().min(16).max(4_096),
   }).strict(),
   z.object({
     ...piManagementHelperCommandBase,

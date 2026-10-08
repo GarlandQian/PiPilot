@@ -55,6 +55,8 @@ import { registerAppProtocol, registerAppSchemePrivileges } from './security/app
 import { configureSessionSecurity } from './security/session-security'
 import { createApplicationUrlPolicy } from './security/url-policy'
 import { createMainWindow } from './windows/create-main-window'
+import { buildApplicationMenuTemplate } from './windows/application-menu'
+import { ipcChannels, type AppCommand } from '../shared/ipc/contracts'
 import { TerminalService } from './terminal/terminal-service'
 import { ProjectHostPool } from './pi-host/project-host-pool'
 import { PiHostController } from './pi-host/pi-host-controller'
@@ -254,6 +256,8 @@ const workspaceContentService = new WorkspaceContentService(
       ? workspaceRepository.getLocation(scope.workspaceId)
       : undefined
   },
+  // Looked up per call so the fixture trash in E2E replaces it.
+  { trashItem: (path) => shell.trashItem(path) },
 )
 const e2eTerminalShell = !app.isPackaged
   ? process.env.PIPILOT_E2E_TERMINAL_SHELL
@@ -262,6 +266,8 @@ const terminalService = new TerminalService(
   () => conversationNavigationRepository.get().activeScope,
   (scope) => conversationScopeResolver.prepare(scope),
   {
+    // Only available once the app is ready; terminals start after that.
+    systemLocale: () => app.getSystemLocale(),
     getTerminalSettings: () => settingsRepository.get().settings.terminal,
     ...(e2eTerminalShell ? {
         resolveShell: () => ({
@@ -440,6 +446,36 @@ function requestApplicationQuit() {
   app.quit()
 }
 
+let applicationMenuKey = ''
+
+function sendAppCommand(command: AppCommand) {
+  const window = mainWindow
+  if (window && !window.isDestroyed()) window.webContents.send(ipcChannels.appCommand, { command })
+}
+
+/** The native menu bar follows the in-app language and the window's full-screen state. */
+function updateApplicationMenu() {
+  const configuredLocale = settingsRepository.get().settings.locale
+  const locale = configuredLocale === 'system' ? app.getLocale() : configuredLocale
+  const fullScreen = Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFullScreen())
+  const key = `${locale}\0${fullScreen}`
+  if (key === applicationMenuKey) return
+  applicationMenuKey = key
+  Menu.setApplicationMenu(Menu.buildFromTemplate(buildApplicationMenuTemplate({
+    messages: locale.toLowerCase().startsWith('zh') ? zhCN : enUS,
+    appName: 'PiPilot',
+    platform: process.platform,
+    fullScreen,
+    development: !app.isPackaged,
+    issuesUrl: 'https://github.com/GarlandQian/PiPilot/issues',
+    onCommand(command) {
+      revealMainWindow()
+      sendAppCommand(command)
+    },
+    onOpenExternal(url) { void shell.openExternal(url) },
+  })))
+}
+
 function updateApplicationTrayMenu() {
   if (!applicationTray) return
   const configuredLocale = settingsRepository.get().settings.locale
@@ -507,6 +543,17 @@ async function openMainWindow() {
       const refreshNotificationPresentation = () => taskNotificationService?.refreshPresentation()
       window.on('focus', refreshNotificationPresentation)
       window.on('show', refreshNotificationPresentation)
+      // The renderer drops the traffic-light inset and offers an exit button in
+      // full screen, where macOS hides the window buttons until the top edge.
+      const sendWindowState = () => {
+        if (window.isDestroyed()) return
+        window.webContents.send(ipcChannels.windowStateChanged, {
+          focused: window.isFocused(), fullScreen: window.isFullScreen(), maximized: window.isMaximized(),
+        })
+        updateApplicationMenu()
+      }
+      window.on('enter-full-screen', sendWindowState)
+      window.on('leave-full-screen', sendWindowState)
       window.once('closed', () => {
         if (mainWindow === window) {
           clearNotificationPresentation()
@@ -547,6 +594,8 @@ if (!hasSingleInstanceLock) {
       }
       syncNativeTheme()
       settingsRepository.subscribe(syncNativeTheme)
+      updateApplicationMenu()
+      settingsRepository.subscribe(updateApplicationMenu)
       await workspaceRepository.initialize()
       conversationNavigationRepository.initialize()
       await observedPiSessionDirectories.initialize()
@@ -842,6 +891,10 @@ if (!hasSingleInstanceLock) {
         contextService: conversationContextService,
         terminalService,
         withRemovableProject: (id, operation) => projectWorkflowsService!.withRemovableProject(id, operation),
+        completeText: (input) => {
+          if (!piIntegrationService) throw new Error('Pi integrations are unavailable.')
+          return piIntegrationService.completeText(input)
+        },
       })
       const updateProvider = await createProductionApplicationUpdateProvider({
         packaged: app.isPackaged,

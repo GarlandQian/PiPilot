@@ -70,7 +70,7 @@ test('runs a saved schedule in the background, preserves history and never repla
     }) }, cwd)
     await page.getByRole('button', { name: 'Add project folder', exact: true }).click()
     await seed(page, 'Scheduled target')
-    await page.getByRole('button', { name: 'New session in scheduled-project', exact: true }).click()
+    await page.getByRole('button', { name: 'New task in scheduled-project', exact: true }).click()
     await seed(page, 'Foreground conversation')
     const foreground = await page.evaluate(() => window.pipilot!.localPi.runtime.status())
     await page.getByRole('button', { name: 'Settings', exact: true }).click()

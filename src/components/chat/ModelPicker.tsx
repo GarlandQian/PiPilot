@@ -1,24 +1,12 @@
 import * as React from 'react'
-import { TbBrain, TbCheck, TbLoader2, TbChevronDown } from 'react-icons/tb'
+import { TbCheck, TbChevronDown, TbLoader2 } from 'react-icons/tb'
 import { Button } from '@/components/ui/button'
-import { MarkdownContent } from './markdown/MarkdownContent'
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command'
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Slider } from '@/components/ui/slider'
 import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
-import { projectModelThinkingTrigger } from '@/renderer/composer/composer-controls'
+import { MarkdownContent } from './markdown/MarkdownContent'
+import { projectModelThinkingTrigger, projectReasoningSlider } from '@/renderer/composer/composer-controls'
 import { useConversationOperationFeedback } from '@/renderer/composer/use-operation-feedback'
 import type { LocalPiThinkingLevel } from '@/shared/local-pi'
 
@@ -41,6 +29,9 @@ interface ModelPickerProps {
   onThinkingSelect(level: LocalPiThinkingLevel): void | Promise<void>
 }
 
+/** Keyboard steps settle before Pi is asked to change, so ← → is not a burst of commands. */
+const KEYBOARD_COMMIT_DELAY_MS = 300
+
 function groupModels(models: readonly PiModelOption[]) {
   const groups = new Map<string, PiModelOption[]>()
   for (const model of models) {
@@ -57,6 +48,13 @@ function groupModels(models: readonly PiModelOption[]) {
     }))
 }
 
+const modelKey = (model: Pick<PiModelOption, 'provider' | 'id'>) => `${model.provider}\0${model.id}`
+
+/**
+ * One button for model and effort, as in Codex. Its panel lists the models
+ * and, below them, a slider over the reasoning levels the current model
+ * supports. Unlike Codex's power slider it never changes the model.
+ */
 export function ModelPicker({
   operationOwnerKey,
   models,
@@ -74,32 +72,101 @@ export function ModelPicker({
   const feedback = useConversationOperationFeedback(operationOwnerKey)
   const selecting = feedback.pending?.action ?? null
   const groups = React.useMemo(() => groupModels(models), [models])
-  const trigger = projectModelThinkingTrigger(
-    selected,
-    selectedThinkingLevel,
-    thinkingLevels,
-  )
+  const ordered = React.useMemo(() => groups.flatMap((group) => group.models), [groups])
+  const trigger = projectModelThinkingTrigger(selected, selectedThinkingLevel, thinkingLevels)
   const label = trigger.modelLabel ?? t('composer.noModel')
   const thinkingLabel = trigger.thinkingLevel
     ? t(`settings.models.thinking.${trigger.thinkingLevel}`)
     : null
+  const selectedKey = selected ? modelKey(selected) : ''
+  const unavailable = !connected || loading || groups.length === 0
+  const listRef = React.useRef<HTMLDivElement>(null)
+  const typeahead = React.useRef({ text: '', at: 0 })
+
+  // While dragging only the label follows; the level is applied on release.
+  const [draft, setDraft] = React.useState<number | null>(null)
+  const commitTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pointerDown = React.useRef(false)
+  const slider = projectReasoningSlider(thinkingLevels, selectedThinkingLevel)
+  const adjustable = connected && !loading && thinkingLevels.length > 1 && slider.index >= 0
+  const shownIndex = draft ?? slider.index
+  const shownLevel = thinkingLevels[shownIndex] ?? selectedThinkingLevel
+  const shownCostly = projectReasoningSlider(thinkingLevels, shownLevel ?? null).costly
+  React.useEffect(() => { setDraft(null) }, [selectedThinkingLevel, thinkingLevels])
+  React.useEffect(() => () => { if (commitTimer.current) clearTimeout(commitTimer.current) }, [])
 
   const choose = React.useCallback(async (model: PiModelOption) => {
-    const key = `${model.provider}\0${model.id}`
     if (!connected || loading || selecting) return
-    await feedback.run(key, async (isCurrent) => {
+    if (modelKey(model) === selectedKey) {
+      setOpen(false)
+      return
+    }
+    await feedback.run(modelKey(model), async (isCurrent) => {
       await onSelect(model.provider, model.id)
       if (isCurrent()) setOpen(false)
     }, t('composer.modelActionFailed'))
-  }, [connected, feedback.run, loading, onSelect, selecting, t])
+  }, [connected, feedback.run, loading, onSelect, selectedKey, selecting, t])
 
+  // A level chosen while another is still applying waits its turn.
+  const queuedLevel = React.useRef<LocalPiThinkingLevel | null>(null)
   const chooseThinking = React.useCallback(async (level: LocalPiThinkingLevel) => {
-    if (!connected || loading || selecting || level === selectedThinkingLevel) return
-    await feedback.run(`thinking\0${level}`, async (isCurrent) => {
+    if (!connected || loading) return
+    if (selecting) {
+      queuedLevel.current = level
+      return
+    }
+    if (level === selectedThinkingLevel) {
+      setDraft(null)
+      return
+    }
+    // The panel stays open so the level can be tuned further.
+    const applied = await feedback.run(`thinking\0${level}`, async () => {
       await onThinkingSelect(level)
-      if (isCurrent()) setOpen(false)
     }, t('composer.modelActionFailed'))
+    if (!applied) setDraft(null)
   }, [connected, feedback.run, loading, onThinkingSelect, selectedThinkingLevel, selecting, t])
+  React.useEffect(() => {
+    if (selecting || !queuedLevel.current) return
+    const level = queuedLevel.current
+    queuedLevel.current = null
+    void chooseThinking(level)
+  }, [chooseThinking, selecting])
+
+  const commit = (index: number, delay: number) => {
+    if (commitTimer.current) clearTimeout(commitTimer.current)
+    const level = thinkingLevels[index]
+    if (!level) return
+    commitTimer.current = setTimeout(() => {
+      commitTimer.current = null
+      void chooseThinking(level)
+    }, delay)
+  }
+
+  const options = () => [...(listRef.current?.querySelectorAll<HTMLElement>('[role="option"]:not([aria-disabled="true"])') ?? [])]
+  const focusOption = (target: HTMLElement | undefined) => {
+    if (!target) return
+    for (const option of options()) option.tabIndex = option === target ? 0 : -1
+    target.focus()
+    target.scrollIntoView({ block: 'nearest' })
+  }
+  const onListKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const all = options()
+    const index = all.indexOf(document.activeElement as HTMLElement)
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      focusOption(all[Math.min(all.length - 1, Math.max(0, index + (event.key === 'ArrowDown' ? 1 : -1)))])
+    } else if (event.key === 'Home' || event.key === 'End') {
+      event.preventDefault()
+      focusOption(event.key === 'Home' ? all[0] : all[all.length - 1])
+    } else if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey && event.key !== ' ') {
+      // Type a name's first letters to jump to it, like a native list.
+      const now = Date.now()
+      const text = (now - typeahead.current.at < 600 ? typeahead.current.text : '') + event.key.toLowerCase()
+      typeahead.current = { text, at: now }
+      const match = all.find((option) => option.dataset.name?.toLowerCase().startsWith(text))
+      if (match) focusOption(match)
+    }
+  }
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -108,22 +175,17 @@ export function ModelPicker({
           variant="ghost"
           size="sm"
           // Borderless until hovered, so it reads as a setting, not a second action.
-          className="h-[30px] min-w-0 max-w-72 shrink gap-1 rounded-full px-2.5 text-caption font-medium text-foreground/75 hover:bg-fill-strong hover:text-foreground data-[state=open]:bg-fill-strong data-[state=open]:text-foreground"
+          className="h-[30px] min-w-0 max-w-72 shrink gap-1.5 px-2.5 text-caption font-medium"
           data-model-thinking-trigger
           aria-label={thinkingLabel
-            ? t('composer.modelThinkingSwitcher', {
-                model: label,
-                thinking: thinkingLabel,
-              })
+            ? t('composer.modelThinkingSwitcher', { model: label, thinking: thinkingLabel })
             : t('composer.modelSwitcher', { model: label })}
         >
           <span className="truncate">{label}</span>
           {thinkingLabel ? (
-            // In a narrow composer the thinking level goes first, then the name truncates.
-            <span className="flex min-w-0 shrink-[2] items-center gap-1 @max-md:hidden">
-              <span className="shrink-0 text-muted-foreground" aria-hidden>·</span>
-              <span className="min-w-0 truncate text-muted-foreground">{thinkingLabel}</span>
-            </span>
+            // Codex-style "model effort". In a narrow composer the effort goes
+            // first, then the model name truncates.
+            <span className="min-w-0 shrink-[2] truncate text-muted-foreground @max-md:hidden">{thinkingLabel}</span>
           ) : null}
           {selecting
             ? <TbLoader2 className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" aria-hidden />
@@ -135,101 +197,140 @@ export function ModelPicker({
         align="end"
         sideOffset={8}
         collisionPadding={12}
-        className="w-[min(360px,calc(100vw-24px))] max-h-[min(440px,calc(100vh-96px))] overflow-hidden p-0"
+        aria-label={t('composer.modelPanel')}
+        aria-busy={Boolean(selecting)}
+        className="flex w-[min(300px,calc(100vw-24px))] max-h-[min(480px,calc(100vh-96px))] flex-col gap-0 overflow-hidden p-[6px]"
+        onOpenAutoFocus={(event) => {
+          event.preventDefault()
+          const current = listRef.current?.querySelector<HTMLElement>('[role="option"][aria-selected="true"]')
+          focusOption(current ?? options()[0])
+        }}
       >
-        <Command className="max-h-[min(440px,calc(100vh-96px))]" loop aria-busy={Boolean(selecting)}>
-          <CommandInput placeholder={t('composer.modelSearch')} aria-label={t('composer.modelSearch')} />
-          <CommandList className="max-h-[min(352px,calc(100vh-184px))]">
-            <CommandEmpty>{t('composer.modelThinkingEmpty')}</CommandEmpty>
-            {selectedThinkingLevel && thinkingLevels.length > 1 ? (
-              <CommandGroup
-                heading={t('settings.models.thinkingTitle')}
-                className="border-b border-border [&_[cmdk-group-items]]:flex [&_[cmdk-group-items]]:flex-wrap [&_[cmdk-group-items]]:gap-1"
-              >
-                {thinkingLevels.map((level) => {
-                  const active = level === selectedThinkingLevel
-                  const pending = selecting === `thinking\0${level}`
+        {unavailable ? (
+          <p className="px-2.5 py-2 text-caption text-muted-foreground">
+            {!connected
+              ? t('composer.modelDisconnected')
+              : loading
+                ? t('settings.models.loading')
+                : t('composer.modelEmpty')}
+          </p>
+        ) : (
+          <div
+            ref={listRef}
+            role="listbox"
+            aria-label={t('composer.models')}
+            onKeyDown={onListKeyDown}
+            className="scroll-slim min-h-0 flex-1 overflow-y-auto"
+          >
+            {groups.map((group) => (
+              <div key={group.provider} role="group" aria-label={group.provider}>
+                {groups.length > 1 ? <p aria-hidden className="px-2.5 pt-1.5 pb-0.5 text-micro font-semibold text-muted-foreground">{group.provider}</p> : null}
+                {group.models.map((model) => {
+                  const key = modelKey(model)
+                  const active = key === selectedKey
+                  const disabled = Boolean(selecting)
                   return (
-                    <CommandItem
-                      key={level}
-                      value={`thinking reasoning ${t(`settings.models.thinking.${level}`)} ${level}`}
-                      disabled={!connected || loading || Boolean(selecting)}
-                      onSelect={() => void chooseThinking(level)}
-                      className="min-h-8 gap-1.5 px-2"
+                    <div
+                      key={key}
+                      role="option"
+                      aria-selected={active}
+                      aria-disabled={disabled || undefined}
+                      tabIndex={active || (!selectedKey && model === ordered[0]) ? 0 : -1}
+                      data-name={model.name || model.id}
+                      title={`${model.provider} / ${model.id}`}
+                      onClick={() => { if (!disabled) void choose(model) }}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          if (!disabled) void choose(model)
+                        }
+                      }}
+                      className={cn(
+                        'relative flex min-h-[26px] cursor-default items-center gap-2 rounded-[8px] py-[3px] pr-2.5 pl-7 text-app leading-tight outline-none select-none',
+                        'hover:bg-fill focus-visible:bg-primary focus-visible:text-primary-foreground focus-visible:[&_.text-muted-foreground]:text-primary-foreground/80',
+                        disabled && 'opacity-40',
+                      )}
                     >
-                      <TbBrain className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-                      <span className="min-w-0 flex-1 truncate text-caption">
-                        {t(`settings.models.thinking.${level}`)}
-                      </span>
-                      {pending
-                        ? <TbLoader2 className="size-4 animate-spin motion-reduce:animate-none" aria-hidden />
-                        : <TbCheck className={cn('size-3.5 shrink-0', active ? 'opacity-100' : 'opacity-0')} aria-hidden />}
-                    </CommandItem>
+                      {active ? <TbCheck className="absolute left-2 size-3.5 stroke-[2.6]" aria-hidden /> : null}
+                      <span className="min-w-0 flex-1 truncate">{model.name || model.id}</span>
+                      {selecting === key
+                        ? <TbLoader2 className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden />
+                        : groups.length === 1 ? <span className="shrink-0 text-micro text-muted-foreground">{model.provider}</span> : null}
+                    </div>
                   )
                 })}
-              </CommandGroup>
-            ) : null}
-            {!connected || loading || groups.length === 0 ? (
-              <CommandGroup heading={t('composer.models')}>
-                <p className="px-2 py-3 text-caption text-muted-foreground">
-                  {!connected
-                    ? t('composer.modelDisconnected')
-                    : loading
-                      ? t('settings.models.loading')
-                      : t('composer.modelEmpty')}
-                </p>
-              </CommandGroup>
-            ) : groups.map((group) => (
-                <CommandGroup key={group.provider} heading={group.provider}>
-                  {group.models.map((model) => {
-                    const key = `${model.provider}\0${model.id}`
-                    const active = selected?.provider === model.provider &&
-                      selected.id === model.id
-                    return (
-                      <CommandItem
-                        key={key}
-                        value={`${model.name} ${model.id} ${model.provider}`}
-                        disabled={!connected || loading || Boolean(selecting)}
-                        onSelect={() => void choose(model)}
-                        className="min-w-0 items-start py-2"
-                      >
-                        {selecting === key ? (
-                          <TbLoader2 className="mt-0.5 size-4 shrink-0 animate-spin motion-reduce:animate-none" aria-hidden />
-                        ) : (
-                          <TbCheck className={cn('mt-0.5 size-4 shrink-0', active ? 'opacity-100' : 'opacity-0')} aria-hidden />
-                        )}
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate text-caption font-medium">
-                                {model.name || model.id}
-                              </span>
-                              <span className="block truncate font-mono text-micro text-muted-foreground">
-                                {model.provider} / {model.id}
-                              </span>
-                            </span>
-                          </TooltipTrigger>
-                          <TooltipContent side="left" className="max-w-80 break-all">
-                            {model.provider} / {model.id}
-                          </TooltipContent>
-                        </Tooltip>
-                      </CommandItem>
-                    )
-                  })}
-                </CommandGroup>
-              ))}
-          </CommandList>
-          {selecting ? (
-            <p className="border-t border-border px-3 py-2 text-caption text-muted-foreground" role="status">
-              {t('composer.actionPending')}
-            </p>
-          ) : null}
-          {(feedback.error || error) && (
-            <div className="border-t border-border px-3 py-2 text-caption text-destructive [&_.md-body]:text-caption [&_.md-body]:text-destructive" role="alert" data-model-action-error>
-              <MarkdownContent markdown={feedback.error || error || ''} />
+              </div>
+            ))}
+          </div>
+        )}
+
+        {!unavailable && selected ? (
+          <section aria-labelledby="model-reasoning-title" data-model-reasoning className="mt-[5px] shrink-0 border-t border-border px-2.5 pt-2.5 pb-1.5">
+            <div className="mb-2 flex items-baseline gap-2">
+              <span id="model-reasoning-title" className="min-w-0 flex-1 text-caption font-medium">{t('composer.reasoning')}</span>
+              {adjustable ? <span className="text-caption font-semibold text-primary" data-model-reasoning-value>{t(`settings.models.thinking.${shownLevel!}`)}</span> : null}
             </div>
-          )}
-        </Command>
+            {adjustable ? (
+              <>
+                <div className="flex items-start gap-2.5">
+                  {/* Named steps already say which way is which. */}
+                  {slider.labelEachStop ? null : <span aria-hidden className="shrink-0 pt-[3px] text-micro text-muted-foreground">{t('composer.reasoningFaster')}</span>}
+                  <div className="min-w-0 flex-1">
+                    <Slider
+                      min={0}
+                      max={thinkingLevels.length - 1}
+                      step={1}
+                      value={[shownIndex]}
+                      ticks={thinkingLevels.length}
+                      // Only a model switch blocks it; a level change in flight queues the next.
+                      disabled={Boolean(selecting) && !selecting?.startsWith('thinking')}
+                      thumbLabel={t('composer.reasoning')}
+                      thumbValueText={shownLevel ? t(`settings.models.thinking.${shownLevel}`) : undefined}
+                      onPointerDown={() => { pointerDown.current = true }}
+                      onValueChange={([value]) => { if (value !== undefined) setDraft(value) }}
+                      onValueCommit={([value]) => {
+                        if (value === undefined) return
+                        // Release applies at once; arrow keys wait for the steps to settle.
+                        commit(value, pointerDown.current ? 0 : KEYBOARD_COMMIT_DELAY_MS)
+                        pointerDown.current = false
+                      }}
+                    />
+                    {slider.labelEachStop ? (
+                      // Each mark's name sits under it, over the knob's travel.
+                      <div aria-hidden className="relative mx-[10px] mt-0.5 h-4">
+                        {thinkingLevels.map((level, index) => (
+                          <span
+                            key={level}
+                            className={cn('absolute -translate-x-1/2 text-micro whitespace-nowrap', index === shownIndex ? 'font-medium text-foreground' : 'text-muted-foreground')}
+                            style={{ left: `${(index / (thinkingLevels.length - 1)) * 100}%` }}
+                          >
+                            {t(`settings.models.thinking.${level}`)}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                  {/* Named steps already say which way is which. */}
+                  {slider.labelEachStop ? null : <span aria-hidden className="shrink-0 pt-[3px] text-micro text-muted-foreground">{t('composer.reasoningDeeper')}</span>}
+                </div>
+                {shownCostly ? <p className="mt-1.5 text-micro text-muted-foreground" data-model-reasoning-cost>{t('composer.reasoningCostly')}</p> : null}
+              </>
+            ) : (
+              <p className="text-micro text-muted-foreground">{t('composer.reasoningUnsupported')}</p>
+            )}
+          </section>
+        ) : null}
+
+        {selecting ? (
+          <p className="px-2.5 pt-1.5 pb-1 text-micro text-muted-foreground" role="status">
+            {t('composer.actionPending')}
+          </p>
+        ) : null}
+        {feedback.error || error ? (
+          <div className="mx-1 mt-1 rounded-[8px] bg-destructive/10 px-2 py-1.5 text-caption text-destructive [&_.md-body]:text-caption [&_.md-body]:text-destructive" role="alert" data-model-action-error>
+            <MarkdownContent markdown={feedback.error || error || ''} />
+          </div>
+        ) : null}
       </PopoverContent>
     </Popover>
   )

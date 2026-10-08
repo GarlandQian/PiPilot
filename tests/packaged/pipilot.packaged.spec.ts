@@ -645,7 +645,7 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
     })
     await projectActions.focus()
     await page.keyboard.press('Enter')
-    await page.getByRole('menuitem', { name: 'New session', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'New task', exact: true }).click()
     await expect.poll(
       () => page!.evaluate(() => window.pipilot!.conversation.get()),
       PACKAGED_RUNTIME_POLL_OPTIONS,
@@ -716,9 +716,9 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
     await expect(integrationsMain.getByRole('button', {
       name: /packaged-fixture-package/iu,
     }).first()).toBeVisible()
-    await page.getByRole('button', { name: 'Sessions', exact: true }).click()
+    await page.getByRole('button', { name: 'Back to app', exact: true }).click()
 
-    await page.getByRole('button', { name: 'New general chat', exact: true }).click()
+    await page.getByRole('button', { name: 'New chat', exact: true }).click()
     await expect.poll(
       () => page!.evaluate(() => window.pipilot!.conversation.get()),
       PACKAGED_RUNTIME_POLL_OPTIONS,
@@ -736,7 +736,7 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
     await projectActions.focus()
     await page.keyboard.press('Enter')
     const newSessionItem = page.getByRole('menuitem', {
-      name: 'New session',
+      name: 'New task',
       exact: true,
     })
     await expect(newSessionItem).toBeVisible()

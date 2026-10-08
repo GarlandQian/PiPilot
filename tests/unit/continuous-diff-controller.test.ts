@@ -1,3 +1,4 @@
+import type { WorkspaceChangeStage } from '../../src/shared/workspace-content'
 import { describe, expect, it, vi } from 'vitest'
 import {
   CONTINUOUS_DIFF_MAX_CONCURRENT_READS,
@@ -11,7 +12,7 @@ import type {
 
 const workspaceId = '11111111-1111-4111-8111-111111111111'
 
-function summary(path: string, binary = false, stage: 'staged' | 'unstaged' = 'unstaged'): WorkspaceChangeSummary {
+function summary(path: string, binary = false, stage: WorkspaceChangeStage = 'unstaged'): WorkspaceChangeSummary {
   return {
     id: `${stage}:${path}`,
     stage,
@@ -245,7 +246,7 @@ describe('continuous diff controller', () => {
   })
 
   it('keeps staged and unstaged versions of one path independent and defers hidden diff reads', async () => {
-    const read = vi.fn(async (path: string, stage: 'staged' | 'unstaged') => ({ ...file(path, stage), ...summary(path, false, stage) }))
+    const read = vi.fn(async (path: string, stage: WorkspaceChangeStage) => ({ ...file(path, stage), ...summary(path, false, stage) }))
     const controller = new ContinuousDiffController(read)
     const snapshot = { ...list([]), files: [summary('same.ts', false, 'staged'), summary('same.ts')] }
     controller.resolveList(controller.beginListLoad(), snapshot, false)

@@ -5,6 +5,7 @@ import type {
 import type { LocalPiRuntimeSessionStatus } from '@/shared/local-pi'
 import type { Session } from '@/types/chat'
 import type { AgentStatus } from '@/types/chat'
+import { sidebarConversationTitle } from '@/components/layout/session-navigation'
 
 export const SESSION_PAGE_SIZE = 50
 
@@ -52,7 +53,7 @@ export function deriveOfficialSessionState(
   const sessions = source
     .map((session): Session => ({
       id: session.sessionId,
-      title: session.name ?? session.preview,
+      title: sidebarConversationTitle(session),
       repo: scopeName,
       updatedAt: Date.parse(session.modifiedAt),
       selectionToken: session.selectionToken,

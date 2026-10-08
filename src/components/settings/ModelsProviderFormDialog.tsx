@@ -42,8 +42,7 @@ const GOOGLE_AI_STUDIO_BASE_URL = 'https://generativelanguage.googleapis.com/v1b
 interface ModelsProviderFormDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  mode: 'add' | 'edit'
-  /** Initial field values for edit mode; ignored in add mode. */
+  /** The provider being edited (adding goes through the one-step Add model sheet). */
   initial?: ProviderFormValue
   /** Whether the edited provider currently stores an apiKey. */
   hasApiKey?: boolean
@@ -51,6 +50,8 @@ interface ModelsProviderFormDialogProps {
   existingIds: readonly string[]
   /** Called with the form value only when every field is valid. */
   onSubmit: (value: ProviderFormValue) => boolean | void
+  /** The button (not the Quit transaction) submitted it: save and apply. */
+  onSaved?: () => void
 }
 
 const DEFAULT_VALUE: ProviderFormValue = {
@@ -77,11 +78,11 @@ type ErrorField = keyof FormErrors
 export function ModelsProviderFormDialog({
   open,
   onOpenChange,
-  mode,
   initial,
   hasApiKey = false,
   existingIds,
   onSubmit,
+  onSaved,
 }: ModelsProviderFormDialogProps) {
   const t = useT()
   const [draft, setDraft] = React.useState<ProviderFormValue>(() => cloneValue(DEFAULT_VALUE))
@@ -128,7 +129,7 @@ export function ModelsProviderFormDialog({
       next.id = t('settings.models.form.idRequired')
     } else {
       const lowered = id.toLowerCase()
-      const own = mode === 'edit' ? initial?.id.trim().toLowerCase() : undefined
+      const own = initial?.id.trim().toLowerCase()
       if (
         existingIds.some((existing) => {
           const candidate = existing.trim().toLowerCase()
@@ -142,7 +143,7 @@ export function ModelsProviderFormDialog({
       next.headers = t('settings.models.form.kvEmptyKey')
     }
     return next
-  }, [draft, existingIds, initial, mode, t])
+  }, [draft, existingIds, initial, t])
 
   const showError = (field: ErrorField) => submitAttempted || touched[field] === true
   const isDirty = JSON.stringify(draft) !== baseline
@@ -186,17 +187,13 @@ export function ModelsProviderFormDialog({
       <FormDialog
         open={open}
         onOpenChange={requestOpenChange}
-        title={t(mode === 'add'
-          ? 'settings.models.form.titleAddProvider'
-          : 'settings.models.form.titleEditProvider')}
+        title={t('settings.models.form.titleEditProvider')}
         description={t('settings.models.form.providerIntro')}
         className="sm:max-w-[680px]"
         bodyClassName="py-6"
         cancelLabel={t('common.cancel')}
-        submitLabel={t(mode === 'add'
-          ? 'settings.models.form.submitAdd'
-          : 'settings.models.form.submitEdit')}
-        onSubmit={() => { handleSubmit() }}
+        submitLabel={t('settings.models.form.submitEdit')}
+        onSubmit={() => { if (handleSubmit()) onSaved?.() }}
         disabled={shutdownLocked}
       >
         <div className="flex flex-col gap-6">
@@ -206,11 +203,11 @@ export function ModelsProviderFormDialog({
             label={<span>{t('settings.models.form.id')}{requiredMark}</span>}
             htmlFor={idId}
             error={showError('id') ? errors.id : undefined}
-            hint={mode === 'add' ? t('settings.models.form.idPlaceholder') : undefined}
+
           >
             <Input
               id={idId}
-              aria-describedby={mode === 'add' || (showError('id') && errors.id) ? `${idId}-feedback` : undefined}
+              aria-describedby={showError('id') && errors.id ? `${idId}-feedback` : undefined}
               value={draft.id}
               aria-invalid={(showError('id') && errors.id !== undefined) || undefined}
               className="font-mono"
@@ -294,7 +291,7 @@ export function ModelsProviderFormDialog({
               aria-describedby={`${apiKeyId}-feedback`}
               type="password"
               value={draft.apiKeyDraft}
-              placeholder={t(mode === 'edit' && hasApiKey
+              placeholder={t(hasApiKey
                 ? 'settings.models.form.apiKeyPlaceholderEdit'
                 : 'settings.models.form.apiKeyPlaceholderAdd')}
               autoComplete="off"
@@ -302,7 +299,7 @@ export function ModelsProviderFormDialog({
               className="font-mono"
               onChange={(event) => update({ apiKeyDraft: event.target.value })}
             />
-            {mode === 'edit' && hasApiKey ? (
+            {hasApiKey ? (
               <div className="flex items-center gap-2 pt-1">
                 <Checkbox
                   id={clearKeyId}

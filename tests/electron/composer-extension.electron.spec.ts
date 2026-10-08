@@ -275,6 +275,10 @@ test('uses one keyboard-safe Composer picker and middle-column extension surface
     await notificationButton.click()
     await expectInsideConversationColumn(page, widgetActivity)
 
+    // A new conversation has no tabs, so its side panel starts put away (Codex).
+    await page.getByRole('button', { name: 'Expand panel', exact: true }).click()
+    await expect(page.locator('[data-panel-dock="right"] [data-panel-launcher]')).toBeVisible()
+    await expectInsideConversationColumn(page, widgetActivity)
     const resizeHandle = page.getByRole('separator', {
       name: 'Resize inspector: arrow keys to adjust, double-click to reset',
     })
@@ -321,8 +325,8 @@ test('uses one keyboard-safe Composer picker and middle-column extension surface
 
     await composer.fill('/mcp')
     await page.getByRole('button', { name: 'Send', exact: true }).click()
-    await expect(page.getByRole('button', { name: 'Settings', exact: true }))
-      .toHaveAttribute('aria-current', 'page')
+    // Settings opened (the sidebar is hidden here, so the title bar leads back).
+    await expect(page.getByRole('button', { name: 'Back to app', exact: true })).toBeVisible()
     await expect(page.getByRole('tab', { name: 'MCP', exact: true }))
       .toHaveAttribute('aria-selected', 'true')
   } finally {

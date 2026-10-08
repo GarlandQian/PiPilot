@@ -20,8 +20,10 @@ import {
   modelsConfigSnapshotSchema,
   modelsConfigTargetSchema,
   modelsConfigTestResultSchema,
+  modelsRemoteListResultSchema,
 } from '../models-config'
 import type { AppSettings, AppSettingsPatch } from '../settings'
+import { externalEditorListSchema, externalEditorSchema } from '../external-editors'
 import {
   workspaceChangedEventSchema,
   workspaceChooseResultSchema,
@@ -32,7 +34,19 @@ import {
   type WorkspaceSnapshot,
 } from '../schemas/workspace'
 import {
+  WORKSPACE_EXISTS_PATH_LIMIT,
+  workspaceCommitDiffSnapshotSchema,
+  workspaceCommitListSchema,
+  workspaceCommitRequestSchema,
+  workspaceCommitResultSchema,
+  workspaceCommitShaSchema,
+  workspaceDiffSidesSchema,
+  workspaceExistingFilesSchema,
+  workspaceFileMediaSchema,
+  workspaceGitStatusSchema,
+  workspaceBranchDiffSnapshotSchema,
   workspaceChangeStageSchema,
+  workspaceWorkingStageSchema,
   workspaceDiffFileSchema,
   workspaceDiffSnapshotSchema,
   workspaceDirectorySnapshotSchema,
@@ -141,6 +155,7 @@ export const ipcChannels = {
   modelsConfigSaveAndRestart: 'pipilot:models:saveAndRestart',
   modelsConfigSetDefault: 'pipilot:models:setDefault',
   modelsConfigTest: 'pipilot:models:test',
+  modelsConfigListRemote: 'pipilot:models:list-remote',
   modelsConfigGetDefaults: 'pipilot:models:getDefaults',
   sessionCatalogDelete: 'pipilot:session-catalog:delete',
   sessionCatalogList: 'pipilot:session-catalog:list',
@@ -168,14 +183,33 @@ export const ipcChannels = {
   workspaceChoose: 'pipilot:workspace:choose',
   workspaceDiffList: 'pipilot:workspace-diff:list',
   workspaceDiffRead: 'pipilot:workspace-diff:read',
+  workspaceDiffApply: 'pipilot:workspace-diff:apply',
+  workspaceDiffApplyHunk: 'pipilot:workspace-diff:apply-hunk',
+  workspaceDiffListBranch: 'pipilot:workspace-diff:list-branch',
   workspaceFilePreview: 'pipilot:workspace-file:preview',
+  workspaceFileMedia: 'pipilot:workspace-file:media',
+  workspaceFileReveal: 'pipilot:workspace-file:reveal',
+  workspaceFilesExist: 'pipilot:workspace-files:exist',
+  workspaceDiffListCommits: 'pipilot:workspace-diff:list-commits',
+  workspaceDiffListCommit: 'pipilot:workspace-diff:list-commit',
+  workspaceDiffSides: 'pipilot:workspace-diff:sides',
+  workspaceGitStatus: 'pipilot:workspace-git:status',
+  workspaceGitCommit: 'pipilot:workspace-git:commit',
+  workspaceGitSuggestMessage: 'pipilot:workspace-git:suggest-message',
+  editorsList: 'pipilot:editors:list',
+  editorsOpen: 'pipilot:editors:open',
   workspaceFilesList: 'pipilot:workspace-files:list',
   workspaceFilesSearch: 'pipilot:workspace-files:search',
   workspaceGet: 'pipilot:workspace:get',
   workspaceOpen: 'pipilot:workspace:open',
   workspaceRemove: 'pipilot:workspace:remove',
   workspaceSetPinned: 'pipilot:workspace:set-pinned',
+  workspaceReveal: 'pipilot:workspace:reveal',
   windowGetState: 'pipilot:window:get-state',
+  windowStateChanged: 'pipilot:window:state-changed',
+  windowExitFullScreen: 'pipilot:window:exit-full-screen',
+  windowClose: 'pipilot:window:close',
+  appCommand: 'pipilot:app:command',
 } as const
 
 export type IpcChannel = (typeof ipcChannels)[keyof typeof ipcChannels]
@@ -278,6 +312,11 @@ export const windowSnapshotSchema = z.object({
 }).strict()
 export type WindowSnapshot = z.infer<typeof windowSnapshotSchema>
 
+/** Application-menu items whose action lives in the renderer. */
+export const appCommandSchema = z.enum(['new-task', 'new-chat', 'import-conversation', 'open-settings', 'close-tab'])
+export type AppCommand = z.infer<typeof appCommandSchema>
+export const appCommandEventSchema = z.object({ command: appCommandSchema }).strict()
+
 export const openExternalResponseSchema = z.object({ opened: z.literal(true) }).strict()
 export type OpenExternalResponse = z.infer<typeof openExternalResponseSchema>
 
@@ -347,6 +386,9 @@ export const externalControlLauncherUninstallContract = defineIpcContract(
   externalControlLauncherSnapshotSchema,
 )
 export const windowGetStateContract = defineIpcContract(ipcChannels.windowGetState, z.object(requestFields).strict(), windowSnapshotSchema)
+export const windowExitFullScreenContract = defineIpcContract(ipcChannels.windowExitFullScreen, z.object(requestFields).strict(), windowSnapshotSchema)
+/** ⌘W with no tab left to close closes the window, as the menu item used to. */
+export const windowCloseContract = defineIpcContract(ipcChannels.windowClose, z.object(requestFields).strict(), z.object({ closed: z.boolean() }).strict())
 export const settingsGetContract = defineIpcContract(ipcChannels.settingsGet, z.object(requestFields).strict(), settingsSnapshotSchema)
 export const settingsUpdateContract = defineIpcContract(
   ipcChannels.settingsUpdate,
@@ -511,6 +553,17 @@ export const modelsConfigTestContract = defineIpcContract(
   }).strict(),
   modelsConfigTestResultSchema,
 )
+/** Lists an endpoint's models with the key being entered; nothing is saved. */
+export const modelsConfigListRemoteContract = defineIpcContract(
+  ipcChannels.modelsConfigListRemote,
+  z.object({
+    ...requestFields,
+    baseUrl: z.string().min(1).max(2_048),
+    api: z.string().min(1).max(64),
+    apiKey: z.string().max(8_192).optional(),
+  }).strict(),
+  modelsRemoteListResultSchema,
+)
 export const modelsConfigGetDefaultsContract = defineIpcContract(ipcChannels.modelsConfigGetDefaults, z.object({ ...requestFields, target: modelsConfigTargetSchema }).strict(), modelsConfigDefaultsSchema)
 
 export const workspaceGetContract = defineIpcContract(ipcChannels.workspaceGet, z.object(requestFields).strict(), workspaceSnapshotSchema)
@@ -536,13 +589,60 @@ export const workspaceRemoveResultSchema = z.discriminatedUnion('activeRemoved',
 export type WorkspaceRemoveResult = z.infer<typeof workspaceRemoveResultSchema>
 export const workspaceRemoveContract = defineIpcContract(ipcChannels.workspaceRemove, z.object({ ...requestFields, workspaceId: workspaceIdSchema }).strict(), workspaceRemoveResultSchema)
 export const workspaceSetPinnedContract = defineIpcContract(ipcChannels.workspaceSetPinned, z.object({ ...requestFields, workspaceId: workspaceIdSchema, pinned: z.boolean() }).strict(), workspacePinnedResultSchema)
+/** Shows a project folder in Finder / File Explorer; main resolves the path from the ID. */
+export const workspaceRevealContract = defineIpcContract(ipcChannels.workspaceReveal, z.object({ ...requestFields, workspaceId: workspaceIdSchema }).strict(), z.object({ workspaceId: workspaceIdSchema }).strict())
 
 const workspaceContentRequestFields = { ...requestFields, workspaceId: workspaceIdSchema }
 export const workspaceFilesListContract = defineIpcContract(ipcChannels.workspaceFilesList, z.object({ ...workspaceContentRequestFields, path: workspaceRelativePathSchema }).strict(), workspaceDirectorySnapshotSchema)
 export const workspaceFilePreviewContract = defineIpcContract(ipcChannels.workspaceFilePreview, z.object({ ...workspaceContentRequestFields, path: workspaceRelativePathSchema }).strict(), workspaceFilePreviewSchema)
 export const workspaceFilesSearchContract = defineIpcContract(ipcChannels.workspaceFilesSearch, z.object({ ...workspaceContentRequestFields, query: z.string().max(512) }).strict(), workspacePathSearchResultSchema)
 export const workspaceDiffListContract = defineIpcContract(ipcChannels.workspaceDiffList, z.object(workspaceContentRequestFields).strict(), workspaceDiffSnapshotSchema)
-export const workspaceDiffReadContract = defineIpcContract(ipcChannels.workspaceDiffRead, z.object({ ...workspaceContentRequestFields, path: workspaceRelativePathSchema, stage: workspaceChangeStageSchema.default('unstaged') }).strict(), workspaceDiffFileSchema)
+export const workspaceDiffListBranchContract = defineIpcContract(ipcChannels.workspaceDiffListBranch, z.object(workspaceContentRequestFields).strict(), workspaceBranchDiffSnapshotSchema)
+export const workspaceDiffReadContract = defineIpcContract(ipcChannels.workspaceDiffRead, z.object({ ...workspaceContentRequestFields, path: workspaceRelativePathSchema, stage: workspaceChangeStageSchema.default('unstaged'), commit: workspaceCommitShaSchema.optional() }).strict(), workspaceDiffFileSchema)
+export const workspaceFileMediaContract = defineIpcContract(ipcChannels.workspaceFileMedia, z.object({ ...workspaceContentRequestFields, path: workspaceRelativePathSchema }).strict(), workspaceFileMediaSchema)
+/** Shows one project file in Finder / File Explorer. */
+export const workspaceFileRevealContract = defineIpcContract(ipcChannels.workspaceFileReveal, z.object({ ...workspaceContentRequestFields, path: workspaceRelativePathSchema }).strict(), z.object({ workspaceId: workspaceIdSchema }).strict())
+export const workspaceFilesExistContract = defineIpcContract(ipcChannels.workspaceFilesExist, z.object({ ...workspaceContentRequestFields, paths: z.array(workspaceRelativePathSchema).max(WORKSPACE_EXISTS_PATH_LIMIT) }).strict(), workspaceExistingFilesSchema)
+export const workspaceDiffListCommitsContract = defineIpcContract(ipcChannels.workspaceDiffListCommits, z.object(workspaceContentRequestFields).strict(), workspaceCommitListSchema)
+export const workspaceDiffListCommitContract = defineIpcContract(ipcChannels.workspaceDiffListCommit, z.object({ ...workspaceContentRequestFields, commit: workspaceCommitShaSchema }).strict(), workspaceCommitDiffSnapshotSchema)
+export const workspaceDiffSidesContract = defineIpcContract(ipcChannels.workspaceDiffSides, z.object({
+  ...workspaceContentRequestFields,
+  path: workspaceRelativePathSchema,
+  previousPath: workspaceRelativePathSchema.optional(),
+  stage: workspaceChangeStageSchema,
+  commit: workspaceCommitShaSchema.optional(),
+}).strict(), workspaceDiffSidesSchema)
+export const workspaceGitStatusContract = defineIpcContract(ipcChannels.workspaceGitStatus, z.object(workspaceContentRequestFields).strict(), workspaceGitStatusSchema)
+export const editorsListContract = defineIpcContract(ipcChannels.editorsList, z.object(requestFields).strict(), externalEditorListSchema)
+/** Open the project (no path) or one of its files, at a line, in an external app. */
+export const editorsOpenContract = defineIpcContract(ipcChannels.editorsOpen, z.object({
+  ...workspaceContentRequestFields,
+  editorId: externalEditorSchema.shape.id,
+  path: workspaceRelativePathSchema.optional(),
+  line: z.number().int().min(1).max(10_000_000).optional(),
+}).strict(), z.object({ workspaceId: workspaceIdSchema }).strict())
+/** A commit message for what the commit would contain, written by the conversation's model. */
+export const workspaceGitSuggestMessageContract = defineIpcContract(ipcChannels.workspaceGitSuggestMessage, z.object({
+  ...workspaceContentRequestFields,
+  providerId: z.string().min(1).max(256),
+  modelId: z.string().min(1).max(256),
+  includeUnstaged: z.boolean(),
+  locale: z.enum(['zh-CN', 'en-US']),
+}).strict(), z.object({ workspaceId: workspaceIdSchema, message: z.string().max(20_000) }).strict())
+export const workspaceGitCommitContract = defineIpcContract(ipcChannels.workspaceGitCommit, z.object({ ...workspaceContentRequestFields, request: workspaceCommitRequestSchema }).strict(), workspaceCommitResultSchema)
+/** Stage, unstage or discard reviewed changes; each carries the revision the view showed. */
+/** Stage, unstage or discard one hunk of a reviewed file. */
+export const workspaceDiffApplyHunkContract = defineIpcContract(ipcChannels.workspaceDiffApplyHunk, z.object({
+  ...workspaceContentRequestFields,
+  action: z.enum(['stage', 'unstage', 'discard']),
+  change: z.object({ path: workspaceRelativePathSchema, stage: workspaceWorkingStageSchema, revision: z.string().min(1).max(256) }).strict(),
+  hunk: z.number().int().min(0).max(100_000),
+}).strict(), workspaceDiffSnapshotSchema)
+export const workspaceDiffApplyContract = defineIpcContract(ipcChannels.workspaceDiffApply, z.object({
+  ...workspaceContentRequestFields,
+  action: z.enum(['stage', 'unstage', 'discard']),
+  changes: z.array(z.object({ path: workspaceRelativePathSchema, stage: workspaceWorkingStageSchema, revision: z.string().min(1).max(256) }).strict()).min(1).max(1_000),
+}).strict(), workspaceDiffSnapshotSchema)
 
 const terminalRequestFields = { ...requestFields, scope: conversationScopeSchema, terminalId: terminalIdSchema }
 export const terminalListShellProfilesContract = defineIpcContract(ipcChannels.terminalListShellProfiles, z.object(requestFields).strict(), z.array(terminalShellProfileSchema))

@@ -6,7 +6,17 @@ export class ResourceRefreshLoop {
   private dirty = false
   private timer: ReturnType<typeof setTimeout> | undefined
 
-  constructor(private readonly refresh: () => Promise<unknown>, private readonly interval = 5_000) {}
+  constructor(private readonly refresh: () => Promise<unknown>, private interval = 5_000) {}
+
+  /** A visible resource refreshes often; a background one only now and then. */
+  setInterval(interval: number) {
+    if (this.interval === interval) return
+    this.interval = interval
+    if (this.timer !== undefined) {
+      this.clearTimer()
+      this.timer = setTimeout(() => this.invalidate(), this.interval)
+    }
+  }
 
   setActive(active: boolean) {
     if (this.disposed || this.active === active) return

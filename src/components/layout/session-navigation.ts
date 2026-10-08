@@ -1,9 +1,13 @@
 import type { OfficialPiSessionSummary } from '@/shared/conversation-scope'
+import { conversationTitleFromText } from '@/shared/conversation-title'
 import type { AgentStatus } from '@/types/chat'
 import type { SessionActivityState } from '@/store/workspace-state'
 
-export type SidebarSessionFilter = 'all' | 'running' | 'attention' | 'archived'
-export type SidebarSessionSort = 'recent' | 'name'
+/** `all` lists active tasks outside Pinned; `archived` lists only archived ones. */
+export type SidebarSessionFilter = 'all' | 'archived'
+export type SidebarSessionSort = 'recent' | 'created' | 'name'
+/** Codex: group tasks under their projects, or show every task in one list. */
+export type SidebarOrganization = 'project' | 'chronological'
 
 interface SessionPresentationItem {
   summary: OfficialPiSessionSummary
@@ -17,8 +21,9 @@ interface SessionPresentationItem {
   organizationKey?: string
 }
 
-export function sidebarConversationTitle(summary: OfficialPiSessionSummary, untitled = '') {
-  return summary.name?.trim() || summary.preview.trim() || untitled
+/** A session's display title: its name, else a clean title from its first message. */
+export function sidebarConversationTitle(summary: Pick<OfficialPiSessionSummary, 'name' | 'title' | 'preview'>, untitled = '') {
+  return summary.name?.trim() || summary.title || conversationTitleFromText(summary.preview) || untitled
 }
 
 /** Opening a historical transcript alone is not an active agent run. */
@@ -38,20 +43,37 @@ export function isNewBackgroundResult(item: SessionPresentationItem, previousSta
     item.status === 'completed'
 }
 
-/** Project labels resume work; explicit new-task controls own creation. */
-export function preferredProjectSession<T extends SessionPresentationItem>(items: readonly T[], rememberedKey?: string): T | undefined {
-  const available = items.filter((item) => !item.archived)
-  return available.find((item) => item.selected) ??
-    available.find((item) => rememberedKey && item.organizationKey === rememberedKey) ??
-    [...available].sort((a, b) => b.summary.modifiedAt.localeCompare(a.summary.modifiedAt))[0]
+export type SidebarProjectIndicator = 'attention' | 'failed' | 'running' | 'unread' | 'none'
+
+/** What a collapsed project row shows for the tasks it hides. */
+export function sidebarProjectIndicator(items: readonly SessionPresentationItem[]): SidebarProjectIndicator {
+  const visible = items.filter((item) => !item.archived)
+  if (visible.some((item) => item.needsAttention)) return 'attention'
+  if (visible.some((item) => item.activityState === 'failed' || item.status === 'failed')) return 'failed'
+  if (visible.some(isSidebarSessionRunning)) return 'running'
+  return visible.some((item) => item.unread && !item.selected) ? 'unread' : 'none'
 }
 
-export function presentPrioritySessions<T extends SessionPresentationItem>(items: readonly T[]): T[] {
-  return items.filter((item) => sidebarSessionNeedsAttention(item) || isSidebarSessionRunning(item) || item.selected || (item.pinned && !item.archived))
-    .sort((a, b) => Number(sidebarSessionNeedsAttention(b)) - Number(sidebarSessionNeedsAttention(a)) ||
-      Number(isSidebarSessionRunning(b)) - Number(isSidebarSessionRunning(a)) ||
-      Number(Boolean(b.selected)) - Number(Boolean(a.selected)) ||
-      b.summary.modifiedAt.localeCompare(a.summary.modifiedAt))
+function compareSessions(left: SessionPresentationItem, right: SessionPresentationItem, sort: SidebarSessionSort) {
+  if (sort === 'name') {
+    const byName = sidebarConversationTitle(left.summary).localeCompare(
+      sidebarConversationTitle(right.summary),
+      undefined,
+      { numeric: true, sensitivity: 'base' },
+    )
+    if (byName !== 0) return byName
+  }
+  if (sort === 'created') {
+    const byCreated = right.summary.createdAt.localeCompare(left.summary.createdAt)
+    if (byCreated !== 0) return byCreated
+  }
+  return right.summary.modifiedAt.localeCompare(left.summary.modifiedAt) ||
+    left.summary.selectionToken.localeCompare(right.summary.selectionToken)
+}
+
+/** Pinned tasks leave their project and live in one Pinned section, as in Codex. */
+export function presentPinnedSessions<T extends SessionPresentationItem>(items: readonly T[], sort: SidebarSessionSort): T[] {
+  return items.filter((item) => item.pinned && !item.archived).sort((left, right) => compareSessions(left, right, sort))
 }
 
 /** Filter before paginating so a matching older session stays discoverable. */
@@ -68,27 +90,12 @@ export function presentSidebarSessions<T extends SessionPresentationItem>(
   const normalizedQuery = query.trim().toLowerCase()
   const projectMatches = projectName.toLowerCase().includes(normalizedQuery)
   const matchingItems = items.filter((item) =>
-    (filter === 'archived' ? item.archived === true :
-      filter === 'running' ? isSidebarSessionRunning(item) :
-        filter === 'attention' ? sidebarSessionNeedsAttention(item) :
-          normalizedQuery.length > 0 || !item.archived || item.selected || isSidebarSessionRunning(item) || sidebarSessionNeedsAttention(item)) &&
+    (filter === 'archived' ? item.archived === true
+      : !item.pinned && (normalizedQuery.length > 0 || !item.archived || item.selected || isSidebarSessionRunning(item) || sidebarSessionNeedsAttention(item))) &&
     (!normalizedQuery || projectMatches ||
       sidebarConversationTitle(item.summary).toLowerCase().includes(normalizedQuery) ||
       item.summary.preview.toLowerCase().includes(normalizedQuery)),
-  ).sort((left, right) => {
-    const pinned = Number(Boolean(right.pinned)) - Number(Boolean(left.pinned))
-    if (pinned) return pinned
-    if (sort === 'name') {
-      const byName = sidebarConversationTitle(left.summary).localeCompare(
-        sidebarConversationTitle(right.summary),
-        undefined,
-        { numeric: true, sensitivity: 'base' },
-      )
-      if (byName !== 0) return byName
-    }
-    return right.summary.modifiedAt.localeCompare(left.summary.modifiedAt) ||
-      left.summary.selectionToken.localeCompare(right.summary.selectionToken)
-  })
+  ).sort((left, right) => compareSessions(left, right, sort))
   const visibleItems = limit === undefined ? matchingItems : matchingItems.slice(0, limit)
 
   return {

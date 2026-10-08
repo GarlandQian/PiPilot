@@ -90,6 +90,7 @@ export function ReviewCommentCard({ reference }: { reference: PrecisionReference
   </div>
 }
 
+/** Saved line comments, ready to go into the draft; nothing until there are some. */
 export function DiffReviewSummary() {
   const review = useDiffReview()
   const precision = usePrecisionReferences()
@@ -99,11 +100,9 @@ export function DiffReviewSummary() {
   const owner = React.useRef(review?.ownerKey)
   owner.current = review?.ownerKey
   React.useEffect(() => { setAdding(false); setFailed(false) }, [review?.ownerKey])
-  if (!review?.ready) return null
+  if (!review?.ready || (!review.comments.length && !failed)) return null
   return <div className="shrink-0 border-b border-border px-3 py-2 text-caption" data-diff-review-summary>
-    <p className="text-micro text-muted-foreground">{t('precision.projectScope')}</p>
-    <p className="mt-1 text-micro text-muted-foreground">{t('precision.selectDiffLines')}</p>
-    {review.comments.length ? <details className="mt-2" open><summary className="cursor-pointer font-medium">{t('precision.reviewCount', { count: review.comments.length })}</summary>
+    {review.comments.length ? <details open><summary className="cursor-pointer font-medium">{t('precision.reviewCount', { count: review.comments.length })}</summary>
       <div className="scroll-slim max-h-56 overflow-auto">{review.comments.map((reference) => <ReviewCommentCard key={reference.id} reference={reference} />)}</div>
       <Button size="sm" variant="secondary" className="mt-2" disabled={adding || review.pending || !precision?.available || review.comments.some((reference) => review.freshness(reference) === 'unknown')}
         onClick={() => {

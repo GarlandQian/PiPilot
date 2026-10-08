@@ -45,6 +45,7 @@ import { safePiManagementMessage } from './pi-management-diagnostics'
 const HELPER_INPUT_LIMIT = 4 * 1_024 * 1_024
 const PACKAGE_MANIFEST_LIMIT = 256 * 1_024
 const MODEL_TEST_TIMEOUT_MS = 30_000
+const COMPLETION_TIMEOUT_MS = 60_000
 const MODEL_TEST_PREVIEW_LIMIT = 512
 let protocolOutput: Awaited<ReturnType<typeof createPiManagementOutput>> | undefined
 let packageCommand: string[] | undefined
@@ -308,6 +309,44 @@ async function testModel(
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true })
   }
+}
+
+/** One request to one configured model, with the user's own models.json and credentials. */
+async function completeText(
+  command: Extract<PiManagementHelperCommand, { action: 'complete-text' }>,
+  settingsManager: ExternalSettingsManager,
+  agentDir: string,
+) {
+  const runtime = await BundledModelRuntime.create({
+    authPath: join(agentDir, 'auth.json'),
+    modelsPath: join(agentDir, 'models.json'),
+    allowModelNetwork: false,
+    refreshOnCreate: false,
+  })
+  const model = runtime.getModel(command.providerId, command.modelId)
+  if (!model) {
+    throw new PiModelTestError('PI_MODEL_TEST_NOT_FOUND', `Model ${command.providerId}/${command.modelId} is not available.`)
+  }
+  const response = await runtime.completeSimple(model, {
+    ...(command.systemPrompt ? { systemPrompt: command.systemPrompt } : {}),
+    messages: [{ role: 'user', content: command.prompt, timestamp: Date.now() }],
+  }, { maxTokens: command.maxTokens, maxRetries: 1, timeoutMs: COMPLETION_TIMEOUT_MS })
+  if (response.stopReason === 'error' || response.stopReason === 'aborted') {
+    throw new PiModelTestError('PI_MODEL_TEST_REQUEST_FAILED', response.errorMessage || `The request ${response.stopReason}.`)
+  }
+  const text = (response.content ?? [])
+    .flatMap((part) => part.type === 'text' && typeof part.text === 'string' ? [part.text] : [])
+    .join('')
+    .trim()
+    .slice(0, 16_000)
+  emit({
+    type: 'result',
+    operationId: command.operationId,
+    result: piManagementSnapshotPayloadSchema.parse({
+      ...modelsPayload(settingsManager, agentDir),
+      models: { ...modelsPayload(settingsManager, agentDir).models!, completion: { text } },
+    }),
+  })
 }
 
 function emit(rawEvent: unknown) {
@@ -619,6 +658,10 @@ async function runCommand(command: PiManagementHelperCommand) {
   )
   packageCommand = settingsManager.getGlobalSettings().npmCommand
 
+  if (command.action === 'complete-text') {
+    await completeText(command, settingsManager, agentDir)
+    return
+  }
   if (
     command.action === 'models-defaults' ||
     command.action === 'set-default-model' ||
