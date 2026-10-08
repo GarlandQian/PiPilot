@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ExternalControlLauncherService,
@@ -62,7 +63,9 @@ function harness(initial: WindowsUserPathValue | null) {
   }
 }
 
-describe.skipIf(process.platform !== 'win32')('Windows legacy launcher receipts', () => {
+// Files use the host filesystem; all Windows PATH operations use the injected
+// adapter, so receipt migration is exercised on every development platform.
+describe('Windows legacy launcher receipts', () => {
   it('recognizes a legacy installation without claiming or modifying its existing PATH', async () => {
     const fixture = harness(null)
     fixture.value = {
@@ -142,7 +145,6 @@ describe.skipIf(process.platform !== 'win32')('Windows legacy launcher receipts'
   })
 
   it.each([
-    ['different installation', { launcherPath: 'C:\\Other\\PiPilot\\pipilot-mcp.exe' }],
     ['different platform', { platform: 'darwin' }],
     ['unknown version', { version: 3 }],
     ['missing v2 ownership metadata', { version: 2 }],
@@ -166,6 +168,38 @@ describe.skipIf(process.platform !== 'win32')('Windows legacy launcher receipts'
     expect(fixture.adapter.read).not.toHaveBeenCalled()
     expect(fixture.adapter.write).not.toHaveBeenCalled()
     expect(fixture.adapter.remove).not.toHaveBeenCalled()
+  })
+
+  it.each([1, 2])('repairs a v%s receipt from a removed installation while preserving PATH and a recovery copy', async (version) => {
+    const fixture = harness(null)
+    const oldDirectory = join(dirname(fixture.directory), 'old-installation')
+    const oldPath = join(oldDirectory, 'pipilot-mcp.exe')
+    const originalPath = `C:\\Tools;${oldDirectory};;%USERPROFILE%\\bin`
+    fixture.value = { type: 'REG_EXPAND_SZ', value: originalPath }
+    fixture.writeReceipt({ ...fixture.legacy, version, launcherPath: oldPath,
+      ...(version === 2 ? { fingerprint: createHash('sha256').update(oldDirectory.toLowerCase()).digest('hex'), windows: { insertedSeparator: true, pathValueCreated: false } } : {}),
+    })
+    const oldReceipt = readFileSync(fixture.receiptPath, 'utf8')
+    expect(await fixture.service.inspect()).toMatchObject({ state: 'repair', managed: false })
+    expect(readFileSync(fixture.receiptPath, 'utf8')).toBe(oldReceipt)
+    expect(await fixture.service.install()).toMatchObject({ state: 'installed', managed: true })
+    expect(fixture.value?.value).toBe(`${originalPath};${fixture.directory}`)
+    const backup = readdirSync(dirname(fixture.receiptPath)).find((name) => name.includes('.stale-'))!
+    expect(readFileSync(join(dirname(fixture.receiptPath), backup), 'utf8')).toBe(oldReceipt)
+    await fixture.service.uninstall()
+    expect(fixture.value?.value).toBe(originalPath)
+  })
+
+  it('keeps a second existing installation blocked instead of taking over its command', async () => {
+    const fixture = harness({ type: 'REG_SZ', value: 'C:\\Tools' })
+    const oldDirectory = join(dirname(fixture.directory), 'other-installation')
+    mkdirSync(oldDirectory)
+    const oldPath = join(oldDirectory, 'pipilot-mcp.exe')
+    writeFileSync(oldPath, 'other app')
+    fixture.writeReceipt({ ...fixture.legacy, launcherPath: oldPath })
+    expect(await fixture.service.inspect()).toMatchObject({ state: 'unsupported', error: { code: 'launcher_conflict' } })
+    await expect(fixture.service.install()).rejects.toMatchObject({ code: 'launcher_conflict' })
+    expect(fixture.adapter.write).not.toHaveBeenCalled()
   })
 
   it('preserves the legacy record and restores PATH if registry verification fails', async () => {

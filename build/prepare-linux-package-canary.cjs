@@ -7,9 +7,9 @@ const { tmpdir } = require('node:os')
 const { join, resolve } = require('node:path')
 
 async function main() {
-  if (process.platform !== 'linux' || process.arch !== 'x64' || process.env.GITHUB_ACTIONS !== 'true'
+  if (process.platform !== 'linux' || !['x64', 'arm64'].includes(process.arch) || process.env.GITHUB_ACTIONS !== 'true'
     || process.env.CI !== 'true' || process.env.RUNNER_ENVIRONMENT !== 'github-hosted') {
-    throw new Error('The Linux package canary requires a disposable GitHub Actions Linux x64 runner.')
+    throw new Error('The Linux package canary requires a disposable GitHub Actions Linux x64 or arm64 runner.')
   }
   if (!process.env.GITHUB_ENV) throw new Error('Missing GitHub Actions environment file.')
   const version = JSON.parse(readFileSync('package.json', 'utf8')).version
@@ -34,7 +34,7 @@ async function main() {
   }, null, 2))
   const built = spawnSync(process.execPath, [
     require.resolve('electron-builder/cli.js'), '--config', configPath,
-    '--linux', 'AppImage', '--x64', '--publish', 'never',
+    '--linux', 'AppImage', `--${process.arch}`, '--publish', 'never',
   ], { stdio: 'inherit' })
   if (built.error) throw built.error
   if (built.status !== 0) throw new Error(`The older AppImage build exited with ${built.status}.`)

@@ -3,14 +3,18 @@ import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createRequire } from 'node:module'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
 import { PIPILOT_VERSION } from '../../src/shared/build-info'
 
 const execFileAsync = promisify(execFile)
 const temporaryDirectories: string[] = []
+const { renderReleaseNotes } = createRequire(import.meta.url)('../../build/release-notes.cjs') as {
+  renderReleaseNotes: (options: { version: string; changelog: string; directory?: string; preview?: boolean }) => string
+}
 
-type Platform = 'macos' | 'windows' | 'linux'
+type Platform = 'macos' | 'windows' | 'linux' | 'linux-arm64'
 
 const platformPolicy: Record<Platform, {
   architectures: string[]
@@ -26,6 +30,9 @@ const platformPolicy: Record<Platform, {
     architectures: ['x64'],
     trust: 'unsigned',
     updateCapability: 'native-install',
+  },
+  'linux-arm64': {
+    architectures: ['arm64'], trust: 'unsigned', updateCapability: 'native-install',
   },
   linux: {
     architectures: ['x64'],
@@ -50,13 +57,22 @@ async function createReleaseFixture(options: {
       `PiPilot-${version}-macos-x64.zip`,
     ],
     windows: [
-      `PiPilot-${version}-windows-x64.exe`,
-      `PiPilot-${version}-windows-x64.exe.blockmap`,
+      `PiPilot-${version}-windows-x64-setup.exe`,
+      `PiPilot-${version}-windows-x64-setup.exe.blockmap`,
+      `PiPilot-${version}-windows-x64-portable.exe`,
+      `PiPilot-${version}-windows-x64-portable.zip`,
       'latest.yml',
+    ],
+    'linux-arm64': [
+      `PiPilot-${version}-linux-arm64.AppImage`,
+      `PiPilot-${version}-linux-arm64.deb`,
+      `PiPilot-${version}-linux-aarch64.rpm`,
+      'latest-linux-arm64.yml',
     ],
     linux: [
       `PiPilot-${version}-linux-x86_64.AppImage`,
       `PiPilot-${version}-linux-amd64.deb`,
+      `PiPilot-${version}-linux-x86_64.rpm`,
       'latest-linux.yml',
     ],
   }
@@ -65,7 +81,7 @@ async function createReleaseFixture(options: {
     assets.macos = assets.macos.map((name) => name.replace('-macos-', '-'))
   }
 
-  for (const name of [...assets.macos, ...assets.windows, ...assets.linux]) {
+  for (const name of Object.values(assets).flat()) {
     if (!name.endsWith('.yml')) await writeFile(join(root, name), `fixture:${name}`)
   }
 
@@ -97,8 +113,8 @@ async function createReleaseFixture(options: {
 
   await writeMetadata(
     'latest.yml',
-    [`PiPilot-${version}-windows-x64.exe`],
-    `PiPilot-${version}-windows-x64.exe`,
+    [`PiPilot-${version}-windows-x64-setup.exe`],
+    `PiPilot-${version}-windows-x64-setup.exe`,
     options.invalidWindowsSha512,
   )
   await writeMetadata(
@@ -108,9 +124,14 @@ async function createReleaseFixture(options: {
       : [
           `PiPilot-${version}-linux-x86_64.AppImage`,
           `PiPilot-${version}-linux-amd64.deb`,
+          `PiPilot-${version}-linux-x86_64.rpm`,
         ],
     `PiPilot-${version}-linux-x86_64.AppImage`,
   )
+
+  await writeMetadata('latest-linux-arm64.yml', [
+    `PiPilot-${version}-linux-arm64.AppImage`, `PiPilot-${version}-linux-arm64.deb`, `PiPilot-${version}-linux-aarch64.rpm`,
+  ], `PiPilot-${version}-linux-arm64.AppImage`)
 
   for (const platform of Object.keys(assets) as Platform[]) {
     const files = []
@@ -142,6 +163,49 @@ afterEach(async () => {
 })
 
 describe('release assembly validation', () => {
+  it('renders exact package links and only the selected version changes', async () => {
+    const fixture = await createReleaseFixture()
+    const notes = renderReleaseNotes({
+      version: fixture.version,
+      directory: fixture.root,
+      changelog: `## Unreleased\nFuture work\n## ${fixture.version}\nCurrent changes\n## 0.0.1\nOlder changes\n`,
+    })
+
+    const downloads = [...notes.matchAll(/https:\/\/github\.com\/GarlandQian\/PiPilot\/releases\/download\/v[^)]+/g)]
+      .map((match) => decodeURIComponent(match[0].split('/').pop()!))
+    const packages = downloads.filter((name) => !name.endsWith('SHA256SUMS.txt'))
+    expect(packages).toHaveLength(13)
+    expect(new Set(packages).size).toBe(13)
+    for (const name of downloads) await expect(stat(join(fixture.root, name))).resolves.toBeDefined()
+    expect(packages).toContain(`PiPilot-${fixture.version}-linux-amd64.deb`)
+    expect(packages).toContain(`PiPilot-${fixture.version}-linux-aarch64.rpm`)
+    expect(notes).toContain('Current changes')
+    expect(notes).not.toContain('Future work')
+    expect(notes).not.toContain('Older changes')
+    expect(notes).toContain(`/compare/v0.0.1...v${fixture.version}`)
+  })
+
+  it('requires release-specific changes and complete manifests for publication', async () => {
+    const fixture = await createReleaseFixture()
+    expect(() => renderReleaseNotes({
+      version: fixture.version, directory: fixture.root, changelog: '## Unreleased\nFuture work',
+    })).toThrow('Missing non-empty CHANGELOG section')
+    await rm(join(fixture.root, 'linux-arm64-manifest.json'))
+    expect(() => renderReleaseNotes({
+      version: fixture.version, directory: fixture.root, changelog: `## ${fixture.version}\nCurrent changes`,
+    })).toThrow()
+  })
+
+  it('allows an unpublished preview without fabricated download links', () => {
+    const changelog = '## Unreleased\nPending changes'
+    const notes = renderReleaseNotes({ version: '9.9.9', changelog, preview: true })
+    expect(notes).toContain('Pending changes')
+    expect(notes).toContain('Preview only')
+    expect(notes).not.toContain('/releases/download/')
+    expect(notes).not.toContain('/compare/')
+    expect(() => renderReleaseNotes({ version: '9.9.9', changelog })).toThrow('require an asset directory')
+  })
+
   it('cleans prior Actions runs before mutating only the initial Release', async () => {
     const workflow = await readFile(
       join(process.cwd(), '.github', 'workflows', 'release.yml'),
@@ -199,7 +263,7 @@ describe('release assembly validation', () => {
       { cwd: process.cwd() },
     )
 
-    expect(JSON.parse(result.stdout)).toEqual({ version: fixture.version, assets: 16 })
+    expect(JSON.parse(result.stdout)).toEqual({ version: fixture.version, assets: 25 })
   })
 
   it('rejects packages without a system identifier even when their checksums match', async () => {

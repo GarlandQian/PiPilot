@@ -4,7 +4,7 @@
   "description": "An Electron desktop client for the local Pi coding agent",
   "author": "PiPilot contributors",
   "private": true,
-  "version": "0.3.5",
+  "version": "0.4.0",
   "packageManager": "pnpm@12.8.1",
   "type": "module",
   "main": "./out/main/index.js",
@@ -15,10 +15,11 @@
     "package": "pnpm build && electron-builder --publish never",
     "package:dir": "pnpm build && electron-builder --dir --publish never",
     "package:mac": "pnpm build && electron-builder --mac --arm64 --x64 --publish never",
-    "package:win": "pnpm build && electron-builder --win --x64 --publish never",
+    "package:win": "pnpm build && electron-builder --win --x64 --publish never && node build/build-windows-portable.cjs",
     "package:linux": "pnpm build && electron-builder --linux --x64 --publish never",
-    "package:win:update": "pnpm build && electron-builder --config electron-builder.update.yml --win --x64 --publish never",
+    "package:win:update": "pnpm build && electron-builder --config electron-builder.update.yml --win --x64 --publish never && node build/build-windows-portable.cjs",
     "package:linux:update": "pnpm build && electron-builder --config electron-builder.update.yml --linux --x64 --publish never",
+    "package:linux:arm64:update": "pnpm build && electron-builder --config electron-builder.update.yml --linux --arm64 --publish never",
     "rebuild:native": "install-electron && electron-builder install-app-deps",
     "postinstall": "pnpm rebuild:native",
     "preview": "electron-vite preview",
@@ -34,7 +35,8 @@
     "electron-updater": "6.8.9",
     "jsonc-parser": "3.3.1",
     "node-pty": "1.1.0",
-    "zod": "^4.6.5"
+    "zod": "^4.6.5",
+    "pipilot-npm": "npm:npm@12.2.0"
   },
   "devDependencies": {
     "@electron/fuses": "2.1.3",

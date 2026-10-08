@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { useBundledNpm } from '../bundled-npm'
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, extname, join, resolve } from 'node:path'
@@ -95,6 +96,7 @@ interface ExternalPackageManager {
 }
 
 interface ExternalSettingsManager {
+  getNpmCommand(): string[] | undefined
   flush(): Promise<void>
   reload(): Promise<void>
   drainErrors(): Array<{ scope: 'global' | 'project'; error: Error }>
@@ -656,7 +658,8 @@ async function runCommand(command: PiManagementHelperCommand) {
     agentDir,
     { projectTrusted: true },
   )
-  packageCommand = settingsManager.getGlobalSettings().npmCommand
+  useBundledNpm(settingsManager)
+  packageCommand = settingsManager.getNpmCommand()
 
   if (command.action === 'complete-text') {
     await completeText(command, settingsManager, agentDir)
@@ -717,7 +720,7 @@ async function runCommand(command: PiManagementHelperCommand) {
       packageManager,
       reloadSettings: async () => {
         await settingsManager.reload()
-        packageCommand = settingsManager.getGlobalSettings().npmCommand
+        packageCommand = settingsManager.getNpmCommand()
         throwSettingsErrors(settingsManager)
       },
       flushSettings: async () => {

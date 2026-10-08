@@ -62,6 +62,8 @@ import { ProjectHostPool } from './pi-host/project-host-pool'
 import { PiHostController } from './pi-host/pi-host-controller'
 import { PiRuntimeFrontend } from './pi-host/pi-runtime-frontend'
 import { resolvePiAgentDirectory } from './pi-agent-directory'
+import { PiDirectoryPreference } from './pi-directory-preference'
+import { isPortableDistribution, portableDataDirectory, preparePortableDataDirectory } from './portable-storage'
 import {
   ConversationScopeResolver,
 } from './conversations/conversation-scope-resolver'
@@ -140,6 +142,14 @@ function isPathInside(parent: string, candidate: string) {
     !child.startsWith(`..${sep}`) &&
     !isAbsolute(child)
 }
+const portableDistribution = isPortableDistribution(process.resourcesPath)
+const portableDirectory = testUserDataOverride ? undefined : portableDataDirectory({
+  packaged: app.isPackaged, portable: portableDistribution,
+})
+if (portableDirectory) {
+  preparePortableDataDirectory(portableDirectory)
+  app.setPath('userData', portableDirectory)
+}
 if (testUserDataOverride) {
   mkdirSync(testUserDataOverride, { recursive: true, mode: 0o700 })
   app.setPath('userData', testUserDataOverride)
@@ -150,10 +160,17 @@ const applicationHomeDirectory = testUserDataOverride
   ? join(testUserDataOverride, 'home')
   : app.getPath('home')
 if (testUserDataOverride) mkdirSync(applicationHomeDirectory, { recursive: true, mode: 0o700 })
-const applicationAgentDirectory = resolvePiAgentDirectory({
+const defaultAgentDirectory = resolvePiAgentDirectory({
   homeDirectory: applicationHomeDirectory,
   isolatedTest: Boolean(testUserDataOverride),
+  environment: portableDirectory
+    ? { ...process.env, PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR || join(portableDirectory, 'agent') }
+    : process.env,
 })
+const piDirectoryPreference = new PiDirectoryPreference(
+  join(app.getPath('userData'), 'pi-directory.json'), defaultAgentDirectory,
+)
+const applicationAgentDirectory = piDirectoryPreference.activeDirectory
 const piEnvironment: NodeJS.ProcessEnv = {
   ...process.env,
   PI_CODING_AGENT_DIR: applicationAgentDirectory,
@@ -716,7 +733,10 @@ if (!hasSingleInstanceLock) {
       const externalControlPreference = new ExternalControlPreferenceRepository(
         join(externalControlDirectory, 'preferences.json'),
       )
-      const windowsMcpExecutablePath = app.isPackaged && process.platform === 'win32'
+      // A self-extracting portable EXE has no persistent sibling executable for
+      // an external MCP client. The portable ZIP retains its stable directory.
+      const transientPortableExecutable = portableDistribution && Boolean(process.env.PORTABLE_EXECUTABLE_DIR)
+      const windowsMcpExecutablePath = app.isPackaged && process.platform === 'win32' && !transientPortableExecutable
         ? join(dirname(process.execPath), 'pipilot-mcp.exe')
         : undefined
       const testExternalControlExecutable = !app.isPackaged
@@ -768,6 +788,7 @@ if (!hasSingleInstanceLock) {
         }
       }
       const externalControlLauncher = new ExternalControlLauncherService({
+        ...(transientPortableExecutable ? { unavailableReason: 'The portable EXE uses a temporary directory. Use the installer or portable ZIP edition for the stable MCP launcher.' } : {}),
         descriptorPath: externalControlDescriptor.path,
         executablePath: externalControlLauncherSource,
         homeDirectory: applicationHomeDirectory,
@@ -824,7 +845,7 @@ if (!hasSingleInstanceLock) {
         dispose: disposeApplicationResources,
         quit: () => app.quit(),
       })
-      registerAppIpc({ getMainWindow: () => mainWindow, policy, settingsRepository, shutdownGuard })
+      registerAppIpc({ getMainWindow: () => mainWindow, policy, settingsRepository, shutdownGuard, piDirectoryPreference })
       externalControlIpcController = registerExternalControlIpc({
         getMainWindow: () => mainWindow,
         launcherService: externalControlLauncher,
@@ -897,6 +918,7 @@ if (!hasSingleInstanceLock) {
         },
       })
       const updateProvider = await createProductionApplicationUpdateProvider({
+        portable: portableDistribution,
         packaged: app.isPackaged,
         currentVersion: app.getVersion(),
         platform: process.platform,

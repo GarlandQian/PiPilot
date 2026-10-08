@@ -21,7 +21,7 @@ export interface SettingsGroupMeta {
 }
 export const SETTINGS_GROUPS: readonly SettingsGroupMeta[] = [
   { id: 'preferences', labelKey: 'settings.group.preferences', sections: [
-    { id: 'general', labelKey: 'settings.nav.general', descriptionKey: 'settings.redesign.general', icon: TbSettings, tint: '#8e8e93', searchTerms: 'send enter queue steer runtime Pi 发送 排队 引导 运行' },
+    { id: 'general', labelKey: 'settings.nav.general', descriptionKey: 'settings.redesign.general', icon: TbSettings, tint: '#8e8e93', searchTerms: 'send enter queue steer runtime Pi directory folder config 发送 排队 引导 运行 目录 文件夹 配置' },
     { id: 'appearance', labelKey: 'settings.nav.appearance', descriptionKey: 'settings.redesign.appearance', icon: TbPalette, tint: '#5e5ce6', searchTerms: 'theme font color size density wrap motion liquid glass transparency tint 字体 主题 颜色 密度 换行 动画 玻璃 透明 着色' },
     { id: 'language', labelKey: 'settings.nav.language', descriptionKey: 'settings.redesign.language', icon: TbWorld, tint: '#007aff', searchTerms: 'locale translation English Chinese 简体中文 英文 语言' },
     { id: 'terminal', labelKey: 'settings.nav.terminal', descriptionKey: 'settings.redesign.terminal', icon: TbTerminal2, tint: '#3a3a3c', searchTerms: 'shell font size 终端 字体' },

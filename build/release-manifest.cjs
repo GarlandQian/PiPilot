@@ -1,12 +1,13 @@
 const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
+const inventory = require('./release-inventory.cjs')
 
 const platform = process.argv[2]
 const releaseDirectory = path.resolve(process.argv[3] || 'release')
 const version = String(JSON.parse(fs.readFileSync('package.json', 'utf8')).version)
 
-if (!['macos', 'windows', 'linux'].includes(platform)) {
+if (!inventory.architectures[platform]) {
   throw new Error(`unsupported release platform: ${platform}`)
 }
 
@@ -19,8 +20,9 @@ if (platform === 'macos') {
 
 const patterns = {
   macos: [/\.dmg$/i, /\.zip$/i],
-  windows: [/\.exe$/i, /^latest\.yml$/i, /\.blockmap$/i],
-  linux: [/\.AppImage$/i, /\.deb$/i, /latest-linux\.yml$/i, /\.blockmap$/i],
+  windows: [/\.exe$/i, /\.zip$/i, /^latest\.yml$/i, /\.blockmap$/i],
+  linux: [/\.AppImage$/i, /\.deb$/i, /\.rpm$/i, /^latest-linux\.yml$/i, /\.blockmap$/i],
+  'linux-arm64': [/\.AppImage$/i, /\.deb$/i, /\.rpm$/i, /^latest-linux-arm64\.yml$/i, /\.blockmap$/i],
 }[platform]
 
 const isCurrentVersionBlockmap = (name) =>
@@ -31,7 +33,8 @@ const names = fs.existsSync(releaseDirectory)
     .filter((entry) => entry.isFile())
     .map((entry) => entry.name)
     .filter((name) => patterns.some((pattern) => pattern.test(name)))
-    .filter((name) => name.includes(version) || /^latest(-linux)?\.yml$/i.test(name) || isCurrentVersionBlockmap(name))
+    .filter((name) => name.includes(version) || /^latest(-linux(-arm64)?)?\.yml$/i.test(name) || isCurrentVersionBlockmap(name))
+    .filter((name) => name.endsWith('.yml') || inventory.architectures[platform].some((arch) => inventory.hasArchitecture(name, arch)))
     .sort()
   : []
 
@@ -50,26 +53,24 @@ if (platform === 'windows' && !names.some((name) => /^latest\.yml$/i.test(name))
 if (platform === 'linux' && !names.some((name) => /^latest-linux\.yml$/i.test(name))) {
   throw new Error('linux release is missing latest-linux.yml')
 }
+if (platform === 'linux-arm64' && !names.includes('latest-linux-arm64.yml')) throw new Error('linux-arm64 release is missing latest-linux-arm64.yml')
 
-const expectedArchitectures = platform === 'macos' ? ['arm64', 'x64'] : ['x64']
-const architectureAliases = {
-  arm64: ['arm64', 'aarch64'],
-  x64: ['x64', 'x86_64', 'amd64'],
-}
+const expectedArchitectures = inventory.architectures[platform]
 const packageNames = platform === 'macos'
   ? names.filter((name) => /\.(dmg|zip)$/iu.test(name))
   : platform === 'windows'
-    ? names.filter((name) => /\.exe$/iu.test(name))
-    : names.filter((name) => /\.(AppImage|deb)$/iu.test(name))
+    ? names.filter((name) => /\.(exe|zip)$/iu.test(name))
+    : names.filter((name) => /\.(AppImage|deb|rpm)$/iu.test(name))
+inventory.assertPackages(platform, version, packageNames)
 const observedArchitectures = [...new Set(
   packageNames.flatMap((name) =>
     expectedArchitectures.filter((arch) =>
-      architectureAliases[arch].some((alias) => name.includes(`-${alias}.`)),
+      inventory.hasArchitecture(name, arch),
     ),
   ),
 )].sort()
 for (const name of packageNames) {
-  if (!name.startsWith(`PiPilot-${version}-${platform}-`)) {
+  if (!name.startsWith(`PiPilot-${version}-${inventory.os(platform)}-`)) {
     throw new Error(`${platform} package must identify its version and platform: ${name}`)
   }
 }
@@ -79,17 +80,17 @@ if (observedArchitectures.join(',') !== expectedArchitectures.slice().sort().joi
 if (platform === 'macos' && packageNames.length !== 4) {
   throw new Error(`macOS release must contain exactly four DMG/ZIP assets, found ${packageNames.length}`)
 }
-if (platform === 'windows' && packageNames.length !== 1) {
-  throw new Error(`Windows release must contain exactly one NSIS package, found ${packageNames.length}`)
+if (platform === 'windows' && packageNames.length !== 3) {
+  throw new Error(`Windows release must contain three package assets, found ${packageNames.length}`)
 }
-if (platform === 'linux' && packageNames.length !== 2) {
-  throw new Error(`Linux release must contain exactly two package assets, found ${packageNames.length}`)
+if (platform.startsWith('linux') && packageNames.length !== 3) {
+  throw new Error(`Linux release must contain three package assets per architecture, found ${packageNames.length}`)
 }
 const expectedExtensions = platform === 'macos'
   ? ['.dmg', '.zip']
   : platform === 'windows'
-    ? ['.exe']
-    : ['.AppImage', '.deb']
+    ? ['.exe', '.zip']
+    : ['.AppImage', '.deb', '.rpm']
 for (const extension of expectedExtensions) {
   if (!packageNames.some((name) => name.endsWith(extension))) {
     throw new Error(`${platform} release is missing ${extension} package output`)

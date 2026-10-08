@@ -11,6 +11,7 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve(projectRoot, 'src/main/index.ts'),
+          'npm-runner': resolve(projectRoot, 'src/main/npm-runner.ts'),
           'pi-host-utility': resolve(projectRoot, 'src/main/pi-host/pi-host-utility.ts'),
           'pi-management-helper': resolve(
             projectRoot,

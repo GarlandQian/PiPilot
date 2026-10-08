@@ -1,4 +1,5 @@
 import { realpathSync } from 'node:fs'
+import { useBundledNpm } from '../bundled-npm'
 import { randomUUID } from 'node:crypto'
 import { importedConversationHistorySchema, type ImportedConversationHistory } from '../../shared/conversation-import'
 import { isAbsolute, join, resolve } from 'node:path'
@@ -8,6 +9,7 @@ import {
   type CreateAgentSessionRuntimeFactory,
   type CreateAgentSessionServicesOptions,
   SessionManager,
+  SettingsManager,
   createAgentSessionFromServices,
   createAgentSessionRuntime,
   createAgentSessionServices,
@@ -422,9 +424,12 @@ export class RuntimeManager {
       sessionManager: nextSessionManager,
       sessionStartEvent,
     }) => {
+      const settingsManager = SettingsManager.create(cwd, agentDir)
+      useBundledNpm(settingsManager)
       const services = await createAgentSessionServices({
         cwd,
         agentDir,
+        settingsManager,
         resourceLoaderOptions: this.resourceLoaderOptions,
       })
       if (target.importHistory && nextSessionManager === sessionManager && !importPrepared) {

@@ -381,7 +381,7 @@ async function stopPackagedApp(
   }
 }
 
-test('runs the bundled Pi SDK workflow from the packaged application', async () => {
+test('runs the bundled Pi SDK workflow without system npm from the packaged application', async () => {
   test.setTimeout(600_000)
   const executable = resolvePackagedExecutable()
   expect(inspectPackagedApplication(executable)).toEqual({
@@ -549,6 +549,15 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
 
   const debugPort = await reserveDebugPort()
   let launchOutput = ''
+  // Exercise new and retained conversations with the same missing-npm
+  // condition as a clean Windows installation. Keep only OS commands available.
+  const applicationEnvironment: NodeJS.ProcessEnv = { ...process.env, ...piFixture.env }
+  for (const key of Object.keys(applicationEnvironment)) {
+    if (key.toLowerCase() === 'path') delete applicationEnvironment[key]
+  }
+  applicationEnvironment.PATH = process.platform === 'win32'
+    ? [join(process.env.SystemRoot ?? 'C:\\Windows', 'System32'), join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0')].join(delimiter)
+    : '/usr/bin:/bin:/usr/sbin:/sbin'
   const appProcess = spawnPackagedApplication(
     executable,
     [
@@ -557,8 +566,7 @@ test('runs the bundled Pi SDK workflow from the packaged application', async () 
     ],
     {
       env: {
-        ...process.env,
-        ...piFixture.env,
+        ...applicationEnvironment,
         PIPILOT_PACKAGED_SMOKE: '1',
         PIPILOT_E2E_STARTUP_DELAY_MS: '900',
         PIPILOT_E2E_HOST_FAILURE_MARKER: hostFailureMarker,

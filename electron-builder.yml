@@ -14,6 +14,7 @@ files:
   - '!node_modules/**/*.test.*'
   - '!node_modules/**/{test,tests,__tests__,coverage}/**'
   - '!node_modules/node-pty/{deps,scripts,src}/**/*'
+  - '!node_modules/pipilot-npm/**/*'
 
 extraResources:
   - from: build/tray-icon.png
@@ -63,7 +64,7 @@ dmg:
   backgroundColor: '#17181c'
 
 win:
-  artifactName: ${productName}-${version}-windows-${arch}.${ext}
+  artifactName: ${productName}-${version}-windows-${arch}-setup.${ext}
   target:
     - target: nsis
       arch:
@@ -85,9 +86,15 @@ linux:
     - target: AppImage
       arch:
         - x64
+        - arm64
     - target: deb
       arch:
         - x64
+        - arm64
+    - target: rpm
+      arch:
+        - x64
+        - arm64
   icon: build/icons/linux
   category: Development
   executableName: pipilot

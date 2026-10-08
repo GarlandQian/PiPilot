@@ -197,6 +197,9 @@ export function ExternalControlView({ active = true }: { active?: boolean }) {
                       : `settings.externalControl.launcher.state.${launcherState}.desc`,
                 )}
               </p>
+              {launcherState === 'unsupported' && launcher?.error ? (
+                <p className="mt-1 break-words text-micro text-muted-foreground" role="status">{launcher.error.message}</p>
+              ) : null}
               {launcher?.requiresClientRestart ? (
                 <p className="mt-1 text-micro text-warning" role="status">
                   {t('settings.externalControl.launcher.restartClients')}
@@ -212,7 +215,7 @@ export function ExternalControlView({ active = true }: { active?: boolean }) {
                 </p>
               ) : null}
             </div>
-            {launcherState === 'loadError' ? (
+            {launcherState === 'loadError' || launcherState === 'unsupported' ? (
               <Button
                 variant="ghost"
                 size="sm"

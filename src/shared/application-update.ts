@@ -32,8 +32,10 @@ export const applicationUpdatePackageSchema = z.enum([
   'development',
   'macos',
   'nsis',
+  'portable',
   'appimage',
   'deb',
+  'linux-package',
   'unsupported',
 ])
 export type ApplicationUpdatePackage = z.infer<
@@ -118,8 +120,8 @@ export const applicationUpdatePolicySchema = z
   .superRefine((policy, context) => {
     const expectedPlatform = (() => {
       if (policy.package === 'macos') return 'macos' as const
-      if (policy.package === 'nsis') return 'windows' as const
-      if (policy.package === 'appimage' || policy.package === 'deb') {
+      if (policy.package === 'nsis' || policy.package === 'portable') return 'windows' as const
+      if (policy.package === 'appimage' || policy.package === 'deb' || policy.package === 'linux-package') {
         return 'linux' as const
       }
       if (policy.package === 'unsupported') return 'unsupported' as const
@@ -138,7 +140,7 @@ export const applicationUpdatePolicySchema = z
         return policy.capability === 'manual-release' || policy.capability === 'native-install'
       }
       if (policy.package === 'appimage') return policy.capability === 'native-install'
-      if (policy.package === 'macos' || policy.package === 'deb') {
+      if (policy.package === 'macos' || policy.package === 'deb' || policy.package === 'linux-package' || policy.package === 'portable') {
         return policy.capability === 'manual-release'
       }
       return policy.capability === null

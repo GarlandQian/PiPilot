@@ -11,6 +11,9 @@ import {
 } from '../shared/external-control'
 import {
   appGetInfoContract,
+  piDirectoryGetContract,
+  piDirectoryChooseContract,
+  piDirectoryResetContract,
   appShutdownRespondContract,
   applicationUpdateChangedEventSchema,
   applicationUpdateCheckContract,
@@ -416,6 +419,9 @@ const api: PiPilotApi = {
   },
   shell: { openExternal: async (url) => { await invoke(shellOpenExternalContract, { context: createContext(), url }) } },
   settings: {
+    getPiDirectory: () => invoke(piDirectoryGetContract, { context: createContext() }),
+    choosePiDirectory: () => invoke(piDirectoryChooseContract, { context: createContext() }),
+    resetPiDirectory: () => invoke(piDirectoryResetContract, { context: createContext() }),
     get: () => invoke(settingsGetContract, { context: createContext() }),
     reset: (scope) => invoke(settingsResetContract, { context: createContext(), scope }),
     subscribe: settingsSubscription.subscribe as (listener: SettingsListener) => () => void,

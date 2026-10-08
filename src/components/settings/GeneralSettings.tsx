@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { PiDirectorySettings } from './PiDirectorySettings'
 import { useEditorName } from '@/components/inspector/OpenInEditorButton'
 import { useExternalEditors } from '@/renderer/external-editors'
 import { TbCpu, TbRefresh } from 'react-icons/tb'
@@ -88,7 +89,7 @@ export function GeneralSettings({ restartBusy, restartMessage, restartAvailable,
           {t(runtimeFailed ? 'settings.redesign.runtimeError' : runtimePending ? 'settings.general.piRestarting' : runtimeState === 'ready' ? 'settings.redesign.runtimeActive' : 'settings.redesign.runtimeInactive')}
         </span>
       </div>
-      <p className="font-mono text-caption text-muted-foreground">{t('settings.about.piConfig')}</p>
+      <PiDirectorySettings />
       <SettingRow label={t('settings.general.piRestart')} desc={t('settings.general.piRestartDesc')}>
         <Button variant="outline" size="sm" disabled={restartBusy || !restartAvailable} onClick={() => setConfirmRestart(true)}>
           <TbRefresh className={restartBusy ? 'animate-spin' : ''} aria-hidden />{t(restartBusy ? 'settings.general.piRestarting' : 'settings.general.piRestart')}

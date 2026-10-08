@@ -4,6 +4,7 @@ const {
 } = require('node:path')
 const {
   copyFileSync,
+  cpSync,
   chmodSync,
   lstatSync,
   readFileSync,
@@ -108,6 +109,15 @@ exports.repairPackagedTerminalHelpers = repairPackagedTerminalHelpers
 
 exports.default = async function applyElectronFuses(context) {
   repairPackagedTerminalHelpers(context)
+  // npm ships bundled dependencies inside its own node_modules. The normal
+  // dependency/resource collectors prune those nested modules; copy the locked
+  // distribution intact before signing and exercise it in packaged smoke tests.
+  const resourceDirectory = context.electronPlatformName === 'darwin'
+    ? join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`, 'Contents', 'Resources')
+    : join(context.appOutDir, 'resources')
+  cpSync(dirname(require.resolve('pipilot-npm/package.json')), join(resourceDirectory, 'npm'), {
+    recursive: true, dereference: true,
+  })
   const {
     flipFuses,
     FuseV1Options,

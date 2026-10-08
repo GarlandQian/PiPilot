@@ -4,35 +4,32 @@ const path = require('node:path')
 
 const releaseDirectory = path.resolve(process.argv[2] || 'release')
 const expectedVersion = String(process.argv[3] || '')
-const platforms = ['macos', 'windows', 'linux']
-const expectedArchitectures = {
-  macos: ['arm64', 'x64'],
-  windows: ['x64'],
-  linux: ['x64'],
-}
-const architectureAliases = {
-  arm64: ['arm64', 'aarch64'],
-  x64: ['x64', 'x86_64', 'amd64'],
-}
+const inventory = require('./release-inventory.cjs')
+const platforms = Object.keys(inventory.architectures)
+const expectedArchitectures = inventory.architectures
 const expectedTrust = {
   macos: 'adhoc-no-developer-id',
   windows: 'unsigned',
   linux: 'unsigned',
+  'linux-arm64': 'unsigned',
 }
 const expectedUpdateCapability = {
   macos: 'manual-release',
   windows: 'native-install',
   linux: 'native-install',
+  'linux-arm64': 'native-install',
 }
 const expectedPackageExtensions = {
   macos: ['.dmg', '.zip'],
-  windows: ['.exe'],
-  linux: ['.AppImage', '.deb'],
+  windows: ['.exe', '.zip'],
+  linux: ['.AppImage', '.deb', '.rpm'],
+  'linux-arm64': ['.AppImage', '.deb', '.rpm'],
 }
 const expectedPackageCounts = {
   macos: 4,
-  windows: 1,
-  linux: 2,
+  windows: 3,
+  linux: 3,
+  'linux-arm64': 3,
 }
 
 if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(expectedVersion)) {
@@ -187,6 +184,7 @@ for (const platform of platforms) {
   }
   const manifestFiles = new Set(manifest.files.map((file) => file?.name))
   manifestFilesByPlatform.set(platform, manifestFiles)
+  inventory.assertPackages(platform, expectedVersion, [...manifestFiles])
   const packageFiles = manifest.files
     .map((file) => file?.name)
     .filter((name) => typeof name === 'string' && expectedPackageExtensions[platform].some((extension) => name.endsWith(extension)))
@@ -194,7 +192,7 @@ for (const platform of platforms) {
     throw new Error(`${manifestFile} package inventory mismatch`)
   }
   for (const name of packageFiles) {
-    if (!name.startsWith(`PiPilot-${expectedVersion}-${platform}-`)) {
+    if (!name.startsWith(`PiPilot-${expectedVersion}-${inventory.os(platform)}-`)) {
       throw new Error(`${manifestFile} package must identify its version and platform: ${name}`)
     }
   }
@@ -205,7 +203,7 @@ for (const platform of platforms) {
   }
   for (const arch of expectedArchitectures[platform]) {
     if (!packageFiles.some((name) =>
-      architectureAliases[arch].some((alias) => name.includes(`-${alias}.`)))) {
+      inventory.hasArchitecture(name, arch))) {
       throw new Error(`${manifestFile} is missing the ${arch} package architecture`)
     }
   }
@@ -244,14 +242,14 @@ assertUpdateMetadata(
   'latest.yml',
   ['.exe'],
   '.exe',
-  manifestFilesByPlatform.get('windows'),
+  new Set([...manifestFilesByPlatform.get('windows')].filter((name) => !name.includes('-portable.'))),
   true,
 )
 // AppImage embeds its blockmap in the update payload; unlike NSIS, it does not
 // require a sibling .blockmap asset.
 assertUpdateMetadata(
   'latest-linux.yml',
-  ['.AppImage', '.deb'],
+  ['.AppImage', '.deb', '.rpm'],
   '.AppImage',
   manifestFilesByPlatform.get('linux'),
   false,
@@ -259,6 +257,10 @@ assertUpdateMetadata(
 if (fs.existsSync(path.join(releaseDirectory, 'latest-mac.yml'))) {
   throw new Error('macOS updater metadata is not part of this release')
 }
+assertUpdateMetadata(
+  'latest-linux-arm64.yml', ['.AppImage', '.deb', '.rpm'], '.AppImage',
+  manifestFilesByPlatform.get('linux-arm64'), false,
+)
 
 const actualFiles = fs.readdirSync(releaseDirectory, { withFileTypes: true })
   .filter((entry) => entry.isFile())

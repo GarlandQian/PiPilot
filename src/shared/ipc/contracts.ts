@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { piDirectorySnapshotSchema } from '../pi-directory'
 import { applicationShutdownDecisionSchema } from '../application-shutdown'
 import { taskNotificationPresentationSchema, taskNotificationSnapshotSchema } from '../task-notifications'
 import {
@@ -389,6 +390,9 @@ export const windowGetStateContract = defineIpcContract(ipcChannels.windowGetSta
 export const windowExitFullScreenContract = defineIpcContract(ipcChannels.windowExitFullScreen, z.object(requestFields).strict(), windowSnapshotSchema)
 /** ⌘W with no tab left to close closes the window, as the menu item used to. */
 export const windowCloseContract = defineIpcContract(ipcChannels.windowClose, z.object(requestFields).strict(), z.object({ closed: z.boolean() }).strict())
+export const piDirectoryGetContract = defineIpcContract('pipilot:pi-directory:get', z.object(requestFields).strict(), piDirectorySnapshotSchema)
+export const piDirectoryChooseContract = defineIpcContract('pipilot:pi-directory:choose', z.object(requestFields).strict(), piDirectorySnapshotSchema)
+export const piDirectoryResetContract = defineIpcContract('pipilot:pi-directory:reset', z.object(requestFields).strict(), piDirectorySnapshotSchema)
 export const settingsGetContract = defineIpcContract(ipcChannels.settingsGet, z.object(requestFields).strict(), settingsSnapshotSchema)
 export const settingsUpdateContract = defineIpcContract(
   ipcChannels.settingsUpdate,

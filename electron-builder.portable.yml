@@ -1,0 +1,14 @@
+extends: electron-builder.yml
+directories:
+  output: release/portable
+extraMetadata:
+  pipilotDistribution: portable
+win:
+  artifactName: ${productName}-${version}-windows-${arch}-portable.${ext}
+  target:
+    - target: portable
+      arch: [x64]
+    - target: zip
+      arch: [x64]
+portable:
+  artifactName: ${productName}-${version}-windows-${arch}-portable.${ext}

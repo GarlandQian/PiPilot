@@ -19,13 +19,13 @@ async function temporary(prefix: string) {
 }
 
 describe('Linux package canary isolation', () => {
-  it('requires GitHub-hosted Linux x64 and both CI identities before native installation can run', () => {
+  it('requires GitHub-hosted Linux x64 or arm64 and both CI identities before native installation can run', () => {
     const ci = { CI: 'true', GITHUB_ACTIONS: 'true', RUNNER_ENVIRONMENT: 'github-hosted' }
     expect(isLinuxCanaryRunner(ci, 'linux', 'x64')).toBe(true)
     expect(isLinuxCanaryRunner({ CI: 'true' }, 'linux', 'x64')).toBe(false)
     expect(isLinuxCanaryRunner({ GITHUB_ACTIONS: 'true' }, 'linux', 'x64')).toBe(false)
     expect(isLinuxCanaryRunner(ci, 'darwin', 'x64')).toBe(false)
-    expect(isLinuxCanaryRunner(ci, 'linux', 'arm64')).toBe(false)
+    expect(isLinuxCanaryRunner(ci, 'linux', 'arm64')).toBe(true)
     expect(isLinuxCanaryRunner({ ...ci, RUNNER_ENVIRONMENT: 'self-hosted' }, 'linux', 'x64')).toBe(false)
   })
 

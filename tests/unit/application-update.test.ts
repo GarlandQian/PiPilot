@@ -18,6 +18,16 @@ import {
 
 vi.mock('electron', () => ({ net: { fetch: vi.fn() } }))
 
+it('keeps Windows portable editions on automatic checks with manual delivery', async () => {
+  const provider = await createProductionApplicationUpdateProvider({
+    packaged: true, platform: 'win32', portable: true, currentVersion: '0.3.5',
+  })
+  expect(provider).toBeInstanceOf(GithubReleaseProvider)
+  expect(provider.policy).toMatchObject({ package: 'portable', capability: 'manual-release' })
+  await expect(provider.download()).rejects.toMatchObject({ code: 'UPDATE_UNSUPPORTED' })
+  provider.dispose()
+})
+
 function policy(
   platform: ApplicationUpdatePolicy['platform'],
   pkg: ApplicationUpdatePolicy['package'],
@@ -110,7 +120,7 @@ describe('application update policy', () => {
     expect(createApplicationUpdatePolicy({ packaged: true, currentVersion: '0.0.1', platform: 'linux', appImagePath: '/tmp/PiPilot.AppImage' }).policy)
       .toMatchObject({ package: 'appimage', capability: 'native-install' })
     expect(createApplicationUpdatePolicy({ packaged: true, currentVersion: '0.0.1', platform: 'linux' }).policy)
-      .toMatchObject({ package: 'deb', capability: 'manual-release' })
+      .toMatchObject({ package: 'linux-package', capability: 'manual-release' })
   })
 
   it('uses the official updater for packaged Windows without enabling automatic download or bypassing verification', async () => {

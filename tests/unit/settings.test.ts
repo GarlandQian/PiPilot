@@ -457,6 +457,9 @@ describe('settings adapters and store', () => {
     }
     const get = vi.fn(async () => authoritative)
     const api: PiPilotApi['settings'] = {
+      getPiDirectory: vi.fn(),
+      choosePiDirectory: vi.fn(),
+      resetPiDirectory: vi.fn(),
       get,
       reset: vi.fn(async () => authoritative),
       subscribe: vi.fn(() => () => undefined),

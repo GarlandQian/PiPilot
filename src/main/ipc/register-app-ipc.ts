@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto'
-import { app, shell, type BrowserWindow } from 'electron'
+import { app, dialog, shell, type BrowserWindow } from 'electron'
+import type { PiDirectoryPreference } from '../pi-directory-preference'
 import {
   appGetInfoContract,
+  piDirectoryGetContract,
+  piDirectoryChooseContract,
+  piDirectoryResetContract,
   appShutdownRespondContract,
   ipcChannels,
   settingsChangedEventSchema,
@@ -28,6 +32,7 @@ interface RegisterAppIpcOptions {
   policy: ApplicationUrlPolicy
   settingsRepository: SettingsRepository
   shutdownGuard: ConfigurationShutdownGuard
+  piDirectoryPreference?: PiDirectoryPreference
 }
 
 export function registerAppIpc({
@@ -35,8 +40,33 @@ export function registerAppIpc({
   policy,
   settingsRepository,
   shutdownGuard,
+  piDirectoryPreference,
 }: RegisterAppIpcOptions) {
   const isTrustedSender = createTrustedSenderValidator(policy, getMainWindow)
+  if (piDirectoryPreference) {
+    let choosing = false
+    registerValidatedHandler(piDirectoryGetContract, isTrustedSender, () => piDirectoryPreference.snapshot())
+    registerValidatedHandler(piDirectoryResetContract, isTrustedSender, () => {
+      if (choosing) throw new MainProcessError('DIRECTORY_BUSY', 'Close the directory picker first.')
+      return piDirectoryPreference.select(null)
+    })
+    registerValidatedHandler(piDirectoryChooseContract, isTrustedSender, async () => {
+      const window = getMainWindow()
+      if (!window || window.isDestroyed()) throw new MainProcessError('WINDOW_UNAVAILABLE', 'The main window is unavailable.')
+      if (choosing) throw new MainProcessError('DIRECTORY_BUSY', 'A directory picker is already open.')
+      choosing = true
+      try {
+        const snapshot = piDirectoryPreference.snapshot()
+        const result = await dialog.showOpenDialog(window, {
+          defaultPath: snapshot.selectedDirectory ?? snapshot.defaultDirectory,
+          properties: ['openDirectory', 'createDirectory'],
+        })
+        return result.canceled || !result.filePaths[0]
+          ? piDirectoryPreference.snapshot()
+          : piDirectoryPreference.select(result.filePaths[0])
+      } finally { choosing = false }
+    })
+  }
 
   registerValidatedHandler(appShutdownRespondContract, isTrustedSender, ({ shutdownId, decision }, event) => ({
     accepted: shutdownGuard.respond(event.sender, shutdownId, decision),

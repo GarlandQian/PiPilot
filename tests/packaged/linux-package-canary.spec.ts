@@ -201,7 +201,8 @@ test('runs the real AppImage, updates A to candidate B and automatically relaunc
   const prepared = await validateLinuxCanaryRoot(preparedRoot!)
   const manifest = await readLinuxCanaryManifest(prepared)
   const root = join(prepared, 'appimage')
-  const metadata = yaml.load(await readFile(join(manifest.candidateDirectory, 'latest-linux.yml'), 'utf8')) as {
+  const feedName = process.arch === 'arm64' ? 'latest-linux-arm64.yml' : 'latest-linux.yml'
+  const metadata = yaml.load(await readFile(join(manifest.candidateDirectory, feedName), 'utf8')) as {
     version: string; path: string; sha512: string; files: Array<{ url: string; sha512: string; size: number }>
   }
   expect(metadata.version).toBe(manifest.version)
@@ -222,7 +223,7 @@ test('runs the real AppImage, updates A to candidate B and automatically relaunc
   let imageRequests = 0
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
-    if (url.pathname === '/latest-linux.yml') {
+    if (url.pathname === `/${feedName}`) {
       response.writeHead(200, { 'content-type': 'application/yaml', 'cache-control': 'no-store' })
       response.end(JSON.stringify(metadata)); return
     }
@@ -329,7 +330,7 @@ test('installs the exact DEB, starts its registered launcher and retains manual 
     app = await launch('/usr/bin/pipilot', data.environment, log)
     expect(await app.page.evaluate(() => window.pipilot!.app.getInfo())).toMatchObject({ version: manifest.version, mode: 'production' })
     expect((await app.page.evaluate(() => window.pipilot!.applicationUpdate.get())).policy).toMatchObject({
-      currentVersion: manifest.version, platform: 'linux', package: 'deb', capability: 'manual-release',
+      currentVersion: manifest.version, platform: 'linux', package: 'linux-package', capability: 'manual-release',
     })
     await expect.poll(async () => (await app!.page.evaluate(() => window.pipilot!.applicationUpdate.download())).snapshot).toMatchObject({
       state: 'error', operation: 'download', code: 'UPDATE_UNSUPPORTED',

@@ -230,7 +230,7 @@ export class GithubReleaseProvider extends BaseApplicationUpdateProvider {
       ? { platform: 'macos' as const, package: 'macos' as const }
       : platform === 'win32'
         ? { platform: 'windows' as const, package: 'nsis' as const }
-        : { platform: 'linux' as const, package: 'deb' as const }
+        : { platform: 'linux' as const, package: 'linux-package' as const }
     const policy = options.policy ?? applicationUpdatePolicySchema.parse({
       ...platformPolicy,
       capability: 'manual-release',
@@ -414,6 +414,7 @@ export class ElectronUpdaterProvider extends BaseApplicationUpdateProvider {
 }
 
 export function createApplicationUpdatePolicy(options: {
+  portable?: boolean
   packaged: boolean
   currentVersion: string
   platform?: NodeJS.Platform
@@ -434,8 +435,8 @@ export function createApplicationUpdatePolicy(options: {
     return {
       policy: applicationUpdatePolicySchema.parse({
         platform: normalizedPlatform,
-        package: 'nsis',
-        capability: 'native-install',
+        package: options.portable ? 'portable' : 'nsis',
+        capability: options.portable ? 'manual-release' : 'native-install',
         currentVersion: options.currentVersion,
         releaseUrl: APPLICATION_UPDATE_RELEASE_URL,
       }),
@@ -444,9 +445,9 @@ export function createApplicationUpdatePolicy(options: {
   if (platform === 'linux') {
     // Electron exposes APPIMAGE only for an AppImage launch. Require the
     // canonical filename as well so an unrelated environment value cannot
-    // accidentally grant native-install capability to a DEB install.
+    // accidentally grant native-install capability to a DEB/RPM install.
     const isAppImage = Boolean(options.appImagePath && /\.AppImage$/iu.test(options.appImagePath))
-    const packageName: ApplicationUpdatePackage = isAppImage ? 'appimage' : 'deb'
+    const packageName: ApplicationUpdatePackage = isAppImage ? 'appimage' : 'linux-package'
     const capability: ApplicationUpdateCapability = isAppImage ? 'native-install' : 'manual-release'
     return { policy: applicationUpdatePolicySchema.parse({ platform: normalizedPlatform, package: packageName, capability, currentVersion: options.currentVersion, releaseUrl: APPLICATION_UPDATE_RELEASE_URL }) }
   }
@@ -454,6 +455,7 @@ export function createApplicationUpdatePolicy(options: {
 }
 
 export async function createProductionApplicationUpdateProvider(options: {
+  portable?: boolean
   packaged: boolean
   currentVersion: string
   platform?: NodeJS.Platform

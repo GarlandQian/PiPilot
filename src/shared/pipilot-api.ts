@@ -263,6 +263,9 @@ export interface PiPilotApi {
   }
   readonly shell: { openExternal(url: string): Promise<void> }
   readonly settings: {
+    getPiDirectory(): Promise<import('./pi-directory').PiDirectorySnapshot>
+    choosePiDirectory(): Promise<import('./pi-directory').PiDirectorySnapshot>
+    resetPiDirectory(): Promise<import('./pi-directory').PiDirectorySnapshot>
     get(): Promise<SettingsSnapshot>
     reset(scope: SettingsResetScope): Promise<SettingsSnapshot>
     subscribe(listener: (snapshot: SettingsSnapshot) => void): () => void

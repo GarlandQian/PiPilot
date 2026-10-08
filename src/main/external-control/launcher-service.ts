@@ -51,6 +51,7 @@ const MAX_WINDOWS_ENVIRONMENT_CHARS = 32_767
 const POSIX_PATH_DELIMITER = ':'
 
 export interface ExternalControlLauncherServiceOptions {
+  unavailableReason?: string
   descriptorPath: string
   executablePath: string | null
   homeDirectory: string
@@ -89,7 +90,7 @@ interface LauncherReceipt {
 type ReceiptRead =
   | { state: 'missing' }
   | { state: 'invalid' }
-  | { state: 'legacy-windows'; identity: FileIdentity }
+  | { state: 'legacy-windows'; identity: FileIdentity; launcherPath: string }
   | { state: 'valid'; identity: FileIdentity; receipt: LauncherReceipt }
 
 interface Inspection {
@@ -642,6 +643,7 @@ export class ExternalControlLauncherService {
   private readonly uid: number | undefined
   private readonly darwinUserPath: DarwinUserPathAdapter | null
   private readonly windowsUserPath: WindowsUserPathAdapter | null
+  private windowsPathInitializationError: ExternalControlLauncherServiceError | null = null
   private requiresClientRestart = false
   private pendingOperation: Promise<void> = Promise.resolve()
   private pendingInspection: Promise<ExternalControlLauncherSnapshot> | null = null
@@ -673,8 +675,9 @@ export class ExternalControlLauncherService {
           this.environment,
           win32.dirname(this.options.receiptPath),
         )
-      } catch {
+      } catch (error) {
         this.windowsUserPath = null
+        if (error instanceof ExternalControlLauncherServiceError) this.windowsPathInitializationError = error
       }
     } else {
       this.windowsUserPath = null
@@ -821,6 +824,7 @@ export class ExternalControlLauncherService {
   }
 
   private async inspectInternal(): Promise<Inspection> {
+    if (this.options.unavailableReason) return { snapshot: unsupported('launcher_unavailable', this.options.unavailableReason) }
     if (!this.options.isPackaged && !this.options.testTargetDirectory) {
       return { snapshot: unsupported(
         'launcher_unavailable',
@@ -873,6 +877,9 @@ export class ExternalControlLauncherService {
   }
 
   private async inspectWindows(): Promise<Inspection> {
+    if (this.windowsPathInitializationError) return { snapshot: unsupported(
+      this.windowsPathInitializationError.code, this.windowsPathInitializationError.message,
+    ) }
     const targetPath = this.options.executablePath!
     if (
       !this.windowsUserPath ||
@@ -896,7 +903,9 @@ export class ExternalControlLauncherService {
         receipt.receipt,
         targetPath,
       )
-      if (receipt.state === 'valid' && !owned) {
+      const stale = this.isStaleWindowsReceipt(receipt, targetPath)
+      if ((receipt.state === 'valid' && !owned && !stale) ||
+        (receipt.state === 'legacy-windows' && !this.sameWindowsPath(receipt.launcherPath, targetPath) && !stale)) {
         return { snapshot: unsupported(
           'launcher_conflict',
           'The existing PiPilot MCP launcher receipt belongs to another installation.',
@@ -916,7 +925,7 @@ export class ExternalControlLauncherService {
         windowsPath,
         receipt,
         snapshot: externalControlLauncherSnapshotSchema.parse({
-          state: merged.changed ? 'missing' : 'installed',
+          state: stale ? 'repair' : merged.changed ? 'missing' : 'installed',
           managed: !merged.changed && owned && unambiguous,
           requiresClientRestart: false,
         }),
@@ -1359,7 +1368,27 @@ export class ExternalControlLauncherService {
     })
   }
 
-  private async installWindows(inspection: Inspection) {
+  private async installWindows(inspection: Inspection): Promise<ExternalControlLauncherSnapshot> {
+    if (inspection.receipt && inspection.targetPath && this.isStaleWindowsReceipt(inspection.receipt, inspection.targetPath)) {
+      const receipt = inspection.receipt
+      if (receipt.state !== 'valid' && receipt.state !== 'legacy-windows') throw new Error('Invalid stale receipt.')
+      const current = this.readReceipt()
+      if ((current.state !== 'valid' && current.state !== 'legacy-windows') || !sameIdentity(receipt.identity, current.identity)) {
+        throw new ExternalControlLauncherServiceError('launcher_conflict', 'The launcher receipt changed before repair.')
+      }
+      // A moved/uninstalled app no longer owns a usable command. Keep its PATH
+      // entries untouched and archive the record before registering this app.
+      const backup = `${this.options.receiptPath}.stale-${randomUUID()}.json`
+      renameSync(this.options.receiptPath, backup)
+      try {
+        const fresh = await this.inspectWindows()
+        if (fresh.snapshot.state === 'unsupported') throw new ExternalControlLauncherServiceError('launcher_conflict', 'The launcher changed during repair.')
+        return await this.installWindows(fresh)
+      } catch (error) {
+        if (this.readReceipt().state === 'missing') renameSync(backup, this.options.receiptPath)
+        throw error
+      }
+    }
     const adapter = this.windowsUserPath!
     const changed = await persistWindowsLauncherDirectory(
       adapter,
@@ -1535,10 +1564,23 @@ export class ExternalControlLauncherService {
 
   private windowsReceiptMatches(receipt: LauncherReceipt, targetPath: string) {
     return receipt.platform === 'win32' &&
-      receipt.launcherPath.toLocaleLowerCase('en-US') ===
-        targetPath.toLocaleLowerCase('en-US') &&
+      this.sameWindowsPath(receipt.launcherPath, targetPath) &&
       receipt.fingerprint === fingerprint(normalizeWindowsPathEntry(win32.dirname(targetPath))) &&
       receipt.windows !== undefined
+  }
+
+  private sameWindowsPath(left: string, right: string) {
+    return win32.normalize(left).toLocaleLowerCase('en-US') === win32.normalize(right).toLocaleLowerCase('en-US')
+  }
+
+  private isStaleWindowsReceipt(receipt: ReceiptRead, targetPath: string) {
+    const previous = receipt.state === 'valid' ? receipt.receipt.launcherPath
+      : receipt.state === 'legacy-windows' ? receipt.launcherPath : null
+    if (!previous || this.sameWindowsPath(previous, targetPath) ||
+      win32.basename(previous).toLowerCase() !== WINDOWS_LAUNCHER_NAME) return false
+    if (receipt.state === 'valid' && !this.windowsReceiptMatches(receipt.receipt, previous)) return false
+    try { lstatSync(previous); return false }
+    catch (error) { return (error as NodeJS.ErrnoException).code === 'ENOENT' }
   }
 
   private readReceipt(): ReceiptRead {
@@ -1559,15 +1601,14 @@ export class ExternalControlLauncherService {
         typeof raw.launcherPath === 'string' &&
         !/[\0\r\n]/u.test(raw.launcherPath) &&
         win32.isAbsolute(raw.launcherPath) &&
-        raw.launcherPath.toLocaleLowerCase('en-US') ===
-          this.options.executablePath?.toLocaleLowerCase('en-US') &&
+        win32.basename(raw.launcherPath).toLowerCase() === WINDOWS_LAUNCHER_NAME &&
         typeof raw.fingerprint === 'string' &&
         /^[a-f0-9]{64}$/u.test(raw.fingerprint)
       ) {
         // v1 fingerprints do not provide the metadata needed to undo a PATH edit.
         // Retain the record without claiming ownership or checking it against the
         // v2 fingerprint algorithm; a new PATH edit will create a real v2 receipt.
-        return { state: 'legacy-windows', identity: file }
+        return { state: 'legacy-windows', identity: file, launcherPath: raw.launcherPath }
       }
       const expectedKeys = raw.platform === 'win32'
         ? ['fingerprint', 'launcherPath', 'platform', 'version', 'windows']

@@ -18,7 +18,7 @@ export function resolvePackagedExecutable(options: PackagedTargetOptions = {}) {
   if (architecture !== 'arm64' && architecture !== 'x64') {
     throw new Error(`Unsupported packaged test architecture: ${architecture}`)
   }
-  if (platform !== 'darwin' && architecture !== 'x64') {
+  if (platform === 'win32' && architecture !== 'x64') {
     throw new Error(`No ${platform}/${architecture} release target is configured.`)
   }
   const candidates = explicitPath
@@ -31,7 +31,7 @@ export function resolvePackagedExecutable(options: PackagedTargetOptions = {}) {
         : ['release/mac/PiPilot.app/Contents/MacOS/PiPilot', 'release/mac-x64/PiPilot.app/Contents/MacOS/PiPilot']
       : platform === 'win32'
         ? ['release/win-unpacked/PiPilot.exe']
-        : ['release/linux-unpacked/pipilot']
+        : [architecture === 'arm64' ? 'release/linux-arm64-unpacked/pipilot' : 'release/linux-unpacked/pipilot']
   const executable = candidates.map((candidate) => resolve(root, candidate)).find(exists)
   if (!executable) {
     throw new Error(`No packaged PiPilot ${platform}/${architecture} executable was found. Build that target before its smoke test.`)

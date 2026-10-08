@@ -2,6 +2,7 @@ import { createReadStream } from 'node:fs'
 import { basename, join, win32 } from 'node:path'
 import { PassThrough, type Readable } from 'node:stream'
 import { resolveTestUserDataOverride } from './application-storage'
+import { isPortableDistribution, portableDataDirectory } from './portable-storage'
 
 const MCP_STDIO_FLAG = '--pipilot-mcp-stdio'
 
@@ -98,6 +99,13 @@ export async function bootstrapMain(
     packagedSmoke: environment.PIPILOT_PACKAGED_SMOKE,
   })
   if (testUserDataOverride) app.setPath('userData', testUserDataOverride)
+  else {
+    const directory = portableDataDirectory({
+      packaged: app.isPackaged, portable: isPortableDistribution(process.resourcesPath),
+      platform, executablePath, environment,
+    })
+    if (directory) app.setPath('userData', directory)
+  }
   // Electron's Windows bootstrap can take long enough for an MCP client to
   // send its initialize frame before `app.whenReady()` resolves. Start
   // reading stdin immediately so that the OS pipe is buffered instead of

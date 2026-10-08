@@ -10,7 +10,7 @@ export interface LinuxCanaryManifest {
 }
 
 export function isLinuxCanaryRunner(environment = process.env, platform = process.platform, architecture = process.arch) {
-  return platform === 'linux' && architecture === 'x64'
+  return platform === 'linux' && ['x64', 'arm64'].includes(architecture)
     && environment.GITHUB_ACTIONS === 'true' && environment.CI === 'true'
     && environment.RUNNER_ENVIRONMENT === 'github-hosted'
 }

@@ -112,7 +112,7 @@ jobs:
       artifact_prefix: release-${{ needs.preflight.outputs.version }}
 
   package:
-    name: Package ${{ matrix.platform }}
+    name: Package ${{ matrix.inventory }}
     needs: [preflight, verify]
     permissions:
       contents: read
@@ -123,6 +123,8 @@ jobs:
       matrix:
         include:
           - platform: macos
+            inventory: macos
+            arch: arm64
             # Keep the dual-architecture package build on macOS 26. The x64
             # smoke runs natively on macos-15-intel in the job below.
             runner: macos-26
@@ -134,26 +136,48 @@ jobs:
               release/macos-manifest.json
               release/macos-SHA256SUMS.txt
           - platform: windows
+            inventory: windows
+            arch: x64
             runner: windows-2025
             command: pnpm package:win:update
             smoke: pnpm test:packaged
             artifact_paths: |
               release/*.exe
+              release/*.zip
               release/latest.yml
               release/*.blockmap
               release/windows-manifest.json
               release/windows-SHA256SUMS.txt
           - platform: linux
+            inventory: linux
+            arch: x64
+            unpacked: linux-unpacked
             runner: ubuntu-24.04
             command: pnpm package:linux:update
             smoke: xvfb-run --auto-servernum pnpm test:packaged
             artifact_paths: |
               release/*.AppImage
               release/*.deb
+              release/*.rpm
               release/latest-linux.yml
               release/*.blockmap
               release/linux-manifest.json
               release/linux-SHA256SUMS.txt
+          - platform: linux
+            inventory: linux-arm64
+            arch: arm64
+            unpacked: linux-arm64-unpacked
+            runner: ubuntu-24.04-arm
+            command: pnpm package:linux:arm64:update
+            smoke: xvfb-run --auto-servernum pnpm test:packaged
+            artifact_paths: |
+              release/*.AppImage
+              release/*.deb
+              release/*.rpm
+              release/latest-linux-arm64.yml
+              release/*.blockmap
+              release/linux-arm64-manifest.json
+              release/linux-arm64-SHA256SUMS.txt
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -171,18 +195,38 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Install Linux package tools
+        if: ${{ matrix.platform == 'linux' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends rpm
       - name: Build package
         run: ${{ matrix.command }}
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       - name: Create manifest and checksums
-        run: node build/release-manifest.cjs "${{ matrix.platform }}" release
+        run: node build/release-manifest.cjs "${{ matrix.inventory }}" release
+      - name: Validate RPM metadata and runtime payload
+        if: ${{ matrix.platform == 'linux' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          package="release/PiPilot-${{ needs.preflight.outputs.version }}-linux-${{ matrix.arch }}.rpm"
+          test "$(rpm -qp --queryformat '%{NAME}' "$package")" = pipilot
+          test "$(rpm -qp --queryformat '%{VERSION}' "$package")" = '${{ needs.preflight.outputs.version }}'
+          expected_arch=x86_64
+          if [[ '${{ matrix.arch }}' == arm64 ]]; then expected_arch=aarch64; fi
+          test "$(rpm -qp --queryformat '%{ARCH}' "$package")" = "$expected_arch"
+          rpm -qpl "$package" > "$RUNNER_TEMP/pipilot-rpm-files.txt"
+          for path in /opt/PiPilot/pipilot /opt/PiPilot/resources/app.asar /opt/PiPilot/resources/npm/bin/npm-cli.js; do
+            grep -Fx "$path" "$RUNNER_TEMP/pipilot-rpm-files.txt"
+          done
       - name: Configure Linux Chromium sandbox for smoke
         if: ${{ matrix.platform == 'linux' }}
         shell: bash
         run: |
           set -euo pipefail
-          sandbox='release/linux-unpacked/chrome-sandbox'
+          sandbox='release/${{ matrix.unpacked }}/chrome-sandbox'
           test -f "$sandbox"
           sudo chown root:root "$sandbox"
           sudo chmod 4755 "$sandbox"
@@ -191,7 +235,7 @@ jobs:
         if: ${{ matrix.platform != 'macos' }}
         run: ${{ matrix.smoke }}
         env:
-          PIPILOT_PACKAGED_ARCH: x64
+          PIPILOT_PACKAGED_ARCH: ${{ matrix.arch }}
       - name: Prepare older Windows installer for native update canary
         if: ${{ matrix.platform == 'windows' }}
         run: node build/prepare-windows-update-canary.cjs
@@ -215,7 +259,7 @@ jobs:
         if: ${{ always() && matrix.platform == 'linux' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: linux-package-canary-${{ needs.preflight.outputs.version }}
+          name: linux-package-canary-${{ matrix.arch }}-${{ needs.preflight.outputs.version }}
           path: test-results/linux-package-canary/
           if-no-files-found: ignore
           retention-days: 14
@@ -228,14 +272,14 @@ jobs:
         if: ${{ failure() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: packaged-failures-${{ matrix.platform }}-${{ needs.preflight.outputs.version }}
+          name: packaged-failures-${{ matrix.inventory }}-${{ needs.preflight.outputs.version }}
           path: test-results/
           if-no-files-found: ignore
           retention-days: 14
       - name: Upload release candidate
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: pipilot-${{ matrix.platform }}-${{ needs.preflight.outputs.version }}
+          name: pipilot-${{ matrix.inventory }}-${{ needs.preflight.outputs.version }}
           path: ${{ matrix.artifact_paths }}
           if-no-files-found: error
           retention-days: 14
@@ -343,9 +387,21 @@ jobs:
             cp "$candidate" "release/$name"
           done < <(find release-candidates -maxdepth 3 -type f -print0)
           node build/validate-release-assembly.cjs release "$VERSION"
-          node build/release-notes.cjs "$VERSION" release-notes.md
+          if [[ "$SHOULD_RELEASE" == 'true' ]]; then
+            node build/release-notes.cjs "$VERSION" release-notes.md release
+          else
+            node build/release-notes.cjs "$VERSION" release-notes.md release --preview
+          fi
         env:
           VERSION: ${{ needs.preflight.outputs.version }}
+          SHOULD_RELEASE: ${{ needs.preflight.outputs.should_release }}
+      - name: Upload release notes
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-notes-${{ needs.preflight.outputs.version }}
+          path: release-notes.md
+          if-no-files-found: error
+          retention-days: 14
       - name: Remove all previous Actions runs
         if: ${{ needs.preflight.outputs.should_release == 'true' && needs.preflight.outputs.version == '0.0.1' }}
         shell: bash
