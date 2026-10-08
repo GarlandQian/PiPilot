@@ -34,7 +34,7 @@ for (const extension of ['exe', 'zip']) {
     const executable = join(directory, extension === 'exe' ? 'PiPilot-portable.exe' : 'PiPilot.exe')
     if (extension === 'exe') await copyFile(source, executable)
     else await run('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
-      '$ErrorActionPreference = "Stop"; Expand-Archive -LiteralPath $env.PIPILOT_TEST_ZIP -DestinationPath $env.PIPILOT_TEST_DIRECTORY'],
+      '$ErrorActionPreference = "Stop"; Expand-Archive -LiteralPath $env:PIPILOT_TEST_ZIP -DestinationPath $env:PIPILOT_TEST_DIRECTORY'],
     { env: { ...process.env, PIPILOT_TEST_ZIP: source, PIPILOT_TEST_DIRECTORY: directory }, timeout: 90_000 })
     const data = join(directory, 'data')
     const agent = join(data, 'agent')
