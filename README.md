@@ -10,7 +10,7 @@ terminals, models, and Pi extensions.
 Pi continues to own its sessions, configuration, and resources. PiPilot provides the desktop
 experience and does not create a parallel agent runtime or migrate Pi data into a private format.
 
-**Source version:** 0.3.4 · [Download releases](https://github.com/GarlandQian/PiPilot/releases)
+**Source version:** 0.3.5 · [Download releases](https://github.com/GarlandQian/PiPilot/releases)
 
 [![CI](https://github.com/GarlandQian/PiPilot/actions/workflows/ci.yml/badge.svg)](https://github.com/GarlandQian/PiPilot/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2f3437.svg)](LICENSE)
@@ -134,7 +134,7 @@ Installers are currently unsigned. macOS builds are not notarized, so macOS may 
 the app before opening it. Windows may show a SmartScreen or unknown-publisher warning.
 
 Installer filenames include the version, system (`macos`, `windows`, or `linux`), and architecture,
-for example `PiPilot-0.3.4-macos-arm64.dmg`. Linux targets may use `x86_64` or `amd64` for x64.
+for example `PiPilot-0.3.5-macos-arm64.dmg`. Linux targets may use `x86_64` or `amd64` for x64.
 All supported desktop packages check for stable updates 15 seconds after startup and every 12 hours
 while running. You can also select **Settings → About → Check for updates**.
 

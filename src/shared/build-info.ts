@@ -1,1 +1,1 @@
-export const PIPILOT_VERSION = '0.3.4' as const
+export const PIPILOT_VERSION = '0.3.5' as const
