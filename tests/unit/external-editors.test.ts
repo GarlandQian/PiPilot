@@ -7,6 +7,20 @@ import { cleanCommitMessage } from '../../src/main/ipc/register-workspace-ipc'
 import { suggestedBranchName } from '../../src/components/inspector/CommitControls'
 import { preferredEditor } from '../../src/renderer/external-editors'
 
+// Preserve real process launch and argument handling without relying on /bin/sh.
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>()
+  return {
+    ...actual,
+    spawn(file: string, args: string[], options: import('node:child_process').SpawnOptions) {
+      if (file.includes('pipilot-editors-')) {
+        return actual.spawn(process.execPath, [file, ...args], options)
+      }
+      return actual.spawn(file, args, options)
+    },
+  }
+})
+
 async function waitFor(path: string) {
   for (let attempt = 0; attempt < 50; attempt += 1) {
     try { return await readFile(path, 'utf8') } catch { await new Promise((resolve) => setTimeout(resolve, 50)) }
@@ -18,7 +32,7 @@ describe('external editors', () => {
   it('finds editors on PATH without a shell, and always offers the default app and file manager', async () => {
     const bin = await mkdtemp(join(tmpdir(), 'pipilot-editors-'))
     try {
-      await writeFile(join(bin, 'code'), '#!/bin/sh\necho "$@" > "$(dirname "$0")/opened"\n', 'utf8')
+      await writeFile(join(bin, 'code'), `require('node:fs').writeFileSync(require('node:path').join(__dirname, 'opened'), process.argv.slice(2).join(' '))`, 'utf8')
       await chmod(join(bin, 'code'), 0o755)
       const openPath = vi.fn(async () => '')
       const showItemInFolder = vi.fn()

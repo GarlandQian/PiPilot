@@ -5,7 +5,7 @@ if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) {
   throw new Error(`invalid release version: ${version}`)
 }
 
-const highlights = version === '0.3.3'
+const highlights = version === '0.3.4'
   ? [
       'Redesigned workspace panels, terminal tabs, and conversation navigation.',
       'Improved diff review, Git actions, and external editor integration.',

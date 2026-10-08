@@ -13,6 +13,7 @@ const git = (cwd: string, args: string[]) => execute('git', args, { cwd, encodin
 async function repository(files: Record<string, string>) {
   const root = await mkdtemp(join(tmpdir(), 'pipilot-change-actions-'))
   await git(root, ['init', '-q'])
+  await git(root, ['config', 'core.autocrlf', 'false'])
   for (const [path, content] of Object.entries(files)) await writeFile(join(root, path), content, 'utf8')
   await git(root, ['add', '--', '.'])
   await git(root, ['-c', 'user.name=PiPilot Tests', '-c', 'user.email=pipilot@example.invalid', 'commit', '-qm', 'baseline'])

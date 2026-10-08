@@ -6,7 +6,7 @@ PiPilot 是基于官方 [Pi coding agent](https://github.com/earendil-works/pi) 
 
 Pi 继续管理自己的 Session、配置和资源。PiPilot 负责桌面体验，不维护另一套 Agent Runtime，也不把 Pi 数据迁移到私有格式中。
 
-**源码版本：**0.3.3 · [下载发布版本](https://github.com/GarlandQian/PiPilot/releases)
+**源码版本：**0.3.4 · [下载发布版本](https://github.com/GarlandQian/PiPilot/releases)
 
 [![CI](https://github.com/GarlandQian/PiPilot/actions/workflows/ci.yml/badge.svg)](https://github.com/GarlandQian/PiPilot/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2f3437.svg)](LICENSE)
@@ -62,7 +62,7 @@ PiPilot 内置任务工具仅维护会话摘要、实际阻塞和最多三条下
 
 当前安装包未签名，macOS 版本也未公证。macOS 可能要求用户先批准再打开应用；Windows 可能显示 SmartScreen 或未知发布者警告。
 
-安装包文件名包含版本、系统（`macos`、`windows` 或 `linux`）和架构，例如 `PiPilot-0.3.3-macos-arm64.dmg`。Linux 打包格式可能使用 `x86_64` 或 `amd64` 表示 x64。所有支持的桌面安装包均在启动后 15 秒、运行期间每 12 小时自动检查稳定版更新，也可通过 **设置 → 关于 → 检查更新** 手动检查。
+安装包文件名包含版本、系统（`macos`、`windows` 或 `linux`）和架构，例如 `PiPilot-0.3.4-macos-arm64.dmg`。Linux 打包格式可能使用 `x86_64` 或 `amd64` 表示 x64。所有支持的桌面安装包均在启动后 15 秒、运行期间每 12 小时自动检查稳定版更新，也可通过 **设置 → 关于 → 检查更新** 手动检查。
 
 Windows 首次安装可选择安装目录。Windows NSIS 和 Linux AppImage 版本会自动检查较新的稳定版本；由用户点击下载，再确认重启安装。重启前会检查运行中的任务和未保存的配置。Windows 更新沿用原安装目录，保留 Pi 配置和会话；下载文件通过官方更新元数据校验，安装包仍不签名。
 

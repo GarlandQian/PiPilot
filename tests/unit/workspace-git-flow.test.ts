@@ -1,18 +1,36 @@
-import { execFile } from 'node:child_process'
+import { execFile, type ExecFileOptions } from 'node:child_process'
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { promisify } from 'node:util'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { WorkspaceContentService } from '../../src/main/workspace/workspace-content-service'
 
-const execute = promisify(execFile)
+const execute = (file: string, args: string[], options: ExecFileOptions) =>
+  new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+    execFile(file, args, { ...options, encoding: 'utf8' }, (error, stdout, stderr) =>
+      error ? reject(error) : resolve({ stdout, stderr }))
+  })
+
+// Run the fake CLI with Node on every platform; Windows cannot execute a shebang.
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>()
+  return {
+    ...actual,
+    execFile(file: string, args: string[], options: ExecFileOptions, callback: (error: Error | null, stdout: string, stderr: string) => void) {
+      if (file.endsWith('pipilot-test-gh.cjs')) {
+        return actual.execFile(process.execPath, [file, ...args], { ...options, encoding: 'utf8' }, callback)
+      }
+      return Reflect.apply(actual.execFile, undefined, [file, args, options, callback])
+    },
+  }
+})
 const workspaceId = '00000000-0000-4000-8000-000000000703'
 const git = (cwd: string, args: string[]) => execute('git', args, { cwd, encoding: 'utf8' })
 
 async function repository(files: Record<string, string>) {
   const root = await mkdtemp(join(tmpdir(), 'pipilot-git-flow-'))
   await git(root, ['init', '-q', '-b', 'main'])
+  await git(root, ['config', 'core.autocrlf', 'false'])
   await git(root, ['config', 'user.name', 'PiPilot Tests'])
   await git(root, ['config', 'user.email', 'pipilot@example.invalid'])
   await git(root, ['config', 'commit.gpgsign', 'false'])
@@ -138,8 +156,12 @@ describe('committing from the review', () => {
     const bin = await mkdtemp(join(tmpdir(), 'pipilot-gh-'))
     try {
       await git(remote, ['init', '-q', '--bare'])
-      const gh = join(bin, 'gh')
-      await writeFile(gh, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo gh; exit 0; fi\necho "$@" > "$(dirname "$0")/args"\necho "https://github.com/example/repo/pull/7"\n', 'utf8')
+      const gh = join(bin, 'pipilot-test-gh.cjs')
+      await writeFile(gh, `
+        if (process.argv[2] === '--version') { console.log('gh'); process.exit(0) }
+        require('node:fs').writeFileSync(require('node:path').join(__dirname, 'args'), process.argv.slice(2).join(' ') + '\\n')
+        console.log('https://github.com/example/repo/pull/7')
+      `, 'utf8')
       await chmod(gh, 0o755)
       await withRepository({ 'a.txt': 'one\n' }, async (root, service) => {
         await git(root, ['remote', 'add', 'origin', remote])
