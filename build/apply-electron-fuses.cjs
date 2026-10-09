@@ -118,6 +118,9 @@ exports.default = async function applyElectronFuses(context) {
   cpSync(dirname(require.resolve('pipilot-npm/package.json')), join(resourceDirectory, 'npm'), {
     recursive: true, dereference: true,
   })
+  if (context.electronPlatformName === 'win32') {
+    require('./bundle-windows-node.cjs').bundleWindowsNode(resourceDirectory, context.arch)
+  }
   const {
     flipFuses,
     FuseV1Options,

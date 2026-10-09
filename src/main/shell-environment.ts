@@ -12,7 +12,8 @@ const SHELL_SESSION_ONLY = new Set(['SHLVL', 'PWD', 'OLDPWD', '_', 'ELECTRON_RUN
  * system's minimal environment, without the PATH that the user's shell builds
  * (Homebrew, nvm, fnm, cargo…): `npx` or a globally installed MCP server then
  * fails with ENOENT. Started from a shell (SHLVL is set), it already has it.
- * Windows gives desktop apps the user's full PATH.
+ * Windows packages provide app-local Node/npm/npx separately; fnm's shell-only
+ * PATH must not be assumed to exist when starting from a desktop shortcut.
  */
 export function needsShellEnvironment(environment: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform) {
   return platform !== 'win32' && !environment.SHLVL

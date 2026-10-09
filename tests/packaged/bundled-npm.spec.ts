@@ -29,5 +29,22 @@ test('runs packaged npm and installs a local extension without system Node or np
     await writeFile(join(prefix, 'package.json'), '{"private":true}')
     await run(['install', source, '--prefix', prefix, '--offline', '--ignore-scripts', '--no-audit', '--no-fund', '--legacy-peer-deps'])
     expect(JSON.parse(await readFile(join(prefix, 'node_modules', 'pipilot-offline-test-extension', 'package.json'), 'utf8')).version).toBe('1.0.0')
+    if (process.platform === 'win32') {
+      const node = join(resources, 'node', 'node.exe')
+      expect((await promisify(execFile)(node, ['--version'], { env: environment, windowsHide: true })).stdout.trim()).toBe('v24.18.0')
+      expect(await readFile(join(resources, 'node', 'LICENSE'), 'utf8')).toContain('Node.js')
+      const marker = 'npm lifecycle and child node passed 中文 with spaces'
+      await writeFile(join(source, 'package.json'), JSON.stringify({
+        name: 'pipilot-offline-test-extension', version: '1.0.0', scripts: { check: 'node check.cjs' },
+      }))
+      await writeFile(join(source, 'check.cjs'), `
+        const { execFileSync } = require('node:child_process')
+        process.stdout.write(execFileSync('node', ['-e', 'process.stdout.write(process.argv[1])', ${JSON.stringify(marker)}], { windowsHide: true }))
+      `)
+      expect((await run(['run', 'check', '--prefix', source])).stdout).toContain(marker)
+      expect((await promisify(execFile)(executable, [runner, '--', 'npx', '--version'], {
+        env: environment, timeout: 60_000, windowsHide: true,
+      })).stdout.trim()).toBe('12.2.0')
+    }
   } finally { await rm(root, { recursive: true, force: true }) }
 })

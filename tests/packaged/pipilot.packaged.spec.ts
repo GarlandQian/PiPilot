@@ -28,6 +28,7 @@ import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from '../../src/shared/sett
 import { createWindowsUserPathAdapter } from '../../src/main/external-control/launcher-service'
 import { startPiSdkFixture } from '../electron/pi-sdk-fixture'
 import { NATIVE_MCP_CANARY_TEXT, NATIVE_MCP_CANARY_TOOL, startNativeMcpFixture } from '../helpers/native-mcp-fixture'
+import { createNpxMcpFixture, NPX_MCP_CANARY_TEXT, NPX_MCP_CANARY_TOOL } from '../helpers/npx-mcp-fixture'
 import { resolvePackagedExecutable as resolvePackagedTarget, verifyPackagedArchitecture } from './resolve-packaged-executable'
 
 const require = createRequire(import.meta.url)
@@ -410,6 +411,7 @@ test('runs the bundled Pi SDK workflow without system npm from the packaged appl
   const fixtureRoot = await mkdtemp(join(packagedTemporaryDirectory, 'pipilot-sdk-fixture-'))
   const agentDir = join(fixtureRoot, 'agent-data')
   const mcpFixture = await startNativeMcpFixture()
+  const npxFixture = process.platform === 'win32' ? await createNpxMcpFixture(fixtureRoot) : null
   const codemodePrompt = 'Packaged native MCP and codemode canary'
   const hostFailureMarker = join(fixtureRoot, 'host-failure.marker')
   const writeProjectionPrompt = 'Packaged official write result remains live'
@@ -423,7 +425,8 @@ test('runs the bundled Pi SDK workflow without system npm from the packaged appl
     agentDir,
     globalPackages: [globalPackagePath],
     codemodeToolPrompts: {
-      [codemodePrompt]: `const result = await tools.mcp__packaged_canary__${NATIVE_MCP_CANARY_TOOL}({}); text(result.content[0].text);`,
+      [codemodePrompt]: `const result = await tools.mcp__packaged_canary__${NATIVE_MCP_CANARY_TOOL}({}); text(result.content[0].text);`
+        + (npxFixture ? ` const node = await tools.mcp__npx_canary__${NPX_MCP_CANARY_TOOL}({}); text(node.content[0].text);` : ''),
     },
     promptDelays: {
       'Packaged background session stays alive': 15_000,
@@ -438,6 +441,7 @@ test('runs the bundled Pi SDK workflow without system npm from the packaged appl
   await writeFile(join(agentDir, 'mcp.json'), JSON.stringify({
     mcpServers: {
       packaged_canary: { url: mcpFixture.url, exposure: 'codemode' },
+      ...(npxFixture ? { npx_canary: npxFixture.config } : {}),
     },
   }), 'utf8')
   const canonicalWorkspacePath = await realpath(workspacePath)
@@ -793,6 +797,10 @@ test('runs the bundled Pi SDK workflow without system npm from the packaged appl
       expect.stringContaining(NATIVE_MCP_CANARY_TEXT),
     ])
     expect(mcpFixture.calls).toContainEqual({ method: 'tools/call', name: NATIVE_MCP_CANARY_TOOL })
+    if (npxFixture) {
+      expect(piFixture.codemodeResults[0]).toContain(NPX_MCP_CANARY_TEXT)
+      expect(await npxFixture.hasCall('tools/call')).toBe(true)
+    }
 
     // The delayed-start Electron test owns frame-level loading continuity;
     // packaged hydration can settle before a renderer observer samples it.

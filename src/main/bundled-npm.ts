@@ -1,4 +1,4 @@
-import { accessSync, constants, statSync } from 'node:fs'
+import { accessSync, constants, existsSync, statSync } from 'node:fs'
 import { basename, delimiter, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -21,15 +21,49 @@ function systemNpmAvailable() {
   )
 }
 
-export function bundledNpmCommand(moduleUrl = import.meta.url, executablePath = process.execPath) {
+function mainOutputDirectory(moduleUrl: string) {
   const directory = dirname(fileURLToPath(moduleUrl))
-  const output = basename(directory) === 'chunks' ? dirname(directory) : directory
+  return basename(directory) === 'chunks' ? dirname(directory) : directory
+}
+
+export function bundledWindowsNodeDirectory(moduleUrl = import.meta.url) {
+  if (process.platform !== 'win32') return undefined
+  const directory = join(mainOutputDirectory(moduleUrl), '..', '..', '..', 'node')
+  return existsSync(join(directory, 'node.exe')) ? directory : undefined
+}
+
+/** App-local only: never change the user's registry PATH or fnm installation. */
+export function prependWindowsNodePath(environment: NodeJS.ProcessEnv, directory: string) {
+  const keys = Object.keys(environment).filter((key) => key.toLowerCase() === 'path')
+  const paths = keys.flatMap((key) => (environment[key] ?? '').split(';')).filter(Boolean)
+  const seen = new Set<string>()
+  const unique = [directory, ...paths].filter((entry) => {
+    const normalized = entry.replace(/^"|"$/gu, '').replace(/[\\/]+$/u, '').toLowerCase()
+    if (seen.has(normalized)) return false
+    seen.add(normalized)
+    return true
+  })
+  for (const key of keys) delete environment[key]
+  environment.PATH = unique.join(';')
+}
+
+export function prepareBundledNodeEnvironment(environment = process.env, moduleUrl = import.meta.url) {
+  const directory = bundledWindowsNodeDirectory(moduleUrl)
+  if (directory) prependWindowsNodePath(environment, directory)
+  return directory
+}
+
+export function bundledNpmCommand(moduleUrl = import.meta.url, executablePath = process.execPath) {
+  const windowsNode = prepareBundledNodeEnvironment(process.env, moduleUrl)
+  if (windowsNode) return [join(windowsNode, 'npm.cmd')]
   // Pi uses the trailing -- npm to identify the package manager's argument dialect.
-  return [executablePath, join(output, 'npm-runner.js'), '--', 'npm']
+  return [executablePath, join(mainOutputDirectory(moduleUrl), 'npm-runner.js'), '--', 'npm']
 }
 
 /** Use Pi's public getter, including after reload, without saving machine paths in settings.json. */
-export function useBundledNpm(settings: PackageSettings, command = systemNpmAvailable() ? ['npm'] : bundledNpmCommand()) {
+export function useBundledNpm(settings: PackageSettings, command = bundledWindowsNodeDirectory()
+  ? bundledNpmCommand()
+  : systemNpmAvailable() ? ['npm'] : bundledNpmCommand()) {
   const configured = settings.getNpmCommand.bind(settings)
   settings.getNpmCommand = () => {
     const value = configured()

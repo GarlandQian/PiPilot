@@ -14,7 +14,8 @@ Each version section supplies the highlights for its GitHub Release. Download li
 - **补全模型信息**：结合 Pi 内置目录和可关闭的 models.dev 在线目录补全模型能力、上下文长度与价格；在线目录保留本地缓存，未知模型明确显示能力未知。对话模型菜单可直接进入添加供应商流程。
 - **更清晰的配置编辑**：模型与 MCP 编辑页支持表单和 JSON 同步，敏感字段默认遮罩，保留已有高级配置；离开未保存的编辑页会提示，修改供应商 ID 时会同步其默认模型归属。
 - **重做 MCP 管理**：新增常用服务器模板、粘贴配置，以及从 Claude Code、Claude Desktop、Codex、Cursor、Gemini CLI、VS Code 和 Windsurf 导入。导入前可预览和选择，已有同名服务器保留，来源文件不变；可直接启用、停用、编辑或移除服务器。
-- **改善桌面启动环境**：macOS／Linux 从桌面启动时尝试读取交互式登录 Shell 环境，让已安装的 npx、cargo 等命令可供 Pi、MCP 和终端使用；读取失败或超时保留原环境。外部服务器仍需安装相应运行环境，Windows 的 fnm 环境差异仍需单独处理。
+- **修复 Windows npm 与对话启动**：安装版和便携版附带独立 Node.js、npm、npx，供新建／打开对话、Pi 扩展包、npm 脚本和 stdio MCP 使用，不再依赖 fnm 的终端初始化或系统 npm。保留明确配置的其他包管理命令，不改写系统 PATH。
+- **改善桌面启动环境**：macOS／Linux 从桌面启动时尝试读取交互式登录 Shell 环境，让已安装的 npx、cargo 等命令可供 Pi、MCP 和终端使用；读取失败或超时保留原环境。uvx、独立原生 MCP 程序等仍需自行安装。
 
 ### English
 
@@ -22,7 +23,8 @@ Each version section supplies the highlights for its GitHub Release. Download li
 - **Model metadata:** Fill capabilities, context lengths, and pricing from Pi's catalog and the optional models.dev catalog, with a local cache for offline use and explicit unknown-capability labels. Open provider setup directly from the conversation's model menu.
 - **Clearer configuration editing:** Model and MCP editors synchronize forms with JSON, mask sensitive fields by default, and preserve advanced configuration. Unsaved edits receive an exit prompt; renaming a provider ID also moves its default-model selection.
 - **Redesigned MCP management:** Add common server templates, paste configuration, or import selected servers from Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, VS Code, and Windsurf. Preview imports, preserve existing names and source files, and enable, disable, edit, or remove servers in place.
-- **Desktop launch environment:** On macOS and Linux, desktop launches try the interactive login shell's environment so installed commands such as npx and cargo are available to Pi, MCP servers, and terminals. Failures or timeouts retain the original environment. External runtimes remain required; Windows fnm environment differences still need separate handling.
+- **Windows npm and conversation startup:** Setup and portable editions include standalone Node.js, npm, and npx for new/resumed conversations, Pi packages, npm scripts, and stdio MCP servers, without depending on fnm shell initialization or system npm. Explicit custom package-manager commands are preserved; the system PATH is not modified.
+- **Desktop launch environment:** On macOS and Linux, desktop launches try the interactive login shell's environment so installed commands such as npx and cargo are available to Pi, MCP servers, and terminals. Failures or timeouts retain the original environment. Other runtimes such as uvx and standalone native MCP programs still need installation.
 
 ## 0.4.0
 

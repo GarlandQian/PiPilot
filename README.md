@@ -91,9 +91,9 @@ See [configuration and data](docs/usage.md#pi-configuration-and-data) for file l
 
 ## Troubleshooting
 
-- **Windows: `spawn npm ENOENT` when opening or creating a conversation.** PiPilot now falls back to bundled npm when system npm is unavailable to the app. Node installed through [fnm](https://github.com/Schniz/fnm#shell-setup) can be visible in a terminal but absent from a desktop shortcut's environment. Fully quit the app, including its tray process, and launch from a terminal where `npm --version` works to check that difference.
+- **Windows npm and conversation startup.** Setup and portable editions include Node.js, npm, and npx for conversations, packages, and MCP servers. Desktop shortcuts do not require fnm shell initialization or changes to the system PATH. Fully quit the old version, including its tray process, before opening the upgrade.
 - **MCP launcher unavailable after moving an installation.** If the recorded Windows installation has been removed, use **Repair** in External Control. Another existing installation or an unverifiable record is shown as a conflict rather than overwritten. Portable EXE users should use Setup or portable ZIP for a stable launcher.
-- **An external MCP command is missing.** macOS/Linux desktop launches now try the login shell's environment. If a command is still unavailable, check its installation and PATH or configure an absolute executable path. Windows fnm environments may still differ between terminal and desktop launches. Bundled npm supports Pi package management; it does not install every external MCP runtime.
+- **An external MCP command is missing.** Windows includes node, npm, and npx; macOS/Linux desktop launches try the login shell's environment. Other commands such as uvx and grok-search-rs still need installation and an accessible PATH or an absolute executable path. The first npx package download needs network access; missing browsers or credentials remain server-specific errors.
 
 For bugs, include the PiPilot version, operating system, architecture, package type, and error text in a [GitHub issue](https://github.com/GarlandQian/PiPilot/issues). Remove credentials and personal session content.
 

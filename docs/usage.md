@@ -145,14 +145,20 @@ installed. Existing user-installed extensions remain under your control. Pi give
 remove the old adapter from **Settings > Integrations > Packages** and reload the runtime to use
 native MCP; PiPilot does not uninstall personal extensions automatically.
 
-The bundled Pi runtime does not require a separate Node.js installation. Package management uses system npm when it is available on the application's PATH and falls back to bundled npm otherwise. Explicit custom package-manager commands are preserved. A stdio MCP server may
-still require its own runtime, such as `node`, `npx`, or `uvx`. That command must be available to
-the application process, or configured with an absolute executable path. On macOS and Linux,
-desktop launches try reading the interactive login shell's environment before starting Pi and MCP.
-If the shell fails or takes more than five seconds, PiPilot keeps its original environment. This
-does not initialize Windows fnm shells; fully quit and launch from a working terminal to check
-that environment difference. Project MCP configuration runs
-with the project resources when you open a conversation, so only add projects you trust.
+The bundled Pi runtime does not require a separate Node.js installation. Windows Setup and portable
+editions include standalone Node.js 24.18.0, npm, and npx for conversations, packages, and stdio MCP
+servers, including npm scripts and child processes that invoke node. PiPilot adjusts only its own
+process PATH; it does not change the system PATH or fnm installation. Desktop launches work without
+fnm shell initialization. Explicit custom package-manager commands remain unchanged.
+
+On macOS and Linux, Pi package management uses system npm when available and bundled npm otherwise.
+Desktop launches try the interactive login shell's environment before starting Pi and MCP; failures
+or a five-second timeout retain the original environment. Other runtimes such as uvx and standalone
+native MCP programs must still be installed and accessible by PATH or an absolute executable path.
+The first npx package download needs network access; server-specific browsers and credentials still
+need configuration. Fully quit the old version, including its tray process, before upgrading.
+Project MCP configuration runs with the project resources when you open a conversation, so only
+add projects you trust.
 
 The MCP editor can import the old project `.mcp.json` into a draft for `.pi/mcp.json`, translating
 `disabled` to `enabled`. Import does not write files until you save and keeps the original file.

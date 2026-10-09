@@ -9,6 +9,7 @@ import { DefaultPackageRepository } from '../../src/main/local-pi-management/def
 import { PI_RECOMMENDED_PACKAGES } from '../../src/shared/pi-package-adapters'
 import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from '../../src/shared/settings'
 import { startPiSdkFixture } from '../electron/pi-sdk-fixture'
+import { createNpxMcpFixture, NPX_MCP_CANARY_TEXT, NPX_MCP_CANARY_TOOL } from '../helpers/npx-mcp-fixture'
 
 test.skip(process.platform !== 'win32' || process.env.GITHUB_ACTIONS !== 'true'
   || process.env.RUNNER_ENVIRONMENT !== 'github-hosted', 'Requires a disposable Windows release runner.')
@@ -38,7 +39,12 @@ for (const extension of ['exe', 'zip']) {
     { env: { ...process.env, PIPILOT_TEST_ZIP: source, PIPILOT_TEST_DIRECTORY: directory }, timeout: 90_000 })
     const data = join(directory, 'data')
     const agent = join(data, 'agent')
-    const fixture = await startPiSdkFixture({ agentDir: agent })
+    const npxFixture = await createNpxMcpFixture(root)
+    const prompt = 'Portable npx MCP canary'
+    const fixture = await startPiSdkFixture({ agentDir: agent, codemodeToolPrompts: {
+      [prompt]: `const result = await tools.mcp__npx_canary__${NPX_MCP_CANARY_TOOL}({}); text(result.content[0].text);`,
+    } })
+    await writeFile(join(agent, 'mcp.json'), JSON.stringify({ mcpServers: { npx_canary: npxFixture.config } }))
     const decisions = new DefaultPackageRepository(agent)
     for (const recommendation of PI_RECOMMENDED_PACKAGES) await decisions.save({ ...recommendation, status: 'removed' })
     await writeFile(join(data, 'settings.json'), JSON.stringify({
@@ -51,6 +57,14 @@ for (const extension of ['exe', 'zip']) {
         || key === 'PI_CODING_AGENT_DIR' || key === 'ELECTRON_RUN_AS_NODE') delete environment[key]
     }
     environment.PATH = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32')
+    // Also cover a present but broken npm/npx, as with an expired fnm shell PATH.
+    if (extension === 'zip') {
+      const stale = join(root, 'stale fnm multishell')
+      await mkdir(stale)
+      for (const command of ['npm', 'npx']) await writeFile(join(stale, `${command}.cmd`), '@echo stale fnm runtime >&2\r\n@exit /b 91\r\n')
+      environment.Path = `${stale};${environment.PATH}`
+      delete environment.PATH
+    }
     let child: ChildProcess | undefined
     let browser: Browser | undefined
     let page: Page | undefined
@@ -83,6 +97,11 @@ for (const extension of ['exe', 'zip']) {
       await expect.poll(async () => JSON.parse(await readFile(join(data, 'settings.json'), 'utf8')).settings.composer.sendShortcut).toBe('mod-enter')
       await page!.getByRole('button', { name: 'New chat', exact: true }).click()
       await expect.poll(() => page!.evaluate(() => window.pipilot!.localPi.runtime.status()), { timeout: 60_000 }).toMatchObject({ state: 'ready' })
+      await expect.poll(() => npxFixture.hasCall('tools/list'), { timeout: 60_000 }).toBe(true)
+      await page!.getByRole('textbox', { name: 'Message input' }).fill(prompt)
+      await page!.getByRole('button', { name: 'Send', exact: true }).click()
+      await expect.poll(() => fixture.codemodeResults).toEqual([expect.stringContaining(NPX_MCP_CANARY_TEXT)])
+      expect(await npxFixture.hasCall('tools/call')).toBe(true)
       await page!.screenshot({ path: testInfo.outputPath(`portable-${extension}.png`) })
     } finally {
       await browser?.close().catch(() => undefined)

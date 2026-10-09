@@ -109,8 +109,10 @@ import { createExternalControlSession } from './external-control/session-factory
 import { ExternalControlLauncherService } from './external-control/launcher-service'
 import { applyShellEnvironment, needsShellEnvironment, resolveShellEnvironment } from './shell-environment'
 import { ModelsDevService } from './models-config/models-dev'
+import { prepareBundledNodeEnvironment } from './bundled-npm'
 
 registerAppSchemePrivileges()
+prepareBundledNodeEnvironment()
 
 if (process.platform === 'darwin') {
   // PiPilot's current macOS packages intentionally use an ad-hoc signature.

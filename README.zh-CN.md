@@ -91,9 +91,9 @@ Pi 默认目录为 `~/.pi/agent`。可在 **设置 → 通用 → Pi 配置目�
 
 ## 常见问题
 
-- **Windows 打开或新建对话时出现 `spawn npm ENOENT`。** 应用找不到系统 npm 时，现在会回退到内置 npm。通过 [fnm](https://github.com/Schniz/fnm#shell-setup) 安装的 Node 可能只在已初始化的终端中可见，桌面图标启动的应用不一定继承该环境。可完全退出 PiPilot（包括托盘进程），再从能运行 `npm --version` 的终端启动，检查是否存在此差异。
+- **Windows 的 npm 与对话启动。** 安装版和便携版均附带 Node.js、npm、npx，供对话、扩展包和 MCP 使用。从桌面图标启动也不依赖 fnm 的终端环境，无需修改系统 PATH。升级后请完全退出旧版（包括托盘进程）再打开。
 - **更换安装目录后，MCP 启动器显示不可用。** 已确认旧 Windows 安装被移除时，可在 External Control 中点击「修复」。旧安装仍存在或记录无法验证时，会显示具体冲突原因，不会覆盖另一份安装。便携 EXE 如需稳定启动器，请改用安装版或便携 ZIP。
-- **外部 MCP 命令找不到。** macOS／Linux 桌面启动时会尝试读取登录 Shell 环境；仍找不到时，请检查安装与 PATH，或填写可执行文件绝对路径。Windows 的 fnm 终端与桌面环境仍可能不同。内置 npm 用于 Pi 包管理，不会代为安装所有外部 MCP Runtime。
+- **外部 MCP 命令找不到。** Windows 提供内置 node、npm、npx；macOS／Linux 桌面启动时会尝试读取登录 Shell 环境。uvx、grok-search-rs 等其他命令仍需安装，并能从应用 PATH 找到，或填写可执行文件绝对路径。npx 首次下载服务器包需要网络；缺少浏览器、凭据等会显示对应服务器错误。
 
 提交 [Issue](https://github.com/GarlandQian/PiPilot/issues) 时，请附版本、系统、架构、安装包类型和错误文本，并移除凭据与私人会话内容。
 

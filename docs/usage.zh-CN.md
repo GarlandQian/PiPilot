@@ -63,9 +63,9 @@ PiPilot 会把缺失的 Plan Mode、Subagents 和 Goal 自动安装到这个共�
 
 MCP 连接使用 Pi 原生支持和标准 JSON 配置。内置 Runtime 支持 stdio 与 Streamable HTTP，无需 MCP 适配插件，也不会自动安装。已安装的用户扩展仍由你管理；Pi 会优先使用已启用的 `pi-mcp-adapter`，替代原生集成。确认原生配置后，在 **设置 > Integrations > 包** 中移除旧适配器并重新加载 Runtime，即可使用原生 MCP。PiPilot 不会自动卸载个人扩展。
 
-PiPilot 本体使用内置 Pi，无需另行安装 Node.js。Pi 扩展包管理优先使用应用进程 PATH 中可找到的系统 npm；找不到时使用随安装包附带的 npm 和 Electron 内置 Node，避免打开会话时因 `spawn npm ENOENT` 失败。显式设置的其他包管理命令会保留。你配置的 stdio MCP 服务器仍可能需要 `node`、`npx` 或 `uvx` 等运行环境；命令必须能从应用进程的 PATH 找到，或配置为可执行文件的绝对路径。macOS／Linux 从桌面启动时，会在启动 Pi 和 MCP 前尝试读取交互式登录 Shell 环境；失败或超过五秒则保留原环境。打开会话时会随项目资源加载项目 MCP 配置，因此只添加可信项目。
+PiPilot 本体使用内置 Pi，无需另行安装 Node.js。Windows 安装版和便携版附带独立的 Node.js 24.18.0、npm 和 npx；应用优先使用这套运行环境启动对话、管理扩展包和运行 stdio MCP，npm 脚本和子进程也能找到 node。显式设置的其他包管理命令会保留。macOS／Linux 的 Pi 包管理优先使用系统 npm，找不到时使用随安装包附带的 npm 和 Electron 内置 Node；从桌面启动时，会在启动 Pi 和 MCP 前尝试读取交互式登录 Shell 环境，失败或超过五秒则保留原环境。打开会话时会随项目资源加载项目 MCP 配置，因此只添加可信项目。
 
-Windows 即使用 fnm 安装了 Node，也可能遇到上述 PATH 差异：[fnm 的 shell 初始化](https://github.com/Schniz/fnm#shell-setup)作用于终端环境，从桌面图标启动的 PiPilot 不一定继承它。可完全退出 PiPilot（包括托盘进程），再从能运行 `npm --version` 的终端启动，以验证是否由此导致。无需替换 fnm，也不要把 fnm 临时 multishell 目录永久写进系统 PATH。
+Windows 的内置运行环境仅调整 PiPilot 及其子进程的 PATH，不修改系统 PATH 或 fnm 安装，也无需从终端启动应用。便携版升级仍只需保留 `data/`。自定义命令的绝对路径和其他运行环境（如 uvx、grok-search-rs）需要有效安装；npx 首次获取服务器包需要网络，服务器所需浏览器或凭据仍需配置。升级后请完全退出旧版（包括托盘进程）再打开。
 
 MCP 编辑器可以把旧的项目 `.mcp.json` 导入 `.pi/mcp.json` 草稿，并将 `disabled` 转换为 `enabled`。导入后只有保存才写入新文件，原文件会保留。不支持的 socket 或仅 SSE 配置会明确报错，不会静默丢弃。外观、导航和窗口偏好单独保存在 Electron 应用数据目录。请勿提交包含 API Key、Token 或真实 Session 内容的文件。
 
