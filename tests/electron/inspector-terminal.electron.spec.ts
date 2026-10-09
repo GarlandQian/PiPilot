@@ -435,21 +435,26 @@ test('opens current and inactive project menu terminals in that project without 
   test.setTimeout(90_000)
   const fixture = await launchTerminalFixture(testInfo)
   const { app, page, projectA, projectB, errors } = fixture
-  const openFromProjectMenu = async (project: string) => {
+  const openFromProjectMenu = async (project: string, expectedCount: number) => {
     await page.getByRole('button', { name: `Project actions for ${basename(project)}`, exact: true }).click()
     await page.getByRole('menuitem', { name: 'Open in terminal', exact: true }).click()
     await expect.poll(() => page.evaluate(async () => (await window.pipilot!.localPi.runtime.status()).cwd)).toBe(project)
+    // Switching the runtime can finish before the queued create and renderer selection.
+    // An old panel being hidden during navigation does not acknowledge the new terminal.
+    await expect.poll(async () => (await listTerminals(page)).length).toBe(expectedCount)
+    const terminals = await listTerminals(page)
+    await expect(terminalPanel(page, terminals[expectedCount - 1].terminalId)).toBeVisible()
   }
   try {
     await addProject(app, page, projectA)
-    await openFromProjectMenu(projectA)
+    await openFromProjectMenu(projectA, 1)
     const first = await activeTerminal(page)
     await expectTerminalDirectory(page, first, projectA, 'CURRENT_PROJECT_CWD')
     expect((await listTerminals(page)).map(({ terminalId }) => terminalId)).toEqual([first.terminalId])
 
     await addProject(app, page, projectB)
     expect(await listTerminals(page)).toEqual([])
-    await openFromProjectMenu(projectA)
+    await openFromProjectMenu(projectA, 2)
     await expect(first.panel).toBeHidden()
     const second = await activeTerminal(page)
     expect(second.terminalId).not.toBe(first.terminalId)
@@ -457,7 +462,7 @@ test('opens current and inactive project menu terminals in that project without 
     expect((await listTerminals(page)).map(({ terminalId }) => terminalId)).toEqual([first.terminalId, second.terminalId])
 
     // The other project's first explicit request must not also make an implicit terminal.
-    await openFromProjectMenu(projectB)
+    await openFromProjectMenu(projectB, 1)
     const other = await activeTerminal(page)
     await expectTerminalDirectory(page, other, projectB, 'OTHER_PROJECT_CWD')
     expect((await listTerminals(page)).map(({ terminalId }) => terminalId)).toEqual([other.terminalId])
