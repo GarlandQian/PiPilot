@@ -258,7 +258,16 @@ test('preserves named terminals and viewport across hiding, tabs and projects, a
     await first.panel.locator('.xterm-screen').hover()
     await page.mouse.wheel(0, -1000)
     await expect(firstRow).not.toHaveText(latestPosition)
-    const readingPosition = await firstRow.innerText()
+    // mouse.wheel acknowledges dispatch, not completion of xterm's render/scroll.
+    // Capture a settled baseline before testing exact restoration after hiding.
+    let readingPosition = ''
+    let stableReadings = 0
+    await expect.poll(async () => {
+      const current = await firstRow.innerText()
+      stableReadings = current === readingPosition ? stableReadings + 1 : 0
+      readingPosition = current
+      return stableReadings
+    }, { intervals: [100] }).toBeGreaterThanOrEqual(3)
     expect(readingPosition).toContain('PIPILOT_A1_SCROLL:')
     const firstView = await first.panel.locator('.xterm').elementHandle()
     if (!firstView) throw new Error('The first terminal view is missing')
