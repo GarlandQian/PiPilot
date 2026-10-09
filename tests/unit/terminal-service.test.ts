@@ -87,6 +87,16 @@ class FakePty {
 
 const temporaryDirectories: string[] = []
 
+// These tests use real host directories, so the adapter must use the same path syntax.
+const externalAppFixture = process.platform === 'win32'
+  ? { platform: 'win32', executable: 'C:\\tools\\wt.exe', adapter: 'windows-terminal' } as const
+  : { platform: 'linux', executable: '/tools/kitty', adapter: 'kitty' } as const
+function externalAppArguments(cwd: string) {
+  return externalAppFixture.platform === 'win32'
+    ? ['-w', 'new', 'new-tab', '-d', cwd.replace(/;/g, '\\;')]
+    : ['--directory', cwd]
+}
+
 async function temporaryDirectory(name: string) {
   const root = await mkdtemp(join(tmpdir(), `pipilot-${name}-`))
   temporaryDirectories.push(root)
@@ -141,18 +151,18 @@ describe('TerminalService', () => {
     const root = await temporaryDirectory('external-terminal-directory')
     await mkdir(join(root, 'sub folder'))
     let settings: TerminalSettings = { ...DEFAULT_SETTINGS.terminal, defaultExternalAppId: 'external:custom:kitty',
-      defaultExternalAppSnapshot: { id: 'external:custom:kitty', label: 'My kitty', executable: '/tools/kitty', adapter: 'kitty' },
-      externalApps: [{ id: 'external:custom:kitty', name: 'My kitty', executable: '/tools/kitty', adapter: 'kitty' }] }
+      defaultExternalAppSnapshot: { id: 'external:custom:kitty', label: 'My kitty', executable: externalAppFixture.executable, adapter: externalAppFixture.adapter },
+      externalApps: [{ id: 'external:custom:kitty', name: 'My kitty', executable: externalAppFixture.executable, adapter: externalAppFixture.adapter }] }
     const launchExternal = vi.fn(async () => undefined)
     const service = new TerminalService(() => firstScope, async (scope) => ({ scope, cwd: root }), {
-      platform: 'linux', environment: {}, getTerminalSettings: () => settings, launchExternal,
-      resolveExecutable: async (candidate) => candidate === '/tools/kitty' ? candidate : undefined,
+      platform: externalAppFixture.platform, environment: {}, getTerminalSettings: () => settings, launchExternal,
+      resolveExecutable: async (candidate) => candidate === externalAppFixture.executable ? candidate : undefined,
     })
     expect(await service.openExternal(firstScope, undefined, 'sub folder')).toEqual({ scope: firstScope, appId: 'external:custom:kitty' })
-    expect(launchExternal.mock.calls[0]).toEqual(['/tools/kitty', ['--directory', await realpath(join(root, 'sub folder'))], { cwd: await realpath(join(root, 'sub folder')) }])
+    expect(launchExternal.mock.calls[0]).toEqual([externalAppFixture.executable, externalAppArguments(await realpath(join(root, 'sub folder'))), { cwd: await realpath(join(root, 'sub folder')) }])
     await expect(service.openExternal(firstScope, undefined, '../outside')).rejects.toMatchObject({ code: 'TERMINAL_CWD_UNAVAILABLE' })
     settings = { ...settings, externalApps: [] }
-    expect(await service.listExternalApps(true)).toContainEqual(expect.objectContaining({ id: 'external:custom:kitty', label: 'My kitty', executable: '/tools/kitty', available: false }))
+    expect(await service.listExternalApps(true)).toContainEqual(expect.objectContaining({ id: 'external:custom:kitty', label: 'My kitty', executable: externalAppFixture.executable, available: false }))
     await expect(service.openExternal(firstScope)).rejects.toMatchObject({ code: 'TERMINAL_EXTERNAL_APP_UNAVAILABLE' })
     expect(launchExternal).toHaveBeenCalledTimes(1)
   })
@@ -167,14 +177,14 @@ describe('TerminalService', () => {
       if (scopeKey(scope) !== scopeKey(firstScope)) throw new Error('Unregistered project')
       return { scope, cwd: root }
     }, {
-      platform: 'linux', environment: {}, launchExternal, spawnPty,
+      platform: externalAppFixture.platform, environment: {}, launchExternal, spawnPty,
       getTerminalSettings: () => ({ ...DEFAULT_SETTINGS.terminal, defaultExternalAppId: 'external:custom:kitty',
-        externalApps: [{ id: 'external:custom:kitty', name: 'kitty', executable: '/tools/kitty', adapter: 'kitty' }] }),
-      resolveExecutable: async (candidate) => candidate === '/tools/kitty' ? candidate : undefined,
+        externalApps: [{ id: 'external:custom:kitty', name: 'kitty', executable: externalAppFixture.executable, adapter: externalAppFixture.adapter }] }),
+      resolveExecutable: async (candidate) => candidate === externalAppFixture.executable ? candidate : undefined,
     })
     await expect(service.openExternal(firstScope, undefined, 'folder')).resolves.toEqual({ scope: firstScope, appId: 'external:custom:kitty' })
     expect(getActiveScope).not.toHaveBeenCalled()
-    expect(launchExternal).toHaveBeenCalledWith('/tools/kitty', ['--directory', await realpath(join(root, 'folder'))], { cwd: await realpath(join(root, 'folder')) })
+    expect(launchExternal).toHaveBeenCalledWith(externalAppFixture.executable, externalAppArguments(await realpath(join(root, 'folder'))), { cwd: await realpath(join(root, 'folder')) })
     await expect(service.create(firstScope, 80, 24)).rejects.toMatchObject({ code: 'TERMINAL_STALE_SCOPE' })
     await expect(service.openExternal(thirdScope)).rejects.toMatchObject({ code: 'TERMINAL_CWD_UNAVAILABLE' })
     await expect(service.openExternal(firstScope, undefined, root)).rejects.toMatchObject({ code: 'TERMINAL_CWD_UNAVAILABLE' })
@@ -192,11 +202,11 @@ describe('TerminalService', () => {
       if (!registeredRoot) throw new Error('Unregistered project')
       return { scope, cwd: registeredRoot }
     }, {
-      platform: 'linux', environment: {}, launchExternal,
+      platform: externalAppFixture.platform, environment: {}, launchExternal,
       getTerminalSettings: () => ({ ...DEFAULT_SETTINGS.terminal, defaultExternalAppId: 'external:custom:kitty',
-        externalApps: [{ id: 'external:custom:kitty', name: 'kitty', executable: '/tools/kitty', adapter: 'kitty' }] }),
+        externalApps: [{ id: 'external:custom:kitty', name: 'kitty', executable: externalAppFixture.executable, adapter: externalAppFixture.adapter }] }),
       resolveExecutable: async (candidate) => {
-        if (candidate !== '/tools/kitty') return undefined
+        if (candidate !== externalAppFixture.executable) return undefined
         if (++probes === 2) {
           if (change === 'removed') registeredRoot = undefined
           else if (change === 'replaced') registeredRoot = replacement
@@ -206,6 +216,7 @@ describe('TerminalService', () => {
       },
     })
     await expect(service.openExternal(firstScope)).rejects.toMatchObject({ code: change === 'disposed' ? 'TERMINAL_UNAVAILABLE' : 'TERMINAL_CWD_UNAVAILABLE' })
+    expect(probes).toBe(2)
     expect(launchExternal).not.toHaveBeenCalled()
   })
 
