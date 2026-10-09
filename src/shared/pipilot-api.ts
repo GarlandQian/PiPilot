@@ -1,4 +1,6 @@
 import type { ExternalEditor } from './external-editors'
+import type { ModelCatalogLookupResult, ProviderCatalogResult } from './model-catalog'
+import type { BuiltinProvider, BuiltinProviderKeyResult } from './models-config'
 import type {
   AppError,
   AppInfo,
@@ -62,7 +64,7 @@ import type {
   SessionCatalogSelectionToken,
 } from './conversation-scope'
 import type {
-  McpConfigRestartResult,
+  McpConfigRestartResult, McpImportSourcesResult,
   McpConfigSaveResult,
   McpConfigSnapshot,
   McpConfigTarget,
@@ -156,6 +158,8 @@ export interface PiPilotApi {
   readonly mcpConfig: {
     load(target: McpConfigTarget): Promise<McpConfigSnapshot>
     restart(): Promise<McpConfigRestartResult>
+    /** Other apps' MCP servers (Claude, Codex, Cursor…), read but never changed. */
+    importSources(): Promise<McpImportSourcesResult>
     save(target: McpConfigTarget, content: string, expectedFingerprint: string, restart?: boolean): Promise<McpConfigSaveResult>
   }
   readonly modelsConfig: {
@@ -167,6 +171,14 @@ export interface PiPilotApi {
     test(target: ModelsConfigTarget, content: string, providerId: string, modelId: string): Promise<ModelsConfigTestResult>
     /** The models an endpoint offers, listed with the key being entered. */
     listRemote(request: { baseUrl: string; api: string; apiKey?: string }): Promise<ModelsRemoteListResult>
+    /** What Pi's catalog knows about these model IDs on this endpoint. */
+    lookupCatalog(request: { baseUrl: string; ids: string[] }): Promise<ModelCatalogLookupResult>
+    /** Pi's own providers (DeepSeek, OpenRouter…) and which have a key. */
+    builtinProviders(): Promise<{ providers: BuiltinProvider[] }>
+    /** The models of one of Pi's own providers. */
+    providerCatalog(providerId: string): Promise<ProviderCatalogResult>
+    /** Store a provider's key in Pi's auth.json; null removes it. */
+    setProviderKey(request: { providerId: string; key: string | null }): Promise<BuiltinProviderKeyResult>
   }
   readonly conversation: {
     get(): Promise<ConversationNavigationSnapshot>

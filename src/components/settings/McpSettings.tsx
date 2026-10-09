@@ -1,416 +1,266 @@
 import * as React from 'react'
-import {
-  TbFileCode,
-  TbPlus,
-  TbRefresh,
-} from 'react-icons/tb'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
-import { Badge } from '@/components/ui/badge'
+import { TbActivity, TbCopy, TbDots, TbFileCode, TbFileImport, TbLoader2, TbPlus, TbRefresh } from 'react-icons/tb'
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
-import {
-  definitionFromFormValue,
-  formValueFromServer,
-  structuredDocumentSupported,
-} from './mcp-server-form-model'
-import { Textarea } from '@/components/ui/textarea'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { useT } from '@/i18n'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { useLocale, useT } from '@/i18n'
 import { cn } from '@/lib/utils'
-import { ConfigApplyNotice } from './ConfigApplyNotice'
-import { useConfigApplyStatus } from './useConfigApplyStatus'
-import { ConfigurationDocumentError, ConfigurationDocumentUnavailable, ConfigurationReloadConfirmation } from './ConfigurationDocumentFeedback'
-import { useConfigurationDocument, useMcpConfigurationDocument } from '@/store/configuration-documents'
 import type { ConfigurationDocument } from '@/renderer/configuration-documents'
-import {
-  createMcpConfigAdapter,
-  type McpConfigAdapter,
-} from '@/renderer/adapters/mcp-config-adapter'
-import { displayMcpConfigPath } from '@/renderer/mcp/mcp-path-presentation'
-import {
-  parseMcpConfigDocument,
-  convertMcpConfigToNativeJson,
-  removeMcpServer,
-  renameMcpServer,
-  upsertMcpServer,
-} from '@/shared/mcp-config-parser'
-import type {
-  McpConfigServer,
-  McpConfigSnapshot,
-  McpConfigTarget,
-} from '@/shared/mcp-config'
+import type { McpConfigServer, McpConfigSnapshot } from '@/shared/mcp-config'
+import { convertMcpConfigToNativeJson, parseMcpConfigDocument } from '@/shared/mcp-config-parser'
+import { templateForServer, type McpTemplate } from '@/shared/mcp-templates'
+import { localizedText } from '@/shared/model-provider-presets'
 import type { PiIntegrationScope } from '@/shared/pi-integrations'
-import { usePiIntegrations } from '@/store/pi-integrations'
-import { useWorkspaceStore } from '@/store/workspace'
-import { hasEnabledLegacyMcpAdapter, isNativeMcpCommand } from '@/shared/mcp-config-compatibility'
-import {
-  usePiRpcActions,
-  usePiRuntime,
-} from '@/store/pi-rpc'
-import {
-  McpServerFormDialog,
-  type McpServerFormValue,
-} from './McpServerFormDialog'
-import { McpServerBrowser } from './integrations/McpServerBrowser'
+import { useMcpConfigurationDocument } from '@/store/configuration-documents'
+import { ConfigApplyNotice } from './ConfigApplyNotice'
+import { ConfigFileEditor } from './ConfigFileEditor'
+import { ConfigurationDocumentError, ConfigurationDocumentUnavailable, ConfigurationReloadConfirmation } from './ConfigurationDocumentFeedback'
+import { DiscardChangesDialog } from './editor-page'
+import { McpAddPage, type McpAddMode } from './mcp/McpAddPage'
+import { McpImportPage } from './mcp/McpImportPage'
+import { McpServerEditor, type McpEditorTarget } from './mcp/McpServerEditor'
+import { McpServerList, McpServersEmpty } from './mcp/McpServerList'
+import { uniqueMcpName, withTransport, type McpTransport } from './mcp/mcp-editor-model'
+import { mcpTargetFor, mcpTargetKey, useMcpManager, type McpManager } from './mcp/useMcpManager'
+import { useSettingsSubpage } from './settings-subpage'
 
 export interface McpSettingsProps {
   scope: PiIntegrationScope
   active?: boolean
-  onDirtyChange?(dirty: boolean): void
   onManagePackages?(): void
+  /** A page of its own is open: the Integrations tabs step aside. */
+  onSubpageChange?(open: boolean): void
 }
 
-function targetFor(scope: PiIntegrationScope): McpConfigTarget {
-  return scope.kind === 'global'
-    ? { kind: 'global' }
-    : { kind: 'project', workspaceId: scope.workspaceId }
-}
+type Route =
+  | { page: 'list' }
+  | { page: 'add'; mode: McpAddMode }
+  | { page: 'import' }
+  | { page: 'edit'; target: McpEditorTarget; from: 'list' | 'add'; nonce: number }
+  | { page: 'file'; nonce: number }
 
-function targetKey(target: McpConfigTarget) {
-  return target.kind === 'global' ? 'global' : `project:${target.workspaceId}`
-}
-
-export function McpSettings({ scope, active = true, onDirtyChange, onManagePackages }: McpSettingsProps) {
+export function McpSettings({ scope, active = true, onManagePackages, onSubpageChange }: McpSettingsProps) {
   const [, retry] = React.useReducer((value: number) => value + 1, 0)
-  const { document, available } = useMcpConfigurationDocument(targetFor(scope))
+  const { document, available } = useMcpConfigurationDocument(mcpTargetFor(scope))
   return document ? (
-    <McpDocumentSettings key={targetKey(targetFor(scope))} scope={scope} active={active} onDirtyChange={onDirtyChange} onManagePackages={onManagePackages} document={document} />
+    <McpDocumentSettings key={mcpTargetKey(mcpTargetFor(scope))} scope={scope} active={active} onManagePackages={onManagePackages} onSubpageChange={onSubpageChange} document={document} />
   ) : <ConfigurationDocumentUnavailable capacity={available} retry={retry} />
 }
 
-function McpDocumentSettings({ scope, active = true, onDirtyChange, onManagePackages, document }: McpSettingsProps & {
+let nonce = 0
+
+function McpDocumentSettings({ scope, active = true, onManagePackages, onSubpageChange, document }: McpSettingsProps & {
   document: ConfigurationDocument<McpConfigSnapshot>
 }) {
   const t = useT()
-  const runtime = usePiRuntime()
-  const integrations = usePiIntegrations()
-  const workspace = useWorkspaceStore()
-  const actions = usePiRpcActions()
-  const [adapter] = React.useState<McpConfigAdapter | null>(createMcpConfigAdapter)
-  const target = React.useMemo(() => targetFor(scope), [scope])
-  const { snapshot, draftText, view, dirty, phase, error: documentError, savedApply } = useConfigurationDocument(document, active)
-  const [detecting, setDetecting] = React.useState(false)
-  const loading = phase === 'loading' || detecting || (!snapshot && !documentError)
-  const saving = phase === 'saving'
-  const [reloadOpen, setReloadOpen] = React.useState(false)
-  const [error, setError] = React.useState<string | null>(null)
-  const [status, setStatus] = React.useState<string | null>(null)
-  const [formOpen, setFormOpen] = React.useState(false)
-  const [editing, setEditing] = React.useState<McpConfigServer | null>(null)
-  const [removeName, setRemoveName] = React.useState<string | null>(null)
-  const requestEpoch = React.useRef(0)
-  const diagnosticsId = React.useId()
-  const targetKeyValue = targetKey(target)
-  const targetKeyRef = React.useRef(targetKeyValue)
-  targetKeyRef.current = targetKeyValue
-  const snapshotIsCurrent = snapshot !== null &&
-    targetKey(snapshot.target) === targetKeyValue
-  const readApplySnapshot = React.useCallback(() => adapter!.load(target), [adapter, target])
-  const apply = useConfigApplyStatus(
-    targetKeyValue,
-    snapshotIsCurrent ? snapshot : null,
-    adapter ? readApplySnapshot : null,
-  )
-  const parsed = React.useMemo(() => parseMcpConfigDocument(draftText), [draftText])
-  const formSupported = structuredDocumentSupported(parsed)
-  const runtimeReady = runtime.runtime?.state === 'ready'
-  const mcpCommand = runtimeReady ? runtime.commands.find((command) => command.name === 'mcp') : undefined
-  // A project extension can also read the global MCP document. Protect that
-  // shared file while restricting project documents to their own runtime.
-  const runtimeScopeMatches = scope.kind === 'global' ||
-    (workspace.activeScope.kind === 'project' && workspace.activeScope.workspaceId === scope.workspaceId)
-  const runtimeOverride = runtimeScopeMatches && mcpCommand && !isNativeMcpCommand(mcpCommand)
-  const legacyAdapterEnabled = integrations.snapshot ? hasEnabledLegacyMcpAdapter(integrations.snapshot) : false
-  const nativeWritesBlocked = Boolean(runtimeOverride) || legacyAdapterEnabled
-  const displayedPath = snapshotIsCurrent
-    ? displayMcpConfigPath(snapshot.target, snapshot.path, snapshot.displayPath)
-    : t('settings.mcp.loading')
+  const locale = useLocale()
+  const manager = useMcpManager(document, scope, active)
+  const rootRef = React.useRef<HTMLDivElement>(null)
+  // The file page lives in the document's view, so it survives like the draft it edits.
+  const [route, setRoute] = React.useState<Route>(() => document.getSnapshot().view === 'json' ? { page: 'file', nonce: ++nonce } : { page: 'list' })
+  const [pending, setPending] = React.useState<Route | null>(null)
+  const pageDirty = React.useRef(false)
+  const onDirtyChange = React.useCallback((dirty: boolean) => { pageDirty.current = dirty }, [])
+  const [recent, setRecent] = React.useState<string | null>(null)
+  const [notice, setNotice] = React.useState<{ text: string; error?: boolean } | null>(null)
+  const [busyName, setBusyName] = React.useState<string | null>(null)
+  const [removing, setRemoving] = React.useState<McpConfigServer | null>(null)
+  /** The file page holds a draft converted from an older format. */
+  const [converted, setConverted] = React.useState(false)
+  const listScroll = React.useRef(0)
+  const { parsed, snapshot } = manager
+  const names = parsed.servers.map((server) => server.name)
+  const ready = manager.current && !manager.loading
+  const editable = ready && parsed.valid && !manager.saving && !manager.writesBlocked
 
-  const updateDraft = document.updateDraft
-  const setView = document.setView
+  // A server page fills the pane. The file page edits this target's own draft, so the tabs and the Global/Project switch stay.
+  React.useEffect(() => { onSubpageChange?.(route.page !== 'list' && route.page !== 'file') }, [onSubpageChange, route.page])
+  React.useEffect(() => () => onSubpageChange?.(false), [onSubpageChange])
 
-  React.useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange])
+  /* -------------------------- navigation -------------------------- */
+
+  const scroller = () => rootRef.current?.closest<HTMLElement>('[data-settings-section]') ?? null
+  const show = (next: Route) => {
+    const container = scroller()
+    if (route.page === 'list' && container) listScroll.current = container.scrollTop
+    pageDirty.current = false
+    manager.setView(next.page === 'file' ? 'json' : 'form')
+    setRoute(next)
+    requestAnimationFrame(() => {
+      const target = scroller()
+      if (target) target.scrollTop = next.page === 'list' ? listScroll.current : 0
+    })
+  }
+  const navigate = (next: Route) => {
+    if (route.page !== 'list' && pageDirty.current) setPending(next)
+    else show(next)
+  }
+  const back = () => navigate(route.page === 'edit' && route.from === 'add' ? { page: 'add', mode: 'template' } : { page: 'list' })
+  const title = (() => {
+    switch (route.page) {
+      case 'list': return null
+      case 'add': return t('settings.mcp.page.addTitle')
+      case 'import': return t('settings.mcp.page.importTitle')
+      case 'file': return 'mcp.json'
+      case 'edit': return route.target.previousName ?? (route.target.template ? t('settings.mcp.page.addNamed', { name: localizedText(route.target.template.title, locale) }) : t('settings.mcp.page.addTitle'))
+    }
+  })()
+  useSettingsSubpage('integrations', title === null ? null : { title, back })
 
   React.useEffect(() => {
-    if (snapshot && view === 'form' && !formSupported) setView('json')
-  }, [formSupported, setView, snapshot, view])
+    if (!recent) return
+    const timer = window.setTimeout(() => setRecent(null), 4_000)
+    return () => window.clearTimeout(timer)
+  }, [recent])
 
-  const isCurrentRequest = React.useCallback((epoch: number, expectedTargetKey: string) => (
-    epoch === requestEpoch.current && expectedTargetKey === targetKeyRef.current
-  ), [])
-
-  const load = React.useCallback(async (confirmDiscard = false) => {
-    if (confirmDiscard && dirty) {
-      setReloadOpen(true)
-      return
-    }
-    setError(null)
-    setStatus(null)
-    await document.load(true)
-  }, [dirty, document])
-
-  React.useEffect(() => () => {
-    requestEpoch.current += 1
-  }, [])
-
-  const save = async (restart: boolean) => {
-    if (
-      !adapter ||
-      !snapshot ||
-      !snapshotIsCurrent ||
-      (!dirty && !restart) ||
-      !parsed.valid ||
-      loading ||
-      saving ||
-      nativeWritesBlocked
-    ) return
-    setError(null)
-    setStatus(null)
-    await document.save(restart)
+  const done = (name: string | null, message?: string) => {
+    show({ page: 'list' })
+    setRecent(name)
+    setNotice(message ? { text: message } : null)
   }
 
-  const showRuntimeStatus = async () => {
-    if (!adapter || loading || saving) return
-    const epoch = ++requestEpoch.current
-    const expectedTargetKey = targetKeyValue
-    setDetecting(true)
-    setError(null)
-    try {
-      await actions.send('/mcp', 'prompt')
-      if (!isCurrentRequest(epoch, expectedTargetKey)) return
-      setStatus(t('settings.mcp.runtimeStatusRequested'))
-    } catch (caught) {
-      if (isCurrentRequest(epoch, expectedTargetKey)) {
-        setError(caught instanceof Error ? caught.message : t('settings.mcp.restartFailed'))
-      }
-    } finally {
-      if (isCurrentRequest(epoch, expectedTargetKey)) setDetecting(false)
-    }
+  const openTemplate = (template: McpTemplate) => show({
+    page: 'edit', from: 'add', nonce: ++nonce,
+    target: { previousName: null, name: uniqueMcpName(template.name, names), definition: structuredClone(template.definition) as Record<string, unknown>, template },
+  })
+  const openBlank = (transport: McpTransport) => show({
+    page: 'edit', from: 'add', nonce: ++nonce,
+    target: { previousName: null, name: '', definition: withTransport({}, transport, {}).definition },
+  })
+  const edit = (server: McpConfigServer) => show({
+    page: 'edit', from: 'list', nonce: ++nonce,
+    target: { previousName: server.name, name: server.name, definition: structuredClone(server.definition), template: templateForServer(server.definition) },
+  })
+
+  const addMany = async (servers: readonly { name: string; definition: Record<string, unknown> }[]) => {
+    const added = await manager.addServers(servers)
+    if (added) done(servers[0]?.name ?? null, t('settings.mcp.page.added', { count: servers.length }))
+    return added
   }
 
-  const openAdd = () => {
-    setEditing(null)
-    setFormOpen(true)
+  const toggle = async (server: McpConfigServer, enabled: boolean) => {
+    setBusyName(server.name)
+    const saved = await manager.setEnabled(server.name, enabled)
+    setBusyName(null)
+    setNotice(saved ? null : { text: t('settings.mcp.saveFailed'), error: true })
   }
 
-  const openEdit = (server: McpConfigServer) => {
-    setEditing(server)
-    setFormOpen(true)
+  const copy = (value: unknown) => {
+    void navigator.clipboard.writeText(`${JSON.stringify(value, null, 2)}\n`)
+      .then(() => setNotice({ text: t('settings.mcp.page.copied') }))
+      .catch(() => setNotice({ text: t('settings.mcp.page.copyFailed'), error: true }))
   }
 
-  const submitForm = (value: McpServerFormValue) => {
-    try {
-      let next = draftText
-      if (editing) {
-        const existing = parsed.servers.find((server) => server.name === editing.name)
-        const definition = definitionFromFormValue(value, existing)
-        if (value.name !== editing.name) {
-          next = renameMcpServer(next, editing.name, value.name)
-        }
-        next = upsertMcpServer(next, value.name, definition)
-      } else {
-        next = upsertMcpServer(next, value.name, definitionFromFormValue(value))
-      }
-      if (!updateDraft(next)) return false
-      setError(null)
-      setFormOpen(false)
-      return true
-    } catch {
-      setError(t('settings.mcp.editFailed'))
-      return false
-    }
-  }
-
-  const toggleServerEnabled = (server: McpConfigServer, enabled: boolean) => {
-    try {
-      const definition = { ...server.definition }
-      if (enabled) delete definition.enabled
-      else definition.enabled = false
-      updateDraft(upsertMcpServer(draftText, server.name, definition))
-      setError(null)
-    } catch {
-      setError(t('settings.mcp.editFailed'))
-    }
+  const confirmRemove = async () => {
+    const server = removing
+    setRemoving(null)
+    if (!server) return
+    const removed = await manager.removeServer(server.name)
+    setNotice(removed ? null : { text: t('settings.mcp.saveFailed'), error: true })
   }
 
   const convertDraft = (content: string) => {
     try {
-      if (!updateDraft(convertMcpConfigToNativeJson(content))) return
-      setView('json')
-      setStatus(t('settings.mcp.migration.review'))
-      setError(null)
+      if (!manager.updateDraft(convertMcpConfigToNativeJson(content))) return
+      setConverted(true)
+      show({ page: 'file', nonce: ++nonce })
     } catch {
-      setError(t('settings.mcp.migration.failed'))
+      setNotice({ text: t('settings.mcp.migration.failed'), error: true })
     }
   }
 
-  return (
-    <div className="@container/mcp min-w-0 space-y-4" data-mcp-settings aria-busy={loading || saving}>
-      <div className="flex flex-col gap-3 @min-[680px]/mcp:flex-row @min-[680px]/mcp:items-start @min-[680px]/mcp:justify-between">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-title">{t('settings.mcp.servers')}</h3>
-            <Badge variant="secondary">{t(`settings.mcp.scope.${scope.kind}`)}</Badge>
-            {dirty ? <span className="text-caption text-warning">{t('settings.document.unsaved')}</span> : null}
-          </div>
-          <div className="mt-2 flex min-w-0 items-start gap-1.5 text-muted-foreground">
-            <TbFileCode className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-            <p className="min-w-0 break-all font-mono text-micro" title={snapshotIsCurrent ? snapshot.path : undefined}>{displayedPath}</p>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-1.5">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon-sm" disabled={loading || saving} aria-label={t('common.refresh')} onClick={() => void load(true)}>
-                <TbRefresh className={loading ? 'animate-spin' : ''} aria-hidden />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>{t('common.refresh')}</TooltipContent>
-          </Tooltip>
-          <Button variant="outline" size="sm" disabled={!dirty || !parsed.valid || loading || saving || nativeWritesBlocked} onClick={() => void save(false)}>
-            {t('common.save')}
-          </Button>
-          <Button size="sm" disabled={!snapshotIsCurrent || apply.status?.state === 'superseded' || !parsed.valid || loading || saving || nativeWritesBlocked} onClick={() => void save(true)}>
-            {t(dirty ? 'settings.mcp.saveRestart' : 'settings.configApply.retry')}
-          </Button>
-        </div>
-      </div>
+  /* ---------------------------- pages ----------------------------- */
 
-      <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 text-caption text-muted-foreground">
-        <span>{t(nativeWritesBlocked ? 'settings.mcp.extensionOverride' : isNativeMcpCommand(mcpCommand) ? 'settings.mcp.nativeDescription' : 'settings.mcp.nativeConfigured')}</span>
-        <Button variant="ghost" size="sm" disabled={!runtimeReady || !mcpCommand || loading || saving} onClick={() => void showRuntimeStatus()}>{t('settings.mcp.runtimeStatus')}</Button>
-      </div>
-      {nativeWritesBlocked ? <div className="space-y-2 rounded-lg bg-warning/10 p-3.5 text-caption" role="alert"><p>{t('settings.mcp.extensionMigrationBlocked')}</p>{onManagePackages ? <Button variant="outline" size="sm" onClick={onManagePackages}>{t('settings.mcp.managePackages')}</Button> : null}</div> : null}
+  const page = (() => {
+    switch (route.page) {
+      case 'add': return <McpAddPage mode={route.mode} onMode={(mode) => show({ page: 'add', mode })} existing={names} disabled={!editable}
+        onTemplate={openTemplate} onBlank={openBlank} onAdd={addMany} onCancel={back} onDirtyChange={onDirtyChange} />
+      case 'import': return <McpImportPage load={() => window.pipilot!.mcpConfig.importSources()} existing={names} disabled={!editable} onAdd={addMany} onCancel={back} />
+      case 'edit': return <McpServerEditor key={route.nonce} manager={manager} target={route.target}
+        takenNames={names.filter((name) => name !== route.target.previousName)} onDone={({ name }) => done(name)} onCancel={back} onDirtyChange={onDirtyChange} />
+      case 'file': return <ConfigFileEditor key={route.nonce} draftText={manager.draftText} savedText={manager.current ? snapshot!.content : null} onChange={manager.updateDraft} path={manager.path ?? undefined}
+        description={t('settings.mcp.page.fileDescription')} label="mcp.json" parse={parseMcpConfigDocument} save={manager.saveDraft} onReload={() => void manager.load(true)}
+        disabled={manager.writesBlocked} onDone={() => done(null)} onCancel={back} onDirtyChange={onDirtyChange}
+        notice={manager.writesBlocked ? <div className="space-y-2 rounded-lg bg-warning/10 p-3.5 text-caption" role="alert"><p>{t('settings.mcp.extensionMigrationBlocked')}</p>
+          {onManagePackages ? <Button variant="outline" size="sm" onClick={onManagePackages}>{t('settings.mcp.managePackages')}</Button> : null}</div>
+          : converted && manager.dirty ? <p className="px-1 text-caption text-muted-foreground" role="status">{t('settings.mcp.migration.review')}</p> : null} />
+      case 'list': return null
+    }
+  })()
 
-      {snapshotIsCurrent && snapshot.legacy ? (
-        <div className="mac-box space-y-2 p-3.5 text-caption">
+  return <div ref={rootRef} className="@container/mcp min-w-0" data-mcp-settings data-mcp-page={route.page} aria-busy={manager.loading || manager.saving}>
+    {route.page !== 'list' ? page : <section className="min-w-0" aria-label={t('settings.mcp.servers')}>
+      <header className="mb-2 flex min-w-0 flex-wrap items-end gap-x-3 gap-y-2 px-1">
+        <div className="min-w-0 flex-1 basis-64">
+          <h2 className="text-app font-semibold text-foreground">{t('settings.mcp.page.title')}</h2>
+          <p className="mt-0.5 max-w-[72ch] text-caption leading-snug text-muted-foreground">{t(manager.writesBlocked ? 'settings.mcp.extensionOverride' : 'settings.mcp.page.description')}</p>
+          <p className="mt-1 break-all font-mono text-micro text-muted-foreground" title={snapshot?.path}>{manager.path ?? t('settings.mcp.loading')}</p>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {manager.saving ? <TbLoader2 className="mr-1 size-3.5 animate-spin text-muted-foreground motion-reduce:animate-none" aria-label={t('settings.models.workspace.saving')} /> : null}
+          <Button variant="outline" size="sm" disabled={!editable} onClick={() => navigate({ page: 'add', mode: 'template' })}><TbPlus aria-hidden />{t('settings.mcp.page.add')}</Button>
+          <Button variant="outline" size="sm" disabled={!editable} onClick={() => navigate({ page: 'import' })}><TbFileImport aria-hidden />{t('settings.mcp.page.import')}</Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild><Button variant="ghost" size="icon-sm" aria-label={t('settings.models.cards.more')}><TbDots aria-hidden /></Button></DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem disabled={!parsed.servers.length} onSelect={() => copy({ mcpServers: Object.fromEntries(parsed.servers.map((server) => [server.name, server.definition])) })}><TbCopy aria-hidden />{t('settings.mcp.page.copyAll')}</DropdownMenuItem>
+              <DropdownMenuItem disabled={!manager.current} onSelect={() => show({ page: 'file', nonce: ++nonce })}><TbFileCode aria-hidden />{t('settings.mcp.page.editFile')}</DropdownMenuItem>
+              <DropdownMenuItem disabled={!manager.runtimeReady || !manager.mcpCommand} onSelect={() => {
+                void manager.showRuntimeStatus().then(() => setNotice({ text: t('settings.mcp.runtimeStatusRequested') }), () => setNotice({ text: t('settings.mcp.restartFailed'), error: true }))
+              }}><TbActivity aria-hidden />{t('settings.mcp.runtimeStatus')}</DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem disabled={manager.loading || manager.saving} onSelect={() => void manager.load(true)}><TbRefresh aria-hidden />{t('common.refresh')}</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </header>
+      <div className="min-w-0 space-y-2">
+        {manager.writesBlocked ? <div className="space-y-2 rounded-lg bg-warning/10 p-3.5 text-caption" role="alert"><p>{t('settings.mcp.extensionMigrationBlocked')}</p>{onManagePackages ? <Button variant="outline" size="sm" onClick={onManagePackages}>{t('settings.mcp.managePackages')}</Button> : null}</div> : null}
+        {manager.current && snapshot?.legacy ? <div className="mac-box space-y-2 p-3.5 text-caption">
           <p>{t(snapshot.exists ? 'settings.mcp.migration.existing' : 'settings.mcp.migration.available')}</p>
           <p className="break-all font-mono text-micro text-muted-foreground">{snapshot.legacy.path}</p>
-          {!snapshot.exists ? <Button variant="outline" size="sm" disabled={dirty || loading || saving} onClick={() => convertDraft(snapshot.legacy!.content)}>{t('settings.mcp.migration.import')}</Button> : null}
-        </div>
-      ) : null}
-      {snapshotIsCurrent && snapshot.legacyUnavailablePath ? <p className="break-words text-caption text-warning">{t('settings.mcp.migration.unreadable', { path: snapshot.legacyUnavailablePath })}</p> : null}
-      {!parsed.valid && snapshotIsCurrent ? <div className="space-y-2 text-caption text-muted-foreground"><p>{t('settings.mcp.migration.conversionHint')}</p><Button variant="outline" size="sm" disabled={loading || saving} onClick={() => convertDraft(draftText)}>{t('settings.mcp.migration.convert')}</Button></div> : null}
-
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 pb-3">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <div className="mac-segmented" role="group" aria-label={t('settings.mcp.editMode')}>
-            {(['form', 'json'] as const).map((candidate) => (
-              <button
-                key={candidate}
-                type="button"
-                disabled={candidate === 'form' && !formSupported}
-                aria-pressed={view === candidate}
-                className="h-7 rounded px-2.5 text-caption text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40 disabled:pointer-events-none disabled:opacity-40 aria-pressed:bg-background aria-pressed:text-foreground"
-                onClick={() => setView(candidate)}
-              >
-                {t(`settings.mcp.mode.${candidate}`)}
-              </button>
-            ))}
+          {!snapshot.exists ? <Button variant="outline" size="sm" disabled={manager.dirty || manager.loading || manager.saving} onClick={() => convertDraft(snapshot.legacy!.content)}>{t('settings.mcp.migration.import')}</Button> : null}
+        </div> : null}
+        {manager.current && snapshot?.legacyUnavailablePath ? <p className="break-words px-1 text-caption text-warning">{t('settings.mcp.migration.unreadable', { path: snapshot.legacyUnavailablePath })}</p> : null}
+        <ConfigApplyNotice status={manager.apply.status} readFailed={manager.apply.readFailed} />
+        <ConfigurationDocumentError error={manager.documentError} />
+        {notice ? <p className={cn('px-1 text-caption', notice.error ? 'text-destructive' : 'text-muted-foreground')} role={notice.error ? 'alert' : 'status'}>{notice.text}</p> : null}
+        {!snapshot?.applyStatus && manager.savedApply && manager.savedApply !== 'applied' && manager.savedApply !== 'saved' ? <p className="px-1 text-caption text-muted-foreground" role="status">{t(`settings.mcp.apply.${manager.savedApply}`)}</p> : null}
+        {manager.loading && !snapshot ? <div className="mac-group"><p className="py-12 text-center text-caption text-muted-foreground" role="status">{t('settings.mcp.loading')}</p></div>
+          : manager.current && !parsed.valid ? <div className="flex min-w-0 flex-wrap items-center gap-3 rounded-lg bg-destructive/8 px-3.5 py-2.5" role="alert">
+            <p className="min-w-0 flex-1 text-caption text-destructive">{t('settings.mcp.page.invalidFile')}</p>
+            <Button variant="outline" size="sm" disabled={manager.loading || manager.saving} onClick={() => convertDraft(manager.draftText)}>{t('settings.mcp.migration.convert')}</Button>
+            <Button variant="outline" size="sm" onClick={() => show({ page: 'file', nonce: ++nonce })}>{t('settings.mcp.page.editFile')}</Button>
           </div>
-        </div>
-        <Button variant="outline" size="sm" disabled={!snapshotIsCurrent || loading || saving || view !== 'form' || !formSupported} onClick={openAdd}>
-          <TbPlus aria-hidden />
-          {t('settings.mcp.addServer')}
-        </Button>
+            : parsed.servers.length === 0 ? <McpServersEmpty disabled={!editable} onAdd={() => navigate({ page: 'add', mode: 'template' })} onImport={() => navigate({ page: 'import' })} />
+              : <McpServerList servers={parsed.servers} disabled={!editable} busyName={busyName} recent={recent}
+                onEdit={edit} onToggle={(server, enabled) => void toggle(server, enabled)} onCopy={(server) => copy({ [server.name]: server.definition })} onRemove={setRemoving} />}
       </div>
+    </section>}
 
-      {!formSupported ? <p className="text-caption text-muted-foreground">{t('settings.mcp.formUnavailable')}</p> : null}
-      <div className="empty:hidden">
-        {(error || status) && (
-          <p className={cn('text-caption', error ? 'text-destructive' : 'text-muted-foreground')} role={error ? 'alert' : 'status'}>{error ?? status}</p>
-        )}
-        <ConfigApplyNotice status={apply.status} readFailed={apply.readFailed} />
-        <ConfigurationDocumentError error={documentError} />
-        {!snapshot?.applyStatus && savedApply ? <p className="py-2 text-caption text-muted-foreground" role="status">{t(`settings.mcp.apply.${savedApply}`)}</p> : null}
-      </div>
+    <ConfigurationReloadConfirmation open={manager.reloadOpen} onOpenChange={manager.setReloadOpen} onReload={() => { manager.setReloadOpen(false); void manager.load() }} />
+    <DiscardChangesDialog open={pending !== null} onOpenChange={(open) => { if (!open) setPending(null) }} onDiscard={() => { const next = pending; setPending(null); if (route.page === 'file') manager.revertDraft(); if (next) show(next) }} />
+    <RemoveServerDialog server={removing} manager={manager} onOpenChange={(open) => { if (!open) setRemoving(null) }} onConfirm={() => void confirmRemove()} />
+  </div>
+}
 
-      {loading && !snapshot ? (
-        <p className="py-12 text-center text-caption text-muted-foreground" role="status">{t('settings.mcp.loading')}</p>
-      ) : view === 'form' ? (
-        <McpServerBrowser
-          servers={parsed.servers}
-          disabled={loading || saving || !snapshotIsCurrent}
-          onEdit={openEdit}
-          onRemove={setRemoveName}
-          onToggleEnabled={toggleServerEnabled}
-          onOpenJson={() => setView('json')}
-        />
-      ) : (
-        <div className="space-y-3">
-          <p className="text-caption text-muted-foreground">{t('settings.integrations.mcp.jsonDescription')}</p>
-          <Textarea
-            value={draftText}
-            onChange={(event) => updateDraft(event.target.value)}
-            spellCheck={false}
-            aria-invalid={!parsed.valid}
-            aria-describedby={parsed.diagnostics.length > 0 ? diagnosticsId : undefined}
-            aria-label={t('settings.mcp.mode.json')}
-            disabled={loading || saving || !snapshotIsCurrent}
-            className="min-h-[28rem] resize-y rounded-lg bg-surface-inset px-4 py-3 font-mono text-caption leading-relaxed dark:bg-black/20"
-          />
-        </div>
-      )}
-
-      {parsed.diagnostics.length > 0 && (
-        <div id={diagnosticsId} className="mt-2 rounded-lg bg-destructive/8 px-3 py-2" role="alert">
-          {parsed.diagnostics.slice(0, 5).map((diagnostic, index) => (
-            <p key={`${diagnostic.code}:${diagnostic.offset}:${index}`} className="text-micro text-destructive">
-              {t('settings.mcp.diagnostic', {
-                line: diagnostic.line,
-                column: diagnostic.column,
-                message: diagnostic.message,
-              })}
-            </p>
-          ))}
-        </div>
-      )}
-      <ConfigurationReloadConfirmation open={reloadOpen} onOpenChange={setReloadOpen} onReload={() => { setReloadOpen(false); void load() }} />
-
-      <McpServerFormDialog
-        open={formOpen}
-        onOpenChange={setFormOpen}
-        mode={editing ? 'edit' : 'add'}
-        initial={editing ? formValueFromServer(editing) : undefined}
-        existingNames={parsed.servers.map((server) => server.name)}
-        onSubmit={submitForm}
-      />
-
-      <AlertDialog open={Boolean(removeName)} onOpenChange={(open) => !open && setRemoveName(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t('settings.mcp.removeServer')}</AlertDialogTitle>
-            <AlertDialogDescription>{t('settings.mcp.removeConfirm', { name: removeName ?? '' })}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              onClick={() => {
-                if (!removeName) return
-                try {
-                  updateDraft(removeMcpServer(draftText, removeName))
-                  setError(null)
-                } catch {
-                  setError(t('settings.mcp.editFailed'))
-                } finally {
-                  setRemoveName(null)
-                }
-              }}
-            >
-              {t('settings.mcp.removeServer')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
-  )
+function RemoveServerDialog({ server, manager, onOpenChange, onConfirm }: {
+  server: McpConfigServer | null
+  manager: McpManager
+  onOpenChange(open: boolean): void
+  onConfirm(): void
+}) {
+  const t = useT()
+  return <AlertDialog open={server !== null} onOpenChange={onOpenChange}>
+    <AlertDialogContent>
+      <AlertDialogHeader>
+        <AlertDialogTitle>{t('settings.mcp.removeConfirm', { name: server?.name ?? '' })}</AlertDialogTitle>
+        <AlertDialogDescription>{t('settings.mcp.page.removeDescription')}</AlertDialogDescription>
+      </AlertDialogHeader>
+      <AlertDialogFooter>
+        <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+        <AlertDialogAction variant="destructive" disabled={manager.saving} onClick={onConfirm}>{t('settings.mcp.removeServer')}</AlertDialogAction>
+      </AlertDialogFooter>
+    </AlertDialogContent>
+  </AlertDialog>
 }

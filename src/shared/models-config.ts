@@ -201,3 +201,31 @@ export function structuredProviderSupported(provider: ModelsConfigProvider): boo
 export function structuredDocumentSupported(document: ModelsConfigDocument): boolean {
   return document.valid && document.providers.every(structuredProviderSupported)
 }
+
+/** One of Pi's own providers (DeepSeek, OpenRouter…): it needs only a key; Pi knows its models. */
+export const builtinProviderSchema = z.object({
+  id: z.string().min(1).max(128),
+  name: z.string().min(1).max(256),
+  baseUrl: z.string().max(2_048).optional(),
+  configured: z.boolean(),
+  /** Where the key comes from: auth.json ("stored"), an environment variable, models.json… */
+  source: z.enum(['stored', 'runtime', 'environment', 'fallback', 'models_json_key', 'models_json_command']).optional(),
+  /** Pi's description of that source, such as the environment variable's name. */
+  label: z.string().max(256).optional(),
+  /** A key can be entered (a few providers only read ambient credentials). */
+  keyLogin: z.boolean(),
+  oauth: z.boolean(),
+  modelCount: z.number().int().nonnegative().max(10_000),
+}).strict()
+
+export type BuiltinProvider = z.infer<typeof builtinProviderSchema>
+
+export const builtinProvidersResultSchema = z.object({
+  providers: z.array(builtinProviderSchema).max(200),
+}).strict()
+
+export const builtinProviderKeyResultSchema = builtinProvidersResultSchema.extend({
+  apply: z.enum(['saved', 'applied', 'restarted', 'pending', 'unavailable', 'failed']),
+}).strict()
+
+export type BuiltinProviderKeyResult = z.infer<typeof builtinProviderKeyResultSchema>

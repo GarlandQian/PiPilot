@@ -107,6 +107,8 @@ import { ExternalControlLifecycleService } from './external-control/lifecycle-se
 import { ExternalControlPreferenceRepository } from './external-control/preference-repository'
 import { createExternalControlSession } from './external-control/session-factory'
 import { ExternalControlLauncherService } from './external-control/launcher-service'
+import { applyShellEnvironment, needsShellEnvironment, resolveShellEnvironment } from './shell-environment'
+import { ModelsDevService } from './models-config/models-dev'
 
 registerAppSchemePrivileges()
 
@@ -122,6 +124,10 @@ if (process.platform === 'darwin') {
 }
 
 app.enableSandbox()
+
+// Opened from the Dock or a launcher, the app lacks the PATH the user's shell
+// builds; read it now, while the app starts, for Pi, MCP servers and terminals.
+const shellEnvironment = needsShellEnvironment() ? resolveShellEnvironment() : Promise.resolve(null)
 
 const developmentUrl = process.env.ELECTRON_RENDERER_URL
 const policy = createApplicationUrlPolicy(developmentUrl)
@@ -613,6 +619,12 @@ if (!hasSingleInstanceLock) {
       settingsRepository.subscribe(syncNativeTheme)
       updateApplicationMenu()
       settingsRepository.subscribe(updateApplicationMenu)
+      const resolvedShellEnvironment = await shellEnvironment
+      if (resolvedShellEnvironment) {
+        applyShellEnvironment(process.env, resolvedShellEnvironment)
+        // The agent directory and an isolated test home stay the app's choice.
+        applyShellEnvironment(piEnvironment, resolvedShellEnvironment, ['PI_CODING_AGENT_DIR', ...(testUserDataOverride ? ['HOME', 'USERPROFILE'] : [])])
+      }
       await workspaceRepository.initialize()
       conversationNavigationRepository.initialize()
       await observedPiSessionDirectories.initialize()
@@ -875,6 +887,10 @@ if (!hasSingleInstanceLock) {
         homeDirectory: applicationHomeDirectory,
         agentDirectory: applicationAgentDirectory,
         management: piIntegrationService,
+        modelsDev: new ModelsDevService({
+          cachePath: join(app.getPath('userData'), 'model-metadata', 'models-dev.json'),
+          enabled: () => settingsRepository.get().settings.models.onlineMetadata,
+        }),
       })
       modelsConfigController = new ModelsConfigController(
         modelsConfigService,

@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { TbCheck, TbChevronDown, TbLoader2 } from 'react-icons/tb'
+import { TbCheck, TbChevronDown, TbLoader2, TbPlus } from 'react-icons/tb'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Slider } from '@/components/ui/slider'
@@ -27,6 +27,8 @@ interface ModelPickerProps {
   error?: string | null
   onSelect(provider: string, modelId: string): void | Promise<void>
   onThinkingSelect(level: LocalPiThinkingLevel): void | Promise<void>
+  /** Settings › Models; `add` also opens its "Add model" sheet. */
+  onManageModels?: (add: boolean) => void
 }
 
 /** Keyboard steps settle before Pi is asked to change, so ← → is not a burst of commands. */
@@ -66,6 +68,7 @@ export function ModelPicker({
   error,
   onSelect,
   onThinkingSelect,
+  onManageModels,
 }: ModelPickerProps) {
   const t = useT()
   const [open, setOpen] = React.useState(false)
@@ -207,13 +210,20 @@ export function ModelPicker({
         }}
       >
         {unavailable ? (
-          <p className="px-2.5 py-2 text-caption text-muted-foreground">
-            {!connected
-              ? t('composer.modelDisconnected')
-              : loading
-                ? t('settings.models.loading')
-                : t('composer.modelEmpty')}
-          </p>
+          <div className="px-2.5 py-2" data-model-empty>
+            <p className="text-caption text-muted-foreground">
+              {!connected
+                ? t('composer.modelDisconnected')
+                : loading
+                  ? t('settings.models.loading')
+                  : t('composer.modelEmpty')}
+            </p>
+            {connected && !loading && onManageModels ? (
+              <Button size="sm" className="mt-2" data-model-add onClick={() => { setOpen(false); onManageModels(true) }}>
+                <TbPlus aria-hidden />{t('settings.models.quickAdd.open')}
+              </Button>
+            ) : null}
+          </div>
         ) : (
           <div
             ref={listRef}
@@ -319,6 +329,15 @@ export function ModelPicker({
               <p className="text-micro text-muted-foreground">{t('composer.reasoningUnsupported')}</p>
             )}
           </section>
+        ) : null}
+
+        {!unavailable && onManageModels ? (
+          <div className="mt-[5px] shrink-0 border-t border-border pt-[5px]">
+            <button type="button" data-model-manage onClick={() => { setOpen(false); onManageModels(false) }}
+              className="flex min-h-[26px] w-full cursor-default items-center gap-2 rounded-[8px] px-2.5 py-[3px] text-left text-app outline-none select-none hover:bg-fill focus-visible:bg-primary focus-visible:text-primary-foreground">
+              {t('composer.manageModels')}
+            </button>
+          </div>
         ) : null}
 
         {selecting ? (

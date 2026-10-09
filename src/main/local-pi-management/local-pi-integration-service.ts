@@ -20,6 +20,7 @@ import {
   type PiManagementSnapshotPayload,
 } from '../../shared/pi-integrations'
 import type { ConversationScope } from '../../shared/conversation-scope'
+import type { ModelCatalogEntry } from '../../shared/model-catalog'
 import type { ConversationScopeResolver } from '../conversations/conversation-scope-resolver'
 import type { PiRuntimeFrontend } from '../pi-host/pi-runtime-frontend'
 import {
@@ -118,6 +119,7 @@ export class LocalPiIntegrationService {
   private sdkModuleRootPromise: Promise<string> | null = null
   private snapshotGeneration = 0
   private mutationChain: Promise<unknown> = Promise.resolve()
+  private catalog: Promise<ModelCatalogEntry[]> | undefined
   private snapshotFlights = new Map<string, Promise<PiIntegrationSnapshot>>()
   private disposed = false
   private bootstrapFlight: Promise<PiIntegrationOperationResult> | null = null
@@ -283,6 +285,37 @@ export class LocalPiIntegrationService {
       )
     }
     return test
+  }
+
+  /** Pi's built-in chat models; they only change with the Pi package, so one read per run. */
+  modelCatalog() {
+    this.catalog ??= (async () => {
+      this.assertActive()
+      const target = await this.captureTarget({ kind: 'global' })
+      const payload = await this.runHelper(target, { action: 'model-catalog', operationId: this.createId() })
+      return this.requireModelsPayload(payload).catalog ?? []
+    })().catch((error: unknown) => {
+      this.catalog = undefined
+      throw error
+    })
+    return this.catalog
+  }
+
+  /** Pi's own providers with their key status; with a change, after it is made. */
+  async builtinProviders(change?: { providerId: string; key: string | null }) {
+    this.assertActive()
+    const target = await this.captureTarget({ kind: 'global' })
+    const operationId = this.createId()
+    const payload = await this.runHelper(target, !change
+      ? { action: 'builtin-providers', operationId }
+      : change.key === null
+        ? { action: 'remove-provider-key', operationId, providerId: change.providerId }
+        : { action: 'set-provider-key', operationId, providerId: change.providerId, key: change.key })
+    const providers = this.requireModelsPayload(payload).builtinProviders
+    if (!providers) {
+      throw new LocalPiIntegrationError('PI_MANAGEMENT_HELPER_PROTOCOL_ERROR', 'The Pi management helper did not return its providers.')
+    }
+    return providers
   }
 
   /** One completion from one configured model; nothing joins any conversation. */
@@ -605,7 +638,9 @@ export class LocalPiIntegrationService {
       | { action: 'snapshot' | 'check-updates' | 'bootstrap-defaults'; operationId: string }
       | { action: 'install' | 'update' | 'remove'; operationId: string; source: string }
       | { action: 'set-retry'; operationId: string; enabled: boolean }
-      | { action: 'models-defaults'; operationId: string }
+      | { action: 'models-defaults' | 'model-catalog' | 'builtin-providers'; operationId: string }
+      | { action: 'set-provider-key'; operationId: string; providerId: string; key: string }
+      | { action: 'remove-provider-key'; operationId: string; providerId: string }
       | { action: 'set-default-model'; operationId: string; providerId: string; modelId: string }
       | { action: 'test-model'; operationId: string; content: string; providerId: string; modelId: string }
       | { action: 'complete-text'; operationId: string; providerId: string; modelId: string; systemPrompt: string; prompt: string; maxTokens: number },

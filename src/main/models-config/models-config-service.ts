@@ -20,6 +20,8 @@ import {
 import { parseModelsConfigDocument } from '../../shared/models-config-schema'
 import type { LocalPiIntegrationService } from '../local-pi-management/local-pi-integration-service'
 import { configApplySaveFields, type ConfigApplyCoordinator } from '../config-apply/config-apply-coordinator'
+import { lookupCatalogModels, providerCatalogResultSchema, type ModelCatalogEntry, type ModelCatalogLookupResult, type ModelsDevIndex } from '../../shared/model-catalog'
+import { builtinProviderKeyResultSchema, builtinProvidersResultSchema, type BuiltinProviderKeyResult } from '../../shared/models-config'
 
 const DEFAULT_DOCUMENT = '{\n  "providers": {}\n}\n'
 const MISSING_FINGERPRINT = createHash('sha256')
@@ -51,7 +53,9 @@ interface ModelsConfigServiceOptions {
   management?: Pick<
     LocalPiIntegrationService,
     'modelsDefaults' | 'setDefaultModel' | 'testModel'
-  >
+  > & Partial<Pick<LocalPiIntegrationService, 'modelCatalog' | 'builtinProviders'>>
+  /** models.dev, which knows many models Pi's catalog does not. */
+  modelsDev?: { index(): Promise<ModelsDevIndex | null> }
 }
 
 function fingerprint(content: string | Buffer) {
@@ -65,6 +69,7 @@ function isMissing(error: unknown) {
 export class ModelsConfigService {
   private readonly agentDirectory: string
   private readonly management?: ModelsConfigServiceOptions['management']
+  private readonly modelsDev?: ModelsConfigServiceOptions['modelsDev']
 
   constructor(options: ModelsConfigServiceOptions) {
     if (!isAbsolute(options.homeDirectory)) {
@@ -76,6 +81,7 @@ export class ModelsConfigService {
     }
     this.agentDirectory = resolve(agentDirectory)
     this.management = options.management
+    this.modelsDev = options.modelsDev
   }
 
   async load(rawTarget: ModelsConfigTarget): Promise<ModelsConfigSnapshot> {
@@ -158,6 +164,41 @@ export class ModelsConfigService {
     }
   }
 
+  /** Pi's own providers and which have a key. */
+  async builtinProviders(change?: { providerId: string; key: string | null }) {
+    if (!this.management?.builtinProviders) {
+      throw new ModelsConfigError('MODELS_CONFIG_TEST_UNAVAILABLE', 'The Pi management integration is unavailable.')
+    }
+    try {
+      return await this.management.builtinProviders(change)
+    } catch (error) {
+      if (error instanceof ModelsConfigError) throw error
+      throw new ModelsConfigError('MODELS_CONFIG_WRITE_FAILED', error instanceof Error ? error.message : 'The provider key could not be changed.')
+    }
+  }
+
+  /** Where Pi keeps provider keys, and its current fingerprint (for applying a change). */
+  async authRevision() {
+    const path = join(this.agentDirectory, 'auth.json')
+    const content = await readFile(path).catch(() => Buffer.alloc(0))
+    return { path, fingerprint: fingerprint(content) }
+  }
+
+  /** One of Pi's own providers' models, as its catalog describes them. */
+  async providerCatalog(providerId: string): Promise<ModelCatalogEntry[]> {
+    const catalog = await this.management?.modelCatalog?.().catch(() => []) ?? []
+    return catalog.filter((entry) => entry.provider === providerId)
+  }
+
+  /** Catalog details for model IDs on an endpoint; an unreadable catalog knows nothing. */
+  async lookupCatalog(baseUrl: string, ids: readonly string[]): Promise<ModelCatalogLookupResult> {
+    const [catalog, modelsDev] = await Promise.all([
+      this.management?.modelCatalog?.().catch(() => []) ?? [],
+      this.modelsDev?.index().catch(() => null) ?? null,
+    ])
+    return lookupCatalogModels(catalog, baseUrl, ids, modelsDev)
+  }
+
   async test(
     content: string,
     providerId: string,
@@ -176,8 +217,9 @@ export class ModelsConfigService {
         parsed.diagnostics[0]?.message ?? 'The models configuration is invalid.',
       )
     }
+    // A provider absent from models.json is one of Pi's own; Pi says whether it has the model.
     const provider = parsed.providers.find((entry) => entry.id === providerId)
-    if (!provider?.models.some((entry) => entry.id === modelId)) {
+    if (provider && !provider.models.some((entry) => entry.id === modelId)) {
       throw new ModelsConfigError(
         'MODELS_CONFIG_INVALID',
         'The selected model is not present in the current configuration draft.',
@@ -356,6 +398,25 @@ export class ModelsConfigController {
 
   test(content: string, providerId: string, modelId: string) {
     return this.service.test(content, providerId, modelId)
+  }
+
+  lookupCatalog(baseUrl: string, ids: readonly string[]) {
+    return this.service.lookupCatalog(baseUrl, ids)
+  }
+
+  async providerCatalog(providerId: string) {
+    return providerCatalogResultSchema.parse({ models: await this.service.providerCatalog(providerId) })
+  }
+
+  async builtinProviders() {
+    return builtinProvidersResultSchema.parse({ providers: await this.service.builtinProviders() })
+  }
+
+  /** Store or remove a key in Pi's auth.json, then let running sessions pick it up. */
+  async setProviderKey(providerId: string, key: string | null): Promise<BuiltinProviderKeyResult> {
+    const providers = await this.service.builtinProviders({ providerId, key })
+    const status = await this.applyCoordinator.apply(await this.service.authRevision())
+    return builtinProviderKeyResultSchema.parse({ providers, apply: configApplySaveFields(status).apply })
   }
 
   async save(

@@ -1,6 +1,8 @@
 import { z } from 'zod'
+import { MODEL_CATALOG_LIMIT, modelCatalogEntrySchema } from './model-catalog'
 import {
   MODELS_CONFIG_CONTENT_LIMIT,
+  builtinProviderSchema,
   modelsConfigTestResultSchema,
 } from './models-config'
 
@@ -179,6 +181,10 @@ export const piManagementModelsPayloadSchema = z
     test: modelsConfigTestResultSchema.optional(),
     /** A one-off completion (for example a suggested commit message). */
     completion: z.object({ text: z.string().max(16_000) }).strict().optional(),
+    /** Pi's built-in chat models, for filling in models added by ID. */
+    catalog: z.array(modelCatalogEntrySchema).max(MODEL_CATALOG_LIMIT).optional(),
+    /** Pi's own providers and whether each has a key. */
+    builtinProviders: z.array(builtinProviderSchema).max(200).optional(),
   })
   .strict()
 
@@ -356,6 +362,25 @@ export const piManagementHelperCommandSchema = z.discriminatedUnion('action', [
     action: z.literal('set-default-model'),
     providerId: z.string().min(1).max(256),
     modelId: z.string().min(1).max(256),
+  }).strict(),
+  z.object({
+    ...piManagementHelperCommandBase,
+    action: z.literal('model-catalog'),
+  }).strict(),
+  z.object({
+    ...piManagementHelperCommandBase,
+    action: z.literal('builtin-providers'),
+  }).strict(),
+  z.object({
+    ...piManagementHelperCommandBase,
+    action: z.literal('set-provider-key'),
+    providerId: z.string().min(1).max(128),
+    key: z.string().min(1).max(8_192),
+  }).strict(),
+  z.object({
+    ...piManagementHelperCommandBase,
+    action: z.literal('remove-provider-key'),
+    providerId: z.string().min(1).max(128),
   }).strict(),
   z.object({
     ...piManagementHelperCommandBase,

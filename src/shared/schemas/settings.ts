@@ -55,6 +55,7 @@ export const appSettingsSchema = z
     composer: composerSettingsSchema,
     terminal: terminalSettingsSchema,
     notifications: z.object({ desktop: z.boolean(), sound: z.boolean() }).strict(),
+    models: z.object({ onlineMetadata: z.boolean() }).strict(),
   })
   .strict()
 
@@ -68,6 +69,7 @@ export const appSettingsPatchSchema = z
     composer: composerSettingsPatchSchema.optional(),
     terminal: terminalSettingsPatchSchema.optional(),
     notifications: z.object({ desktop: z.boolean().optional(), sound: z.boolean().optional() }).strict().optional(),
+    models: z.object({ onlineMetadata: z.boolean().optional() }).strict().optional(),
   })
   .strict()
 

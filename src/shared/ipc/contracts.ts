@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { MODEL_CATALOG_LOOKUP_LIMIT, modelCatalogLookupResultSchema, providerCatalogResultSchema } from '../model-catalog'
 import { piDirectorySnapshotSchema } from '../pi-directory'
 import { applicationShutdownDecisionSchema } from '../application-shutdown'
 import { taskNotificationPresentationSchema, taskNotificationSnapshotSchema } from '../task-notifications'
@@ -9,12 +10,15 @@ import {
 import {
   MCP_CONFIG_CONTENT_LIMIT,
   mcpConfigRestartResultSchema,
+  mcpImportSourcesResultSchema,
   mcpConfigSaveResultSchema,
   mcpConfigSnapshotSchema,
   mcpConfigTargetSchema,
 } from '../mcp-config'
 import {
   MODELS_CONFIG_CONTENT_LIMIT,
+  builtinProviderKeyResultSchema,
+  builtinProvidersResultSchema,
   modelsConfigDefaultsSchema,
   modelsConfigSaveResultSchema,
   modelsConfigSetDefaultResultSchema,
@@ -151,12 +155,17 @@ export const ipcChannels = {
   mcpConfigLoad: 'pipilot:mcp-config:load',
   mcpConfigRestart: 'pipilot:mcp-config:restart',
   mcpConfigSave: 'pipilot:mcp-config:save',
+  mcpConfigImportSources: 'pipilot:mcp-config:import-sources',
   modelsConfigLoad: 'pipilot:models:load',
   modelsConfigSave: 'pipilot:models:save',
   modelsConfigSaveAndRestart: 'pipilot:models:saveAndRestart',
   modelsConfigSetDefault: 'pipilot:models:setDefault',
   modelsConfigTest: 'pipilot:models:test',
   modelsConfigListRemote: 'pipilot:models:list-remote',
+  modelsConfigLookupCatalog: 'pipilot:models:lookup-catalog',
+  modelsConfigBuiltinProviders: 'pipilot:models:builtin-providers',
+  modelsConfigSetProviderKey: 'pipilot:models:set-provider-key',
+  modelsConfigProviderCatalog: 'pipilot:models:provider-catalog',
   modelsConfigGetDefaults: 'pipilot:models:getDefaults',
   sessionCatalogDelete: 'pipilot:session-catalog:delete',
   sessionCatalogList: 'pipilot:session-catalog:list',
@@ -527,6 +536,8 @@ export const mcpConfigSaveContract = defineIpcContract(
   mcpConfigSaveResultSchema,
 )
 export const mcpConfigRestartContract = defineIpcContract(ipcChannels.mcpConfigRestart, z.object(requestFields).strict(), mcpConfigRestartResultSchema)
+/** Other apps' MCP servers, read but never changed. */
+export const mcpConfigImportSourcesContract = defineIpcContract(ipcChannels.mcpConfigImportSources, z.object(requestFields).strict(), mcpImportSourcesResultSchema)
 
 const modelsConfigSaveRequestFields = {
   ...requestFields,
@@ -567,6 +578,31 @@ export const modelsConfigListRemoteContract = defineIpcContract(
     apiKey: z.string().max(8_192).optional(),
   }).strict(),
   modelsRemoteListResultSchema,
+)
+export const modelsConfigLookupCatalogContract = defineIpcContract(
+  ipcChannels.modelsConfigLookupCatalog,
+  z.object({
+    ...requestFields,
+    baseUrl: z.string().max(2_048),
+    ids: z.array(z.string().min(1).max(256)).max(MODEL_CATALOG_LOOKUP_LIMIT),
+  }).strict(),
+  modelCatalogLookupResultSchema,
+)
+export const modelsConfigProviderCatalogContract = defineIpcContract(
+  ipcChannels.modelsConfigProviderCatalog,
+  z.object({ ...requestFields, providerId: z.string().min(1).max(128) }).strict(),
+  providerCatalogResultSchema,
+)
+export const modelsConfigBuiltinProvidersContract = defineIpcContract(
+  ipcChannels.modelsConfigBuiltinProviders,
+  z.object(requestFields).strict(),
+  builtinProvidersResultSchema,
+)
+/** A null key removes the stored one. */
+export const modelsConfigSetProviderKeyContract = defineIpcContract(
+  ipcChannels.modelsConfigSetProviderKey,
+  z.object({ ...requestFields, providerId: z.string().min(1).max(128), key: z.string().min(1).max(8_192).nullable() }).strict(),
+  builtinProviderKeyResultSchema,
 )
 export const modelsConfigGetDefaultsContract = defineIpcContract(ipcChannels.modelsConfigGetDefaults, z.object({ ...requestFields, target: modelsConfigTargetSchema }).strict(), modelsConfigDefaultsSchema)
 

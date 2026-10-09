@@ -57,6 +57,8 @@ export interface AppSettings {
   composer: ComposerSettings
   terminal: TerminalSettings
   notifications: { desktop: boolean; sound: boolean }
+  /** Fill in models' capabilities from models.dev as well as Pi's own catalog. */
+  models: { onlineMetadata: boolean }
 }
 
 export interface AppSettingsPatch {
@@ -65,6 +67,7 @@ export interface AppSettingsPatch {
   composer?: Partial<ComposerSettings>
   terminal?: Partial<TerminalSettings>
   notifications?: Partial<AppSettings['notifications']>
+  models?: Partial<AppSettings['models']>
 }
 
 export interface PersistedSettingsDocument {
@@ -74,6 +77,7 @@ export interface PersistedSettingsDocument {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   notifications: { desktop: true, sound: true },
+  models: { onlineMetadata: true },
   locale: 'system',
   appearance: {
     theme: 'system',
@@ -109,7 +113,8 @@ const COMPOSER_SEND_SHORTCUTS: readonly ComposerSendShortcut[] = ['enter', 'mod-
 const RUNNING_SUBMIT_PREFERENCES: readonly RunningSubmitPreference[] = ['queue', 'steer']
 const TERMINAL_LOCATIONS: readonly TerminalLocation[] = ['bottom', 'panel']
 const LEGACY_APP_KEYS = ['locale', 'appearance', 'composer', 'terminal'] as const
-const APP_KEYS = [...LEGACY_APP_KEYS, 'notifications'] as const
+const NOTIFIED_APP_KEYS = [...LEGACY_APP_KEYS, 'notifications'] as const
+const APP_KEYS = [...NOTIFIED_APP_KEYS, 'models'] as const
 const LEGACY_APPEARANCE_KEYS = [
   'theme',
   'uiFontFamily',
@@ -250,8 +255,9 @@ function isLegacyComposer(value: unknown) {
 
 function isMigratableSettings(value: unknown) {
   return isRecord(value) &&
-    (hasExactKeys(value, LEGACY_APP_KEYS) || (hasExactKeys(value, APP_KEYS) &&
-      (isExactNotifications(value.notifications) || isLegacyNotifications(value.notifications)))) &&
+    (hasExactKeys(value, LEGACY_APP_KEYS) ||
+      ((hasExactKeys(value, NOTIFIED_APP_KEYS) || (hasExactKeys(value, APP_KEYS) && isExactModelsSettings(value.models))) &&
+        (isExactNotifications(value.notifications) || isLegacyNotifications(value.notifications)))) &&
     LOCALES.includes(value.locale as Locale) &&
     (isExactAppearance(value.appearance) || isLegacyAppearance(value.appearance)) &&
     (isLegacyComposer(value.composer) || isExactComposer(value.composer)) &&
@@ -264,6 +270,10 @@ function isMigratableSettings(value: unknown) {
       hasExactKeys(value.terminal, LEGACY_TERMINAL_KEYS) &&
       isTerminalTypography(value.terminal)
     ))
+}
+
+function isExactModelsSettings(value: unknown): value is AppSettings['models'] {
+  return isRecord(value) && hasExactKeys(value, ['onlineMetadata']) && typeof value.onlineMetadata === 'boolean'
 }
 
 function isExactNotifications(value: unknown): value is AppSettings['notifications'] {
@@ -280,6 +290,7 @@ function isExactSettings(value: unknown): value is AppSettings {
     isRecord(value) &&
     hasExactKeys(value, APP_KEYS) &&
     isExactNotifications(value.notifications) &&
+    isExactModelsSettings(value.models) &&
     LOCALES.includes(value.locale as Locale) &&
     isExactAppearance(value.appearance) &&
     isExactComposer(value.composer) &&
@@ -301,6 +312,7 @@ export function sanitizeSettings(
   const composer = isRecord(source.composer) ? source.composer : {}
   const terminal = isRecord(source.terminal) ? source.terminal : {}
   const notifications = isRecord(source.notifications) ? source.notifications : {}
+  const models = isRecord(source.models) ? source.models : {}
   const defaultProfile = terminalShellProfileIdSchema.nullable().safeParse(terminal.defaultProfileId)
   const profiles = terminalCustomProfilesSchema.safeParse(terminal.profiles)
 
@@ -309,6 +321,9 @@ export function sanitizeSettings(
     notifications: {
       desktop: booleanOr(notifications.desktop, fallback.notifications.desktop),
       sound: booleanOr(notifications.sound, fallback.notifications.sound),
+    },
+    models: {
+      onlineMetadata: booleanOr(models.onlineMetadata, fallback.models.onlineMetadata),
     },
     appearance: {
       theme: oneOf(appearance.theme, THEMES, fallback.appearance.theme),
@@ -382,6 +397,7 @@ export function mergeSettings(base: AppSettings, patch: AppSettingsPatch): AppSe
       ...base,
       ...patch,
       notifications: { ...base.notifications, ...patch.notifications },
+      models: { ...base.models, ...patch.models },
       appearance: {
         ...base.appearance,
         ...patch.appearance,

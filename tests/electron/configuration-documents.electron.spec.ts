@@ -51,8 +51,12 @@ test('retains target-owned MCP drafts through project A/B/A and semantic tab nav
     const mcpTab = settings.getByRole('tab', { name: 'MCP', exact: true })
     await mcpTab.click()
     const mcpPanel = settings.getByRole('tabpanel', { name: 'MCP', exact: true })
-    await mcpPanel.getByRole('button', { name: 'JSON', exact: true }).click()
-    const editor = mcpPanel.getByRole('textbox', { name: 'JSON', exact: true })
+    const openFile = async () => {
+      await mcpPanel.getByRole('button', { name: 'More', exact: true }).click()
+      await page.getByRole('menuitem', { name: 'Edit mcp.json…', exact: true }).click()
+    }
+    await openFile()
+    const editor = mcpPanel.getByRole('textbox', { name: 'mcp.json', exact: true })
     await expect(editor).toHaveValue(baselineA)
     const draftA = '{ "mcpServers": {}, "future": { "keep": true } }\n'
     await editor.fill(draftA)
@@ -65,7 +69,7 @@ test('retains target-owned MCP drafts through project A/B/A and semantic tab nav
     await expect(externalTab).toHaveAttribute('aria-selected', 'true')
     const externalPanel = settings.getByRole('tabpanel', { name: 'External Control', exact: true })
     await expect(externalPanel).toHaveAttribute('id', (await externalTab.getAttribute('aria-controls'))!)
-    await expect(settings.getByRole('textbox', { name: 'JSON', exact: true })).toHaveCount(0)
+    await expect(settings.getByRole('textbox', { name: 'mcp.json', exact: true })).toHaveCount(0)
     await externalTab.press('Home')
     await expect(settings.getByRole('tab', { name: 'Overview', exact: true })).toBeFocused()
     await page.keyboard.press('ArrowRight')
@@ -76,7 +80,7 @@ test('retains target-owned MCP drafts through project A/B/A and semantic tab nav
     await expect(editor).toHaveValue(draftA)
 
     await settings.getByRole('button', { name: 'Global', exact: true }).click()
-    await mcpPanel.getByRole('button', { name: 'JSON', exact: true }).click()
+    await openFile()
     const globalDraft = '{ "mcpServers": {} }\n'
     await editor.fill(globalDraft)
     await settings.getByRole('button', { name: 'Current project', exact: true }).click()
@@ -86,7 +90,7 @@ test('retains target-owned MCP drafts through project A/B/A and semantic tab nav
     await addProject(app, page, projectB)
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
     await expect(settings.getByText('project-B', { exact: true })).toBeVisible()
-    await mcpPanel.getByRole('button', { name: 'JSON', exact: true }).click()
+    await openFile()
     await expect(editor).toHaveValue(baselineB)
     const draftB = '{ "mcpServers": {}, "future": "B" }\n'
     await editor.fill(draftB)
@@ -113,7 +117,7 @@ test('retains target-owned MCP drafts through project A/B/A and semantic tab nav
     await expect(editor).toHaveValue(baselineA)
     expect(await readFile(join(projectB, '.pi', 'mcp.json'), 'utf8')).toBe(baselineB)
     await editor.fill(draftA)
-    await mcpPanel.getByRole('button', { name: 'Save', exact: true }).click()
+    await mcpPanel.locator('[data-models-editor-footer]').getByRole('button', { name: 'Save', exact: true }).click()
     await expect.poll(() => readFile(join(projectA, '.pi', 'mcp.json'), 'utf8')).toBe(draftA)
     await expect(mcpPanel.getByText('Unsaved changes', { exact: true })).toHaveCount(0)
 

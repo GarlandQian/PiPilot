@@ -201,6 +201,8 @@ export interface ComposerProps {
   onCheckSubmission(submissionId: string): Promise<PiSubmissionStatus>
   onStop(): void | Promise<void>
   onThinkingChange(level: LocalPiThinkingLevel): void | Promise<void>
+  /** Settings › Models from the model picker; `add` opens its "Add model" sheet. */
+  onManageModels?: (add: boolean) => void
   onRunningSubmitPreferenceChange(value: RunningSubmitPreference): void
   onSetQueueMode(kind: 'steering' | 'followUp', mode: ComposerQueueMode): Promise<void>
   onPromoteFollowUp(itemId: string): Promise<void>
@@ -595,6 +597,7 @@ function SessionComposer({
   onCheckSubmission,
   onStop,
   onThinkingChange,
+  onManageModels,
   onPromoteFollowUp,
   onRemoveQueuedMessage,
   onMoveQueuedMessage,
@@ -1960,6 +1963,7 @@ function SessionComposer({
               error={modelError}
               onSelect={onModelChange}
               onThinkingSelect={onThinkingChange}
+              onManageModels={onManageModels}
             />
             <div className="ml-[7px] flex shrink-0 items-center gap-1.5">
               {isStreaming && hasDraft ? (

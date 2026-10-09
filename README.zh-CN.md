@@ -30,7 +30,8 @@ Pi 继续管理自己的会话、配置与资源。PiPilot 使用官方 SDK 和�
 | 代码与终端 | 文件浏览、Diff 审阅与评论、带来源的引用、项目终端标签页、外部编辑器 |
 | 计划与目标 | 集成 Plan Mode、Goal 和 Subagents，在对话旁查看状态和活动 |
 | 项目工作流 | 创建本地 Git worktree，保存并主动运行安装、测试和开发动作 |
-| Pi 配置 | Provider、模型、Thinking、Packages、Skills、Prompts、Themes 和原生 MCP |
+| Pi 配置 | 供应商预设、模型发现与信息补全、Thinking、Packages、Skills、Prompts 和 Themes |
+| MCP 服务器 | 常用模板、从其他应用导入、表单／JSON 编辑，以及全局或项目配置 |
 | 对话流转 | Markdown 导入与导出，支持随文档保存图片附件 |
 | 桌面工具 | 深浅主题、Liquid Glass 着色、通知、定时 Prompt 和可选的本地 MCP 控制 |
 
@@ -50,7 +51,7 @@ Pi 继续管理自己的会话、配置与资源。PiPilot 使用官方 SDK 和�
 
 README 描述当前源码；某个已发布版本具体提供哪些安装包，以其 Release 附件为准。功能对应版本见[更新日志](CHANGELOG.md)。
 
-文件名包含版本、系统和架构，例如 `PiPilot-0.4.0-windows-x64-setup.exe`。便携版以 `-portable.exe`、`-portable.zip` 区分。Linux 格式可能使用 `x86_64` / `amd64` 表示 x64、`aarch64` 表示 ARM64。各平台均附带 SHA-256 校验清单。
+文件名包含版本、系统和架构，例如 `PiPilot-0.5.0-windows-x64-setup.exe`。便携版以 `-portable.exe`、`-portable.zip` 区分。Linux 格式可能使用 `x86_64` / `amd64` 表示 x64、`aarch64` 表示 ARM64。各平台均附带 SHA-256 校验清单。
 
 macOS 使用 ad-hoc 签名，尚未配置 Developer ID 签名和公证；Windows 安装包未签名。系统可能要求批准打开应用，或显示未知发布者提示。
 
@@ -92,7 +93,7 @@ Pi 默认目录为 `~/.pi/agent`。可在 **设置 → 通用 → Pi 配置目�
 
 - **Windows 打开或新建对话时出现 `spawn npm ENOENT`。** 应用找不到系统 npm 时，现在会回退到内置 npm。通过 [fnm](https://github.com/Schniz/fnm#shell-setup) 安装的 Node 可能只在已初始化的终端中可见，桌面图标启动的应用不一定继承该环境。可完全退出 PiPilot（包括托盘进程），再从能运行 `npm --version` 的终端启动，检查是否存在此差异。
 - **更换安装目录后，MCP 启动器显示不可用。** 已确认旧 Windows 安装被移除时，可在 External Control 中点击「修复」。旧安装仍存在或记录无法验证时，会显示具体冲突原因，不会覆盖另一份安装。便携 EXE 如需稳定启动器，请改用安装版或便携 ZIP。
-- **外部 MCP 命令找不到。** 请安装该服务器需要的运行环境，或填写可执行文件绝对路径。内置 npm 用于 Pi 包管理，不会代为安装所有外部 MCP Runtime。
+- **外部 MCP 命令找不到。** macOS／Linux 桌面启动时会尝试读取登录 Shell 环境；仍找不到时，请检查安装与 PATH，或填写可执行文件绝对路径。Windows 的 fnm 终端与桌面环境仍可能不同。内置 npm 用于 Pi 包管理，不会代为安装所有外部 MCP Runtime。
 
 提交 [Issue](https://github.com/GarlandQian/PiPilot/issues) 时，请附版本、系统、架构、安装包类型和错误文本，并移除凭据与私人会话内容。
 

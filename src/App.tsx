@@ -61,6 +61,7 @@ import {
 import { ExtensionUiDialog } from '@/components/chat/ExtensionUiDialog'
 import { ActiveControlBar } from '@/components/chat/ExtensionSurfaces'
 import { lastTurnEditedPaths } from '@/components/inspector/diff-scope'
+import { requestModelsQuickAdd } from '@/renderer/models-intent'
 import { InspectorPortalHost } from '@/components/inspector/InspectorPortalHost'
 import { SideConversationsPanel, type SideQuestionRequest } from '@/components/inspector/SideConversationsPanel'
 import type { PrecisionReference } from '@/renderer/composer/precision-reference'
@@ -1104,6 +1105,10 @@ export default function App() {
               supportsImages={selectedModel?.input.includes('image') ?? false}
               onModelChange={actions.selectModel}
               onThinkingChange={actions.selectThinking}
+              onManageModels={(add) => {
+                if (add) requestModelsQuickAdd()
+                setSettingsSection('models')
+              }}
               onSubmit={submitComposer}
               onCheckSubmission={actions.checkSubmission}
               onStop={actions.abort}

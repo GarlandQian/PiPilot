@@ -19,6 +19,9 @@ export class ConfigurationDocumentExitGuard {
 
   isBusy = () => this.documents().some((document) => document.getSnapshot().phase !== 'idle')
 
+  /** An open editor still holds changes; it may close or save while Quit waits. */
+  hasDirtyEdits = () => this.edits.isDirty()
+
   subscribe = (listener: () => void) => {
     const detach = [this.edits.subscribe(listener), ...this.documents().map((document) => document.subscribe(listener))]
     return () => { for (const unsubscribe of detach) unsubscribe() }

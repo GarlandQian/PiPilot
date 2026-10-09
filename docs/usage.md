@@ -147,8 +147,11 @@ native MCP; PiPilot does not uninstall personal extensions automatically.
 
 The bundled Pi runtime does not require a separate Node.js installation. Package management uses system npm when it is available on the application's PATH and falls back to bundled npm otherwise. Explicit custom package-manager commands are preserved. A stdio MCP server may
 still require its own runtime, such as `node`, `npx`, or `uvx`. That command must be available to
-the application process, or configured with an absolute executable path. On macOS, an application
-opened from Finder may have a different PATH from your terminal. Project MCP configuration runs
+the application process, or configured with an absolute executable path. On macOS and Linux,
+desktop launches try reading the interactive login shell's environment before starting Pi and MCP.
+If the shell fails or takes more than five seconds, PiPilot keeps its original environment. This
+does not initialize Windows fnm shells; fully quit and launch from a working terminal to check
+that environment difference. Project MCP configuration runs
 with the project resources when you open a conversation, so only add projects you trust.
 
 The MCP editor can import the old project `.mcp.json` into a draft for `.pi/mcp.json`, translating
@@ -156,6 +159,14 @@ The MCP editor can import the old project `.mcp.json` into a draft for `.pi/mcp.
 Unsupported socket or SSE-only configurations show validation errors instead of being silently
 discarded. Appearance, navigation, and window preferences are stored separately in Electron's
 application data directory. Do not commit API keys, tokens, or real session content.
+
+## Model and MCP settings
+
+In **Settings → Models**, add a provider from the presets or enter a custom endpoint. Pi's built-in API-key providers save credentials in `auth.json`; custom providers remain in `models.json`. Fetch a remote model list, add an ID manually, and test the selected model. Forms and JSON stay synchronized, sensitive values are masked by default, and unsaved edits receive an exit prompt. The conversation model menu also links to provider setup.
+
+Model capabilities come from Pi's built-in catalog and, when enabled, the public models.dev catalog. The online catalog is cached locally and can be disabled in model settings. Unknown capabilities stay marked as unknown; metadata does not prove that an endpoint supports a model.
+
+In **Settings → Integrations → MCP**, choose global or project scope, then add a template, paste configuration, or import selected servers from another supported app. Import previews preserve existing same-name servers and do not modify the source files. Templates may require credentials, shared folders, or an installed runtime before a server can start. Server switches save immediately; editor changes apply when saved.
 
 ## Scheduled tasks
 

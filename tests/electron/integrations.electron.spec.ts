@@ -430,86 +430,48 @@ test('manages bundled Pi SDK integrations and MCP drafts across responsive Setti
     await page.setViewportSize({ width: 1100, height: 680 })
     await page.getByRole('tab', { name: 'MCP', exact: true }).click()
     const mcpPanel = page.getByRole('tabpanel', { name: 'MCP', exact: true })
-    const serverSearch = mcpPanel.getByRole('searchbox', { name: 'Search servers', exact: true })
-    await serverSearch.fill('mux')
-    await page.setViewportSize({ width: 960, height: 700 })
-    await serverSearch.press('ArrowDown')
-    const muxDetails = mcpPanel.getByRole('button', { name: 'mux details', exact: true })
-    await expect(muxDetails).toBeFocused()
-    await muxDetails.press('Enter')
-    await expect(mcpPanel.locator('[data-mcp-server-detail="mux"]')).toBeVisible()
-    await mcpPanel.getByRole('button', { name: 'Back', exact: true }).click()
-    await expect(muxDetails).toBeFocused()
-    await serverSearch.focus()
-    await serverSearch.press('Escape')
-    await expect(serverSearch).toHaveValue('')
-    await page.setViewportSize({ width: 1100, height: 680 })
-    const docsEdit = page.getByRole('button', {
-      name: 'Edit server docs',
-      exact: true,
-    })
-    await expect(docsEdit).toBeVisible()
-    await docsEdit.click()
-    await page.screenshot({
-      path: testInfo.outputPath('integrations-mcp-structured-minimum.png'),
-    })
-    await page.getByRole('button', { name: 'Streamable HTTP', exact: true }).click()
-    const urlInput = page.getByLabel('URL', { exact: false })
+    await expect(mcpPanel.locator('[data-mcp-server]')).toHaveCount(2)
+    await expect(mcpPanel.locator('[data-mcp-server="mux"]')).toContainText('https://example.test/mcp')
+    await expect(mcpPanel).not.toContainText('fixture-only')
+    // A server opens as a page of its own; the tabs step aside.
+    await mcpPanel.getByRole('button', { name: 'Edit docs', exact: true }).click()
+    const editor = mcpPanel.locator('[data-mcp-server-editor="docs"]')
+    await expect(page.getByRole('tab', { name: 'MCP', exact: true })).toBeHidden()
+    await expect(editor.getByRole('textbox', { name: 'Server name', exact: true })).toBeDisabled()
+    await page.screenshot({ path: testInfo.outputPath('integrations-mcp-structured-minimum.png') })
+    await editor.getByRole('radio', { name: 'Online service', exact: true }).click()
+    const urlInput = editor.getByRole('textbox', { name: 'URL', exact: true })
     await expect(urlInput).toBeVisible()
-    await page.getByRole('dialog').getByRole('button', {
-      name: 'Save',
-      exact: true,
-    }).click()
+    const footer = mcpPanel.locator('[data-models-editor-footer]')
+    await footer.getByRole('button', { name: 'Save', exact: true }).click()
     await expect(urlInput).toHaveAttribute('aria-invalid', 'true')
-    await expect(urlInput).toHaveAttribute('aria-describedby', /-error$/u)
-    await expect(page.getByText('URL is required.', { exact: true })).toBeVisible()
-    await expect(page.getByText(/exactly one non-empty command/u)).toHaveCount(0)
+    await expect(editor.getByText('URL is required.', { exact: true })).toBeVisible()
+    await expect(editor.getByText(/exactly one non-empty command/u)).toHaveCount(0)
     await urlInput.fill('https://example.test/mcp')
-    await expect(page.getByText('URL is required.', { exact: true })).toHaveCount(0)
-    await page.getByRole('button', { name: 'stdio', exact: true }).click()
-    await expect(page.getByRole('dialog').getByRole('textbox', { name: 'Command', exact: true })).toHaveValue('node')
-    await expect(page.getByRole('dialog').getByRole('textbox', { name: 'Arguments 1', exact: true })).toHaveValue('server.js')
-    await page.getByRole('dialog').getByRole('textbox', {
-      name: 'Command',
-      exact: true,
-    }).fill('node-updated')
-    await page.getByRole('dialog').getByRole('button', {
-      name: 'Save',
-      exact: true,
-    }).click()
-    await page.getByRole('button', { name: 'Save', exact: true }).click()
-    await expect(page.getByText(
-      'Configuration saved. Apply it when you are ready.',
-    )).toBeVisible()
+    await expect(editor.getByText('URL is required.', { exact: true })).toHaveCount(0)
+    // Back to a program: what it had is still there.
+    await editor.getByRole('radio', { name: 'Program on this computer', exact: true }).click()
+    await expect(editor.getByRole('textbox', { name: 'Command', exact: true })).toHaveValue('node')
+    await expect(editor.getByRole('textbox', { name: 'Arguments', exact: true })).toHaveValue('server.js')
+    await editor.getByRole('textbox', { name: 'Command', exact: true }).fill('node-updated')
+    await footer.getByRole('button', { name: 'Save', exact: true }).click()
+    await expect(mcpPanel.locator('[data-mcp-server-list]')).toBeVisible()
+    await expect(page.getByRole('tab', { name: 'MCP', exact: true })).toBeVisible()
     await expect.poll(async () => readFile(mcpPath, 'utf8')).toContain('node-updated')
     const structuredSaved = await readFile(mcpPath, 'utf8')
-    expect(JSON.parse(structuredSaved).mcpServers.docs.enabled).toBe(false)
-    expect(structuredSaved).toMatch(/"future"\s*:\s*\{\s*"keep"\s*:\s*true\s*\}/u)
+    expect(JSON.parse(structuredSaved).mcpServers.docs).toEqual({ command: 'node-updated', args: ['server.js'], env: { TOKEN: 'fixture-only' }, enabled: false, future: { keep: true } })
     expect(structuredSaved).toContain('"futureTop": true')
 
-    await expect(page.getByRole('button', {
-      name: 'Edit server mux',
-      exact: true,
-    })).toBeEnabled()
-    await page.getByRole('button', { name: 'JSON', exact: true }).click()
-    const rawEditor = page.locator('textarea').filter({ visible: true }).last()
-    await page.screenshot({
-      path: testInfo.outputPath('integrations-mcp-raw-minimum.png'),
-    })
+    // The whole file stays editable for what the pages do not show.
+    await mcpPanel.getByRole('button', { name: 'More', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Edit mcp.json…', exact: true }).click()
+    const rawEditor = mcpPanel.getByRole('textbox', { name: 'mcp.json', exact: true })
+    await page.screenshot({ path: testInfo.outputPath('integrations-mcp-raw-minimum.png') })
     const rawDraft = await rawEditor.inputValue()
-    await rawEditor.fill(rawDraft.replace(
-      '"futureTop": true',
-      '"futureTop": true,\n  "rawRoundTrip": true',
-    ))
-    await page.getByRole('button', {
-      name: 'Save and apply',
-      exact: true,
-    }).click()
-    await expect.poll(async () => readFile(mcpPath, 'utf8'))
-      .toContain('"rawRoundTrip": true')
-    await expect(page.getByRole('status').filter({
-      hasText: 'Saved configuration is applied.',
-    })).toBeVisible()
+    await rawEditor.fill(rawDraft.replace('"futureTop": true', '"futureTop": true,\n  "rawRoundTrip": true'))
+    await footer.getByRole('button', { name: 'Save', exact: true }).click()
+    await expect.poll(async () => readFile(mcpPath, 'utf8')).toContain('"rawRoundTrip": true')
+    await expect(page.getByRole('status').filter({ hasText: 'Saved configuration is applied.' })).toBeVisible()
     await expect.poll(() => page.evaluate(() => (
       window.pipilot!.localPi.runtime.status()
     ))).toMatchObject({ state: 'ready' })

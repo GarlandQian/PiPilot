@@ -16,6 +16,7 @@ export function ConfigurationExitDialog({ guard }: { guard: ConfigurationDocumen
   const operation = React.useRef(false)
   const subscribeToDocuments = React.useCallback((listener: () => void) => request ? guard.subscribe(listener) : () => undefined, [guard, request])
   const documentsBusy = React.useSyncExternalStore(subscribeToDocuments, guard.isBusy, guard.isBusy)
+  const editsDirty = React.useSyncExternalStore(subscribeToDocuments, guard.hasDirtyEdits, guard.hasDirtyEdits)
 
   const reset = React.useCallback(() => {
     active.current = null
@@ -91,7 +92,7 @@ export function ConfigurationExitDialog({ guard }: { guard: ConfigurationDocumen
       setApproved(true)
       void respond(request, true)
     }
-  }, [approved, busy, documentsBusy, failed, guard, request, respond])
+  }, [approved, busy, documentsBusy, editsDirty, failed, guard, request, respond])
 
   async function choose(save: boolean) {
     const event = active.current

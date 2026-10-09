@@ -88,3 +88,31 @@ export const mcpConfigRestartResultSchema = z
 export type McpConfigRestartResult = z.infer<
   typeof mcpConfigRestartResultSchema
 >
+
+/** Apps whose MCP servers can be copied in, in the order they are listed. */
+export const MCP_IMPORT_APPS = ['claude-code', 'claude-desktop', 'codex', 'cursor', 'gemini', 'vscode', 'windsurf'] as const
+export type McpImportApp = typeof MCP_IMPORT_APPS[number]
+
+const mcpImportNoteSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('sse') }).strict(),
+  z.object({ kind: z.literal('dropped'), fields: z.array(z.string().max(128)).max(64) }).strict(),
+  z.object({ kind: z.literal('input-variables') }).strict(),
+  z.object({ kind: z.literal('renamed'), from: z.string().max(256) }).strict(),
+])
+
+export const mcpImportedServerSchema = z.object({
+  name: z.string().min(1).max(128),
+  definition: z.record(z.string(), z.unknown()),
+  notes: z.array(mcpImportNoteSchema).max(16),
+}).strict()
+
+export const mcpImportSourcesResultSchema = z.object({
+  sources: z.array(z.object({
+    app: z.enum(MCP_IMPORT_APPS),
+    path: z.string().min(1).max(16_384),
+    servers: z.array(mcpImportedServerSchema).max(MCP_CONFIG_SERVER_LIMIT),
+    error: z.enum(['too-large', 'unreadable']).optional(),
+  }).strict()).max(32),
+}).strict()
+
+export type McpImportSourcesResult = z.infer<typeof mcpImportSourcesResultSchema>

@@ -4,7 +4,7 @@
   "description": "An Electron desktop client for the local Pi coding agent",
   "author": "PiPilot contributors",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.5.0",
   "packageManager": "pnpm@12.8.1",
   "type": "module",
   "main": "./out/main/index.js",
@@ -31,12 +31,13 @@
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "0.99.1",
+    "@lobehub/icons-static-svg": "1.95.1",
     "@modelcontextprotocol/server": "2.2.0",
     "electron-updater": "6.8.9",
     "jsonc-parser": "3.3.1",
     "node-pty": "1.1.0",
-    "zod": "^4.6.5",
-    "pipilot-npm": "npm:npm@12.2.0"
+    "pipilot-npm": "npm:npm@12.2.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@electron/fuses": "2.1.3",

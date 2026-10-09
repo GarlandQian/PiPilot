@@ -6,6 +6,24 @@ Each version section supplies the highlights for its GitHub Release. Download li
 
 ## Unreleased
 
+## 0.5.0
+
+### 中文
+
+- **重做模型设置**：通过供应商卡片和独立编辑页管理模型，提供常用供应商、地区与套餐预设；Pi 内置供应商可直接保存或移除 API Key，自定义接口支持获取模型列表、手动添加和连接测试。
+- **补全模型信息**：结合 Pi 内置目录和可关闭的 models.dev 在线目录补全模型能力、上下文长度与价格；在线目录保留本地缓存，未知模型明确显示能力未知。对话模型菜单可直接进入添加供应商流程。
+- **更清晰的配置编辑**：模型与 MCP 编辑页支持表单和 JSON 同步，敏感字段默认遮罩，保留已有高级配置；离开未保存的编辑页会提示，修改供应商 ID 时会同步其默认模型归属。
+- **重做 MCP 管理**：新增常用服务器模板、粘贴配置，以及从 Claude Code、Claude Desktop、Codex、Cursor、Gemini CLI、VS Code 和 Windsurf 导入。导入前可预览和选择，已有同名服务器保留，来源文件不变；可直接启用、停用、编辑或移除服务器。
+- **改善桌面启动环境**：macOS／Linux 从桌面启动时尝试读取交互式登录 Shell 环境，让已安装的 npx、cargo 等命令可供 Pi、MCP 和终端使用；读取失败或超时保留原环境。外部服务器仍需安装相应运行环境，Windows 的 fnm 环境差异仍需单独处理。
+
+### English
+
+- **Redesigned model settings:** Manage providers through cards and dedicated editors, with common provider, region, and plan presets. Store or remove API keys for Pi's built-in providers; fetch model lists, add models manually, and test custom endpoints.
+- **Model metadata:** Fill capabilities, context lengths, and pricing from Pi's catalog and the optional models.dev catalog, with a local cache for offline use and explicit unknown-capability labels. Open provider setup directly from the conversation's model menu.
+- **Clearer configuration editing:** Model and MCP editors synchronize forms with JSON, mask sensitive fields by default, and preserve advanced configuration. Unsaved edits receive an exit prompt; renaming a provider ID also moves its default-model selection.
+- **Redesigned MCP management:** Add common server templates, paste configuration, or import selected servers from Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, VS Code, and Windsurf. Preview imports, preserve existing names and source files, and enable, disable, edit, or remove servers in place.
+- **Desktop launch environment:** On macOS and Linux, desktop launches try the interactive login shell's environment so installed commands such as npx and cargo are available to Pi, MCP servers, and terminals. Failures or timeouts retain the original environment. External runtimes remain required; Windows fnm environment differences still need separate handling.
+
 ## 0.4.0
 
 ### 中文

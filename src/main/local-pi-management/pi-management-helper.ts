@@ -22,6 +22,8 @@ import {
   type PiResourceKind,
   type PiResourceSummary,
 } from '../../shared/pi-integrations'
+import { MODEL_CATALOG_LIMIT, modelCatalogEntrySchema } from '../../shared/model-catalog'
+import { builtinProviderSchema } from '../../shared/models-config'
 import { compatibilityForPackage } from '../../shared/pi-package-adapters'
 import {
   VERSION as BUNDLED_PI_VERSION,
@@ -307,6 +309,118 @@ async function testModel(
         latencyMs,
         responsePreview: modelResponsePreview(response),
       }),
+    })
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true })
+  }
+}
+
+/** Pi's built-in chat models, read from an empty configuration so only Pi's own are listed. */
+async function modelCatalog(
+  command: Extract<PiManagementHelperCommand, { action: 'model-catalog' }>,
+  settingsManager: ExternalSettingsManager,
+  agentDir: string,
+) {
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), 'pipilot-model-catalog-'))
+  try {
+    const modelsPath = join(temporaryDirectory, 'models.json')
+    await writeFile(modelsPath, '{}', { encoding: 'utf8', mode: 0o600 })
+    const runtime = await BundledModelRuntime.create({
+      authPath: join(temporaryDirectory, 'auth.json'),
+      modelsPath,
+      allowModelNetwork: false,
+      refreshOnCreate: false,
+    })
+    const catalog = runtime.getModels().flatMap((model) => {
+      const entry = modelCatalogEntrySchema.safeParse({
+        provider: model.provider,
+        id: model.id,
+        ...(model.name ? { name: model.name } : {}),
+        ...(model.baseUrl ? { baseUrl: model.baseUrl } : {}),
+        reasoning: model.reasoning === true,
+        input: (model.input ?? ['text']).filter((kind): kind is 'text' | 'image' => kind === 'text' || kind === 'image'),
+        ...(model.contextWindow ? { contextWindow: model.contextWindow } : {}),
+        ...(model.maxTokens ? { maxTokens: model.maxTokens } : {}),
+        ...(model.cost ? { cost: { input: model.cost.input, output: model.cost.output, cacheRead: model.cost.cacheRead, cacheWrite: model.cost.cacheWrite } } : {}),
+      })
+      return entry.success ? [entry.data] : []
+    }).slice(0, MODEL_CATALOG_LIMIT)
+    const payload = modelsPayload(settingsManager, agentDir)
+    emit({
+      type: 'result',
+      operationId: command.operationId,
+      result: piManagementSnapshotPayloadSchema.parse({ ...payload, models: { ...payload.models!, catalog } }),
+    })
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true })
+  }
+}
+
+/** A runtime with only Pi's own providers and the user's real credentials. */
+async function builtinRuntime(agentDir: string, temporaryDirectory: string) {
+  const modelsPath = join(temporaryDirectory, 'models.json')
+  await writeFile(modelsPath, '{}', { encoding: 'utf8', mode: 0o600 })
+  return BundledModelRuntime.create({
+    authPath: join(agentDir, 'auth.json'),
+    modelsPath,
+    allowModelNetwork: false,
+    refreshOnCreate: false,
+  })
+}
+
+function builtinProviderList(runtime: Awaited<ReturnType<typeof BundledModelRuntime.create>>) {
+  return runtime.getProviders().flatMap((provider) => {
+    const status = runtime.getProviderAuthStatus(provider.id)
+    const entry = builtinProviderSchema.safeParse({
+      id: provider.id,
+      name: provider.name || provider.id,
+      ...(provider.baseUrl ? { baseUrl: provider.baseUrl } : {}),
+      configured: status.configured,
+      ...(status.source ? { source: status.source } : {}),
+      ...(status.label ? { label: status.label.slice(0, 256) } : {}),
+      keyLogin: Boolean(provider.auth.apiKey?.login),
+      oauth: Boolean(provider.auth.oauth),
+      modelCount: runtime.getModels(provider.id).length,
+    })
+    return entry.success ? [entry.data] : []
+  })
+}
+
+/** Pi's own providers, whether each has a key, and (to set or remove one) the change itself. */
+async function builtinProviders(
+  command: Extract<PiManagementHelperCommand, { action: 'builtin-providers' | 'set-provider-key' | 'remove-provider-key' }>,
+  settingsManager: ExternalSettingsManager,
+  agentDir: string,
+) {
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), 'pipilot-builtin-providers-'))
+  try {
+    const runtime = await builtinRuntime(agentDir, temporaryDirectory)
+    if (command.action !== 'builtin-providers') {
+      const provider = runtime.getProvider(command.providerId)
+      if (!provider) throw new PiModelTestError('PI_MODEL_TEST_NOT_FOUND', `${command.providerId} is not one of Pi's providers.`)
+      if (command.action === 'set-provider-key') {
+        if (!provider.auth.apiKey?.login) throw new PiModelTestError('PI_MODEL_TEST_NOT_FOUND', `${provider.name} does not take an API key.`)
+        // Pi asks for the key through its own login flow, which also stores it.
+        let answered = false
+        await runtime.login(provider.id, 'api_key', {
+          prompt: async (prompt) => {
+            if (answered || (prompt.type !== 'secret' && prompt.type !== 'text')) {
+              throw new Error(`${provider.name} needs more than an API key; set it up with the Pi CLI.`)
+            }
+            answered = true
+            return command.key
+          },
+          notify: () => undefined,
+        })
+      } else {
+        await runtime.logout(provider.id)
+      }
+    }
+    const payload = modelsPayload(settingsManager, agentDir)
+    emit({
+      type: 'result',
+      operationId: command.operationId,
+      result: piManagementSnapshotPayloadSchema.parse({ ...payload, models: { ...payload.models!, builtinProviders: builtinProviderList(runtime) } }),
     })
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true })
@@ -663,6 +777,14 @@ async function runCommand(command: PiManagementHelperCommand) {
 
   if (command.action === 'complete-text') {
     await completeText(command, settingsManager, agentDir)
+    return
+  }
+  if (command.action === 'model-catalog') {
+    await modelCatalog(command, settingsManager, agentDir)
+    return
+  }
+  if (command.action === 'builtin-providers' || command.action === 'set-provider-key' || command.action === 'remove-provider-key') {
+    await builtinProviders(command, settingsManager, agentDir)
     return
   }
   if (

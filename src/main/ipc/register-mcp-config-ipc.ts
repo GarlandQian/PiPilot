@@ -1,5 +1,6 @@
 import type { BrowserWindow } from 'electron'
 import {
+  mcpConfigImportSourcesContract,
   mcpConfigLoadContract,
   mcpConfigRestartContract,
   mcpConfigSaveContract,
@@ -8,6 +9,7 @@ import {
   McpConfigError,
   type McpConfigController,
 } from '../mcp/mcp-config-service'
+import { readMcpImportSources } from '../mcp/mcp-import-sources'
 import type { ApplicationUrlPolicy } from '../security/url-policy'
 import {
   createTrustedSenderValidator,
@@ -51,5 +53,10 @@ export function registerMcpConfigIpc({
     mcpConfigRestartContract,
     isTrustedSender,
     () => controller.restart(),
+  )
+  registerValidatedHandler(
+    mcpConfigImportSourcesContract,
+    isTrustedSender,
+    () => readMcpImportSources(),
   )
 }

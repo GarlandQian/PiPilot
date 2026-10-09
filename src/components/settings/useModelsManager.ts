@@ -1,401 +1,172 @@
 import * as React from 'react'
-import { useT } from '@/i18n'
 import { createModelsConfigAdapter, type ModelsConfigAdapter } from '@/renderer/adapters/models-config-adapter'
-import { structuredProviderSupported, type ModelsConfigModel, type ModelsConfigProvider, type ModelsConfigSnapshot } from '@/shared/models-config'
+import type { BuiltinProvider, ModelsConfigSnapshot, ModelsConfigTestResult } from '@/shared/models-config'
 import { parseModelsConfigDocument, rawModelsProviderDefinition, removeModelsProvider, renameModelsProvider, upsertModelsProvider } from '@/shared/models-config-schema'
 import { useConfigurationDocument } from '@/store/configuration-documents'
-import { isConfigDocumentDirty, type ConfigurationDocument } from '@/renderer/configuration-documents'
+import type { ConfigurationDocument } from '@/renderer/configuration-documents'
 import { useConfigApplyStatus } from './useConfigApplyStatus'
-import { definitionFromFormValues, formValueFromModel, formValueFromProvider, type ModelFormValue, type ProviderFormValue } from './models-form-model'
-import { modelTestSuccess, settleModelTest, type ModelTestStates } from './models-test-state'
-import { applyQuickAdd, type QuickAddValue } from './models-quick-add'
+import { cloneJson, uniqueProviderId, type JsonRecord } from './models/provider-editor-model'
 
-type ProviderDialogState = { mode: 'edit'; provider: ModelsConfigProvider }
+export type BuiltinProvidersState =
+  | { state: 'loading'; providers: readonly BuiltinProvider[] }
+  | { state: 'ready'; providers: readonly BuiltinProvider[] }
+  | { state: 'error'; providers: readonly BuiltinProvider[] }
 
-type ModelDialogState =
-  | { providerId: string; mode: 'add' }
-  | { providerId: string; mode: 'edit'; model: ModelsConfigModel }
-
-export function modelSelectionKey(providerId: string, modelId: string) {
-  return JSON.stringify([providerId, modelId])
-}
-
-function decodeModelSelectionKey(value: string): [string, string] | null {
-  try {
-    const parsed: unknown = JSON.parse(value)
-    return Array.isArray(parsed) &&
-      parsed.length === 2 &&
-      typeof parsed[0] === 'string' &&
-      typeof parsed[1] === 'string'
-      ? [parsed[0], parsed[1]]
-      : null
-  } catch {
-    return null
-  }
-}
-
-function cloneJsonRecord(value: Record<string, unknown>) {
-  const clone = (entry: unknown): unknown => {
-    if (Array.isArray(entry)) return entry.map(clone)
-    if (typeof entry === 'object' && entry !== null) {
-      return Object.fromEntries(
-        Object.entries(entry as Record<string, unknown>).map(([key, child]) => [key, clone(child)]),
-      )
-    }
-    return entry
-  }
-  return clone(value) as Record<string, unknown>
-}
-
-function nextProviderId(baseId: string, existingIds: readonly string[]) {
-  const occupied = new Set(existingIds.map((id) => id.toLowerCase()))
-  const base = `${baseId.trim() || 'provider'}-copy`
-  let candidate = base
-  let suffix = 2
-  while (occupied.has(candidate.toLowerCase())) {
-    candidate = `${base}-${suffix}`
-    suffix += 1
-  }
-  return candidate
+export interface SaveProviderRequest {
+  /** The ID it was loaded with; null for a new provider. */
+  previousId: string | null
+  id: string
+  definition: JsonRecord
+  /** Make this model the default once saved. */
+  defaultModelId?: string | null
 }
 
 export function useModelsManager(document: ConfigurationDocument<ModelsConfigSnapshot>, active: boolean) {
-  const t = useT()
   const [adapter] = React.useState<ModelsConfigAdapter | null>(createModelsConfigAdapter)
-  const { snapshot, draftText, revision, view, dirty, phase, error: documentError, savedApply } = useConfigurationDocument(document, active)
-  const setSnapshot = document.updateSnapshot
-  const setView = document.setView
-  const updateDraft = document.updateDraft
+  const { snapshot, draftText, revision, dirty, phase, error: documentError, savedApply } = useConfigurationDocument(document, active)
   const readApplySnapshot = React.useCallback(() => adapter!.load({ kind: 'global' }), [adapter])
   const apply = useConfigApplyStatus('models:global', snapshot, adapter ? readApplySnapshot : null)
   const loading = phase === 'loading' || (!snapshot && !documentError)
   const saving = phase === 'saving'
-  const [reloadOpen, setReloadOpen] = React.useState(false)
-  const [error, setError] = React.useState<string | null>(null)
-  const [status, setStatus] = React.useState<string | null>(null)
-  const [providerDialog, setProviderDialog] = React.useState<ProviderDialogState | null>(null)
-  const [quickAddOpen, setQuickAddOpen] = React.useState(false)
-  const persistQueued = React.useRef(false)
-  const [modelDialog, setModelDialog] = React.useState<ModelDialogState | null>(null)
-  const [removeProviderId, setRemoveProviderId] = React.useState<string | null>(null)
-  const [removeModel, setRemoveModel] = React.useState<{
-    providerId: string
-    modelId: string
-  } | null>(null)
-  const [defaultBusy, setDefaultBusy] = React.useState<string | null>(null)
-  const [selectedProviderId, setSelectedProviderId] = React.useState<string | null>(null)
-  const [selectedCustomModels, setSelectedCustomModels] = React.useState<Set<string>>(
-    () => new Set(),
-  )
-  const [modelTests, setModelTests] = React.useState<ModelTestStates>({})
-  const modelTestRequests = React.useRef(new Map<string, { revision: number; requestId: number }>())
-  const nextModelTestRequest = React.useRef(0)
   const parsed = React.useMemo(() => parseModelsConfigDocument(draftText), [draftText])
-  // The structured form owns common fields and preserves advanced fields
-  // from the raw JSONC draft. Advanced entries are a notice, not a gate.
-  const hasAdvancedFields = parsed.valid && parsed.providers.some(
-    (provider) => !structuredProviderSupported(provider),
-  )
+  const [reloadOpen, setReloadOpen] = React.useState(false)
+  const [defaultBusy, setDefaultBusy] = React.useState(false)
+  const [builtin, setBuiltin] = React.useState<BuiltinProvidersState>({ state: 'loading', providers: [] })
+
+  const refreshBuiltin = React.useCallback(async () => {
+    if (!adapter) return
+    setBuiltin((current) => ({ state: 'loading', providers: current.providers }))
+    try {
+      const result = await adapter.builtinProviders()
+      setBuiltin({ state: 'ready', providers: result.providers })
+    } catch {
+      setBuiltin((current) => ({ state: 'error', providers: current.providers }))
+    }
+  }, [adapter])
+
+  React.useEffect(() => {
+    if (active) void refreshBuiltin()
+  }, [active, refreshBuiltin])
+
   const load = React.useCallback(async (confirmDiscard = false) => {
     if (confirmDiscard && dirty) {
       setReloadOpen(true)
       return
     }
-    setError(null)
-    setStatus(null)
     await document.load(true)
   }, [dirty, document])
 
-  const save = async (restart: boolean) => {
-    if (!adapter || !snapshot || (!dirty && !restart) || !parsed.valid || loading || saving) return
-    setError(null)
-    setStatus(null)
-    await document.save(restart)
+  /** Write the whole file and apply it to Pi (busy sessions pick it up when idle). */
+  const persistText = async (next: string) => {
+    if (!adapter || !snapshot || document.getSnapshot().phase !== 'idle') return false
+    if (!document.updateDraft(next)) return false
+    const result = await document.save(true)
+    return result !== null
   }
 
-  /**
-   * Form edits take effect at once: save and apply (Pi waits for busy
-   * sessions). Called from the user's own actions only, never from the Quit
-   * transaction, which commits form drafts and saves them itself.
-   */
-  const persist = async () => {
-    if (!adapter) return
-    if (document.getSnapshot().phase !== 'idle') {
-      persistQueued.current = true
-      return
-    }
-    if (!isConfigDocumentDirty(document.getSnapshot())) return
-    await document.save(true)
-    if (persistQueued.current) {
-      persistQueued.current = false
-      if (isConfigDocumentDirty(document.getSnapshot())) await document.save(true)
-    }
-  }
-  const editAndPersist = (next: string) => {
-    if (!updateDraft(next)) return false
-    void persist()
-    return true
+  /** Save the draft as it is (the file page) and apply it. */
+  const saveDraft = async () => {
+    if (!adapter || !snapshot || document.getSnapshot().phase !== 'idle') return false
+    return await document.save(true) !== null
   }
 
   const setDefault = async (providerId: string, modelId: string) => {
-    if (!adapter || defaultBusy) return
-    const key = modelSelectionKey(providerId, modelId)
-    setDefaultBusy(key)
-    setError(null)
-    setStatus(null)
+    if (!adapter) return false
+    setDefaultBusy(true)
     try {
       const result = await adapter.setDefault(providerId, modelId)
-      if (!result.settingsUpdated) throw new Error('settings not updated')
-      setSnapshot((previous) =>
-        previous
-          ? {
-              ...previous,
-              ...(result.defaultProvider !== undefined
-                ? { defaultProvider: result.defaultProvider }
-                : {}),
-              ...(result.defaultModel !== undefined
-                ? { defaultModel: result.defaultModel }
-                : {}),
-            }
-          : previous,
-      )
-      setStatus(t('settings.models.setDefaultDone'))
+      if (!result.settingsUpdated) return false
+      document.updateSnapshot((previous) => previous ? {
+        ...previous,
+        ...(result.defaultProvider !== undefined ? { defaultProvider: result.defaultProvider } : {}),
+        ...(result.defaultModel !== undefined ? { defaultModel: result.defaultModel } : {}),
+      } : previous)
+      return true
     } catch {
-      setError(t('settings.models.setDefaultFailed'))
+      return false
     } finally {
-      setDefaultBusy(null)
+      setDefaultBusy(false)
     }
   }
 
-  const testModel = async (providerId: string, modelId: string) => {
-    if (!adapter || !parsed.valid || loading || saving) return
-    const key = modelSelectionKey(providerId, modelId)
-    const testedRevision = document.getSnapshot().revision
-    if (modelTestRequests.current.get(key)?.revision === testedRevision) return
-    const identity = { revision: testedRevision, requestId: ++nextModelTestRequest.current }
-    modelTestRequests.current.set(key, identity)
-    setModelTests((previous) => ({ ...previous, [key]: { state: 'testing', ...identity } }))
-    try {
-      const result = await adapter.test({ kind: 'global' }, draftText, providerId, modelId)
-      setModelTests((previous) => settleModelTest(previous, key, identity,
-        document.getSnapshot().revision, modelTestSuccess(result)))
-    } catch (caught) {
-      setModelTests((previous) => settleModelTest(previous, key, identity,
-        document.getSnapshot().revision, {
-          state: 'error',
-          message: caught instanceof Error && caught.message ? caught.message : t('settings.models.testFailed'),
-        }))
-    } finally {
-      if (modelTestRequests.current.get(key)?.requestId === identity.requestId) {
-        modelTestRequests.current.delete(key)
-      }
-    }
+  /** The draft with this provider written in, as the editor would save it. */
+  const draftWithProvider = (request: SaveProviderRequest, base = document.getSnapshot().draftText) => {
+    let next = base
+    if (request.previousId && request.previousId !== request.id) next = renameModelsProvider(next, request.previousId, request.id)
+    return upsertModelsProvider(next, request.id, request.definition)
   }
 
-  /* -------------------- structured edit handlers ------------------ */
-
-  const submitProviderForm = (value: ProviderFormValue) => {
+  /**
+   * Save one provider and apply it. A renamed provider that held the default
+   * keeps it under its new ID (the default lives in Pi's settings.json).
+   */
+  const saveProvider = async (request: SaveProviderRequest): Promise<'saved' | 'default-failed' | 'failed'> => {
+    let next: string
     try {
-      if (!providerDialog) return false
-      let next = draftText
-      const provider = providerDialog.provider
-      const rawExisting = rawModelsProviderDefinition(draftText, provider.id)
-      const definition = definitionFromFormValues(
-        value,
-        provider.models.map((model) => formValueFromModel(model)),
-        rawExisting,
-      )
-      if (value.id !== provider.id) {
-        next = renameModelsProvider(next, provider.id, value.id)
-      }
-      next = upsertModelsProvider(next, value.id, definition)
-      if (!updateDraft(next)) return false
-      setError(null)
-      setSelectedProviderId(value.id)
-      setSelectedCustomModels(new Set())
-      setProviderDialog(null)
-      return true
+      next = draftWithProvider(request)
     } catch {
-      setError(t('settings.models.editFailed'))
+      return 'failed'
+    }
+    const heldDefault = Boolean(request.previousId && snapshot?.defaultProvider === request.previousId)
+    if (!await persistText(next)) return 'failed'
+    const modelId = request.defaultModelId ?? (heldDefault && request.previousId !== request.id ? snapshot?.defaultModel : undefined)
+    if (!modelId) return 'saved'
+    const current = document.getSnapshot().snapshot
+    if (current?.defaultProvider === request.id && current.defaultModel === modelId) return 'saved'
+    return await setDefault(request.id, modelId) ? 'saved' : 'default-failed'
+  }
+
+  const removeProvider = async (providerId: string) => {
+    try {
+      return await persistText(removeModelsProvider(document.getSnapshot().draftText, providerId))
+    } catch {
       return false
     }
   }
 
-  const submitQuickAdd = (value: QuickAddValue) => {
+  /** A copy without its key: credentials are never copied. */
+  const duplicateProvider = async (providerId: string) => {
+    const text = document.getSnapshot().draftText
+    const raw = rawModelsProviderDefinition(text, providerId)
+    if (!raw) return null
+    const id = uniqueProviderId(`${providerId}-copy`, parsed.providers.map((provider) => provider.id))
+    const definition = cloneJson(raw)
+    delete definition.apiKey
+    if (typeof definition.name === 'string') definition.name = `${definition.name} copy`
     try {
-      const result = applyQuickAdd(draftText, parsed.providers, value)
-      if (!updateDraft(result.text)) return false
-      setError(null)
-      setSelectedProviderId(result.providerId)
-      setSelectedCustomModels(new Set())
-      setQuickAddOpen(false)
+      return await persistText(upsertModelsProvider(text, id, definition)) ? id : null
+    } catch {
+      return null
+    }
+  }
+
+  /** Try one model with `content` as models.json (the editor's unsaved version included). */
+  const testModel = (content: string, providerId: string, modelId: string): Promise<ModelsConfigTestResult> => {
+    if (!adapter) return Promise.reject(new Error(''))
+    return adapter.test({ kind: 'global' }, content, providerId, modelId)
+  }
+
+  /** Store or (null) remove the key of one of Pi's own providers in auth.json. */
+  const setProviderKey = async (providerId: string, key: string | null) => {
+    if (!adapter) return false
+    try {
+      const result = await adapter.setProviderKey({ providerId, key })
+      setBuiltin({ state: 'ready', providers: result.providers })
       return true
     } catch {
-      setError(t('settings.models.editFailed'))
       return false
     }
   }
 
-  const submitModelForm = (value: ModelFormValue) => {
-    if (!modelDialog) return false
-    const provider = parsed.providers.find((entry) => entry.id === modelDialog.providerId)
-    if (!provider) return false
-    try {
-      const models = provider.models.map((model) => formValueFromModel(model))
-      if (modelDialog.mode === 'edit') {
-        const index = provider.models.findIndex((model) => model.id === modelDialog.model.id)
-        if (index >= 0) models[index] = value
-      } else {
-        models.push(value)
-      }
-      let rawExisting = rawModelsProviderDefinition(draftText, provider.id)
-      if (
-        modelDialog.mode === 'edit' &&
-        rawExisting &&
-        modelDialog.model.id !== value.id &&
-        Array.isArray(rawExisting.models)
-      ) {
-        const index = provider.models.findIndex((model) => model.id === modelDialog.model.id)
-        const rawModels = rawExisting.models.map((model) => (
-          model && typeof model === 'object' && !Array.isArray(model)
-            ? { ...(model as Record<string, unknown>) }
-            : model
-        ))
-        const rawModel = rawModels[index]
-        if (index >= 0 && rawModel && typeof rawModel === 'object' && !Array.isArray(rawModel)) {
-          rawModels[index] = { ...(rawModel as Record<string, unknown>), id: value.id.trim() }
-          rawExisting = { ...rawExisting, models: rawModels }
-        }
-      }
-      const definition = definitionFromFormValues(
-        formValueFromProvider(provider),
-        models,
-        rawExisting,
-      )
-      if (!updateDraft(upsertModelsProvider(draftText, provider.id, definition))) return false
-      setError(null)
-      setModelDialog(null)
-      return true
-    } catch {
-      setError(t('settings.models.editFailed'))
-      return false
-    }
-  }
-
-  const removeProvider = (providerId: string) => {
-    try {
-      editAndPersist(removeModelsProvider(draftText, providerId))
-      setError(null)
-    } catch {
-      setError(t('settings.models.editFailed'))
-    }
-  }
-
-  const removeModelFromProvider = (providerId: string, modelId: string) => {
-    const provider = parsed.providers.find((entry) => entry.id === providerId)
-    if (!provider) return
-    try {
-      const models = provider.models
-        .filter((model) => model.id !== modelId)
-        .map((model) => formValueFromModel(model))
-      const definition = definitionFromFormValues(
-        formValueFromProvider(provider),
-        models,
-        rawModelsProviderDefinition(draftText, provider.id),
-      )
-      editAndPersist(upsertModelsProvider(draftText, provider.id, definition))
-      setError(null)
-    } catch {
-      setError(t('settings.models.editFailed'))
-    }
-  }
-
-  const selectProvider = (providerId: string) => {
-    setSelectedProviderId(providerId)
-    setSelectedCustomModels(new Set())
-  }
-
-  const toggleCustomModel = (providerId: string, modelId: string, checked: boolean) => {
-    const key = modelSelectionKey(providerId, modelId)
-    setSelectedCustomModels((previous) => {
-      const next = new Set(previous)
-      if (checked) next.add(key)
-      else next.delete(key)
-      return next
-    })
-  }
-
-  const duplicateProvider = (provider: ModelsConfigProvider) => {
-    try {
-      const raw = rawModelsProviderDefinition(draftText, provider.id)
-      if (!raw) throw new Error('Provider is not available in the draft.')
-      const id = nextProviderId(provider.id, parsed.providers.map((entry) => entry.id))
-      const definition = cloneJsonRecord(raw)
-      // Credentials are never copied into a new provider. The user can add a
-      // replacement key explicitly in the provider form.
-      delete definition.apiKey
-      const next = upsertModelsProvider(draftText, id, definition)
-      editAndPersist(next)
-      setSelectedProviderId(id)
-      setSelectedCustomModels(new Set())
-      setStatus(t('settings.models.providerDuplicated'))
-      setError(null)
-    } catch {
-      setError(t('settings.models.editFailed'))
-    }
-  }
-
-  const deleteSelectedModels = (targetProviderId: string) => {
-    if (selectedCustomModels.size === 0) return
-    try {
-      let next = draftText
-      for (const selection of selectedCustomModels) {
-        const pair = decodeModelSelectionKey(selection)
-        if (!pair) continue
-        const [providerId, modelId] = pair
-        if (providerId !== targetProviderId) continue
-        const provider = parseModelsConfigDocument(next).providers.find((entry) => entry.id === providerId)
-        if (!provider) continue
-        const models = provider.models
-          .filter((model) => model.id !== modelId)
-          .map((model) => formValueFromModel(model))
-        next = upsertModelsProvider(
-          next,
-          providerId,
-          definitionFromFormValues(
-            formValueFromProvider(provider),
-            models,
-            rawModelsProviderDefinition(next, providerId),
-          ),
-        )
-      }
-      editAndPersist(next)
-      setSelectedCustomModels((previous) => new Set([...previous].filter((selection) =>
-        decodeModelSelectionKey(selection)?.[0] !== targetProviderId)))
-      setStatus(t('settings.models.modelsDeleted'))
-      setError(null)
-    } catch {
-      setError(t('settings.models.editFailed'))
-    }
-  }
-
-  const storedKey = (providerId: string) => {
-    const key = rawModelsProviderDefinition(draftText, providerId)?.apiKey
-    return typeof key === 'string' && key ? key : undefined
-  }
-
-  const isDefault = (providerId: string, modelId: string) =>
-    snapshot?.defaultProvider === providerId && snapshot?.defaultModel === modelId
+  const rawDefinition = (providerId: string) => rawModelsProviderDefinition(draftText, providerId)
 
   return {
-    snapshot, draftText, revision, view, dirty, phase, documentError, savedApply, apply,
-    available: Boolean(adapter), loading, saving, reloadOpen, setReloadOpen,
-    error, status, providerDialog, setProviderDialog, modelDialog, setModelDialog, quickAddOpen, setQuickAddOpen,
-    removeProviderId, setRemoveProviderId, removeModel, setRemoveModel, defaultBusy,
-    selectedProviderId, selectProvider, selectedCustomModels, modelTests, parsed, hasAdvancedFields,
-    load, save, persist, setDefault, testModel, submitProviderForm, submitModelForm, submitQuickAdd, removeProvider,
-    removeModelFromProvider, toggleCustomModel, duplicateProvider, deleteSelectedModels,
-    isDefault, setView, updateDraft, storedKey, listRemote: adapter?.listRemote,
+    adapter, snapshot, draftText, revision, dirty, phase, documentError, savedApply, apply, parsed,
+    available: Boolean(adapter), loading, saving, reloadOpen, setReloadOpen, defaultBusy, builtin,
+    load, persistText, refreshBuiltin, setDefault, draftWithProvider, saveProvider, removeProvider,
+    duplicateProvider, testModel, setProviderKey, rawDefinition, updateDraft: document.updateDraft, saveDraft,
+    view: document.getSnapshot().view, setView: document.setView,
+    revertDraft: () => { const current = document.getSnapshot().snapshot; if (current) document.updateDraft(current.content) },
   }
 }
 

@@ -2,7 +2,11 @@ import type { BrowserWindow } from 'electron'
 import {
   modelsConfigGetDefaultsContract,
   modelsConfigListRemoteContract,
+  modelsConfigBuiltinProvidersContract,
   modelsConfigLoadContract,
+  modelsConfigLookupCatalogContract,
+  modelsConfigProviderCatalogContract,
+  modelsConfigSetProviderKeyContract,
   modelsConfigSaveAndRestartContract,
   modelsConfigSaveContract,
   modelsConfigSetDefaultContract,
@@ -80,6 +84,26 @@ export function registerModelsConfigIpc({
       if (error instanceof RemoteModelListError) throw new MainProcessError(error.code, error.message)
       throw new MainProcessError('MODELS_LIST_UNREACHABLE', 'The endpoint could not be reached.')
     }),
+  )
+  registerValidatedHandler(
+    modelsConfigBuiltinProvidersContract,
+    isTrustedSender,
+    () => controller.builtinProviders().catch(mapModelsConfigError),
+  )
+  registerValidatedHandler(
+    modelsConfigSetProviderKeyContract,
+    isTrustedSender,
+    ({ providerId, key }) => controller.setProviderKey(providerId, key).catch(mapModelsConfigError),
+  )
+  registerValidatedHandler(
+    modelsConfigProviderCatalogContract,
+    isTrustedSender,
+    ({ providerId }) => controller.providerCatalog(providerId),
+  )
+  registerValidatedHandler(
+    modelsConfigLookupCatalogContract,
+    isTrustedSender,
+    ({ baseUrl, ids }) => controller.lookupCatalog(baseUrl, ids),
   )
   registerValidatedHandler(
     modelsConfigTestContract,

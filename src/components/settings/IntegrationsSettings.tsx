@@ -84,6 +84,10 @@ export function IntegrationsSettings({ tab, onTab, active = true }: Integrations
     onTab('resources')
   }
 
+  const [mcpSubpage, setMcpSubpage] = React.useState(false)
+  // An MCP server page fills the pane: no tabs or scope bar above it.
+  const mcpPageOpen = tab === 'mcp' && mcpSubpage
+
   const changeScope = (kind: 'global' | 'project') => {
     if (kind === integrations.scope.kind || (kind === 'project' && !projectScope)) return
     integrations.setScope(kind === 'global' ? { kind: 'global' } : projectScope!)
@@ -95,14 +99,14 @@ export function IntegrationsSettings({ tab, onTab, active = true }: Integrations
       onValueChange={(value) => { if (TABS.some((id) => id === value)) onTab(value as IntegrationsTabId) }}
       className="@container/integrations min-w-0 gap-0"
     >
-      <TabsList className="scroll-slim mx-auto mb-6 max-w-full overflow-x-auto overflow-y-hidden" aria-label={t('settings.integrations.title')}>
+      <TabsList hidden={mcpPageOpen} className="scroll-slim mx-auto mb-6 max-w-full overflow-x-auto overflow-y-hidden" aria-label={t('settings.integrations.title')}>
         {TABS.map((id) => (
           <TabsTrigger key={id} value={id} className="flex-none px-3.5">
             {t(`settings.integrations.tab.${id}`)}
           </TabsTrigger>
         ))}
       </TabsList>
-      <header className="flex flex-col gap-3 pb-5" data-integrations-toolbar>
+      <header hidden={mcpPageOpen} className="flex flex-col gap-3 pb-5" data-integrations-toolbar>
         {/* Scope control leads (like a Finder scope bar); context follows; actions trail. */}
         <div className="flex min-w-0 flex-wrap items-center gap-2.5">
           {tab !== 'external-control' ? <div className="mac-segmented" role="group" aria-label={t('settings.integrations.scope')}>
@@ -204,7 +208,7 @@ export function IntegrationsSettings({ tab, onTab, active = true }: Integrations
         </TabsContent>
       ))}
       <TabsContent value="mcp" forceMount hidden={tab !== 'mcp'} className="min-w-0">
-        <McpSettings scope={integrations.scope} active={active && tab === 'mcp'} onManagePackages={() => onTab('packages')} />
+        <McpSettings scope={integrations.scope} active={active && tab === 'mcp'} onManagePackages={() => onTab('packages')} onSubpageChange={setMcpSubpage} />
       </TabsContent>
       <TabsContent value="external-control" className="min-w-0"><ExternalControlView active={active && tab === 'external-control'} /></TabsContent>
 

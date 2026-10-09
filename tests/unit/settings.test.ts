@@ -54,12 +54,18 @@ const customShell = {
 
 describe('current settings schema', () => {
   it('adds notification preferences without discarding existing appearance or shell profiles', () => {
-    const { notifications: _notifications, ...existing } = darkEnglishSettings()
+    const { notifications: _notifications, models: _models, ...existing } = darkEnglishSettings()
     existing.terminal = { ...existing.terminal, defaultProfileId: customShell.id, profiles: [customShell] }
     const migrated = parseSettingsDocument({ version: SETTINGS_SCHEMA_VERSION, settings: existing }).settings
-    expect(migrated).toEqual({ ...existing, notifications: { desktop: true, sound: true } })
+    expect(migrated).toEqual({ ...existing, notifications: { desktop: true, sound: true }, models: { onlineMetadata: true } })
     expect(parseSettingsDocument({ version: SETTINGS_SCHEMA_VERSION, settings: { ...migrated, notifications: { desktop: false } } }).settings.notifications.desktop).toBe(false)
     expect(() => parseSettingsDocument({ version: SETTINGS_SCHEMA_VERSION, settings: { ...migrated, notifications: { desktop: 'yes' } } })).toThrow()
+  })
+  it('adds the models group to settings saved before it existed, and keeps an explicit opt-out', () => {
+    const { models: _models, ...previous } = darkEnglishSettings()
+    expect(parseSettingsDocument({ version: SETTINGS_SCHEMA_VERSION, settings: previous }).settings.models).toEqual({ onlineMetadata: true })
+    expect(parseSettingsDocument({ version: SETTINGS_SCHEMA_VERSION, settings: { ...previous, models: { onlineMetadata: false } } }).settings.models).toEqual({ onlineMetadata: false })
+    expect(() => parseSettingsDocument({ version: SETTINGS_SCHEMA_VERSION, settings: { ...previous, models: { onlineMetadata: 'yes' } } })).toThrow()
   })
   it('migrates desktop-only preferences and preserves an explicit sound opt-out', () => {
     const existing = darkEnglishSettings()

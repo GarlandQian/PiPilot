@@ -12,15 +12,17 @@ import {
   upsertModelsProvider,
 } from '../../src/shared/models-config-schema'
 import {
-  costFieldValid,
-  costGroupComplete,
-  definitionFromFormValues,
-  duplicateModelId,
-  duplicateProviderId,
-  tokenFieldValid,
-  type ModelFormValue,
-  type ProviderFormValue,
-} from '../../src/components/settings/models-form-model'
+  definitionFromEditor,
+  editorFromDefinition,
+  editorIssues,
+  fillFromDetails,
+  maskSecrets,
+  MASKED_SECRET,
+  restoreSecrets,
+  rowsFromModels,
+  uniqueProviderId,
+  withField,
+} from '../../src/components/settings/models/provider-editor-model'
 
 const DOCUMENT = `{
   // Custom gateway provider.
@@ -58,36 +60,6 @@ const DOCUMENT = `{
     }
   }
 }`
-
-function providerForm(overrides: Partial<ProviderFormValue> = {}): ProviderFormValue {
-  return {
-    id: 'acme',
-    name: 'Acme Gateway',
-    baseUrl: 'https://api.acme.example/v1',
-    api: 'openai-completions',
-    apiKeyDraft: '',
-    clearKey: false,
-    headers: [{ key: 'X-Tenant', value: 'blue' }],
-    ...overrides,
-  }
-}
-
-function modelForm(overrides: Partial<ModelFormValue> = {}): ModelFormValue {
-  return {
-    id: 'acme-pro',
-    name: 'Acme Pro',
-    reasoning: true,
-    inputText: true,
-    inputImage: true,
-    contextWindow: '200000',
-    maxTokens: '8192',
-    costInput: '2',
-    costOutput: '6',
-    costCacheRead: '0.3',
-    costCacheWrite: '0',
-    ...overrides,
-  }
-}
 
 describe('parseModelsConfigDocument', () => {
   it('parses a documented JSONC fixture with comments into providers', () => {
@@ -165,28 +137,9 @@ describe('structured gates', () => {
 
 describe('upsertModelsProvider', () => {
   it('applies minimal edits: comments and untouched providers survive byte-for-byte', () => {
-    const existing = rawModelsProviderDefinition(DOCUMENT, 'acme')!
-    const definition = definitionFromFormValues(
-      providerForm({ name: 'Acme Gateway v2' }),
-      [
-        modelForm(),
-        modelForm({
-          id: 'acme-mini',
-          name: '',
-          reasoning: false,
-          inputText: true,
-          inputImage: false,
-          contextWindow: '64000',
-          maxTokens: '4096',
-          costInput: '',
-          costOutput: '',
-          costCacheRead: '',
-          costCacheWrite: '',
-        }),
-      ],
-      existing,
-    )
-    const next = upsertModelsProvider(DOCUMENT, 'acme', definition)
+    const editor = editorFromDefinition('acme', rawModelsProviderDefinition(DOCUMENT, 'acme')!)
+    const renamed = { ...editor, provider: withField(editor.provider, 'name', 'Acme Gateway v2') }
+    const next = upsertModelsProvider(DOCUMENT, 'acme', definitionFromEditor(renamed))
 
     expect(next).toContain('"Acme Gateway v2"')
     expect(next).toContain('// Custom gateway provider.')
@@ -203,18 +156,9 @@ describe('upsertModelsProvider', () => {
   })
 
   it('adds a new provider without disturbing existing content', () => {
-    const definition = definitionFromFormValues(
-      providerForm({
-        id: 'newco',
-        name: 'New Co',
-        baseUrl: 'https://newco.example/v1',
-        apiKeyDraft: 'sk-new',
-        headers: [],
-      }),
-      [modelForm({ id: 'newco-1', costInput: '', costOutput: '', costCacheRead: '', costCacheWrite: '' })],
-      undefined,
-    )
-    const next = upsertModelsProvider(DOCUMENT, 'newco', definition)
+    const editor = editorFromDefinition('newco', { name: 'New Co', baseUrl: 'https://newco.example/v1', api: 'openai-completions', apiKey: 'sk-new', models: [] })
+    editor.models = rowsFromModels([{ id: 'newco-1' }])
+    const next = upsertModelsProvider(DOCUMENT, 'newco', definitionFromEditor(editor))
     const reparsed = parseModelsConfigDocument(next)
 
     expect(reparsed.valid).toBe(true)
@@ -229,21 +173,14 @@ describe('upsertModelsProvider', () => {
 
   it('round-trips CRLF files without line-ending corruption', () => {
     const crlf = DOCUMENT.replace(/\n/g, '\r\n')
-    const existing = rawModelsProviderDefinition(crlf, 'plain')!
-    const definition = definitionFromFormValues(
-      providerForm({ id: 'plain', name: '', baseUrl: 'https://plain.example/v1', api: '', headers: [] }),
-      [modelForm({
-        id: 'plain-1', name: '', reasoning: false, inputText: true, inputImage: false,
-        contextWindow: '', maxTokens: '', costInput: '', costOutput: '', costCacheRead: '', costCacheWrite: '',
-      })],
-      existing,
-    )
-    const next = upsertModelsProvider(crlf, 'plain', definition)
+    const editor = editorFromDefinition('plain', rawModelsProviderDefinition(crlf, 'plain')!)
+    editor.models = editor.models.map((row) => ({ ...row, raw: withField(row.raw, 'contextWindow', 32000) }))
+    const next = upsertModelsProvider(crlf, 'plain', definitionFromEditor(editor))
     const reparsed = parseModelsConfigDocument(next)
 
     expect(reparsed.valid).toBe(true)
     expect(next).not.toContain('\r\n\n')
-    expect(next).toContain('"plain"')
+    expect(reparsed.providers[1]!.models[0]!.contextWindow).toBe(32000)
   })
 })
 
@@ -273,96 +210,55 @@ describe('removeModelsProvider and renameModelsProvider', () => {
   })
 })
 
-describe('definitionFromFormValues apiKey semantics', () => {
-  it('keeps the stored key when the draft is blank', () => {
-    const existing = rawModelsProviderDefinition(DOCUMENT, 'acme')!
-    const definition = definitionFromFormValues(providerForm(), [modelForm()], existing)
-    expect(definition.apiKey).toBe('sk-secret-1')
+describe('provider editor model', () => {
+  it('keeps every field it does not show, and a definition without models stays without', () => {
+    const raw = rawModelsProviderDefinition(DOCUMENT, 'acme')!
+    expect(definitionFromEditor(editorFromDefinition('acme', raw))).toEqual(raw)
+    expect(definitionFromEditor(editorFromDefinition('override', { baseUrl: 'https://proxy.example' }))).toEqual({ baseUrl: 'https://proxy.example' })
   })
 
-  it('replaces the key when the draft is non-empty', () => {
-    const existing = rawModelsProviderDefinition(DOCUMENT, 'acme')!
-    const definition = definitionFromFormValues(
-      providerForm({ apiKeyDraft: 'sk-replaced' }),
-      [modelForm()],
-      existing,
-    )
-    expect(definition.apiKey).toBe('sk-replaced')
+  it('marks the default model row and keeps row keys across JSON edits', () => {
+    const editor = editorFromDefinition('acme', rawModelsProviderDefinition(DOCUMENT, 'acme')!, 'acme-mini')
+    expect(editor.models.find((row) => row.key === editor.defaultKey)?.raw.id).toBe('acme-mini')
+    const rows = rowsFromModels([{ id: 'acme-mini' }, { id: 'acme-new' }], editor.models)
+    expect(rows[0]!.key).toBe(editor.models[1]!.key)
+    expect(rows[0]!.originalId).toBe('acme-mini')
+    expect(rows[1]!.originalId).toBeNull()
   })
 
-  it('removes the key when clearKey is set', () => {
-    const existing = rawModelsProviderDefinition(DOCUMENT, 'acme')!
-    const definition = definitionFromFormValues(
-      providerForm({ clearKey: true }),
-      [modelForm()],
-      existing,
-    )
-    expect(definition).not.toHaveProperty('apiKey')
+  it('masks literal keys and secret headers in the JSON view, and restores them when left masked', () => {
+    const definition = {
+      apiKey: 'sk-live', headers: { Authorization: 'Bearer abc', 'X-Tenant': 'blue', 'X-Api-Key': '$TENANT_KEY' },
+      models: [{ id: 'm', headers: { 'x-token': 'tok' } }],
+    }
+    const masked = maskSecrets(definition)
+    expect(JSON.stringify(masked)).not.toMatch(/sk-live|Bearer abc|"tok"/u)
+    expect(masked.headers).toEqual({ Authorization: MASKED_SECRET, 'X-Tenant': 'blue', 'X-Api-Key': '$TENANT_KEY' })
+    expect(maskSecrets({ apiKey: '!security find-generic-password -w' }).apiKey).toBe('!security find-generic-password -w')
+
+    expect(restoreSecrets(masked, definition)).toEqual(definition)
+    expect(restoreSecrets({ ...masked, apiKey: 'sk-new' }, definition).apiKey).toBe('sk-new')
   })
 
-  it('preserves passthrough fields (oauth, compat, unknown) verbatim', () => {
-    const existing = rawModelsProviderDefinition(DOCUMENT, 'acme')!
-    const definition = definitionFromFormValues(providerForm(), [modelForm()], existing)
-
-    expect(definition.compat).toEqual(existing.compat)
-    expect(definition.apiKey).toBe(existing.apiKey)
-    const model = (definition.models as Record<string, unknown>[])[0]!
-    expect(model.thinkingLevelMap).toBeDefined()
-    expect((model.cost as Record<string, unknown>).tiers).toBeDefined()
+  it('reports a missing address, a taken ID and duplicate model IDs', () => {
+    const editor = editorFromDefinition('Acme', { models: [{ id: 'a' }, { id: 'a' }, { id: ' ' }] })
+    const issues = editorIssues(editor, ['acme'])
+    expect(issues.id).toBe('taken')
+    expect(issues.baseUrl).toBe('required')
+    expect(Object.values(issues.models)).toEqual(['duplicate', 'required'])
+    expect(editorIssues({ ...editor, provider: { baseUrl: 'not a url' } }, []).baseUrl).toBe('invalid')
   })
 
-  it('preserves non-string provider headers while honoring string-row edits', () => {
-    const existing = rawModelsProviderDefinition(
-      '{ "providers": { "rich": { "headers": { "X-Count": 3, "X-Tenant": "blue" }, "models": [] } } }',
-      'rich',
-    )!
-    const definition = definitionFromFormValues(
-      providerForm({ id: 'rich', headers: [{ key: 'X-Tenant', value: 'green' }] }),
-      [],
-      existing,
-    )
-
-    expect(definition.headers).toEqual({ 'X-Count': 3, 'X-Tenant': 'green' })
-
-    const removedStringHeader = definitionFromFormValues(
-      providerForm({ id: 'rich', headers: [] }),
-      [],
-      existing,
-    )
-    expect(removedStringHeader.headers).toEqual({ 'X-Count': 3 })
-  })
-})
-
-describe('validation helpers', () => {
-  it('detects duplicate provider ids case-insensitively with an exclude option', () => {
-    const document = parseModelsConfigDocument(DOCUMENT)
-
-    expect(duplicateProviderId('ACME', document, { caseInsensitive: true })).toBe(true)
-    expect(duplicateProviderId('acme', document, { caseInsensitive: true, excludeId: 'acme' })).toBe(false)
-    expect(duplicateProviderId('other', document, { caseInsensitive: true })).toBe(false)
+  it('fills only what a model does not say yet', () => {
+    const details = { name: 'Big Model', reasoning: true, input: ['text', 'image'] as ('text' | 'image')[], contextWindow: 200000, maxTokens: 8192, cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } }
+    expect(fillFromDetails({ id: 'big', contextWindow: 1000 }, details)).toEqual({
+      id: 'big', name: 'Big Model', reasoning: true, input: ['text', 'image'], contextWindow: 1000, maxTokens: 8192, cost: details.cost,
+    })
+    expect(fillFromDetails({ id: 'big' }, null, 'Remote Name')).toEqual({ id: 'big', name: 'Remote Name' })
   })
 
-  it('detects duplicate model ids within a provider', () => {
-    const models = [{ id: 'a' }, { id: 'b' }]
-    expect(duplicateModelId('a', models)).toBe(true)
-    expect(duplicateModelId('a', models, 'a')).toBe(false)
-    expect(duplicateModelId('c', models)).toBe(false)
-  })
-
-  it('validates token and cost fields', () => {
-    expect(tokenFieldValid('')).toBe(true)
-    expect(tokenFieldValid('8192')).toBe(true)
-    expect(tokenFieldValid('0')).toBe(false)
-    expect(tokenFieldValid('1.5')).toBe(false)
-    expect(tokenFieldValid('abc')).toBe(false)
-
-    expect(costFieldValid('')).toBe(true)
-    expect(costFieldValid('0')).toBe(true)
-    expect(costFieldValid('0.3')).toBe(true)
-    expect(costFieldValid('-1')).toBe(false)
-
-    expect(costGroupComplete({ costInput: '1', costOutput: '2', costCacheRead: '0', costCacheWrite: '0' })).toBe(true)
-    expect(costGroupComplete({ costInput: '', costOutput: '', costCacheRead: '', costCacheWrite: '' })).toBe(true)
-    expect(costGroupComplete({ costInput: '1', costOutput: '', costCacheRead: '', costCacheWrite: '' })).toBe(false)
+  it('suggests provider IDs nobody uses', () => {
+    expect(uniqueProviderId('SiliconFlow', ['siliconflow', 'siliconflow-2'])).toBe('siliconflow-3')
+    expect(uniqueProviderId('  ', [])).toBe('custom')
   })
 })

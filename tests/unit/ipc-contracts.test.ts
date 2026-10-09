@@ -851,6 +851,7 @@ describe('terminal IPC schemas', () => {
 function darkSettingsForEvent() {
   return {
     notifications: { desktop: true, sound: true },
+    models: { onlineMetadata: true },
     locale: 'en-US',
     appearance: {
       theme: 'dark',

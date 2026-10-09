@@ -30,7 +30,8 @@ Pi keeps its own sessions, configuration, and resources. PiPilot uses the offici
 | Code and terminals | File browsing, diffs and review comments, source-linked quotes, project terminal tabs, and external editors |
 | Plans and goals | Plan Mode, Goal, and Subagents integration with status and activity alongside your conversation |
 | Project workflows | Local Git worktrees and saved setup, test, and development actions you choose when to run |
-| Your Pi setup | Providers, models, thinking controls, packages, skills, prompts, themes, and native MCP |
+| Your Pi setup | Provider presets, model discovery and metadata, thinking controls, packages, skills, prompts, and themes |
+| MCP servers | Templates, configuration import from other apps, form/JSON editing, and global or project scopes |
 | Portable conversations | Markdown import and export, including adjacent image attachments |
 | Desktop tools | Light/dark appearance, Liquid Glass tint, notifications, scheduled prompts, and optional local MCP control |
 
@@ -50,7 +51,7 @@ Choose a package from the [latest Release](https://github.com/GarlandQian/PiPilo
 
 This README describes the current source. The assets on each Release page are authoritative for that published version; see [version changes](CHANGELOG.md) for availability.
 
-Filenames include version, system, and architecture, for example `PiPilot-0.4.0-windows-x64-setup.exe`. Windows portable files end in `-portable.exe` or `-portable.zip`. Linux may use `x86_64`/`amd64` for x64 and `aarch64` for ARM64. SHA-256 lists accompany each platform's downloads.
+Filenames include version, system, and architecture, for example `PiPilot-0.5.0-windows-x64-setup.exe`. Windows portable files end in `-portable.exe` or `-portable.zip`. Linux may use `x86_64`/`amd64` for x64 and `aarch64` for ARM64. SHA-256 lists accompany each platform's downloads.
 
 macOS builds are ad-hoc signed, without Developer ID signing or notarization. Windows builds are unsigned. The operating system may ask you to approve opening the app or show an unknown-publisher warning.
 
@@ -92,7 +93,7 @@ See [configuration and data](docs/usage.md#pi-configuration-and-data) for file l
 
 - **Windows: `spawn npm ENOENT` when opening or creating a conversation.** PiPilot now falls back to bundled npm when system npm is unavailable to the app. Node installed through [fnm](https://github.com/Schniz/fnm#shell-setup) can be visible in a terminal but absent from a desktop shortcut's environment. Fully quit the app, including its tray process, and launch from a terminal where `npm --version` works to check that difference.
 - **MCP launcher unavailable after moving an installation.** If the recorded Windows installation has been removed, use **Repair** in External Control. Another existing installation or an unverifiable record is shown as a conflict rather than overwritten. Portable EXE users should use Setup or portable ZIP for a stable launcher.
-- **An external MCP command is missing.** Configure its required runtime or an absolute executable path. Bundled npm supports Pi package management; it does not install every external MCP runtime.
+- **An external MCP command is missing.** macOS/Linux desktop launches now try the login shell's environment. If a command is still unavailable, check its installation and PATH or configure an absolute executable path. Windows fnm environments may still differ between terminal and desktop launches. Bundled npm supports Pi package management; it does not install every external MCP runtime.
 
 For bugs, include the PiPilot version, operating system, architecture, package type, and error text in a [GitHub issue](https://github.com/GarlandQian/PiPilot/issues). Remove credentials and personal session content.
 

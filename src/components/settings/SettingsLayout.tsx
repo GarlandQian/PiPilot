@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { SettingsIconTile } from './common'
 import type { IntegrationsTabId } from './IntegrationsSettings'
 import { SETTINGS_SECTIONS, type SettingsSectionId } from './settings-navigation'
+import { SettingsSubpageProvider, type SettingsSubpage } from './settings-subpage'
 import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { usePiRpcActions, usePiRuntime } from '@/store/pi-rpc'
@@ -54,6 +55,17 @@ export function SettingsLayout({
   const [visitedSections, setVisitedSections] = React.useState<ReadonlySet<SettingsSectionId>>(
     () => new Set([section]),
   )
+  const [subpages, setSubpages] = React.useState<Partial<Record<SettingsSectionId, SettingsSubpage>>>({})
+  const publishSubpage = React.useCallback((id: SettingsSectionId, page: SettingsSubpage | null) => {
+    setSubpages((current) => {
+      if (!page && !current[id]) return current
+      const next = { ...current }
+      if (page) next[id] = page
+      else delete next[id]
+      return next
+    })
+  }, [])
+  const subpage = subpages[section]
 
   React.useEffect(() => {
     setVisitedSections((current) => current.has(section) ? current : new Set([...current, section]))
@@ -113,7 +125,20 @@ export function SettingsLayout({
     >
       {/* Unified toolbar, like a System Settings pane title. */}
       <header className="app-drag toolbar-material absolute inset-x-0 top-0 z-30 flex h-(--frame-header-h) items-center gap-2 pr-4 titlebar-leading-[12px]">
-        {compact && onBack ? (
+        {subpage ? (
+          <Button
+            ref={compact ? compactBackRef : undefined}
+            variant="ghost"
+            size="icon-sm"
+            className="glass size-[34px] hover:bg-(--glass-fill) hover:brightness-[0.97]"
+            aria-label={t('settings.back')}
+            title={t('settings.back')}
+            data-settings-subpage-back
+            onClick={subpage.back}
+          >
+            <TbChevronLeft className="size-[18px] stroke-[2.4]" aria-hidden />
+          </Button>
+        ) : compact && onBack ? (
           <Button
             ref={compactBackRef}
             variant="ghost"
@@ -126,7 +151,7 @@ export function SettingsLayout({
             <TbChevronLeft className="size-[18px] stroke-[2.4]" aria-hidden />
           </Button>
         ) : <span className="w-2" aria-hidden />}
-        <h1 className="min-w-0 flex-1 truncate text-[calc(var(--app-font-size)+2px)] font-bold text-foreground">{t(metadata.labelKey)}</h1>
+        <h1 className="min-w-0 flex-1 truncate text-[calc(var(--app-font-size)+2px)] font-bold text-foreground">{subpage?.title ?? t(metadata.labelKey)}</h1>
         {showSaveStatus && saveStatus !== 'idle' ? (
           <div className={cn('flex max-w-[45%] items-center gap-1.5 text-caption', saveStatus === 'error' ? 'text-destructive' : 'text-muted-foreground')} role={saveStatus === 'error' ? 'alert' : 'status'} data-settings-save-status={saveStatus}>
             {saveStatus === 'saving' ? <TbLoader2 className="size-3.5 shrink-0 animate-spin" aria-hidden /> : saveStatus === 'saved' ? <TbCheck className="size-3.5 shrink-0 text-success" aria-hidden /> : <TbAlertTriangle className="size-3.5 shrink-0" aria-hidden />}
@@ -145,7 +170,7 @@ export function SettingsLayout({
             '@container/settings-workspace mx-auto w-full px-6 pt-[calc(var(--frame-header-h)+1.5rem)] pb-10 @min-[880px]/frame:px-8',
             id === 'integrations' || id === 'models' ? 'max-w-6xl' : 'max-w-[720px]',
           )}>
-            {id === 'about' ? null : (() => {
+            {id === 'about' || subpages[id] ? null : (() => {
               const meta = SETTINGS_SECTIONS.find((item) => item.id === id)!
               // System Settings pane hero: big tile, bold name, one-line summary.
               return <div className="mb-6 flex flex-col items-center gap-1 rounded-xl bg-group px-6 pt-5 pb-4 text-center shadow-[inset_0_0_0_0.5px_var(--color-group-border)]">
@@ -155,7 +180,7 @@ export function SettingsLayout({
               </div>
             })()}
             <React.Suspense fallback={<div className="flex min-h-40 items-center justify-center gap-2 text-sm text-muted-foreground" role="status"><TbLoader2 className="size-4 animate-spin" aria-hidden />{t('settings.loadingPage')}</div>}>
-              {content(id)}
+              <SettingsSubpageProvider onChange={publishSubpage}>{content(id)}</SettingsSubpageProvider>
             </React.Suspense>
           </div>
         </div>
