@@ -8,6 +8,7 @@ import {
 } from '../../src/main/local-pi-management/local-pi-integration-service'
 import type { LocalPiManagementHost } from '../../src/main/local-pi-management/local-pi-management-host'
 import type { PiManagementSnapshotPayload } from '../../src/shared/pi-integrations'
+import { SUPPORTED_PI_VERSION } from '../../src/shared/local-pi'
 
 const workspaceId = '00000000-0000-4000-8000-000000000222'
 const roots: string[] = []
@@ -205,7 +206,7 @@ describe('LocalPiIntegrationService', () => {
     try {
         await expect(service.load({ kind: 'global' })).resolves.toMatchObject({
           state: 'ready',
-          executable: { path: 'bundled', version: '0.99.1' },
+          executable: { path: 'bundled', version: SUPPORTED_PI_VERSION },
         packages: [],
       })
       expect(runtimeHost.restart).not.toHaveBeenCalled()

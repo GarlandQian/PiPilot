@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { mergeTerminalEnvironment, parseWslDistributions, TerminalProfileDiscovery, terminalLocaleEnvironment, wslWorkingDirectory } from '../../src/main/terminal/terminal-profile-discovery'
+import { mergeTerminalEnvironment, parseWslDistributions, shellArguments, TerminalProfileDiscovery, terminalLocaleEnvironment, wslWorkingDirectory } from '../../src/main/terminal/terminal-profile-discovery'
 
 describe('TerminalProfileDiscovery', () => {
   it('discovers arbitrary login shells, /etc/shells entries and PATH/Homebrew shells with stable per-install IDs', async () => {
@@ -22,7 +22,8 @@ describe('TerminalProfileDiscovery', () => {
     expect((await discovery.discover([], { ids: [ksh.id] })).map(({ executable }) => executable)).toContain('/bin/ksh')
     // Two fish installs are told apart by location.
     expect(profiles.filter(({ label }) => label.startsWith('fish')).map(({ label }) => label).sort()).toEqual(['fish · /tools', 'fish · /usr/local/bin'])
-    expect(profiles.every(({ id, source, available, args }) => id.startsWith('detected:') && source === 'detected' && available && args[0] === '-l')).toBe(true)
+    expect(profiles.every(({ id, source, available }) => id.startsWith('detected:') && source === 'detected' && available)).toBe(true)
+    expect(profiles.find(({ executable }) => executable === '/opt/custom/my-shell')?.args).toEqual([])
     const originalFish = profiles.find(({ executable }) => executable === '/tools/fish')!
     installed.delete('/usr/local/bin/fish')
     expect((await discovery.discover()).find(({ executable }) => executable === '/tools/fish')?.id).toBe(originalFish.id)
@@ -65,7 +66,63 @@ describe('TerminalProfileDiscovery', () => {
     ])
     expect(distros[0].id).not.toBe(distros[1].id)
     expect((await discovery.discover()).filter(({ source }) => source === 'wsl').map(({ id }) => id)).toEqual(distros.map(({ id }) => id))
-    expect(await discovery.automatic()).toMatchObject({ file: cmd })
+    expect(await discovery.automatic()).toMatchObject({ file: pwsh7 })
+  })
+
+  it('keeps native selections independent from a slow WSL scan and refreshes inventory only on request', async () => {
+    const cmd = 'C:\\Windows\\System32\\cmd.exe'
+    const wsl = 'C:\\Windows\\System32\\wsl.exe'
+    let installed = true
+    const probe = vi.fn(async (): Promise<Buffer> => Buffer.from('Ubuntu\r\n', 'utf16le'))
+    const discovery = new TerminalProfileDiscovery({ platform: 'win32', environment: {}, readDirectory: async () => [],
+      resolveExecutable: async (candidate) => (candidate === cmd && installed) || candidate === wsl ? candidate : undefined,
+      probeProcess: probe })
+    const native = await discovery.automatic()
+    expect(native?.file).toBe(cmd)
+    expect(probe).not.toHaveBeenCalled()
+    const first = await discovery.discover()
+    const selected = first.find(({ executable }) => executable === cmd)!
+    await discovery.discover()
+    await discovery.selected(selected.id)
+    expect(probe).toHaveBeenCalledTimes(1)
+    let releaseProbe!: (output: Buffer) => void
+    let probeStarted!: () => void
+    const started = new Promise<void>((resolve) => { probeStarted = resolve })
+    probe.mockImplementationOnce(() => new Promise<Buffer>((resolve) => { releaseProbe = resolve; probeStarted() }))
+    const refreshing = discovery.discover([], {}, true)
+    await started
+    expect((await discovery.selected(selected.id))?.executable).toBe(cmd)
+    releaseProbe(Buffer.from('Ubuntu\r\n', 'utf16le'))
+    await refreshing
+    installed = false
+    expect(await discovery.selected(selected.id)).toBeUndefined()
+    expect((await discovery.discover()).some(({ id }) => id === selected.id)).toBe(true)
+    expect((await discovery.discover([], {}, true)).some(({ id }) => id === selected.id)).toBe(false)
+    expect(probe).toHaveBeenCalledTimes(3)
+  })
+
+  it('uses supported arguments for each discovered Unix shell', () => {
+    expect(shellArguments('/bin/zsh', 'darwin')).toEqual(['-l'])
+    expect(shellArguments('/usr/bin/nu', 'linux')).toEqual(['--login'])
+    expect(shellArguments('/usr/bin/pwsh', 'linux')).toEqual(['-Login', '-NoLogo'])
+    expect(shellArguments('/usr/bin/elvish', 'linux')).toEqual([])
+    expect(shellArguments('/usr/bin/xonsh', 'linux')).toEqual(['--login', '--interactive'])
+    expect(shellArguments('/custom/unknown', 'linux')).toEqual([])
+  })
+
+  it('falls back from stable PowerShell to Windows PowerShell and CMD without selecting preview', async () => {
+    const stable = 'C:\\Program Files\\PowerShell\\7\\pwsh.exe'
+    const preview = 'C:\\Program Files\\PowerShell\\7-preview\\pwsh.exe'
+    const winps = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
+    const cmd = 'C:\\Windows\\System32\\cmd.exe'
+    const installed = new Set([preview, stable, winps, cmd])
+    const discovery = new TerminalProfileDiscovery({ platform: 'win32', environment: { ComSpec: cmd },
+      readDirectory: async () => ['7-preview', '7'], resolveExecutable: async (candidate) => installed.has(candidate) ? candidate : undefined })
+    expect((await discovery.automatic())?.file).toBe(stable)
+    installed.delete(stable)
+    expect((await discovery.automatic())?.file).toBe(winps)
+    installed.delete(winps)
+    expect((await discovery.automatic())?.file).toBe(cmd)
   })
 
   it('does not probe missing WSL and tolerates a failed installed WSL probe', async () => {

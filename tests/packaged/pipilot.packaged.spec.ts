@@ -24,6 +24,7 @@ import {
 import { FuseState, FuseV1Options, getCurrentFuseWire } from '@electron/fuses'
 import { LATEST_PROTOCOL_VERSION } from '@modelcontextprotocol/server'
 import { PIPILOT_VERSION } from '../../src/shared/build-info'
+import { SUPPORTED_PI_VERSION } from '../../src/shared/local-pi'
 import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from '../../src/shared/settings'
 import { createWindowsUserPathAdapter } from '../../src/main/external-control/launcher-service'
 import { startPiSdkFixture } from '../electron/pi-sdk-fixture'
@@ -685,7 +686,7 @@ test('runs the bundled Pi SDK workflow without system npm from the packaged appl
       window.pipilot!.piIntegrations.load({ kind: 'global' })
     )), PACKAGED_RUNTIME_POLL_OPTIONS).toMatchObject({
       state: 'ready',
-      executable: { version: '0.99.1' },
+      executable: { version: SUPPORTED_PI_VERSION },
       packages: expect.arrayContaining([
         expect.objectContaining({
           displayName: 'packaged-fixture-package',
@@ -721,7 +722,7 @@ test('runs the bundled Pi SDK workflow without system npm from the packaged appl
       name: 'Integrations',
       exact: true,
     })).toBeVisible()
-    await expect(integrationsMain.getByText(/Pi 0\.99\.1/u)).toBeVisible()
+    await expect(integrationsMain.getByText(`Pi ${SUPPORTED_PI_VERSION}`, { exact: false })).toBeVisible()
     await integrationsMain.getByRole('tab', {
       name: 'Packages',
       exact: true,

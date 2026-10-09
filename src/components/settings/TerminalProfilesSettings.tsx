@@ -32,14 +32,14 @@ export function TerminalProfilesSettings() {
   const selectionId = React.useId()
   const profilesRevision = JSON.stringify(terminal.profiles)
 
-  const refresh = React.useCallback(async () => {
+  const refresh = React.useCallback(async (force = false) => {
     const request = ++requestId.current
     setLoading(true)
     setLoadFailed(false)
     try {
       const api = window.pipilot?.terminal
       if (!api) throw new Error('Terminal API unavailable')
-      const next = await api.listShellProfiles()
+      const next = await api.listShellProfiles(force)
       if (!mounted.current || request !== requestId.current) return
       setProfiles(next)
       setLoaded(true)
@@ -64,7 +64,10 @@ export function TerminalProfilesSettings() {
   const mergedProfiles = [
     ...profiles.filter(({ source }) => source !== 'custom').map((profile) => ({
       ...profile,
-      label: !profile.available && !profile.executable ? t('settings.terminal.profiles.unavailable') : profile.label,
+      label: !profile.available && !profile.executable
+        ? terminal.defaultProfileSnapshot?.id === profile.id ? terminal.defaultProfileSnapshot.label : t('settings.terminal.profiles.savedDefault')
+        : profile.label,
+      executable: profile.executable || (terminal.defaultProfileSnapshot?.id === profile.id ? terminal.defaultProfileSnapshot.executable : ''),
     })),
     ...terminal.profiles.map((profile): TerminalShellProfile => {
       const found = profiles.find(({ id }) => id === profile.id)
@@ -90,7 +93,10 @@ export function TerminalProfilesSettings() {
     const existing = terminal.profiles.some(({ id }) => id === profile.id)
     if (editing?.mode === 'edit' && !existing) return false
     const next = existing ? terminal.profiles.map((item) => item.id === profile.id ? profile : item) : [...terminal.profiles, profile]
-    return updateTerminal({ profiles: next })
+    return updateTerminal({
+      profiles: next,
+      ...(terminal.defaultProfileId === profile.id ? { defaultProfileSnapshot: { id: profile.id, label: profile.name, executable: profile.executable } } : {}),
+    })
   }
   const remove = async () => {
     if (!removing || busy || removeBusyRef.current) return
@@ -100,7 +106,7 @@ export function TerminalProfilesSettings() {
     try {
       const saved = await updateTerminal({
         profiles: terminal.profiles.filter(({ id }) => id !== removing.id),
-        ...(terminal.defaultProfileId === removing.id ? { defaultProfileId: null } : {}),
+        ...(terminal.defaultProfileId === removing.id ? { defaultProfileId: null, defaultProfileSnapshot: null } : {}),
       })
       if (!mounted.current) return
       if (saved) setRemoving(null)
@@ -116,14 +122,17 @@ export function TerminalProfilesSettings() {
   return <>
     <SettingSection title={t('settings.terminal.profiles.title')} desc={t('settings.terminal.profiles.description')}>
       <SettingRow label={t('settings.terminal.profiles.default')} desc={t('settings.terminal.profiles.defaultDescription')}>
-        <Select value={terminal.defaultProfileId ?? AUTOMATIC_PROFILE} disabled={busy} onValueChange={(value) => { void updateTerminal({ defaultProfileId: value === AUTOMATIC_PROFILE ? null : value }) }}>
+        <Select value={terminal.defaultProfileId ?? AUTOMATIC_PROFILE} disabled={busy} onValueChange={(value) => {
+          const profile = mergedProfiles.find(({ id }) => id === value)
+          void updateTerminal({ defaultProfileId: value === AUTOMATIC_PROFILE ? null : value, defaultProfileSnapshot: profile ? { id: profile.id, label: profile.label, executable: profile.executable } : null })
+        }}>
           <SelectTrigger id={selectionId} className="w-full min-w-0 sm:w-64" aria-label={t('settings.terminal.profiles.default')} aria-describedby={defaultUnavailable ? `${selectionId}-warning` : undefined}>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value={AUTOMATIC_PROFILE}>{t('settings.terminal.profiles.automatic')}</SelectItem>
             {mergedProfiles.map((profile) => <SelectItem key={profile.id} value={profile.id} disabled={!profile.available}>{profile.label}{!profile.available ? ` · ${t('settings.terminal.profiles.unavailable')}` : ''}</SelectItem>)}
-            {missingDefault ? <SelectItem value={terminal.defaultProfileId!} disabled>{terminal.defaultProfileId} · {t('settings.terminal.profiles.unavailable')}</SelectItem> : null}
+            {missingDefault ? <SelectItem value={terminal.defaultProfileId!} disabled>{terminal.defaultProfileSnapshot?.label ?? t('settings.terminal.profiles.savedDefault')} · {t('settings.terminal.profiles.unavailable')}</SelectItem> : null}
           </SelectContent>
         </Select>
       </SettingRow>
@@ -131,14 +140,14 @@ export function TerminalProfilesSettings() {
       {defaultUnavailable ? <div id={`${selectionId}-warning`} role="alert" className="flex min-w-0 flex-wrap items-center gap-3 bg-warning/8">
         <TbAlertTriangle className="size-4 shrink-0 text-warning" aria-hidden />
         <p className="min-w-0 flex-1 text-caption text-foreground">{t('settings.terminal.profiles.defaultUnavailable')}</p>
-        <Button variant="outline" size="sm" disabled={busy} onClick={() => { void updateTerminal({ defaultProfileId: null }) }}>{t('settings.terminal.profiles.useAutomatic')}</Button>
+        <Button variant="outline" size="sm" disabled={busy} onClick={() => { void updateTerminal({ defaultProfileId: null, defaultProfileSnapshot: null }) }}>{t('settings.terminal.profiles.useAutomatic')}</Button>
       </div> : null}
     </SettingSection>
     {/* Available profiles: a grouped list whose section header carries its actions. */}
     <section className="min-w-0 pb-6" aria-label={t('settings.terminal.profiles.listTitle')}>
       <header className="mb-2 flex min-w-0 flex-wrap items-center gap-2 px-1">
         <h2 className="min-w-0 flex-1 text-app font-semibold">{t('settings.terminal.profiles.listTitle')}</h2>
-        <Button variant="ghost" size="sm" className="text-foreground/75" disabled={loading || busy} onClick={() => void refresh()}><TbRefresh aria-hidden className={loading ? 'animate-spin' : undefined} />{t('settings.terminal.profiles.refresh')}</Button>
+        <Button variant="ghost" size="sm" className="text-foreground/75" disabled={loading || busy} onClick={() => void refresh(true)}><TbRefresh aria-hidden className={loading ? 'animate-spin' : undefined} />{t('settings.terminal.profiles.refresh')}</Button>
         <Button variant="outline" size="sm" disabled={busy || terminal.profiles.length >= 64} onClick={add}><TbPlus aria-hidden />{t('settings.terminal.profiles.add')}</Button>
       </header>
       {loading ? <p role="status" className="flex items-center gap-2 px-1 pb-2 text-caption text-muted-foreground"><TbLoader2 aria-hidden className="size-3.5 animate-spin" />{t('settings.terminal.profiles.loading')}</p> : null}

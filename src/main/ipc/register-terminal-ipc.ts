@@ -5,6 +5,8 @@ import {
   terminalRestartContract,
   terminalListContract,
   terminalListShellProfilesContract,
+  terminalListExternalAppsContract,
+  terminalOpenExternalContract,
   terminalAttachContract,
   terminalRenameContract,
   terminalCloseContract,
@@ -50,8 +52,12 @@ export function registerTerminalIpc({
   registerValidatedHandler(
     terminalListShellProfilesContract,
     isTrustedSender,
-    () => terminalService.listShellProfiles().catch(mapTerminalError),
+    ({ refresh }) => terminalService.listShellProfiles(refresh).catch(mapTerminalError),
   )
+  registerValidatedHandler(terminalListExternalAppsContract, isTrustedSender,
+    ({ refresh }) => terminalService.listExternalApps(refresh).catch(mapTerminalError))
+  registerValidatedHandler(terminalOpenExternalContract, isTrustedSender,
+    ({ scope, appId, relativeDirectory }) => terminalService.openExternal(scope, appId, relativeDirectory).catch(mapTerminalError))
   registerValidatedHandler(
     terminalListContract,
     isTrustedSender,
@@ -85,8 +91,8 @@ export function registerTerminalIpc({
   registerValidatedHandler(
     terminalCreateContract,
     isTrustedSender,
-    ({ scope, cols, rows, shellProfileId }) =>
-      terminalService.create(scope, cols, rows, shellProfileId).catch(mapTerminalError),
+    ({ scope, cols, rows, shellProfileId, relativeDirectory }) =>
+      terminalService.create(scope, cols, rows, shellProfileId, relativeDirectory).catch(mapTerminalError),
   )
   registerValidatedHandler(
     terminalInputContract,

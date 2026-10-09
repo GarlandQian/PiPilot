@@ -51,7 +51,7 @@ Choose a package from the [latest Release](https://github.com/GarlandQian/PiPilo
 
 This README describes the current source. The assets on each Release page are authoritative for that published version; see [version changes](CHANGELOG.md) for availability.
 
-Filenames include version, system, and architecture, for example `PiPilot-0.5.0-windows-x64-setup.exe`. Windows portable files end in `-portable.exe` or `-portable.zip`. Linux may use `x86_64`/`amd64` for x64 and `aarch64` for ARM64. SHA-256 lists accompany each platform's downloads.
+Filenames include version, system, and architecture, for example `PiPilot-0.6.0-windows-x64-setup.exe`. Windows portable files end in `-portable.exe` or `-portable.zip`. Linux may use `x86_64`/`amd64` for x64 and `aarch64` for ARM64. SHA-256 lists accompany each platform's downloads.
 
 macOS builds are ad-hoc signed, without Developer ID signing or notarization. Windows builds are unsigned. The operating system may ask you to approve opening the app or show an unknown-publisher warning.
 
@@ -99,7 +99,7 @@ For bugs, include the PiPilot version, operating system, architecture, package t
 
 ## Development
 
-Use **Node.js 24.18.0** and **pnpm 12.8.1**.
+Use **Node.js 24.18.0** and **pnpm 12.10.1**.
 
 ~~~sh
 git clone https://github.com/GarlandQian/PiPilot.git

@@ -12,6 +12,7 @@ import { usePiRpcActions, usePiRuntime } from '@/store/pi-rpc'
 import { useWorkspaceStore } from '@/store/workspace'
 import { useConfigApplyStatus } from '../useConfigApplyStatus'
 import type { JsonRecord } from '../models/provider-editor-model'
+import { withMcpEnabled } from './mcp-editor-model'
 
 export function mcpTargetFor(scope: PiIntegrationScope): McpConfigTarget {
   return scope.kind === 'global' ? { kind: 'global' } : { kind: 'project', workspaceId: scope.workspaceId }
@@ -35,7 +36,7 @@ export function useMcpManager(document: ConfigurationDocument<McpConfigSnapshot>
   const apply = useConfigApplyStatus(targetKey, current ? snapshot : null, adapter ? readApplySnapshot : null)
   const loading = phase === 'loading' || (!snapshot && !documentError)
   const saving = phase === 'saving'
-  const parsed = React.useMemo(() => parseMcpConfigDocument(draftText), [draftText])
+  const parsed = React.useMemo(() => parseMcpConfigDocument(draftText, target.kind), [draftText, target.kind])
   const [reloadOpen, setReloadOpen] = React.useState(false)
   const runtimeReady = runtime.runtime?.state === 'ready'
   const mcpCommand = runtimeReady ? runtime.commands.find((command) => command.name === 'mcp') : undefined
@@ -105,9 +106,7 @@ export function useMcpManager(document: ConfigurationDocument<McpConfigSnapshot>
   const setEnabled = (name: string, enabled: boolean) => {
     const server = parsed.servers.find((candidate) => candidate.name === name)
     if (!server) return Promise.resolve(false)
-    const definition = { ...server.definition }
-    if (enabled) delete definition.enabled
-    else definition.enabled = false
+    const definition = withMcpEnabled(server.definition, enabled, target.kind)
     return saveServer(name, name, definition)
   }
 

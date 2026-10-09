@@ -3855,10 +3855,13 @@ test('launches a sandboxed shell with a narrow validated bridge', { tag: '@integ
     expect(rendererSandboxed).toBe(true)
 
     const appInfo = await page.evaluate(() => window.pipilot?.app.getInfo())
+    const electronManifest = JSON.parse(await readFile(
+      new URL(import.meta.resolve('electron/package.json')), 'utf8',
+    )) as { version: string }
     expect(appInfo).toMatchObject({
       name: 'PiPilot',
       version: PIPILOT_VERSION,
-      electronVersion: '44.5.0',
+      electronVersion: electronManifest.version,
       mode: 'development',
     })
     const nativeWindowMode = await electronApp.evaluate(({ BrowserWindow }) => {

@@ -23,6 +23,7 @@ import {
 import { useSettings, useUpdateSettings } from '@/store/settings'
 import { SettingRow, SettingSection } from './common'
 import { TerminalProfilesSettings } from './TerminalProfilesSettings'
+import { ExternalTerminalSettings } from './ExternalTerminalSettings'
 
 const RECOMMENDED_FONT = '__recommended__'
 const CUSTOM_FONT = '__custom__'
@@ -57,6 +58,7 @@ export function TerminalSettings() {
         </SettingRow>
       </SettingSection>
       <TerminalProfilesSettings />
+      <ExternalTerminalSettings />
       <SettingSection
         title={t('settings.terminal.title')}
         desc={t('settings.terminal.description')}

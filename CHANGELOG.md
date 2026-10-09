@@ -6,6 +6,26 @@ Each version section supplies the highlights for its GitHub Release. Download li
 
 ## Unreleased
 
+## 0.6.0
+
+### 中文
+
+- **改进项目终端**：终端「＋」使用默认 Shell，下拉菜单可临时选择其他 Shell；支持刷新发现列表和自定义配置，记住不可用的默认项。项目、文件夹和文件可直接在对应目录打开终端，重启终端保留原工作目录。
+- **支持外部终端**：单独选择默认终端应用，支持 macOS Terminal、iTerm2、Ghostty，Windows Terminal、PowerShell、CMD 和常见 Linux 终端，也可配置应用路径；打开其他项目的外部终端不会切换当前对话。改善 Windows Store 终端执行别名的发现。
+- **稳定项目启动体验**：空项目「开始任务」入口在会话列表后台刷新时保持稳定，避免新建任务后侧栏反复切换加载状态。
+- **升级 Pi 运行时至 1.1.0**：适配新的会话事件和取消状态；MCP 项目配置支持只覆盖全局服务器的启用状态和工具暴露方式，保留 OAuth 元数据并校验配置范围，兼容旧的 codemode-deferred 配置。
+- **澄清模型协议与认证**：按 API 协议显示地址、凭据和模型 ID 提示，只为支持的协议查询模型列表；改进 Vertex 和 Bedrock 内置供应商的密钥登录步骤，避免将密钥提交到不匹配的认证字段。
+- **升级说明**：Pi 1.1 的内置 Azure 供应商 ID 改为 `azure`。旧配置中的供应商引用 `azure-openai-responses` 需手动更新或重新登录，API 协议字段仍保持 `azure-openai-responses`；应用不会自动改写个人认证配置。Electron 升至 44.7.0，并同步相关依赖和构建工具。
+
+### English
+
+- **Project terminals:** The plus button uses the default shell; its menu can launch another shell without changing that default. Refresh discovered shells, manage custom profiles, retain unavailable defaults, and open terminals at a project, folder, or file's parent directory. Restarting a terminal preserves its working directory.
+- **External terminals:** Choose a separate default terminal app, including Terminal, iTerm2, and Ghostty on macOS, Windows Terminal, PowerShell, and CMD on Windows, and common Linux terminals, with custom executable paths supported. Opening another project's external terminal leaves the active conversation unchanged. Windows Store terminal execution aliases are detected more reliably.
+- **Stable project startup:** Keep an empty project's Start task entry stable during background session-list refreshes, avoiding repeated loading-state changes after creating a task.
+- **Pi runtime 1.1.0:** Adapt session events and cancellation state. Project MCP configuration can override only a global server's enablement and tool exposure; OAuth metadata and configuration scopes are validated, and legacy codemode-deferred settings remain compatible.
+- **Model protocol and authentication guidance:** Show protocol-specific endpoint, credential, and model-ID hints, and fetch model lists only for supported protocols. Handle the built-in Vertex and Bedrock key-login steps without sending secrets to unrelated authentication fields.
+- **Upgrade note:** Pi 1.1 renames the built-in Azure provider ID to `azure`. Manually update old `azure-openai-responses` provider references or sign in again; keep the API protocol field as `azure-openai-responses`. Personal authentication files are not automatically rewritten. Electron moves to 44.7.0 alongside dependency and build-tool updates.
+
 ## 0.5.0
 
 ### 中文

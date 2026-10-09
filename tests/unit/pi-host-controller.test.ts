@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url'
 import type { MessageChannelMain, MessagePortMain, UtilityProcess } from 'electron'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  PI_HOST_EXPECTED_SDK_VERSION,
   PiHostController,
   resolvePiHostUtilityModulePath,
   type PiHostElectronAdapter,
@@ -160,7 +161,7 @@ function createHarness(options: {
   const channels: ReturnType<typeof createFakeChannel>[] = []
   const forkUtility = vi.fn(() => {
     utility = new FakeUtilityProcess(
-      options.sdkVersion ?? '0.99.1',
+      options.sdkVersion ?? PI_HOST_EXPECTED_SDK_VERSION,
       options.onRequest,
     )
     return utility as unknown as UtilityProcess
@@ -219,7 +220,7 @@ describe('PiHostController', () => {
       state: 'ready',
       hostEpoch: 1,
       pid: 4_242,
-      sdkVersion: '0.99.1',
+      sdkVersion: PI_HOST_EXPECTED_SDK_VERSION,
       nodeVersion: '24.18.1',
       electronVersion: '44.2.0',
       capabilities: ['ping', 'shutdown'],
@@ -236,7 +237,7 @@ describe('PiHostController', () => {
     )
     expect(piHostBootstrapEnvelopeSchema.parse(harness.utility.bootstrap)).toMatchObject({
       hostEpoch: 1,
-      expectedSdkVersion: '0.99.1',
+      expectedSdkVersion: PI_HOST_EXPECTED_SDK_VERSION,
     })
 
     await expect(harness.controller.request({ type: 'ping' })).resolves.toEqual({

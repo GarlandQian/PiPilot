@@ -6,6 +6,7 @@ import type {
   MessagePortMain,
   UtilityProcess,
 } from 'electron'
+import { SUPPORTED_PI_VERSION } from '../../shared/local-pi'
 import {
   PI_HOST_MAX_ENVELOPE_BYTES,
   PI_HOST_PROTOCOL_VERSION,
@@ -25,7 +26,7 @@ import {
   type PiHostUiRequestEventEnvelope,
 } from '../../shared/pi-host-protocol'
 
-export const PI_HOST_EXPECTED_SDK_VERSION = '0.99.1'
+export const PI_HOST_EXPECTED_SDK_VERSION = SUPPORTED_PI_VERSION
 // Packaged Intel builds may initialize the Electron utility under Rosetta.
 export const DEFAULT_PI_HOST_HANDSHAKE_TIMEOUT_MS = 60_000
 export const DEFAULT_PI_HOST_REQUEST_TIMEOUT_MS = 30_000

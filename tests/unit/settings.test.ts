@@ -53,6 +53,18 @@ const customShell = {
 }
 
 describe('current settings schema', () => {
+  it('migrates previous terminal settings and round-trips external apps and named default snapshots', () => {
+    const current = darkEnglishSettings()
+    const { defaultProfileSnapshot: _shell, externalApps: _apps, defaultExternalAppId: _appId, defaultExternalAppSnapshot: _app, ...previousTerminal } = current.terminal
+    const migrated = parseSettingsDocument({ version: SETTINGS_SCHEMA_VERSION, settings: { ...current, terminal: previousTerminal } }).settings
+    expect(migrated.terminal).toEqual(current.terminal)
+    const configured = { ...current, terminal: { ...current.terminal,
+      defaultProfileId: 'detected:fixture', defaultProfileSnapshot: { id: 'detected:fixture', label: 'My shell', executable: '/tools/fish' },
+      defaultExternalAppId: 'external:custom:work', defaultExternalAppSnapshot: { id: 'external:custom:work', label: 'Work terminal', executable: '/tools/kitty', adapter: 'kitty' },
+      externalApps: [{ id: 'external:custom:work', name: 'Work terminal', executable: '/tools/kitty', adapter: 'kitty' }],
+    } }
+    expect(parseSettingsDocument({ version: SETTINGS_SCHEMA_VERSION, settings: configured }).settings).toEqual(configured)
+  })
   it('adds notification preferences without discarding existing appearance or shell profiles', () => {
     const { notifications: _notifications, models: _models, ...existing } = darkEnglishSettings()
     existing.terminal = { ...existing.terminal, defaultProfileId: customShell.id, profiles: [customShell] }

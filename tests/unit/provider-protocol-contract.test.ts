@@ -58,7 +58,10 @@ describe('installed Pi SDK provider contracts', () => {
       expect(fixture.requests.filter((request) => request.prompt === prompt).map((request) => request.hasWriteResult))
         .toEqual([false, true])
       expect(events.some((event) => event.type === 'tool_execution_start' && event.toolName === 'write')).toBe(true)
-      expect(events.some((event) => event.type === 'tool_execution_end' && event.isError === false)).toBe(true)
+      expect(events).toContainEqual(expect.objectContaining({
+        type: 'tool_execution_end', isError: false, durationMs: expect.any(Number),
+      }))
+      expect(events).toContainEqual({ type: 'agent_settled', aborted: false })
       expect(events.some((event) => event.type === 'message_update' && event.assistantMessageEvent.type === 'text_delta')).toBe(true)
       expect(events.some((event) => event.type === 'message_update' && event.assistantMessageEvent.type === 'toolcall_delta')).toBe(true)
       expect(session.messages.filter((message) => message.role === 'assistant').every((message) => (

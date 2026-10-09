@@ -4,7 +4,7 @@ import { mcpServerName, parseCodexMcpToml, parseMcpImport, splitCommandLine } fr
 import { templateForServer, MCP_TEMPLATES } from '../../src/shared/mcp-templates'
 import { MASKED_SECRET } from '../../src/components/settings/models/provider-editor-model'
 import {
-  argsFromLines, maskMcpSecrets, mcpEditorIssues, preparedMcpDefinition, preservedFields, restoreMcpSecrets, uniqueMcpName, withTransport,
+  argsFromLines, maskMcpSecrets, mcpEditorIssues, preparedMcpDefinition, preservedFields, restoreMcpSecrets, uniqueMcpName, withMcpEnabled, withTransport,
 } from '../../src/components/settings/mcp/mcp-editor-model'
 import { filterServers } from '../../src/components/settings/mcp/McpServerList'
 
@@ -54,6 +54,31 @@ describe('MCP server page model', () => {
     expect(mcpEditorIssues('Docs', { command: 'npx', timeout: 0 }, ['docs'], null)).toEqual({ name: 'taken', timeout: 'invalid' })
     expect(mcpEditorIssues('docs', { command: 'npx' }, [], 'Server args must be an array of strings.')).toEqual({ pi: 'Server args must be an array of strings.' })
     expect(uniqueMcpName('playwright', ['Playwright'])).toBe('playwright-2')
+  })
+
+  it('edits project overrides without inventing a transport or losing explicit enablement', () => {
+    const override = { enabled: false, exposure: 'deferred', toolExposure: { 'delete_*': 'hidden' } }
+    expect(mcpEditorIssues('docs', override, [], null, undefined, 'project')).toEqual({})
+    expect(mcpEditorIssues('docs', override, [], null, undefined, 'global')).toEqual({ command: 'required' })
+    const enabled = withMcpEnabled(override, true, 'project')
+    expect(enabled).toEqual({ ...override, enabled: true })
+    expect(override.enabled).toBe(false)
+    const draft = JSON.stringify({ mcpServers: { docs: override, own: { command: 'node', args: ['own.js'] } } })
+    const saved = upsertMcpServer(draft, 'docs', preparedMcpDefinition(enabled))
+    const parsed = parseMcpConfigDocument(saved, 'project')
+    expect(parsed.valid).toBe(true)
+    expect(parsed.servers[0]).toMatchObject({ name: 'docs', transport: 'override', definition: enabled })
+    expect(parsed.servers[1]?.definition).toEqual({ command: 'node', args: ['own.js'] })
+    expect(withMcpEnabled({ command: 'node', enabled: false }, true, 'project')).toEqual({ command: 'node' })
+  })
+
+  it('preserves native HTTP provider authentication and OAuth metadata during form edits', () => {
+    const definition = {
+      url: ' https://example.test/mcp ', auth: { provider: 'openai' },
+      oauth: { clientName: 'PiPilot', authServerMetadataUrl: 'https://auth.example.test/.well-known/oauth-authorization-server' },
+    }
+    expect(preparedMcpDefinition(definition)).toEqual({ ...definition, url: 'https://example.test/mcp' })
+    expect(preservedFields(definition)).toEqual(['auth', 'oauth'])
   })
 
   it('searches names, commands and descriptions, never credentials', () => {

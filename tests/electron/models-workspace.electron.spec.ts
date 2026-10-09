@@ -210,3 +210,82 @@ test('renaming the provider that holds the default model moves the default with 
     await fixture.close()
   }
 })
+
+test('custom API selection explains credentials and preserves advanced protocols without treating them as generic endpoints', async ({}, testInfo) => {
+  test.setTimeout(60_000)
+  const { app, fixture, modelPath, initial } = await launch(testInfo)
+  try {
+    const page = await app.firstWindow()
+    const errors: string[] = []
+    page.on('pageerror', (error) => errors.push(error.message))
+    await expect(page.locator('[data-model-thinking-trigger]')).toContainText('Fake Chat', { timeout: 20_000 })
+    await page.getByRole('button', { name: 'Settings', exact: true }).click()
+    await page.locator('[data-context-panel-nav-id="models"]').click()
+    const main = page.getByRole('main', { name: 'Models', exact: true })
+    await main.locator('[data-models-provider-card="fixture"]').getByRole('button', { name: 'Edit fixture', exact: true }).click()
+    const editor = main.locator('[data-models-custom-editor="fixture"]')
+    const protocol = editor.locator('#models-editor-api')
+    const address = editor.locator('#models-editor-url')
+    const key = editor.locator('#models-editor-key')
+    const fetchList = editor.getByRole('button', { name: 'Fetch List', exact: true })
+    const changeProtocol = async (api: string) => {
+      await protocol.click()
+      await page.getByRole('option', { name: new RegExp(` ${api}$`, 'u') }).click()
+    }
+
+    await protocol.click()
+    await expect(page.getByRole('option', { name: /openai-codex-responses/u })).toHaveCount(0)
+    await page.getByRole('option', { name: / openai-responses$/u }).click()
+    await expect(protocol).toHaveAccessibleDescription(/does not sign in to ChatGPT/u)
+    await expect(fetchList).toBeEnabled()
+    await expect(key).toHaveAccessibleName('API Key')
+    await expect(address).toHaveValue(initial.providers.fixture.baseUrl)
+    await expect(key).toHaveValue('fixture-key')
+
+    await changeProtocol('azure-openai-responses')
+    await expect(key).toHaveAccessibleName('Azure OpenAI API key')
+    await expect(address).toHaveAttribute('placeholder', 'https://your-resource.openai.azure.com/openai/v1')
+    await expect(fetchList).toBeDisabled()
+    await expect(fetchList).toHaveAccessibleDescription(/manually/u)
+    await changeProtocol('google-vertex')
+    await expect(protocol).toHaveAccessibleDescription(/built-in google-vertex/u)
+    await expect(fetchList).toBeDisabled()
+
+    // Advanced configurations must remain editable, without exposing secrets
+    // or silently mapping them to the first generic protocol.
+    await editor.getByRole('button', { name: /^Config JSON/u }).click()
+    const json = editor.getByRole('textbox', { name: 'Config JSON', exact: true })
+    const definition = JSON.parse(await json.inputValue())
+    await json.fill(JSON.stringify({ ...definition, api: 'openai-codex-responses', extensionField: { preserved: true } }, null, 2))
+    await expect(protocol).toContainText('OpenAI Codex (legacy OAuth)')
+    await expect(key).toHaveAccessibleName('OAuth access token (JWT)')
+    await expect(protocol).toHaveAccessibleDescription(/Ordinary API keys fail before connecting/u)
+    await expect(fetchList).toBeDisabled()
+    await expect(key).toHaveValue('fixture-key')
+    await expect(json).not.toHaveValue(/fixture-key/u)
+
+    for (const theme of ['light', 'dark'] as const) {
+      await page.evaluate((theme) => window.pipilot!.settings.update({ appearance: { theme } }), theme)
+      await expect.poll(() => page.locator('html').evaluate((element) => element.classList.contains('dark'))).toBe(theme === 'dark')
+      await page.setViewportSize({ width: 1100, height: 680 })
+      await protocol.scrollIntoViewIfNeeded()
+      await expect.poll(() => editor.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
+      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+      await page.screenshot({ path: testInfo.outputPath(`models-protocol-${theme}.png`), animations: 'disabled' })
+    }
+
+    await json.fill(JSON.stringify({ ...definition, api: 'fixture-extension-api', extensionField: { preserved: true } }, null, 2))
+    await expect(protocol).toContainText('fixture-extension-api')
+    await expect(fetchList).toBeDisabled()
+    await expect(json).toHaveValue(/"preserved": true/u)
+    await expect(key).toHaveValue('fixture-key')
+    await footer(page).getByRole('button', { name: 'Cancel', exact: true }).click()
+    await page.getByRole('alertdialog', { name: 'Discard your changes?', exact: true }).getByRole('button', { name: 'Discard', exact: true }).click()
+    expect(await readJson(modelPath)).toEqual(initial)
+    expect(errors).toEqual([])
+    expect(fixture.prompts).toEqual([])
+  } finally {
+    await closeFixtureApplication(app)
+    await fixture.close()
+  }
+})

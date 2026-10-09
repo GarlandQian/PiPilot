@@ -6,6 +6,7 @@ import {
   upsertMcpServer,
   convertMcpConfigToNativeJson,
   validateMcpServerDefinition,
+  isMcpServerOverride,
 } from '../../src/shared/mcp-config-parser'
 import { opensMcpSettings } from '../../src/renderer/mcp/mcp-command-routing'
 
@@ -152,6 +153,13 @@ describe('native MCP configuration', () => {
       { url: 'https://example.test/mcp', type: 'streamable-http', headers: { Authorization: '!credential-command' }, exposure: 'direct' },
       { command: 'node', exposure: 'codemode-deferred', timeout: 0.5, toolExposure: { 'read_*': 'hidden' } },
       { url: 'https://example.test/mcp', oauth: { clientId: 'test', clientSecret: '${SECRET}', scope: 'read', callbackUrl: 'http://[::1]:8080/callback', callbackPort: 8080 } },
+      { url: 'https://example.test/mcp', auth: { provider: 'openai' } },
+      { url: 'http://127.0.0.1/mcp', auth: { provider: 'openai' } },
+      { url: 'http://[::1]/mcp', auth: { provider: 'openai' } },
+      { url: 'https://example.test/mcp', description: 'Native server description', oauth: { clientName: 'Desktop client', authServerMetadataUrl: 'https://issuer.test/.well-known/openid-configuration' } },
+      { url: 'https://example.test/mcp', oauth: { authServerMetadataUrl: 'http://localhost/.well-known/oauth-authorization-server' } },
+      { url: 'https://example.test/mcp', oauth: { clientRegistration: 'dcr', clientName: 'Desktop client' } },
+      { url: 'https://example.test/mcp', oauth: { clientRegistration: 'cimd', callbackUrl: 'http://127.0.0.1:9000/callback' } },
       { command: 'node', args: [false] },
       { command: 'node', enabled: 'false' },
       { command: 'node', timeout: 0 },
@@ -160,10 +168,52 @@ describe('native MCP configuration', () => {
       { url: 'https://example.test/mcp', type: 'sse' },
       { url: 'https://example.test/mcp', oauth: { callbackUrl: 'http://127.0.0.1:8080/callback', callbackPort: 9090 } },
       { url: 'https://example.test/mcp', oauth: { callbackUrl: 'http://127.0.0.1/callback?unsafe=1' } },
+      { url: 'https://example.test/mcp', auth: { provider: '' } },
+      { url: 'https://example.test/mcp', auth: { provider: 7 } },
+      { url: 'http://example.test/mcp', auth: { provider: 'openai' } },
+      { url: 'https://example.test/mcp', description: false },
+      { url: 'https://example.test/mcp', oauth: { clientName: ' ' } },
+      { url: 'https://example.test/mcp', oauth: { authServerMetadataUrl: 'http://issuer.test/metadata' } },
+      { url: 'https://example.test/mcp', oauth: { clientRegistration: ['dcr'] } },
+      { url: 'https://example.test/mcp', oauth: { clientRegistration: 'cimd', clientId: 'fixture-id' } },
+      { url: 'https://example.test/mcp', oauth: { clientRegistration: 'cimd', clientName: 'Desktop client' } },
+      { url: 'https://example.test/mcp', oauth: { clientRegistration: 'cimd', callbackUrl: 'http://[::1]/callback' } },
+      { url: 'https://example.test/mcp', oauth: { clientRegistration: 'cimd', callbackUrl: 'http://localhost/other' } },
     ]
     for (const value of cases) {
       expect(validateMcpServerDefinition('docs', value) === null).toBe(typeof sdk.validateMcpServerConfig('docs', value) !== 'string')
     }
+  })
+
+  it('accepts only scoped project setting overrides and preserves their JSON unchanged', () => {
+    const definition = { enabled: true, exposure: 'codemode-deferred', toolExposure: { 'read_*': 'direct' } }
+    const content = JSON.stringify({ mcpServers: { docs: definition } })
+    expect(parseMcpConfigDocument(content, 'project')).toMatchObject({
+      valid: true, servers: [{ name: 'docs', transport: 'override', definition }],
+    })
+    expect(parseMcpConfigDocument(content, 'global').valid).toBe(false)
+    expect(validateMcpServerDefinition('docs', {}, 'project')).toBeNull()
+    expect(isMcpServerOverride(definition)).toBe(true)
+    for (const extra of [{ headers: {} }, { auth: { provider: 'openai' } }, { oauth: {} }, { env: {} }, { future: true }]) {
+      expect(validateMcpServerDefinition('docs', { ...definition, ...extra }, 'project')).not.toBeNull()
+    }
+    for (const selector of [{ command: '' }, { url: null }, { type: 'http' }]) {
+      expect(isMcpServerOverride(selector)).toBe(false)
+      expect(validateMcpServerDefinition('docs', selector, 'project')).not.toBeNull()
+    }
+    const auth = { url: 'https://example.test/mcp', auth: { provider: 'openai' }, future: { keep: true } }
+    expect(validateMcpServerDefinition('docs', auth, 'global')).toBeNull()
+    expect(validateMcpServerDefinition('docs', auth, 'project')).toContain('global')
+    const changed = upsertMcpServer(JSON.stringify({ mcpServers: { docs: auth } }), 'docs', { ...auth, enabled: false })
+    expect(JSON.parse(changed).mcpServers.docs).toEqual({ ...auth, enabled: false })
+  })
+
+  it('reports namespace collisions before saving servers with indistinguishable tool names', () => {
+    const parsed = parseMcpConfigDocument(JSON.stringify({ mcpServers: {
+      'internal-tools': { command: 'first' }, internal_tools: { command: 'second' },
+    } }))
+    expect(parsed.valid).toBe(false)
+    expect(parsed.diagnostics).toContainEqual(expect.objectContaining({ code: 'MCP_SERVER_NAME_CONFLICT' }))
   })
 
   it('converts only an explicit draft without dropping unsupported fields or unknown data', () => {

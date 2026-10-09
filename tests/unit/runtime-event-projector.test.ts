@@ -186,6 +186,45 @@ describe('embedded Pi event projection', () => {
     })
   })
 
+  it.each([false, true])('preserves the SDK settlement aborted=%s flag', (aborted) => {
+    const event = { type: 'agent_settled', aborted } satisfies AgentSessionEvent
+    expect(projectRuntimeEvent(event)).toEqual(event)
+  })
+
+  it('preserves SDK tool duration through the strict renderer boundary', () => {
+    const event = {
+      type: 'tool_execution_end',
+      toolCallId: 'call-timed',
+      toolName: 'write',
+      result: { content: [{ type: 'text', text: 'Written' }], details: {} },
+      isError: false,
+      durationMs: 12.5,
+    } satisfies AgentSessionEvent
+    expect(projectRuntimeEvent(event)).toEqual(event)
+  })
+
+  it('preserves recorded durations in final messages and persisted session entries', () => {
+    const messages = [
+      { ...assistantMessage([{ type: 'text', text: 'Finished' }]), durationMs: 120.5 },
+      {
+        role: 'toolResult', toolCallId: 'call-timed', toolName: 'write',
+        content: [{ type: 'text', text: 'Written' }], isError: false,
+        timestamp: 1, durationMs: 12.5,
+      },
+    ]
+    for (const message of messages) {
+      for (const type of ['message_start', 'message_end'] as const) {
+        const event = { type, message } as AgentSessionEvent
+        expect(projectRuntimeEvent(event)).toEqual(event)
+      }
+      const entry = {
+        type: 'message', id: `entry-${message.role}`, parentId: null,
+        timestamp: '2026-10-09T00:00:00.000Z', message,
+      }
+      expect(localPiSessionEntrySchema.parse(entry)).toEqual(entry)
+    }
+  })
+
   it('projects the official successful write result without details through presentation', () => {
     const writeEnd = {
       type: 'tool_execution_end',

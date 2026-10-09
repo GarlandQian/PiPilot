@@ -67,6 +67,24 @@ async function fixture({ customAgentDirectory = false, assertNativeConfiguration
 }
 
 describe('McpConfigService', () => {
+  it('saves project setting overrides while allowing provider auth only in the global file', async () => {
+    const { service } = await fixture()
+    const projectTarget = { kind: 'project' as const, workspaceId }
+    const globalTarget = { kind: 'global' as const }
+    const initialProject = await service.load(projectTarget)
+    const override = JSON.stringify({ mcpServers: { docs: { enabled: false } } })
+    const saved = await service.save(projectTarget, override, initialProject.fingerprint)
+    expect(saved).toMatchObject({ valid: true, servers: [{ transport: 'override' }] })
+    expect(await service.load(projectTarget)).toMatchObject({ valid: true, content: override })
+
+    const auth = JSON.stringify({ mcpServers: { docs: { url: 'https://example.test/mcp', auth: { provider: 'openai' } } } })
+    await expect(service.save(projectTarget, auth, saved.fingerprint)).rejects.toMatchObject({ code: 'MCP_CONFIG_INVALID' })
+    expect((await service.load(projectTarget)).content).toBe(override)
+    const initialGlobal = await service.load(globalTarget)
+    expect(await service.save(globalTarget, auth, initialGlobal.fingerprint)).toMatchObject({ valid: true })
+    await expect(service.save(globalTarget, override, (await service.load(globalTarget)).fingerprint)).rejects.toMatchObject({ code: 'MCP_CONFIG_INVALID' })
+  })
+
   it('rejects writes when an active extension would interpret native fields differently', async () => {
     const guard = vi.fn(async () => { throw new McpConfigError('MCP_CONFIG_EXTENSION_OVERRIDE', 'Disable the adapter before saving native configuration.') })
     const { project, service } = await fixture({ assertNativeConfigurationWritable: guard })

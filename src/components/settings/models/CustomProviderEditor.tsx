@@ -10,6 +10,7 @@ import { useConfigurationEditTransaction } from '@/store/configuration-documents
 import type { ModelCatalogDetails } from '@/shared/model-catalog'
 import { isLocalAddress, type PresetMatch } from '@/shared/model-provider-presets'
 import { ModelsApiTypeSelect } from './ApiTypeSelect'
+import { providerApiProfile } from './provider-api-profiles'
 import type { ModelsManager } from '../useModelsManager'
 import { ApiKeyLink, EditorDisclosure, EditorField, EditorFooter, EditorSection, JsonEditor, SecretInput, type TestState , RecordRowsEditor } from '../editor-page'
 import { PresetBar } from './PresetBar'
@@ -124,6 +125,8 @@ export function CustomProviderEditor({ manager, target, takenIds, builtinIds, on
   const apiKey = stringField(provider, 'apiKey')
   const api = stringField(provider, 'api')
   const local = isLocalAddress(baseUrl)
+  const apiProfile = providerApiProfile(api, builtinIds.has(editor.id.trim()) ? editor.id.trim() : undefined)
+  const localKey = local && apiProfile.localKey
   const issues = editorIssues(editor, takenIds, jsonError)
   const visibleIssues = showIssues ? issues : { ...issues, id: issues.id === 'taken' || issues.id === 'invalid' ? issues.id : undefined, baseUrl: issues.baseUrl === 'invalid' ? issues.baseUrl : undefined, models: Object.fromEntries(Object.entries(issues.models).filter(([, issue]) => issue === 'duplicate')) }
   const defaultRow = editor.models.find((row) => row.key === editor.defaultKey)
@@ -252,7 +255,7 @@ export function CustomProviderEditor({ manager, target, takenIds, builtinIds, on
     definition = withField(definition, 'baseUrl', stringField(definition, 'baseUrl').trim().replace(/\/+$/u, '') || undefined)
     if (!stringField(definition, 'name').trim()) definition = withField(definition, 'name', undefined)
     // Pi lists a provider's models only when it has some key; a local server ignores it.
-    if (!stringField(definition, 'apiKey') && local) definition = withField(definition, 'apiKey', 'local')
+    if (!stringField(definition, 'apiKey') && localKey) definition = withField(definition, 'apiKey', 'local')
     if (Array.isArray(definition.models)) definition.models = definition.models.map((model) => isRecord(model) && typeof model.id === 'string' ? { ...model, id: model.id.trim() } : model)
     return definition
   }
@@ -325,37 +328,39 @@ export function CustomProviderEditor({ manager, target, takenIds, builtinIds, on
           <Input id="models-editor-name" value={stringField(provider, 'name')} placeholder={editor.id}
             onChange={(event) => update((current) => ({ ...current, provider: withField(current.provider, 'name', event.target.value || undefined) }))} />
         </EditorField>
-        <EditorField label={t('settings.models.form.api')} htmlFor="models-editor-api" hint={t('settings.models.editor.apiHint')}>
-          <ModelsApiTypeSelect id="models-editor-api" value={api} allowProviderDefault={builtinIds.has(editor.id.trim())}
+        <EditorField label={t('settings.models.form.api')} htmlFor="models-editor-api" hint={t(`settings.models.protocol.${apiProfile.kind}.hint`)}>
+          <ModelsApiTypeSelect id="models-editor-api" value={api} allowProviderDefault={builtinIds.has(editor.id.trim())} describedBy="models-editor-api-feedback"
             onChange={(value) => update((current) => ({ ...current, provider: withField(current.provider, 'api', value || undefined) }))} />
         </EditorField>
       </div>
       <EditorField label={t('settings.models.editor.baseUrl')} htmlFor="models-editor-url"
         error={visibleIssues.baseUrl ? t(visibleIssues.baseUrl === 'required' ? 'settings.models.editor.baseUrlRequired' : 'settings.models.editor.baseUrlInvalid') : undefined}
-        hint={t('settings.models.editor.baseUrlHint')}>
-        <Input id="models-editor-url" value={baseUrl} spellCheck={false} autoComplete="off" className="font-mono" placeholder="https://api.example.com/v1"
+        hint={t(`settings.models.protocol.${apiProfile.kind}.address`)}>
+        <Input id="models-editor-url" value={baseUrl} spellCheck={false} autoComplete="off" className="font-mono" placeholder={apiProfile.placeholder}
           aria-invalid={Boolean(visibleIssues.baseUrl) || undefined} aria-describedby="models-editor-url-feedback"
           onChange={(event) => update((current) => ({ ...current, provider: withField(current.provider, 'baseUrl', event.target.value || undefined) }))} />
       </EditorField>
-      <EditorField label={<span className="flex flex-wrap items-center justify-between gap-2">{t('settings.models.form.apiKey')}<ApiKeyLink href={apiKeyUrl} /></span>}
-        htmlFor="models-editor-key" hint={t(local ? 'settings.models.editor.apiKeyLocalHint' : 'settings.models.editor.apiKeyHint')}>
+      <EditorField label={<span className="flex flex-wrap items-center justify-between gap-2">{t(`settings.models.protocol.credential.${apiProfile.credential}`)}{apiProfile.credential === 'apiKey' ? <ApiKeyLink href={apiKeyUrl} /> : null}</span>}
+        htmlFor="models-editor-key" hint={t(localKey ? 'settings.models.editor.apiKeyLocalHint' : 'settings.models.editor.apiKeyHint')}>
         <SecretInput id="models-editor-key" value={apiKey} describedBy="models-editor-key-feedback"
-          placeholder={t(local ? 'settings.models.editor.apiKeyLocalPlaceholder' : 'settings.models.editor.apiKeyPlaceholder')}
+          placeholder={localKey ? t('settings.models.editor.apiKeyLocalPlaceholder') : t(`settings.models.protocol.credential.${apiProfile.credential}`)}
           onChange={(value) => update((current) => ({ ...current, provider: withField(current.provider, 'apiKey', value || undefined) }))} />
       </EditorField>
     </EditorSection>
 
     <EditorSection title={t('settings.models.editor.models')}
-      description={editor.models.length ? t('settings.models.editor.modelsCount', { count: editor.models.length }) : t('settings.models.editor.modelsDescription')}
+      description={editor.models.length ? t('settings.models.editor.modelsCount', { count: editor.models.length }) : t(apiProfile.listModels ? 'settings.models.editor.modelsDescription' : 'settings.models.protocol.manualModels')}
       actions={<>
-        <Button variant="outline" size="sm" disabled={!validEndpoint(baseUrl) || !manager.adapter} onClick={() => setRemoteOpen(true)}><TbCloudDownload aria-hidden />{t('settings.models.editor.fetchModels')}</Button>
+        <Button variant="outline" size="sm" disabled={!apiProfile.listModels || !validEndpoint(baseUrl) || !manager.adapter} aria-describedby={!apiProfile.listModels ? 'models-editor-list-unavailable' : undefined} onClick={() => setRemoteOpen(true)}><TbCloudDownload aria-hidden />{t('settings.models.editor.fetchModels')}</Button>
         <Button variant="outline" size="sm" onClick={addManual}><TbPlus aria-hidden />{t('settings.models.editor.addManually')}</Button>
         <Button variant="ghost" size="sm" disabled={filling || editor.models.length === 0 || !manager.adapter} onClick={() => void fillAll()}>
           {filling ? <TbLoader2 className="animate-spin motion-reduce:animate-none" aria-hidden /> : <TbSparkles aria-hidden />}{t('settings.models.editor.fill')}
         </Button>
       </>}>
+      {!apiProfile.listModels ? <p id="models-editor-list-unavailable" className="text-micro leading-relaxed text-muted-foreground">{t('settings.models.protocol.listUnavailable')}</p> : null}
+      {apiProfile.kind === 'azure' || apiProfile.kind === 'bedrock' ? <p className="text-caption text-muted-foreground">{t(`settings.models.protocol.${apiProfile.kind}.models`)}</p> : null}
       {notice ? <p className="text-caption text-muted-foreground" role="status">{notice}</p> : null}
-      {editor.models.length === 0 ? <p className="py-6 text-center text-caption leading-relaxed text-muted-foreground">{t(local ? 'settings.models.editor.noModelsLocal' : 'settings.models.editor.noModels')}</p>
+      {editor.models.length === 0 ? <p className="py-6 text-center text-caption leading-relaxed text-muted-foreground">{t(!apiProfile.listModels ? 'settings.models.protocol.manualModels' : local ? 'settings.models.editor.noModelsLocal' : 'settings.models.editor.noModels')}</p>
         : <div className="-my-2 min-w-0">{editor.models.map((row) => <ModelRowEditor key={row.key} row={row} issue={visibleIssues.models[row.key]}
           expanded={expanded.has(row.key)} onExpandedChange={(open) => setExpanded((current) => {
             const next = new Set(current)

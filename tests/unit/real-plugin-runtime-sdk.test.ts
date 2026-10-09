@@ -61,7 +61,7 @@ async function runtime(reply: (request: { prompt: string; body: unknown }, sessi
   return { session, manager, provider, cwd, branch, goal, plan }
 }
 
-describe.skipIf(!pluginRoot)('published recommended plugins on bundled Pi SDK 0.99.1', () => {
+describe.skipIf(!pluginRoot)('published recommended plugins on the bundled Pi SDK', () => {
   it('loads all three packages and delegates Plan read-only, completion, save, handoff, and clear to the real plugin', async () => {
     let planningCalls = 0
     let implementing = false

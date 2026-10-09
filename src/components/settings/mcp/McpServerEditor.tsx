@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { parse as parseJsonc, printParseErrorCode, type ParseError } from 'jsonc-parser'
-import { TbInfoCircle, TbLock, TbTerminal2, TbTrash, TbWorld } from 'react-icons/tb'
+import { TbAdjustments, TbInfoCircle, TbLock, TbTerminal2, TbTrash, TbWorld } from 'react-icons/tb'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -10,7 +10,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useLocale, useT, type MessageKey } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { MCP_EXPOSURES } from '@/shared/mcp-config'
-import { validateMcpServerDefinition } from '@/shared/mcp-config-parser'
+import { isMcpServerOverride, validateMcpServerDefinition } from '@/shared/mcp-config-parser'
 import { localizedText } from '@/shared/model-provider-presets'
 import type { McpTemplate } from '@/shared/mcp-templates'
 import { useConfigurationEditTransaction } from '@/store/configuration-documents'
@@ -29,8 +29,8 @@ export interface McpEditorTarget {
   template?: McpTemplate | null
 }
 
-export function McpServerIcon({ transport, className }: { transport: McpTransport; className?: string }) {
-  const Icon = transport === 'http' ? TbWorld : TbTerminal2
+export function McpServerIcon({ transport, className }: { transport: McpTransport | 'override'; className?: string }) {
+  const Icon = transport === 'override' ? TbAdjustments : transport === 'http' ? TbWorld : TbTerminal2
   return <span aria-hidden style={{ backgroundColor: transport === 'http' ? '#2f9e8f' : '#5b6b84' }}
     className={cn('flex size-8 shrink-0 items-center justify-center rounded-[9px] bg-[linear-gradient(to_bottom,rgb(255_255_255/0.18),transparent)] text-white shadow-[inset_0_0_0_0.5px_rgb(0_0_0/0.08)]', className)}>
     <Icon className="size-[58%] stroke-[2]" />
@@ -65,6 +65,7 @@ export function McpServerEditor({ manager, target, takenNames, onDone, onCancel,
   const source = React.useRef<'form' | 'json'>('form')
 
   const transport = transportOf(definition)
+  const override = manager.target.kind === 'project' && isMcpServerOverride(definition)
   const editing = target.previousName !== null
   const update = (next: (current: JsonRecord) => JsonRecord) => {
     source.current = 'form'
@@ -76,8 +77,8 @@ export function McpServerEditor({ manager, target, takenNames, onDone, onCancel,
   }, [definition])
 
   const prepared = React.useMemo(() => preparedMcpDefinition(definition), [definition])
-  const piMessage = React.useMemo(() => name.trim() ? validateMcpServerDefinition(name.trim(), prepared) : null, [name, prepared])
-  const issues = mcpEditorIssues(name, definition, takenNames, piMessage, jsonError)
+  const piMessage = React.useMemo(() => name.trim() ? validateMcpServerDefinition(name.trim(), prepared, manager.target.kind) : null, [name, prepared, manager.target.kind])
+  const issues = mcpEditorIssues(name, definition, takenNames, piMessage, jsonError, manager.target.kind)
   const visible = showIssues ? issues : { ...issues, name: issues.name === 'required' ? undefined : issues.name, command: undefined, url: issues.url === 'invalid' ? issues.url : undefined, pi: undefined }
   const fingerprint = (candidateName: string, candidate: JsonRecord) => JSON.stringify([candidateName.trim(), preparedMcpDefinition(candidate)])
   const dirty = jsonError !== undefined || fingerprint(name, definition) !== fingerprint(target.name, target.definition)
@@ -160,10 +161,10 @@ export function McpServerEditor({ manager, target, takenNames, onDone, onCancel,
 
   return <div className="min-w-0 space-y-6" data-mcp-server-editor={target.previousName ?? 'new'}>
     <div className="mac-box flex min-w-0 flex-wrap items-center gap-3 px-4 py-3" data-mcp-editor-header>
-      <McpServerIcon transport={transport} className="size-12 rounded-[13px]" />
+      <McpServerIcon transport={override ? 'override' : transport} className="size-12 rounded-[13px]" />
       <div className="min-w-0 flex-1">
         <p className="break-words text-title">{title}</p>
-        <p className="mt-0.5 text-caption text-muted-foreground">{template ? localizedText(template.description, locale) : t(transport === 'http' ? 'settings.mcp.page.transportHttpHint' : 'settings.mcp.page.transportStdioHint')}</p>
+        <p className="mt-0.5 text-caption text-muted-foreground">{override ? t('settings.mcp.page.overrideDescription') : template ? localizedText(template.description, locale) : t(transport === 'http' ? 'settings.mcp.page.transportHttpHint' : 'settings.mcp.page.transportStdioHint')}</p>
       </div>
       <OutboundLink href={template?.docs}>{t('settings.mcp.page.docs')}</OutboundLink>
     </div>
@@ -180,7 +181,7 @@ export function McpServerEditor({ manager, target, takenNames, onDone, onCancel,
           {editing ? <TbLock className="pointer-events-none absolute right-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden /> : null}
         </div>
       </EditorField>
-      <div className="min-w-0 space-y-1.5">
+      {!override ? <><div className="min-w-0 space-y-1.5">
         <p className="text-caption font-medium text-foreground/85">{t('settings.mcp.page.transport')}</p>
         <div className="mac-segmented w-fit max-w-full" role="radiogroup" aria-label={t('settings.mcp.page.transport')}>
           {(['stdio', 'http'] as const).map((candidate) => <button key={candidate} type="button" role="radio" aria-checked={transport === candidate} aria-pressed={transport === candidate}
@@ -222,10 +223,10 @@ export function McpServerEditor({ manager, target, takenNames, onDone, onCancel,
             onChange={(record) => update((current) => withField(current, 'headers', record))} />
         </EditorField>
         <p className="flex items-start gap-2 text-micro leading-relaxed text-muted-foreground"><TbInfoCircle className="mt-px size-3.5 shrink-0" aria-hidden />{t('settings.mcp.page.oauthHint')}</p>
-      </>}
+      </>}</> : null}
     </EditorSection>
 
-    <EditorSection title={t('settings.mcp.page.piOptions')}>
+    {!override ? <EditorSection title={t('settings.mcp.page.piOptions')}>
       <label className="flex min-w-0 items-center justify-between gap-3">
         <span className="min-w-0"><span className="block text-caption font-medium">{t('mcp.form.enabled')}</span>
           <span className="block text-micro text-muted-foreground">{t('settings.mcp.page.enabledHint')}</span></span>
@@ -251,28 +252,30 @@ export function McpServerEditor({ manager, target, takenNames, onDone, onCancel,
             onChange={(event) => update((current) => withField(current, 'description', event.target.value || undefined))} />
         </EditorField>
       </div>
-    </EditorSection>
+    </EditorSection> : null}
 
     {visible.pi ? <p className="rounded-lg bg-destructive/8 px-3.5 py-2.5 text-caption text-destructive" role="alert">{visible.pi}</p> : null}
 
-    <EditorDisclosure title={t('settings.models.editor.json')} open={jsonOpen} onOpenChange={setJsonOpen}
+    {override ? <EditorSection title={t('settings.models.editor.json')} description={t('settings.mcp.page.overrideJsonHint')}>
+      <JsonEditor id="mcp-editor-json" value={jsonText} onChange={onJson} error={jsonError} label={t('settings.models.editor.json')} />
+    </EditorSection> : <EditorDisclosure title={t('settings.models.editor.json')} open={jsonOpen} onOpenChange={setJsonOpen}
       badge={preserved.length ? <span className="rounded-full bg-fill-strong px-1.5 text-micro font-normal text-secondary-foreground">{t('settings.mcp.page.preservedCount', { count: preserved.length })}</span> : null}
       description={preserved.length ? t('settings.mcp.page.jsonPreserved', { names: preserved.join(', ') }) : t('settings.mcp.page.jsonDescription')}>
       <JsonEditor id="mcp-editor-json" value={jsonText} onChange={onJson} error={jsonError} label={t('settings.models.editor.json')} />
-    </EditorDisclosure>
+    </EditorDisclosure>}
 
     <EditorFooter onCancel={onCancel} onSave={() => void save()} saving={saving} canSave={(dirty || !editing) && !manager.writesBlocked} error={error}
-      leading={editing ? <Button variant="ghost" className="mr-auto text-destructive" disabled={saving || manager.writesBlocked} onClick={() => setRemoveOpen(true)}><TbTrash aria-hidden />{t('settings.mcp.removeServer')}</Button> : null} />
+      leading={editing ? <Button variant="ghost" className="mr-auto text-destructive" disabled={saving || manager.writesBlocked} onClick={() => setRemoveOpen(true)}><TbTrash aria-hidden />{t(override ? 'settings.mcp.page.removeOverride' : 'settings.mcp.removeServer')}</Button> : null} />
 
     <AlertDialog open={removeOpen} onOpenChange={setRemoveOpen}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>{t('settings.mcp.removeConfirm', { name: target.previousName ?? '' })}</AlertDialogTitle>
-          <AlertDialogDescription>{t('settings.mcp.page.removeDescription')}</AlertDialogDescription>
+          <AlertDialogTitle>{t(override ? 'settings.mcp.page.removeOverrideConfirm' : 'settings.mcp.removeConfirm', { name: target.previousName ?? '' })}</AlertDialogTitle>
+          <AlertDialogDescription>{t(override ? 'settings.mcp.page.removeOverrideDescription' : 'settings.mcp.page.removeDescription')}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
-          <AlertDialogAction variant="destructive" onClick={() => void remove()}>{t('settings.mcp.removeServer')}</AlertDialogAction>
+          <AlertDialogAction variant="destructive" onClick={() => void remove()}>{t(override ? 'settings.mcp.page.removeOverride' : 'settings.mcp.removeServer')}</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

@@ -86,6 +86,17 @@ describe('runtime activity ownership', () => {
       .toEqual({ lifecycle: 'running', queueCount: 0, activity: 'prompt' })
   })
 
+  it('records SDK cancellation even when no aborted assistant message was emitted', () => {
+    let state = event(createRuntimeActivity(), { type: 'agent_start' })
+    state = event(state, { type: 'agent_end', willRetry: false, messages: [] })
+    state = event(state, { type: 'agent_settled', aborted: true })
+    expect(summarizeRuntimeActivity(state)).toEqual({ lifecycle: 'idle', queueCount: 0, outcome: 'cancelled' })
+    expect(isRuntimeIdle(state)).toBe(true)
+    const repeated = event(state, { type: 'agent_settled', aborted: true })
+    expect(repeated.revision).toBe(state.revision)
+    expect(summarizeRuntimeActivity(repeated).outcome).toBe('cancelled')
+  })
+
   it('preserves independently observed retry, tools, and extension UI when get_state looks idle', () => {
     let state = event(createRuntimeActivity(), { type: 'agent_start' })
     state = event(state, { type: 'tool_execution_start', toolCallId: 'tool', toolName: 'bash', args: {} })

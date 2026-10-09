@@ -3,9 +3,15 @@ import type { ModelsRemoteListResult } from '../../shared/models-config'
 const LIST_TIMEOUT_MS = 10_000
 const LIST_RESPONSE_LIMIT = 4 * 1024 * 1024
 const LIST_MODEL_LIMIT = 2_000
+const LIST_SUPPORTED_APIS = new Set([
+  'openai-completions',
+  'openai-responses',
+  'anthropic-messages',
+  'google-generative-ai',
+])
 
 export class RemoteModelListError extends Error {
-  constructor(readonly code: 'MODELS_LIST_UNREACHABLE' | 'MODELS_LIST_HTTP' | 'MODELS_LIST_INVALID', message: string) {
+  constructor(readonly code: 'MODELS_LIST_UNREACHABLE' | 'MODELS_LIST_HTTP' | 'MODELS_LIST_INVALID' | 'MODELS_LIST_UNSUPPORTED_API', message: string) {
     super(message)
     this.name = 'RemoteModelListError'
   }
@@ -30,6 +36,9 @@ export function resolveListKey(value: string | undefined, env: NodeJS.ProcessEnv
 
 /** Where each API family lists its models, and how it authenticates. */
 export function remoteModelListRequest(request: RemoteModelListRequest, env?: NodeJS.ProcessEnv): { url: string; headers: Record<string, string> } {
+  if (!LIST_SUPPORTED_APIS.has(request.api)) {
+    throw new RemoteModelListError('MODELS_LIST_UNSUPPORTED_API', 'Model listing is not supported for this API protocol. Enter model IDs manually.')
+  }
   const url = new URL(request.baseUrl.trim())
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     throw new RemoteModelListError('MODELS_LIST_UNREACHABLE', 'Only http and https endpoints can be listed.')

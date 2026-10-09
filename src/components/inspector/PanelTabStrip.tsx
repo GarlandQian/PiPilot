@@ -176,7 +176,7 @@ export function PanelTabStrip({ dock, tabs, activeId, onSelect, onClose, onClose
               {t(other === 'bottom' ? 'panel.tab.moveBottom' : 'panel.tab.moveRight')}
             </ContextMenuItem> : null}
             {onMove ? <ContextMenuSeparator /> : null}
-            <ContextMenuItem onSelect={() => close(tab.id)}><TbX aria-hidden />{t('panel.tab.close')}</ContextMenuItem>
+            <ContextMenuItem onSelect={() => close(tab.id)}><TbX aria-hidden />{t(tab.id === 'terminal' ? 'terminal.context.hidePanel' : 'panel.tab.close')}</ContextMenuItem>
             {onCloseOthers && tabs.length > 1 ? <ContextMenuItem onSelect={() => { onCloseOthers(tab.id); focusSelected() }}>{t('panel.tab.closeOthers')}</ContextMenuItem> : null}
           </ContextMenuContent>
         </ContextMenu>

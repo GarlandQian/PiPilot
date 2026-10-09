@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { terminalCustomProfilesSchema, terminalShellProfileIdSchema } from '../terminal-profiles'
+import { terminalCustomProfilesSchema, terminalShellProfileIdSchema, terminalDefaultProfileSnapshotSchema, terminalCustomExternalAppsSchema, terminalExternalAppIdSchema, terminalDefaultExternalAppSnapshotSchema } from '../terminal-profiles'
 import {
   GLASS_TINT_MAX,
   GLASS_TINT_MIN,
@@ -37,6 +37,10 @@ export const terminalSettingsSchema = z
     fontSize: z.number().int().min(TERMINAL_FONT_SIZE_MIN).max(TERMINAL_FONT_SIZE_MAX),
     defaultProfileId: terminalShellProfileIdSchema.nullable(),
     profiles: terminalCustomProfilesSchema,
+    defaultProfileSnapshot: terminalDefaultProfileSnapshotSchema.nullable(),
+    externalApps: terminalCustomExternalAppsSchema,
+    defaultExternalAppId: terminalExternalAppIdSchema.nullable(),
+    defaultExternalAppSnapshot: terminalDefaultExternalAppSnapshotSchema.nullable(),
     location: z.enum(['bottom', 'panel']),
   })
   .strict()

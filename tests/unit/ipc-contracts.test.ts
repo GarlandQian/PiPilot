@@ -16,6 +16,8 @@ import {
   terminalRestartContract,
   terminalListContract,
   terminalListShellProfilesContract,
+  terminalListExternalAppsContract,
+  terminalOpenExternalContract,
   terminalAttachContract,
   terminalRenameContract,
   terminalCloseContract,
@@ -749,6 +751,17 @@ describe('terminal IPC schemas', () => {
   const terminalId = '00000000-0000-4000-8000-000000000002'
   const scope = { kind: 'project' as const, workspaceId }
 
+  it('keeps external launch arguments in Main and accepts only app identity and relative directory', () => {
+    const request = { context: { requestId }, scope, relativeDirectory: 'packages/ui' }
+    expect(terminalOpenExternalContract.requestSchema.safeParse(request).success).toBe(true)
+    expect(terminalOpenExternalContract.requestSchema.safeParse({ ...request, appId: 'external:custom:work' }).success).toBe(true)
+    expect(terminalOpenExternalContract.requestSchema.safeParse({ ...request, executable: '/bin/sh', args: ['-c', 'unsafe'] }).success).toBe(false)
+    expect(terminalOpenExternalContract.requestSchema.safeParse({ ...request, relativeDirectory: 'bad\0path' }).success).toBe(false)
+    expect(terminalListExternalAppsContract.requestSchema.safeParse({ context: { requestId }, refresh: true }).success).toBe(true)
+    expect(terminalListShellProfilesContract.requestSchema.safeParse({ context: { requestId }, refresh: true }).success).toBe(true)
+    expect(terminalCreateContract.requestSchema.safeParse({ ...request, cols: 80, rows: 24 }).success).toBe(true)
+  })
+
   it('validates attach identity, trimmed titles, and scoped record operations', () => {
     const request = { context: { requestId }, scope, terminalId }
     expect(terminalAttachContract.requestSchema.safeParse({ ...request, cols: 80, rows: 24 }).success).toBe(true)
@@ -876,6 +889,10 @@ function darkSettingsForEvent() {
       fontSize: 13,
       defaultProfileId: null,
       profiles: [],
+      defaultProfileSnapshot: null,
+      externalApps: [],
+      defaultExternalAppId: null,
+      defaultExternalAppSnapshot: null,
       location: 'bottom',
     },
   }

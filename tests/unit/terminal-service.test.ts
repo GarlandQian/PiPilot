@@ -1,4 +1,4 @@
-import { mkdtemp, realpath, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -103,6 +103,112 @@ afterEach(async () => {
 })
 
 describe('TerminalService', () => {
+  it('opens an explicit project subdirectory and restarts there, rejecting escapes and file paths', async () => {
+    const root = await temporaryDirectory('terminal-relative-cwd')
+    const outside = await temporaryDirectory('terminal-outside-cwd')
+    const subdirectory = 'folder $literal; safe'
+    await mkdir(join(root, subdirectory))
+    await writeFile(join(root, 'file.txt'), 'fixture')
+    await symlink(outside, join(root, 'outside-link'), process.platform === 'win32' ? 'junction' : 'dir')
+    const launches: Array<{ cwd: string | undefined; process: FakePty }> = []
+    const service = new TerminalService(() => firstScope, async (scope) => ({ scope, cwd: root }), {
+      resolveShell: () => ({ file: '/bin/sh', args: [], label: 'sh' }),
+      spawnPty: (_file, _args, options) => { const process = new FakePty(80, 24); launches.push({ cwd: options.cwd, process }); return process },
+    })
+    const created = await service.create(firstScope, 80, 24, undefined, subdirectory)
+    expect(launches[0].cwd).toBe(await realpath(join(root, subdirectory)))
+    launches[0].process.emitExit(0)
+    await service.restart(firstScope, created.terminalId, 80, 24)
+    expect(launches[1].cwd).toBe(launches[0].cwd)
+    for (const directory of ['../escape', outside, 'C:\\Windows', 'outside-link', 'missing']) {
+      await expect(service.create(firstScope, 80, 24, undefined, directory)).rejects.toMatchObject({ code: 'TERMINAL_CWD_UNAVAILABLE' })
+    }
+    await expect(service.create(firstScope, 80, 24, undefined, 'file.txt')).rejects.toMatchObject({ code: 'TERMINAL_CWD_NOT_DIRECTORY' })
+    expect(launches).toHaveLength(2)
+    await service.dispose()
+  })
+
+  it('retains a missing shell default name and executable after refreshing discovery', async () => {
+    const settings: TerminalSettings = { ...DEFAULT_SETTINGS.terminal, defaultProfileId: 'detected:removed',
+      defaultProfileSnapshot: { id: 'detected:removed', label: 'Homebrew fish', executable: '/opt/homebrew/bin/fish' } }
+    const service = new TerminalService(() => firstScope, async (scope) => ({ scope, cwd: '/unused' }), {
+      platform: 'linux', environment: {}, getTerminalSettings: () => settings, readShellsFile: async () => '', resolveExecutable: async () => undefined,
+    })
+    expect(await service.listShellProfiles(true)).toContainEqual(expect.objectContaining({ id: 'detected:removed', label: 'Homebrew fish', executable: '/opt/homebrew/bin/fish', available: false, isDefault: true }))
+  })
+
+  it('opens the configured external app at a validated project folder and preserves unavailable defaults', async () => {
+    const root = await temporaryDirectory('external-terminal-directory')
+    await mkdir(join(root, 'sub folder'))
+    let settings: TerminalSettings = { ...DEFAULT_SETTINGS.terminal, defaultExternalAppId: 'external:custom:kitty',
+      defaultExternalAppSnapshot: { id: 'external:custom:kitty', label: 'My kitty', executable: '/tools/kitty', adapter: 'kitty' },
+      externalApps: [{ id: 'external:custom:kitty', name: 'My kitty', executable: '/tools/kitty', adapter: 'kitty' }] }
+    const launchExternal = vi.fn(async () => undefined)
+    const service = new TerminalService(() => firstScope, async (scope) => ({ scope, cwd: root }), {
+      platform: 'linux', environment: {}, getTerminalSettings: () => settings, launchExternal,
+      resolveExecutable: async (candidate) => candidate === '/tools/kitty' ? candidate : undefined,
+    })
+    expect(await service.openExternal(firstScope, undefined, 'sub folder')).toEqual({ scope: firstScope, appId: 'external:custom:kitty' })
+    expect(launchExternal.mock.calls[0]).toEqual(['/tools/kitty', ['--directory', await realpath(join(root, 'sub folder'))], { cwd: await realpath(join(root, 'sub folder')) }])
+    await expect(service.openExternal(firstScope, undefined, '../outside')).rejects.toMatchObject({ code: 'TERMINAL_CWD_UNAVAILABLE' })
+    settings = { ...settings, externalApps: [] }
+    expect(await service.listExternalApps(true)).toContainEqual(expect.objectContaining({ id: 'external:custom:kitty', label: 'My kitty', executable: '/tools/kitty', available: false }))
+    await expect(service.openExternal(firstScope)).rejects.toMatchObject({ code: 'TERMINAL_EXTERNAL_APP_UNAVAILABLE' })
+    expect(launchExternal).toHaveBeenCalledTimes(1)
+  })
+
+  it('opens an inactive registered project externally without activating it or admitting an inactive PTY', async () => {
+    const root = await temporaryDirectory('external-inactive-project')
+    await mkdir(join(root, 'folder'))
+    const getActiveScope = vi.fn(() => secondScope)
+    const launchExternal = vi.fn(async () => undefined)
+    const spawnPty = vi.fn(() => new FakePty(80, 24))
+    const service = new TerminalService(getActiveScope, async (scope) => {
+      if (scopeKey(scope) !== scopeKey(firstScope)) throw new Error('Unregistered project')
+      return { scope, cwd: root }
+    }, {
+      platform: 'linux', environment: {}, launchExternal, spawnPty,
+      getTerminalSettings: () => ({ ...DEFAULT_SETTINGS.terminal, defaultExternalAppId: 'external:custom:kitty',
+        externalApps: [{ id: 'external:custom:kitty', name: 'kitty', executable: '/tools/kitty', adapter: 'kitty' }] }),
+      resolveExecutable: async (candidate) => candidate === '/tools/kitty' ? candidate : undefined,
+    })
+    await expect(service.openExternal(firstScope, undefined, 'folder')).resolves.toEqual({ scope: firstScope, appId: 'external:custom:kitty' })
+    expect(getActiveScope).not.toHaveBeenCalled()
+    expect(launchExternal).toHaveBeenCalledWith('/tools/kitty', ['--directory', await realpath(join(root, 'folder'))], { cwd: await realpath(join(root, 'folder')) })
+    await expect(service.create(firstScope, 80, 24)).rejects.toMatchObject({ code: 'TERMINAL_STALE_SCOPE' })
+    await expect(service.openExternal(thirdScope)).rejects.toMatchObject({ code: 'TERMINAL_CWD_UNAVAILABLE' })
+    await expect(service.openExternal(firstScope, undefined, root)).rejects.toMatchObject({ code: 'TERMINAL_CWD_UNAVAILABLE' })
+    expect(spawnPty).not.toHaveBeenCalled()
+    expect(launchExternal).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['removed', 'replaced', 'disposed'] as const)('rejects external opening when an inactive project is %s during app resolution', async (change) => {
+    const root = await temporaryDirectory('external-project-race')
+    const replacement = await temporaryDirectory('external-project-replacement')
+    let registeredRoot: string | undefined = root
+    let probes = 0
+    const launchExternal = vi.fn(async () => undefined)
+    const service = new TerminalService(() => secondScope, async (scope) => {
+      if (!registeredRoot) throw new Error('Unregistered project')
+      return { scope, cwd: registeredRoot }
+    }, {
+      platform: 'linux', environment: {}, launchExternal,
+      getTerminalSettings: () => ({ ...DEFAULT_SETTINGS.terminal, defaultExternalAppId: 'external:custom:kitty',
+        externalApps: [{ id: 'external:custom:kitty', name: 'kitty', executable: '/tools/kitty', adapter: 'kitty' }] }),
+      resolveExecutable: async (candidate) => {
+        if (candidate !== '/tools/kitty') return undefined
+        if (++probes === 2) {
+          if (change === 'removed') registeredRoot = undefined
+          else if (change === 'replaced') registeredRoot = replacement
+          else await service.disposeScope(firstScope)
+        }
+        return candidate
+      },
+    })
+    await expect(service.openExternal(firstScope)).rejects.toMatchObject({ code: change === 'disposed' ? 'TERMINAL_UNAVAILABLE' : 'TERMINAL_CWD_UNAVAILABLE' })
+    expect(launchExternal).not.toHaveBeenCalled()
+  })
+
   it('holds terminal admission during archive and releases it even when moving fails', async () => {
     const root = await temporaryDirectory('terminal-archive')
     const service = new TerminalService(() => firstScope, async (scope) => ({ scope, cwd: root }), {
@@ -757,24 +863,24 @@ describe('TerminalService', () => {
     )
     const profiles = await service.listShellProfiles()
     expect(profiles).toEqual([
-      expect.objectContaining({ id: expect.stringMatching(/^detected:/), label: 'Command Prompt (CMD)', isDefault: true, executable: cmd, available: true }),
+      expect.objectContaining({ id: expect.stringMatching(/^detected:/), label: 'PowerShell', isDefault: true, executable: pwsh, available: true }),
+      expect.objectContaining({ id: expect.stringMatching(/^detected:/), label: 'Command Prompt (CMD)', isDefault: false, executable: cmd, available: true }),
       expect.objectContaining({ id: expect.stringMatching(/^detected:/), label: 'Windows PowerShell', isDefault: false, executable: powershell, available: true }),
-      expect.objectContaining({ id: expect.stringMatching(/^detected:/), label: 'PowerShell', isDefault: false, executable: pwsh, available: true }),
     ])
     await service.create(firstScope, 80, 24)
     await service.create(firstScope, 80, 24, profiles[1].id)
     await service.create(firstScope, 80, 24, profiles[0].id)
     await service.create(firstScope, 80, 24, profiles[2].id)
     expect(launches.map(({ file, args }) => ({ file, args }))).toEqual([
-      { file: cmd, args: [] },
-      { file: powershell, args: [] },
+      { file: pwsh, args: [] },
       { file: cmd, args: [] },
       { file: pwsh, args: [] },
+      { file: powershell, args: [] },
     ])
     expect(launches.every(({ process }) => process.kills.length === 0)).toBe(true)
     installed.delete(powershell)
-    await expect(service.create(firstScope, 80, 24, profiles[1].id)).rejects.toMatchObject({ code: 'TERMINAL_SHELL_UNAVAILABLE' })
-    expect((await service.listShellProfiles()).map(({ id }) => id)).toEqual([profiles[0].id, profiles[2].id])
+    await expect(service.create(firstScope, 80, 24, profiles[2].id)).rejects.toMatchObject({ code: 'TERMINAL_SHELL_UNAVAILABLE' })
+    expect((await service.listShellProfiles(true)).map(({ id }) => id)).toEqual([profiles[0].id, profiles[1].id])
     await expect(service.create(firstScope, 80, 24, 'bash')).rejects.toMatchObject({ code: 'TERMINAL_SHELL_UNAVAILABLE' })
     expect(launches).toHaveLength(4)
     await service.dispose()
@@ -830,7 +936,7 @@ describe('TerminalService', () => {
 
       const created = await service.create(firstScope, 80, 24)
       expect(created.shell).toBe('test-shell')
-      expect(launches).toEqual([{ file: configuredShell, args: ['-l'] }])
+      expect(launches).toEqual([{ file: configuredShell, args: [] }])
       await service.dispose()
     },
   )

@@ -43,6 +43,7 @@ import type {
   TerminalShellProfile,
   TerminalShellProfileId,
   TerminalSummary,
+  TerminalExternalApp,
 } from './terminal'
 import type {
   LocalPiExtensionUiEvent,
@@ -253,13 +254,15 @@ export interface PiPilotApi {
     open(workspaceId: string, editorId: string, target?: { path?: string; line?: number }): Promise<void>
   }
   readonly terminal: {
-    listShellProfiles(): Promise<TerminalShellProfile[]>
+    listShellProfiles(refresh?: boolean): Promise<TerminalShellProfile[]>
+    listExternalApps(refresh?: boolean): Promise<TerminalExternalApp[]>
+    openExternal(scope: ConversationScope, appId?: string, relativeDirectory?: string): Promise<{ scope: ConversationScope; appId: string }>
     list(scope: ConversationScope): Promise<TerminalSummary[]>
     attach(scope: ConversationScope, terminalId: string, cols: number, rows: number): Promise<TerminalSession>
     rename(scope: ConversationScope, terminalId: string, title: string): Promise<TerminalSummary>
     close(scope: ConversationScope, terminalId: string): Promise<TerminalActionResult>
     clear(scope: ConversationScope, terminalId: string): Promise<TerminalActionResult>
-    create(scope: ConversationScope, cols: number, rows: number, shellProfileId?: TerminalShellProfileId): Promise<TerminalSession>
+    create(scope: ConversationScope, cols: number, rows: number, shellProfileId?: TerminalShellProfileId, relativeDirectory?: string): Promise<TerminalSession>
     restart(scope: ConversationScope, terminalId: string, cols: number, rows: number): Promise<TerminalSession>
     input(scope: ConversationScope, terminalId: string, data: string): Promise<TerminalActionResult>
     kill(scope: ConversationScope, terminalId: string): Promise<TerminalActionResult>

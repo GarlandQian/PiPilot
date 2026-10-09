@@ -5,11 +5,30 @@ describe('listing an endpoint’s models', () => {
   it('asks each API family where and how it expects', () => {
     expect(remoteModelListRequest({ baseUrl: 'https://api.deepseek.com/v1/', api: 'openai-completions', apiKey: 'sk-1' }))
       .toEqual({ url: 'https://api.deepseek.com/v1/models', headers: { authorization: 'Bearer sk-1' } })
+    expect(remoteModelListRequest({ baseUrl: 'https://api.openai.com/v1/', api: 'openai-responses', apiKey: 'fixture-responses-key' }))
+      .toEqual({ url: 'https://api.openai.com/v1/models', headers: { authorization: 'Bearer fixture-responses-key' } })
     expect(remoteModelListRequest({ baseUrl: 'https://api.anthropic.com', api: 'anthropic-messages', apiKey: 'k' }).url).toBe('https://api.anthropic.com/v1/models?limit=1000')
     expect(remoteModelListRequest({ baseUrl: 'https://generativelanguage.googleapis.com/v1beta', api: 'google-generative-ai', apiKey: 'g' }).headers).toEqual({ 'x-goog-api-key': 'g' })
     // Local servers need no key.
     expect(remoteModelListRequest({ baseUrl: 'http://localhost:11434/v1', api: 'openai-completions' }).headers).toEqual({})
     expect(() => remoteModelListRequest({ baseUrl: 'file:///etc/passwd', api: 'openai-completions' })).toThrow()
+  })
+
+  it.each([
+    'google-vertex',
+    'bedrock-converse-stream',
+    'openai-codex-responses',
+    'azure-openai-responses',
+    'mistral-conversations',
+    'extension-custom-api',
+  ])('rejects unsupported %s listing before making a network request', async (api) => {
+    const fetchImpl = vi.fn(async () => new Response('{"data":[]}'))
+    await expect(listRemoteModels({ baseUrl: 'https://api.example.test', api, apiKey: 'fixture-key' }, fetchImpl))
+      .rejects.toMatchObject({
+        code: 'MODELS_LIST_UNSUPPORTED_API',
+        message: 'Model listing is not supported for this API protocol. Enter model IDs manually.',
+      })
+    expect(fetchImpl).not.toHaveBeenCalled()
   })
 
   it('reads keys the way Pi does, without running key commands', () => {

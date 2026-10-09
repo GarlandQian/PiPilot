@@ -1,21 +1,9 @@
 import type * as React from 'react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useT, type MessageKey } from '@/i18n'
+import { CUSTOM_ENDPOINT_API_TYPES, customEndpointApiOptions } from './provider-api-profiles'
 
-/** The protocols Pi speaks, most common first. */
-export const MODELS_API_TYPES = [
-  'openai-completions',
-  'openai-responses',
-  'anthropic-messages',
-  'google-generative-ai',
-  'openai-codex-responses',
-  'google-vertex',
-  'azure-openai-responses',
-  'mistral-conversations',
-  'bedrock-converse-stream',
-] as const
-
-const NAMED_API_TYPES = new Set<string>(['openai-completions', 'openai-responses', 'anthropic-messages', 'google-generative-ai'])
+const NAMED_API_TYPES = new Set<string>([...CUSTOM_ENDPOINT_API_TYPES, 'openai-codex-responses'])
 const PROVIDER_DEFAULT_API = '__provider_default__'
 
 /** The API type picker: a readable name, with the protocol ID beside it. */
@@ -33,15 +21,14 @@ export function ModelsApiTypeSelect({ id, value, onChange, allowProviderDefault 
     <span className="flex min-w-0 items-baseline gap-2"><span className="truncate">{text}</span>
       {NAMED_API_TYPES.has(api) ? <span className="shrink-0 font-mono text-micro text-muted-foreground">{api}</span> : null}</span>
   </SelectItem>
-  return <Select value={value || (allowProviderDefault ? PROVIDER_DEFAULT_API : MODELS_API_TYPES[0])}
+  return <Select value={value || (allowProviderDefault ? PROVIDER_DEFAULT_API : CUSTOM_ENDPOINT_API_TYPES[0])}
     onValueChange={(next) => onChange(next === PROVIDER_DEFAULT_API ? '' : next)}>
     <SelectTrigger id={id} aria-describedby={describedBy} className="w-full">
       <SelectValue placeholder={t('settings.models.form.apiPlaceholder')} />
     </SelectTrigger>
     <SelectContent>
       {allowProviderDefault ? <SelectItem value={PROVIDER_DEFAULT_API}>{t('settings.models.form.apiProviderDefault')}</SelectItem> : null}
-      {MODELS_API_TYPES.map((api) => option(api, label(api)))}
-      {value && !(MODELS_API_TYPES as readonly string[]).includes(value) ? option(value, t('settings.models.form.apiCustom', { api: value })) : null}
+      {customEndpointApiOptions(value).map((api) => option(api, NAMED_API_TYPES.has(api) ? label(api) : t('settings.models.form.apiCustom', { api })))}
     </SelectContent>
   </Select>
 }

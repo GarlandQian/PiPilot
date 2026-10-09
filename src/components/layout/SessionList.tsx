@@ -20,6 +20,8 @@ import {
   TbPin,
   TbPinnedOff,
   TbTrash,
+  TbTerminal2,
+  TbExternalLink,
 } from 'react-icons/tb'
 import { Button } from '@/components/ui/button'
 import {
@@ -59,6 +61,7 @@ import type { AgentStatus } from '@/types/chat'
 import type { SessionActivityState } from '@/store/workspace-state'
 import { sidebarConversationTitle, type SidebarProjectIndicator } from './session-navigation'
 import { ProjectWorkflowsDialog } from '@/components/projects/ProjectWorkflowsDialog'
+import { useTerminalActions } from '@/components/inspector/TerminalActions'
 
 export interface SidebarConversationItem {
   summary: OfficialPiSessionSummary
@@ -595,6 +598,7 @@ function ProjectMenuItems({ navigation, kind, onStartProjectTask, onImportProjec
   onRemoveProject(project: WorkspaceSummary): void
 }) {
   const t = useT()
+  const terminal = useTerminalActions()
   const Item = kind === 'dropdown' ? DropdownMenuItem : ContextMenuItem
   const Separator = kind === 'dropdown' ? DropdownMenuSeparator : ContextMenuSeparator
   const { project } = navigation
@@ -603,6 +607,10 @@ function ProjectMenuItems({ navigation, kind, onStartProjectTask, onImportProjec
     {onImportProject && <Item disabled={!project.available} onSelect={() => onImportProject(project.id)}><TbFileImport aria-hidden />{t('import.open')}</Item>}
     <Separator />
     {onRevealProject && <Item disabled={!project.available} onSelect={() => onRevealProject(project.id)}><TbFolderOpen aria-hidden />{t(revealLabelKey())}</Item>}
+    {terminal ? <>
+      <Item disabled={!project.available} onSelect={() => terminal.open({ kind: 'project', workspaceId: project.id }, '.')}><TbTerminal2 aria-hidden />{t('terminal.context.openHere')}</Item>
+      <Item disabled={!project.available} onSelect={() => terminal.openExternal({ kind: 'project', workspaceId: project.id }, '.')}><TbExternalLink aria-hidden />{t('terminal.context.openExternalHere')}</Item>
+    </> : null}
     <Item onSelect={() => onPinProject(project.id, !project.pinned)}>
       {project.pinned ? <TbPinnedOff aria-hidden /> : <TbPin aria-hidden />}
       {t(project.pinned ? 'sidebar.workspace.unpinShort' : 'sidebar.workspace.pinShort')}

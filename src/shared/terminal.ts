@@ -13,6 +13,8 @@ export const terminalIdSchema = z.uuid()
 export const terminalTitleSchema = z.string().trim().min(1).max(128)
 export { terminalShellProfileIdSchema, terminalShellProfileSchema } from './terminal-profiles'
 export type { TerminalShellProfileId, TerminalShellProfile } from './terminal-profiles'
+export type { TerminalExternalApp, TerminalCustomExternalApp, TerminalExternalAdapter } from './terminal-profiles'
+export const terminalRelativeDirectorySchema = z.string().max(4_096).refine((value) => !/[\0\r\n]/.test(value))
 
 export const terminalColumnsSchema = z
   .number()

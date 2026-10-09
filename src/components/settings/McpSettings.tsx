@@ -179,7 +179,7 @@ function McpDocumentSettings({ scope, active = true, onManagePackages, onSubpage
       case 'edit': return <McpServerEditor key={route.nonce} manager={manager} target={route.target}
         takenNames={names.filter((name) => name !== route.target.previousName)} onDone={({ name }) => done(name)} onCancel={back} onDirtyChange={onDirtyChange} />
       case 'file': return <ConfigFileEditor key={route.nonce} draftText={manager.draftText} savedText={manager.current ? snapshot!.content : null} onChange={manager.updateDraft} path={manager.path ?? undefined}
-        description={t('settings.mcp.page.fileDescription')} label="mcp.json" parse={parseMcpConfigDocument} save={manager.saveDraft} onReload={() => void manager.load(true)}
+        description={t('settings.mcp.page.fileDescription')} label="mcp.json" parse={(text) => parseMcpConfigDocument(text, manager.target.kind)} save={manager.saveDraft} onReload={() => void manager.load(true)}
         disabled={manager.writesBlocked} onDone={() => done(null)} onCancel={back} onDirtyChange={onDirtyChange}
         notice={manager.writesBlocked ? <div className="space-y-2 rounded-lg bg-warning/10 p-3.5 text-caption" role="alert"><p>{t('settings.mcp.extensionMigrationBlocked')}</p>
           {onManagePackages ? <Button variant="outline" size="sm" onClick={onManagePackages}>{t('settings.mcp.managePackages')}</Button> : null}</div>
@@ -254,12 +254,12 @@ function RemoveServerDialog({ server, manager, onOpenChange, onConfirm }: {
   return <AlertDialog open={server !== null} onOpenChange={onOpenChange}>
     <AlertDialogContent>
       <AlertDialogHeader>
-        <AlertDialogTitle>{t('settings.mcp.removeConfirm', { name: server?.name ?? '' })}</AlertDialogTitle>
-        <AlertDialogDescription>{t('settings.mcp.page.removeDescription')}</AlertDialogDescription>
+        <AlertDialogTitle>{t(server?.transport === 'override' ? 'settings.mcp.page.removeOverrideConfirm' : 'settings.mcp.removeConfirm', { name: server?.name ?? '' })}</AlertDialogTitle>
+        <AlertDialogDescription>{t(server?.transport === 'override' ? 'settings.mcp.page.removeOverrideDescription' : 'settings.mcp.page.removeDescription')}</AlertDialogDescription>
       </AlertDialogHeader>
       <AlertDialogFooter>
         <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
-        <AlertDialogAction variant="destructive" disabled={manager.saving} onClick={onConfirm}>{t('settings.mcp.removeServer')}</AlertDialogAction>
+        <AlertDialogAction variant="destructive" disabled={manager.saving} onClick={onConfirm}>{t(server?.transport === 'override' ? 'settings.mcp.page.removeOverride' : 'settings.mcp.removeServer')}</AlertDialogAction>
       </AlertDialogFooter>
     </AlertDialogContent>
   </AlertDialog>

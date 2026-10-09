@@ -1,7 +1,14 @@
 import {
   terminalCustomProfilesSchema,
+  terminalCustomExternalAppsSchema,
+  terminalDefaultProfileSnapshotSchema,
+  terminalDefaultExternalAppSnapshotSchema,
+  terminalExternalAppIdSchema,
   terminalShellProfileIdSchema,
   type TerminalCustomProfile,
+  type TerminalCustomExternalApp,
+  type TerminalDefaultProfileSnapshot,
+  type TerminalDefaultExternalAppSnapshot,
 } from './terminal-profiles'
 
 export const SETTINGS_SCHEMA_VERSION = 1 as const
@@ -43,6 +50,10 @@ export interface TerminalSettings {
   fontSize: number
   defaultProfileId: string | null
   profiles: TerminalCustomProfile[]
+  defaultProfileSnapshot: TerminalDefaultProfileSnapshot | null
+  externalApps: TerminalCustomExternalApp[]
+  defaultExternalAppId: string | null
+  defaultExternalAppSnapshot: TerminalDefaultExternalAppSnapshot | null
   location: TerminalLocation
 }
 
@@ -102,6 +113,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
     fontSize: 13,
     defaultProfileId: null,
     profiles: [],
+    defaultProfileSnapshot: null,
+    externalApps: [],
+    defaultExternalAppId: null,
+    defaultExternalAppSnapshot: null,
     location: 'bottom',
   },
 }
@@ -130,7 +145,8 @@ const LEGACY_APPEARANCE_KEYS = [
 ] as const
 const APPEARANCE_KEYS = [...LEGACY_APPEARANCE_KEYS, 'glassTint'] as const
 const PROFILE_TERMINAL_KEYS = ['fontFamily', 'fontSize', 'defaultProfileId', 'profiles'] as const
-const TERMINAL_KEYS = [...PROFILE_TERMINAL_KEYS, 'location'] as const
+const LOCATION_TERMINAL_KEYS = [...PROFILE_TERMINAL_KEYS, 'location'] as const
+const TERMINAL_KEYS = [...LOCATION_TERMINAL_KEYS, 'defaultProfileSnapshot', 'externalApps', 'defaultExternalAppId', 'defaultExternalAppSnapshot'] as const
 const LEGACY_TERMINAL_KEYS = ['fontFamily', 'fontSize'] as const
 const COMPOSER_KEYS = ['sendShortcut', 'runningSubmit'] as const
 const LEGACY_COMPOSER_KEYS = ['sendShortcut'] as const
@@ -217,7 +233,11 @@ function isAppearanceFields(value: Record<string, unknown>) {
 
 function isExactTerminal(value: unknown): value is TerminalSettings {
   if (!isRecord(value) || !hasExactKeys(value, TERMINAL_KEYS)) return false
-  return isProfileTerminal(value) && TERMINAL_LOCATIONS.includes(value.location as TerminalLocation)
+  return isProfileTerminal(value) && TERMINAL_LOCATIONS.includes(value.location as TerminalLocation) &&
+    terminalDefaultProfileSnapshotSchema.nullable().safeParse(value.defaultProfileSnapshot).success &&
+    terminalCustomExternalAppsSchema.safeParse(value.externalApps).success &&
+    terminalExternalAppIdSchema.nullable().safeParse(value.defaultExternalAppId).success &&
+    terminalDefaultExternalAppSnapshotSchema.nullable().safeParse(value.defaultExternalAppSnapshot).success
 }
 
 /** Settings written before the terminal location existed. */
@@ -262,6 +282,10 @@ function isMigratableSettings(value: unknown) {
     (isExactAppearance(value.appearance) || isLegacyAppearance(value.appearance)) &&
     (isLegacyComposer(value.composer) || isExactComposer(value.composer)) &&
     (isExactTerminal(value.terminal) || (
+      isRecord(value.terminal) &&
+      hasExactKeys(value.terminal, LOCATION_TERMINAL_KEYS) &&
+      isProfileTerminal(value.terminal) && TERMINAL_LOCATIONS.includes(value.terminal.location as TerminalLocation)
+    ) || (
       isRecord(value.terminal) &&
       hasExactKeys(value.terminal, PROFILE_TERMINAL_KEYS) &&
       isProfileTerminal(value.terminal)
@@ -315,6 +339,10 @@ export function sanitizeSettings(
   const models = isRecord(source.models) ? source.models : {}
   const defaultProfile = terminalShellProfileIdSchema.nullable().safeParse(terminal.defaultProfileId)
   const profiles = terminalCustomProfilesSchema.safeParse(terminal.profiles)
+  const defaultSnapshot = terminalDefaultProfileSnapshotSchema.nullable().safeParse(terminal.defaultProfileSnapshot)
+  const externalApps = terminalCustomExternalAppsSchema.safeParse(terminal.externalApps)
+  const externalDefault = terminalExternalAppIdSchema.nullable().safeParse(terminal.defaultExternalAppId)
+  const externalSnapshot = terminalDefaultExternalAppSnapshotSchema.nullable().safeParse(terminal.defaultExternalAppSnapshot)
 
   return {
     locale: oneOf(source.locale, LOCALES, fallback.locale),
@@ -386,6 +414,10 @@ export function sanitizeSettings(
       fontSize: terminalFontSizeOr(terminal.fontSize, fallback.terminal.fontSize),
       defaultProfileId: defaultProfile.success ? defaultProfile.data : fallback.terminal.defaultProfileId,
       profiles: profiles.success ? profiles.data : structuredClone(fallback.terminal.profiles),
+      defaultProfileSnapshot: defaultSnapshot.success ? defaultSnapshot.data : structuredClone(fallback.terminal.defaultProfileSnapshot),
+      externalApps: externalApps.success ? externalApps.data : structuredClone(fallback.terminal.externalApps),
+      defaultExternalAppId: externalDefault.success ? externalDefault.data : fallback.terminal.defaultExternalAppId,
+      defaultExternalAppSnapshot: externalSnapshot.success ? externalSnapshot.data : structuredClone(fallback.terminal.defaultExternalAppSnapshot),
       location: oneOf(terminal.location, TERMINAL_LOCATIONS, fallback.terminal.location),
     },
   }

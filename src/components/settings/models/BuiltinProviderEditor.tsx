@@ -122,7 +122,7 @@ export function BuiltinProviderEditor({ manager, providerId, preset, isNew, onVe
             {provider?.source === 'stored' ? <Button variant="ghost" size="sm" className="text-destructive" disabled={saving} onClick={() => setRemoveOpen(true)}><TbTrash aria-hidden />{t('settings.models.builtin.removeKey')}</Button> : null}
           </div>
         </EditorField>}
-      {provider?.oauth ? <p className="flex items-start gap-2 text-micro leading-relaxed text-muted-foreground"><TbInfoCircle className="mt-px size-3.5 shrink-0" aria-hidden />{t('settings.models.builtin.oauthHint')}</p> : null}
+      {provider?.oauth ? <p className="flex items-start gap-2 text-micro leading-relaxed text-muted-foreground"><TbInfoCircle className="mt-px size-3.5 shrink-0" aria-hidden />{t(provider.keyLogin ? 'settings.models.builtin.oauthHint' : 'settings.models.builtin.oauthRequiredHint')}</p> : null}
     </EditorSection>
 
     <EditorSection title={t('settings.models.editor.models')}

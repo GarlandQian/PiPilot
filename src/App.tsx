@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { TbLoader2 } from 'react-icons/tb'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import {
   Dialog,
   DialogContent,
@@ -69,7 +70,9 @@ import { panelDockOf, panelTab, type PanelDock } from '@/components/inspector/pa
 import { PanelTabContainers } from '@/components/inspector/PanelTabStrip'
 import { BottomDock, RightDock } from '@/components/inspector/PanelDocks'
 import { WorkspacePanelContents, type WorkspaceChangeTotals } from '@/components/inspector/WorkspacePanel'
-import { TerminalTabContent } from '@/components/inspector/TerminalTab'
+import { TerminalTabContent, type TerminalCreateRequest } from '@/components/inspector/TerminalTab'
+import { TerminalActionsContext } from '@/components/inspector/TerminalActions'
+import { TerminalExternalAppMenu } from '@/components/inspector/TerminalExternalAppMenu'
 import { SubagentExecutionPanel } from '@/components/inspector/SubagentExecutionPanel'
 import { CommandExecutionPanel } from '@/components/inspector/CommandExecutionPanel'
 import { usePanelStrip } from '@/components/inspector/panel-strip-tabs'
@@ -758,6 +761,40 @@ export default function App() {
   const [rightTools, setRightTools] = React.useState<HTMLDivElement | null>(null)
   const [bottomTools, setBottomTools] = React.useState<HTMLDivElement | null>(null)
   const [newTerminalRequest, setNewTerminalRequest] = React.useState(0)
+  const [terminalCreateRequest, setTerminalCreateRequest] = React.useState<TerminalCreateRequest>()
+  const [pendingTerminalOpen, setPendingTerminalOpen] = React.useState<TerminalCreateRequest>()
+  const terminalRequestSequence = React.useRef(0)
+  const externalRequestSequence = React.useRef(0)
+  const [externalOpenError, setExternalOpenError] = React.useState<{ scope: ConversationScope; relativeDirectory?: string; appId?: string; label?: string; code?: string } | null>(null)
+  const openTerminalHere = React.useCallback((scope: ConversationScope, relativeDirectory?: string) => {
+    setPendingTerminalOpen({ id: ++terminalRequestSequence.current, scope, relativeDirectory })
+    if (!sameConversationScope(scope, workspace.activeScope) && scope.kind === 'project') {
+      requestSwitch(() => workspace.openWorkspace(scope.workspaceId))
+    }
+    setRail('sessions')
+  }, [requestSwitch, setRail, workspace])
+  React.useEffect(() => {
+    if (!pendingTerminalOpen || switching) return
+    setPendingTerminalOpen(undefined)
+    if (!sameConversationScope(pendingTerminalOpen.scope, workspace.activeScope)) return
+    setTerminalCreateRequest(pendingTerminalOpen)
+    panel.open(panelTab('terminal'), { dock: terminalDock })
+  }, [pendingTerminalOpen, switching, workspace.activeScope, panel, terminalDock])
+  const openExternalHere = React.useCallback((scope: ConversationScope, relativeDirectory?: string, appId?: string, appName?: string) => {
+    const request = ++externalRequestSequence.current
+    setExternalOpenError(null)
+    void (async () => {
+      const api = window.pipilot?.terminal
+      if (!api) throw new Error('Terminal API unavailable')
+      await api.openExternal(scope, appId, relativeDirectory)
+    })().catch((error: unknown) => {
+      const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : undefined
+      if (externalRequestSequence.current === request) setExternalOpenError({
+        scope, relativeDirectory, appId, code,
+        label: appName ?? (settings.terminal.defaultExternalAppId ? settings.terminal.defaultExternalAppSnapshot?.label : undefined),
+      })
+    })
+  }, [settings.terminal.defaultExternalAppId, settings.terminal.defaultExternalAppSnapshot?.label])
   const terminalHostDock = panelDockOf(panel.state, 'terminal')
   // Both docks share the strip's labels and the "+" menu.
   const strip = usePanelStrip({
@@ -853,6 +890,8 @@ export default function App() {
         onEmpty: () => panel.close('terminal'),
       } : undefined}
       newSessionRequest={newTerminalRequest}
+      createRequest={terminalCreateRequest}
+      onCreateRequestHandled={(id) => setTerminalCreateRequest((current) => current?.id === id ? undefined : current)}
       scope={workspace.activeScope}
       scopeName={workspace.activeScope.kind === 'project' ? workspace.workspace?.name ?? '' : t('conversation.projectless')}
       projectIds={workspace.recentProjects.map((project) => project.id)}
@@ -869,6 +908,7 @@ export default function App() {
 
   return (
     <TooltipProvider delayDuration={350}>
+      <TerminalActionsContext.Provider value={{ scope: workspace.activeScope, open: openTerminalHere, openExternal: openExternalHere }}>
       <PrecisionReferencesProvider ownerKey={`${conversationScopeKey(workspace.activeScope)}:${workspace.activeSessionId ?? 'unselected'}`}
         askSideQuestion={conversationReady ? askSideQuestion : undefined}
         workspaceId={workspace.activeScope.kind === 'project' ? workspace.activeScope.workspaceId : null}>
@@ -877,6 +917,19 @@ export default function App() {
       {importScope && <ConversationImportDialog initialScope={importScope} projects={workspace.recentProjects}
         onCommit={commitImportedConversation} onClose={() => setImportScope(null)} />}
       <div className="flex h-screen w-full min-w-0 flex-col overflow-hidden bg-window text-foreground">
+        {externalOpenError ? <div role="alert" className="flex min-h-9 shrink-0 flex-wrap items-center gap-2 border-b border-border bg-surface px-4 py-2 text-caption">
+          <span className="min-w-0 flex-1 text-destructive">{externalOpenError.label ? `${externalOpenError.label}: ` : ''}{t(externalOpenError.code === 'TERMINAL_EXTERNAL_APP_UNAVAILABLE' ? 'terminal.drawer.externalUnavailable' : 'terminal.drawer.externalLaunchFailed')}</span>
+          <Button variant="ghost" size="xs" onClick={() => openExternalHere(externalOpenError.scope, externalOpenError.relativeDirectory, externalOpenError.appId, externalOpenError.label)}>{t('common.retry')}</Button>
+          {workspaceAdapter ? <DropdownMenu>
+            <DropdownMenuTrigger asChild><Button variant="ghost" size="xs">{t('terminal.drawer.chooseExternalOnce')}</Button></DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <TerminalExternalAppMenu standalone terminalApi={workspaceAdapter.terminal} disabled={false}
+                onOpen={(appId, appName) => openExternalHere(externalOpenError.scope, externalOpenError.relativeDirectory, appId, appName)} />
+            </DropdownMenuContent>
+          </DropdownMenu> : null}
+          <Button variant="ghost" size="xs" onClick={() => { setExternalOpenError(null); setSettingsSection('terminal') }}>{t('terminal.drawer.openSettings')}</Button>
+          <Button variant="ghost" size="xs" onClick={() => setExternalOpenError(null)}>{t('common.close')}</Button>
+        </div> : null}
         {nativeOpenFailed ? <div role="alert" className="app-drag flex min-h-9 shrink-0 items-center gap-2 border-b border-border bg-surface py-1.5 pr-3 pl-4 text-caption text-destructive mac:pl-[calc(var(--traffic-light-gutter)+8px)]">
           <span className="flex-1">{t('notifications.openFailed')}</span>
           <Button variant="ghost" size="xs" onClick={dismissNativeError}>{t('notifications.localDismiss')}</Button>
@@ -1423,6 +1476,7 @@ export default function App() {
         </AlertDialogContent>
       </AlertDialog>
       </PrecisionReferencesProvider>
+      </TerminalActionsContext.Provider>
     </TooltipProvider>
   )
 }

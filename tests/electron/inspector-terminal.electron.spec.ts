@@ -4,6 +4,7 @@ import { _electron as electron, expect, test, type ElectronApplication, type Loc
 import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from '../../src/shared/settings'
 import { startPiSdkFixture } from './pi-sdk-fixture'
 import { closeFixtureApplication } from './close-fixture-application'
+import { selectInspectorView } from './select-inspector-view'
 
 async function addProject(app: ElectronApplication, page: Page, path: string) {
   await app.evaluate(({ dialog }, directory) => {
@@ -127,6 +128,12 @@ async function enterCommand(panel: Locator, command: string) {
   await input.focus()
   await input.pressSequentially(command)
   await input.press('Enter')
+}
+
+async function expectTerminalDirectory(page: Page, terminal: Awaited<ReturnType<typeof activeTerminal>>, directory: string, marker: string) {
+  await enterCommand(terminal.panel, `printf 'PIPILOT_%s:%s\\n' '${marker}' "$PWD"`)
+  await expect.poll(async () => (await terminalSnapshot(page, terminal.terminalId)).replay)
+    .toContain(`PIPILOT_${marker}:${directory}\r\n`)
 }
 
 async function startShell(page: Page, panel: Locator, terminalId: string, tag: string, exitCode = 7) {
@@ -364,6 +371,112 @@ test('preserves named terminals and viewport across hiding, tabs and projects, a
   }
 })
 
+test('opens folder and file context terminals exactly once in the requested directory and retries there', async ({}, testInfo) => {
+  test.skip(process.platform === 'win32', 'The cwd probe uses a deterministic POSIX shell.')
+  test.setTimeout(90_000)
+  const fixture = await launchTerminalFixture(testInfo)
+  const { app, page, projectA, projectB, errors } = fixture
+  try {
+    const folder = "terminal folder's"
+    const directory = join(projectA, folder)
+    await mkdir(directory)
+    await writeFile(join(directory, 'example.ts'), 'export const fixture = true\n')
+    await addProject(app, page, projectA)
+    expect(await listTerminals(page)).toEqual([])
+    await selectInspectorView(page, 'Files')
+    const folderRow = page.locator(`[data-workspace-tree-row="${folder}"]`)
+    await folderRow.click({ button: 'right' })
+    await expect(page.getByRole('menuitem', { name: 'Open in external terminal', exact: true })).toBeVisible()
+    await page.getByRole('menuitem', { name: 'Open in terminal', exact: true }).click()
+    const first = await activeTerminal(page)
+    await expectTerminalDirectory(page, first, directory, 'FOLDER_CWD')
+    expect((await listTerminals(page)).map(({ terminalId }) => terminalId)).toEqual([first.terminalId])
+
+    // Hiding the panel does not end its process or replay the folder request.
+    await terminalWorkspace(page).getByRole('button', { name: 'Hide terminal (keep running)', exact: true }).click()
+    await showTerminal(page)
+    await expect(first.panel).toBeVisible()
+    expect((await listTerminals(page)).map(({ terminalId }) => terminalId)).toEqual([first.terminalId])
+
+    await selectInspectorView(page, 'Files')
+    await folderRow.click()
+    const fileRow = page.locator(`[data-workspace-tree-row="${folder}/example.ts"]`)
+    await expect(fileRow).toBeVisible()
+    await page.evaluate(() => window.pipilot!.settings.update({ terminal: {
+      defaultProfileId: 'custom:missing-folder-shell',
+      defaultProfileSnapshot: { id: 'custom:missing-folder-shell', label: 'Missing folder shell', executable: '/missing/folder-shell' },
+    } }))
+    await fileRow.click({ button: 'right' })
+    await page.getByRole('menuitem', { name: 'Open in terminal', exact: true }).click()
+    await expect(terminalWorkspace(page).getByRole('alert')).toContainText('Missing folder shell')
+    expect((await listTerminals(page)).map(({ terminalId }) => terminalId)).toEqual([first.terminalId])
+    await page.evaluate(() => window.pipilot!.settings.update({ terminal: { defaultProfileId: null, defaultProfileSnapshot: null } }))
+    await terminalWorkspace(page).getByRole('button', { name: 'Retry', exact: true }).click()
+    await expect.poll(async () => (await listTerminals(page)).length).toBe(2)
+    await expect(first.panel).toBeHidden()
+    const retried = await activeTerminal(page)
+    expect(retried.terminalId).not.toBe(first.terminalId)
+    await expectTerminalDirectory(page, retried, directory, 'FILE_PARENT_RETRY_CWD')
+    expect((await listTerminals(page)).map(({ terminalId }) => terminalId)).toEqual([first.terminalId, retried.terminalId])
+
+    await addProject(app, page, projectB)
+    expect(await listTerminals(page)).toEqual([])
+    await page.getByRole('button', { name: `New task in ${basename(projectA)}`, exact: true }).click()
+    await expect.poll(() => page.evaluate(async () => (await window.pipilot!.localPi.runtime.status()).cwd)).toBe(projectA)
+    await showTerminal(page)
+    await expect(retried.panel).toBeVisible()
+    expect((await listTerminals(page)).map(({ terminalId }) => terminalId)).toEqual([first.terminalId, retried.terminalId])
+    expect(errors).toEqual([])
+  } finally { await fixture.close() }
+})
+
+test('opens current and inactive project menu terminals in that project without replaying requests', async ({}, testInfo) => {
+  test.skip(process.platform === 'win32', 'The cwd probe uses a deterministic POSIX shell.')
+  test.setTimeout(90_000)
+  const fixture = await launchTerminalFixture(testInfo)
+  const { app, page, projectA, projectB, errors } = fixture
+  const openFromProjectMenu = async (project: string) => {
+    await page.getByRole('button', { name: `Project actions for ${basename(project)}`, exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Open in terminal', exact: true }).click()
+    await expect.poll(() => page.evaluate(async () => (await window.pipilot!.localPi.runtime.status()).cwd)).toBe(project)
+  }
+  try {
+    await addProject(app, page, projectA)
+    await openFromProjectMenu(projectA)
+    const first = await activeTerminal(page)
+    await expectTerminalDirectory(page, first, projectA, 'CURRENT_PROJECT_CWD')
+    expect((await listTerminals(page)).map(({ terminalId }) => terminalId)).toEqual([first.terminalId])
+
+    await addProject(app, page, projectB)
+    expect(await listTerminals(page)).toEqual([])
+    await openFromProjectMenu(projectA)
+    await expect(first.panel).toBeHidden()
+    const second = await activeTerminal(page)
+    expect(second.terminalId).not.toBe(first.terminalId)
+    await expectTerminalDirectory(page, second, projectA, 'INACTIVE_PROJECT_CWD')
+    expect((await listTerminals(page)).map(({ terminalId }) => terminalId)).toEqual([first.terminalId, second.terminalId])
+
+    // The other project's first explicit request must not also make an implicit terminal.
+    await openFromProjectMenu(projectB)
+    const other = await activeTerminal(page)
+    await expectTerminalDirectory(page, other, projectB, 'OTHER_PROJECT_CWD')
+    expect((await listTerminals(page)).map(({ terminalId }) => terminalId)).toEqual([other.terminalId])
+    // The right dock's + Terminal uses a global sequence, but belongs only to B.
+    // The terminal-only bottom dock exposes its own direct New terminal button.
+    await selectInspectorView(page, 'Files')
+    await page.locator('[data-panel-strip="right"]').getByRole('button', { name: 'New tab', exact: true }).click()
+    await page.getByRole('menuitem', { name: /^Terminal/ }).click()
+    await expect(other.panel).toBeHidden()
+    await expect.poll(async () => (await listTerminals(page)).length).toBe(2)
+    await page.getByRole('button', { name: `New task in ${basename(projectA)}`, exact: true }).click()
+    await expect.poll(() => page.evaluate(async () => (await window.pipilot!.localPi.runtime.status()).cwd)).toBe(projectA)
+    await showTerminal(page)
+    await expect(second.panel).toBeVisible()
+    expect((await listTerminals(page)).map(({ terminalId }) => terminalId)).toEqual([first.terminalId, second.terminalId])
+    expect(errors).toEqual([])
+  } finally { await fixture.close() }
+})
+
 test('uses the global profile for new terminals across projects and preserves an exited terminal launch on restart', async ({}, testInfo) => {
   test.skip(process.platform === 'win32', 'The native shell identity probes use POSIX syntax; Windows profiles have service coverage.')
   test.setTimeout(120_000)
@@ -397,7 +510,15 @@ test('uses the global profile for new terminals across projects and preserves an
       })
       expect(profile.args.every((argument) => typeof argument === 'string')).toBe(true)
     }
-    await expect(drawer.getByRole('button', { name: 'New terminal with shell', exact: true })).toHaveCount(0)
+    await drawer.getByRole('button', { name: 'New terminal with shell', exact: true }).click()
+    await page.locator(`[data-create-shell-profile-id="${detected[0].id}"]`).click()
+    await expect.poll(async () => (await listTerminals(page)).length).toBe(2)
+    const once = await activeTerminal(page)
+    expect(once.shell).toBe(detected[0].label)
+    expect((await page.evaluate(() => window.pipilot!.settings.get())).settings.terminal.defaultProfileId).toBeNull()
+    await drawer.locator(`[data-close-terminal-id="${once.terminalId}"]`).click()
+    await expect.poll(async () => (await listTerminals(page)).length).toBe(1)
+    await expect(original.panel).toBeVisible()
 
     const settings = await openTerminalSettings(page)
     await settings.getByRole('button', { name: 'Add profile', exact: true }).click()
@@ -526,13 +647,13 @@ test('uses the global profile for new terminals across projects and preserves an
     await expectShellProfile(page, restarted, 'RESTARTED', 'original-global-profile', projectA, true)
     expect(await shellIsAlive(replacementPid)).toBe(true)
     await page.screenshot({ path: testInfo.outputPath('terminal-original-profile-restarted.png') })
-    await terminalAction(page, 'Close terminal')
+    await terminalAction(page, 'End and close terminal')
     await expect(terminalPanel(page, restarted.terminalId)).toHaveCount(0)
     await expect.poll(() => shellIsAlive(restartedPid)).toBe(false)
     await expect.poll(() => shellIsAlive(alternatePid)).toBe(false)
     await expect(replacement.panel).toBeVisible()
     expect(await probePid(replacement, 'AFTER_RESTARTED_CLOSE')).toBe(replacementPid)
-    await terminalAction(page, 'Close terminal')
+    await terminalAction(page, 'End and close terminal')
     await expect(terminalPanel(page, replacement.terminalId)).toHaveCount(0)
     await expect.poll(() => shellIsAlive(replacementPid)).toBe(false)
     expect(await listTerminals(page)).toEqual([])
@@ -554,12 +675,25 @@ test('recovers an unavailable global default without replacing existing terminal
     await page.getByRole('button', { name: 'Terminal', exact: true }).click()
     const original = await activeTerminal(page)
     await page.evaluate(() => window.pipilot!.settings.update({
-      terminal: { defaultProfileId: 'custom:missing-profile' },
+      terminal: { defaultProfileId: 'custom:missing-profile', defaultProfileSnapshot: { id: 'custom:missing-profile', label: 'Missing build shell', executable: '/missing/build-shell' } },
     }))
     await terminalWorkspace(page).getByRole('button', { name: 'New terminal', exact: true }).click()
-    await expect(terminalWorkspace(page).getByRole('alert')).toContainText('This terminal profile is unavailable.')
+    await expect(terminalWorkspace(page).getByRole('alert')).toContainText('Missing build shell: This shell is unavailable.')
     expect((await listTerminals(page)).map(({ terminalId }) => terminalId)).toEqual([original.terminalId])
     await expect(original.panel).toHaveAttribute('data-terminal-status', 'running')
+
+    const available = (await page.evaluate(() => window.pipilot!.terminal.listShellProfiles())).find((profile) => profile.available)
+    if (!available) throw new Error('The fixture needs an available shell for one-time recovery')
+    await terminalWorkspace(page).getByRole('button', { name: 'Choose another shell…', exact: true }).click()
+    await page.locator(`[data-create-shell-profile-id="${available.id}"]`).click()
+    await expect.poll(async () => (await listTerminals(page)).length).toBe(2)
+    const oneTimeRecovery = await activeTerminal(page)
+    expect(oneTimeRecovery.shell).toBe(available.label)
+    expect((await page.evaluate(() => window.pipilot!.settings.get())).settings.terminal.defaultProfileId).toBe('custom:missing-profile')
+    await terminalWorkspace(page).locator(`[data-close-terminal-id="${oneTimeRecovery.terminalId}"]`).click()
+    await expect.poll(async () => (await listTerminals(page)).length).toBe(1)
+    await terminalWorkspace(page).getByRole('button', { name: 'New terminal', exact: true }).click()
+    await expect(terminalWorkspace(page).getByRole('alert')).toContainText('Missing build shell')
 
     await terminalWorkspace(page).getByRole('button', { name: 'Terminal settings', exact: true }).click()
     const settings = page.getByRole('main', { name: 'Terminal', exact: true })
@@ -567,6 +701,7 @@ test('recovers an unavailable global default without replacing existing terminal
     await expect(page.getByRole('region', { name: 'Settings', exact: true })
       .getByRole('button', { name: 'Terminal', exact: true })).toHaveAttribute('aria-current', 'page')
     await expect(settings.getByRole('alert')).toContainText('The saved default is unavailable.')
+    await expect(settings.getByRole('combobox', { name: 'Default profile', exact: true })).toContainText('Missing build shell')
     await settings.getByRole('button', { name: 'Use Auto', exact: true }).click()
     await expect.poll(async () => (await page.evaluate(() => window.pipilot!.settings.get()))
       .settings.terminal.defaultProfileId).toBeNull()

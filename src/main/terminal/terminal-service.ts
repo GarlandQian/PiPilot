@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { realpath, stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve, relative, isAbsolute, win32 } from 'node:path'
 import type { IPty, IPtyForkOptions, IWindowsPtyForkOptions } from 'node-pty'
 import {
   TERMINAL_OUTPUT_EVENT_LIMIT,
@@ -14,6 +14,8 @@ import {
   terminalShellProfileSchema,
   terminalSummarySchema,
   terminalTitleSchema,
+  terminalRelativeDirectorySchema,
+  type TerminalExternalApp,
   type TerminalEvent,
   type TerminalSession,
   type TerminalShellProfile,
@@ -36,6 +38,7 @@ import {
   type ShellLaunch,
   type TerminalDiscoveryOptions,
 } from './terminal-profile-discovery'
+import { ExternalTerminalApps, ExternalTerminalError, type ExternalTerminalAppsOptions } from './external-terminal-apps'
 
 const OUTPUT_FLUSH_INTERVAL_MS = 16
 const OUTPUT_PAUSE_THRESHOLD = 256 * 1024
@@ -107,6 +110,7 @@ interface TerminalRecord {
 }
 
 export interface TerminalServiceOptions extends TerminalDiscoveryOptions {
+  launchExternal?: ExternalTerminalAppsOptions['launchExternal']
   /** The system's language (such as zh-CN), for a terminal that inherited no locale. */
   systemLocale?: () => string
   localeExists?: (name: string) => boolean
@@ -161,6 +165,7 @@ export class TerminalService {
   private closeAllPromise: Promise<void> | undefined
   private spawnPty?: SpawnPty
   private readonly discovery: TerminalProfileDiscovery
+  private readonly externalApps: ExternalTerminalApps
 
   constructor(
     private readonly getActiveScope: () => ConversationScope,
@@ -173,6 +178,7 @@ export class TerminalService {
     this.platform = options.platform ?? process.platform
     this.spawnPty = options.spawnPty
     this.discovery = new TerminalProfileDiscovery(options)
+    this.externalApps = new ExternalTerminalApps(options)
   }
 
   subscribe(listener: TerminalListener) {
@@ -194,9 +200,40 @@ export class TerminalService {
     try { return await operation() } finally { this.disposingScopes.delete(key) }
   }
 
-  async listShellProfiles(): Promise<TerminalShellProfile[]> {
+  async listShellProfiles(refresh = false): Promise<TerminalShellProfile[]> {
+    if (refresh) this.discovery.invalidate()
     return (await this.resolveShellProfiles()).map(({ launch: _launch, ...profile }) =>
       terminalShellProfileSchema.parse(profile))
+  }
+
+  async listExternalApps(refresh = false): Promise<TerminalExternalApp[]> {
+    const settings = this.options.getTerminalSettings?.()
+    const apps = await this.externalApps.list(settings?.externalApps ?? [], refresh)
+    const selectedId = settings?.defaultExternalAppId
+    if (selectedId && !apps.some((app) => app.id === selectedId)) {
+      const snapshot = settings?.defaultExternalAppSnapshot
+      apps.unshift({ id: selectedId, label: snapshot?.id === selectedId ? snapshot.label : 'Unavailable terminal app',
+        executable: snapshot?.id === selectedId ? snapshot.executable : '', adapter: snapshot?.id === selectedId ? snapshot.adapter : 'mac-terminal',
+        source: selectedId.startsWith('external:custom:') ? 'custom' : 'detected', available: false, unavailableReason: 'executable-not-found' })
+    }
+    return apps
+  }
+
+  async openExternal(rawScope: ConversationScope, appId?: string, relativeDirectory?: string) {
+    const scope = conversationScopeSchema.parse(rawScope)
+    const version = this.scopeVersions.get(conversationScopeKey(scope))
+    const context = await this.externalContext(scope, relativeDirectory, version)
+    const settings = this.options.getTerminalSettings?.()
+    try {
+      const result = await this.externalApps.open(appId ?? settings?.defaultExternalAppId ?? undefined, context.cwd, settings?.externalApps ?? [], async () => {
+        const current = await this.externalContext(scope, relativeDirectory, version)
+        if (current.root !== context.root || current.cwd !== context.cwd) throw new TerminalServiceError('TERMINAL_CWD_UNAVAILABLE', 'The selected terminal directory changed. Choose it again.')
+      })
+      return { scope, appId: result.appId }
+    } catch (error) {
+      if (error instanceof ExternalTerminalError) throw new TerminalServiceError(error.code, error.message)
+      throw error
+    }
   }
 
   async list(rawScope: ConversationScope): Promise<TerminalSummary[]> {
@@ -240,10 +277,12 @@ export class TerminalService {
     cols: number,
     rows: number,
     shellProfileId?: TerminalShellProfileId,
+    relativeDirectory?: string,
   ): Promise<TerminalSession> {
     const scope = conversationScopeSchema.parse(rawScope)
     const profileId = terminalShellProfileIdSchema.optional().parse(shellProfileId)
-    return this.queueCreation(scope, () => this.createTerminal(scope, cols, rows, profileId))
+    terminalRelativeDirectorySchema.optional().parse(relativeDirectory)
+    return this.queueCreation(scope, () => this.createTerminal(scope, cols, rows, profileId, undefined, relativeDirectory))
   }
 
   async restart(rawScope: ConversationScope, terminalId: string, cols: number, rows: number): Promise<TerminalSession> {
@@ -296,11 +335,17 @@ export class TerminalService {
     rows: number,
     shellProfileId?: TerminalShellProfileId,
     previous?: TerminalRecord,
+    relativeDirectory?: string,
   ): Promise<TerminalSession> {
-    const context = await this.context(scope)
+    const context = await this.context(scope, relativeDirectory)
+    if (previous) context.cwd = await this.directory(context.root, relative(context.root, previous.cwd))
     const key = conversationScopeKey(scope)
     const launch = previous ? await this.restartLaunch(previous.launch) : await this.launchSnapshot(shellProfileId, context.cwd)
     const spawnPty = await this.loadSpawnPty()
+    await this.assertActiveScope(scope, context.root)
+    if (await this.directory(context.root, relative(context.root, context.cwd)) !== context.cwd) {
+      throw new TerminalServiceError('TERMINAL_CWD_UNAVAILABLE', 'The selected terminal directory changed. Choose it again.')
+    }
     await this.assertActiveScope(scope, context.root)
     const { title, ordinal } = previous
       ? { title: previous.title, ordinal: this.scopeOrdinals.get(key) ?? 0 }
@@ -490,7 +535,7 @@ export class TerminalService {
       const configured = custom ? settings?.profiles.find((entry) => entry.id === selectedId) : undefined
       const profile = custom
         ? configured && await this.discovery.resolveCustom(configured)
-        : (await this.resolveShellProfiles()).find((entry) => entry.id === selectedId)
+        : await this.discovery.selected(selectedId)
       if (profile?.available && profile.launch) return profile.launch
       throw new TerminalServiceError(
         'TERMINAL_SHELL_UNAVAILABLE',
@@ -511,9 +556,9 @@ export class TerminalService {
       const selected = profiles.find((profile) => profile.id === settings.defaultProfileId)
       if (selected) selected.isDefault = true
       else profiles.unshift({
-        id: settings.defaultProfileId, label: 'Unavailable shell', isDefault: true,
+        id: settings.defaultProfileId, label: settings.defaultProfileSnapshot?.id === settings.defaultProfileId ? settings.defaultProfileSnapshot.label : 'Unavailable shell', isDefault: true,
         source: settings.defaultProfileId.startsWith('wsl:') ? 'wsl' : settings.defaultProfileId.startsWith('custom:') ? 'custom' : 'detected',
-        executable: '', args: [], available: false,
+        executable: settings.defaultProfileSnapshot?.id === settings.defaultProfileId ? settings.defaultProfileSnapshot.executable : '', args: [], available: false,
         unavailableReason: settings.defaultProfileId.startsWith('wsl:') ? 'distribution-unavailable' : 'executable-not-found',
       })
     } else {
@@ -555,7 +600,7 @@ export class TerminalService {
     if (launch.validateExecutable && !await this.discovery.executable(launch.file)) {
       throw new TerminalServiceError('TERMINAL_SHELL_UNAVAILABLE', 'The original shell is no longer installed or executable.')
     }
-    if (launch.distribution && !(await this.discovery.discover()).some((profile) => profile.launch?.distribution?.toLowerCase() === launch.distribution?.toLowerCase() && profile.launch?.file.toLowerCase() === launch.file.toLowerCase())) {
+    if (launch.distribution && !await this.discovery.distributionAvailable(launch.file, launch.distribution)) {
       throw new TerminalServiceError('TERMINAL_SHELL_UNAVAILABLE', 'The original WSL distribution is no longer installed.')
     }
     return { ...launch, args: [...launch.args], environment: { ...launch.environment } }
@@ -574,7 +619,22 @@ export class TerminalService {
     }, this.platform)
   }
 
-  private async context(scope: ConversationScope) {
+  private async directory(root: string, relativeDirectory?: string) {
+    if (!relativeDirectory || relativeDirectory === '.') return root
+    terminalRelativeDirectorySchema.parse(relativeDirectory)
+    if (isAbsolute(relativeDirectory) || win32.isAbsolute(relativeDirectory)) throw new TerminalServiceError('TERMINAL_CWD_UNAVAILABLE', 'Choose a directory inside the current project.')
+    const candidate = resolve(root, relativeDirectory.replace(/\\/g, '/'))
+    const withinRoot = (file: string) => { const path = relative(root, file); return path === '' || (!path.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) && path !== '..' && !isAbsolute(path)) }
+    if (!withinRoot(candidate)) throw new TerminalServiceError('TERMINAL_CWD_UNAVAILABLE', 'Choose a directory inside the current project.')
+    const canonical = await realpath(candidate).catch(() => undefined)
+    if (!canonical || !withinRoot(canonical)) throw new TerminalServiceError('TERMINAL_CWD_UNAVAILABLE', 'The selected terminal directory is missing or outside the current project.')
+    const details = await stat(canonical).catch(() => undefined)
+    if (!details) throw new TerminalServiceError('TERMINAL_CWD_UNAVAILABLE', 'The selected terminal directory is unavailable.')
+    if (!details.isDirectory()) throw new TerminalServiceError('TERMINAL_CWD_NOT_DIRECTORY', 'The selected terminal path is not a directory.')
+    return canonical
+  }
+
+  private async context(scope: ConversationScope, relativeDirectory?: string) {
     if (conversationScopeKey(this.getActiveScope()) !== conversationScopeKey(scope)) {
       throw new TerminalServiceError(
         'TERMINAL_STALE_SCOPE',
@@ -600,7 +660,38 @@ export class TerminalService {
       )
     }
     await this.assertActiveScope(scope, root)
-    return { root, cwd: root }
+    const cwd = await this.directory(root, relativeDirectory)
+    await this.assertActiveScope(scope, root)
+    return { root, cwd }
+  }
+
+  /** An external app may open a registered sidebar project without activating its conversation. */
+  private async externalContext(scope: ConversationScope, relativeDirectory: string | undefined, version: number | undefined) {
+    const assertAvailable = () => {
+      const key = conversationScopeKey(scope)
+      if (this.disposing || this.disposingScopes.has(key) || this.scopeVersions.get(key) !== version) {
+        throw new TerminalServiceError('TERMINAL_UNAVAILABLE', 'The terminal project is no longer available.')
+      }
+    }
+    assertAvailable()
+    const resolveRoot = async () => {
+      try {
+        // resolveScope uses the Main-owned project registry, never a renderer path.
+        const resolved = await this.resolveScope(scope)
+        if (conversationScopeKey(resolved.scope) !== conversationScopeKey(scope) || !isAbsolute(resolved.cwd)) throw new Error('Invalid project identity')
+        const root = await realpath(resolved.cwd)
+        if (!(await stat(root)).isDirectory()) throw new Error('Not a directory')
+        return root
+      } catch {
+        throw new TerminalServiceError('TERMINAL_CWD_UNAVAILABLE', 'The selected terminal project or directory is unavailable.')
+      }
+    }
+    const root = await resolveRoot()
+    const cwd = await this.directory(root, relativeDirectory)
+    // Directory and executable checks yield; removal or replacement may happen meanwhile.
+    if (await resolveRoot() !== root) throw new TerminalServiceError('TERMINAL_CWD_UNAVAILABLE', 'The selected terminal project changed. Choose it again.')
+    assertAvailable()
+    return { root, cwd }
   }
 
   private async assertActiveScope(scope: ConversationScope, root?: string) {

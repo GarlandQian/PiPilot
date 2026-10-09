@@ -4,7 +4,7 @@ import {
   sessionCatalogSelectionTokenSchema,
 } from './conversation-scope'
 
-export const SUPPORTED_PI_VERSION = '0.99.1' as const
+export const SUPPORTED_PI_VERSION = '1.1.0' as const
 export const LOCAL_PI_RUNTIME_EVENT_PROJECTION_FAILED_CODE =
   'RUNTIME_EVENT_PROJECTION_FAILED' as const
 export const LOCAL_PI_RUNTIME_SESSION_PENDING_MAX = 10_000
@@ -257,6 +257,7 @@ export const localPiAssistantMessageSchema = z
     rawStopReason: z.string().optional(),
     endTurn: z.boolean().optional(),
     timestamp: z.number().int().nonnegative(),
+    durationMs: z.number().nonnegative().optional(),
   })
   .strict()
 
@@ -272,6 +273,7 @@ export const localPiToolResultMessageSchema = z
     nestedCalls: localPiNestedToolCallsSchema.optional(),
     isError: z.boolean(),
     timestamp: z.number().int().nonnegative(),
+    durationMs: z.number().nonnegative().optional(),
   })
   .strict()
 
@@ -404,6 +406,9 @@ export const localPiModelSchema = z
     contextWindow: z.number(),
     maxTokens: z.number(),
     samplingParams: z.record(z.string(), z.unknown()).optional(),
+    samplingParamsByThinkingLevel: z.partialRecord(
+      localPiThinkingLevelSchema, z.record(z.string(), z.unknown()),
+    ).optional(),
     headers: z.record(z.string(), z.string()).optional(),
     compat: z.unknown().optional(),
   })
@@ -1057,7 +1062,7 @@ export const localPiRpcEventSchema = z.union([
   z.object({ type: z.literal('delivery_state'), delivery: localPiDeliverySnapshotSchema }).strict(),
   z.object({ type: z.literal('agent_start') }).strict(),
   z.object({ type: z.literal('agent_end'), messages: z.array(localPiAgentMessageSchema), willRetry: z.boolean() }).strict(),
-  z.object({ type: z.literal('agent_settled') }).strict(),
+  z.object({ type: z.literal('agent_settled'), aborted: z.boolean().optional() }).strict(),
   z.object({ type: z.literal('entry_appended'), entry: localPiSessionEntrySchema }).strict(),
   z.object({ type: z.literal('session_info_changed'), name: z.string().optional() }).strict(),
   z.object({ type: z.literal('thinking_level_changed'), level: localPiThinkingLevelSchema }).strict(),
@@ -1073,7 +1078,7 @@ export const localPiRpcEventSchema = z.union([
   z.object({ type: z.literal('bash_execution_update'), id: z.string().optional(), delta: z.string() }).strict(),
   z.object({ type: z.literal('tool_execution_start'), toolCallId: z.string().min(1), parentToolCallId: z.string().min(1).optional(), toolName: z.string().min(1), args: z.unknown().nonoptional() }).strict(),
   z.object({ type: z.literal('tool_execution_update'), toolCallId: z.string().min(1), parentToolCallId: z.string().min(1).optional(), toolName: z.string().min(1), args: z.unknown().nonoptional(), partialResult: localPiToolResultSchema }).strict(),
-  z.object({ type: z.literal('tool_execution_end'), toolCallId: z.string().min(1), parentToolCallId: z.string().min(1).optional(), toolName: z.string().min(1), result: localPiToolResultSchema, isError: z.boolean() }).strict(),
+  z.object({ type: z.literal('tool_execution_end'), toolCallId: z.string().min(1), parentToolCallId: z.string().min(1).optional(), toolName: z.string().min(1), result: localPiToolResultSchema, isError: z.boolean(), durationMs: z.number().nonnegative().optional() }).strict(),
   z.object({ type: z.literal('queue_update'), steering: z.array(z.string()), followUp: z.array(z.string()) }).strict(),
   z.object({ type: z.literal('compaction_start'), reason: z.enum(['manual', 'threshold', 'overflow']) }).strict(),
   z.object({ type: z.literal('compaction_end'), reason: z.enum(['manual', 'threshold', 'overflow']), result: localPiCompactionResultSchema.optional(), aborted: z.boolean(), willRetry: z.boolean(), errorMessage: z.string().optional() }).strict(),

@@ -1,4 +1,5 @@
 import { isSecretName } from '../editor-page'
+import { isMcpServerOverride } from '@/shared/mcp-config-parser'
 import { cloneJson, isLiteralSecret, isRecord, MASKED_SECRET, type JsonRecord } from '../models/provider-editor-model'
 
 /*
@@ -95,13 +96,15 @@ export interface McpEditorIssues {
   pi?: string
 }
 
-export function mcpEditorIssues(name: string, definition: JsonRecord, takenNames: readonly string[], piMessage: string | null, json?: string): McpEditorIssues {
+export function mcpEditorIssues(name: string, definition: JsonRecord, takenNames: readonly string[], piMessage: string | null, json?: string, scope: 'global' | 'project' = 'global'): McpEditorIssues {
   const issues: McpEditorIssues = {}
   const trimmed = name.trim()
   if (!trimmed) issues.name = 'required'
   else if (!/^[A-Za-z0-9_-]{1,128}$/u.test(trimmed)) issues.name = 'invalid'
   else if (takenNames.some((taken) => taken.toLowerCase() === trimmed.toLowerCase())) issues.name = 'taken'
-  if (transportOf(definition) === 'stdio') {
+  if (scope === 'project' && isMcpServerOverride(definition)) {
+    // Project overrides inherit the global transport. Pi validates their fields.
+  } else if (transportOf(definition) === 'stdio') {
     if (typeof definition.command !== 'string' || !definition.command.trim()) issues.command = 'required'
   } else {
     const url = typeof definition.url === 'string' ? definition.url.trim() : ''
@@ -121,6 +124,15 @@ export function mcpEditorIssues(name: string, definition: JsonRecord, takenNames
 }
 
 export const hasMcpIssues = (issues: McpEditorIssues) => Object.values(issues).some(Boolean)
+
+/** Enabling a project override must override a disabled global server explicitly. */
+export function withMcpEnabled(definition: JsonRecord, enabled: boolean, scope: 'global' | 'project'): JsonRecord {
+  const next = { ...definition }
+  if (scope === 'project' && isMcpServerOverride(next)) next.enabled = enabled
+  else if (enabled) delete next.enabled
+  else next.enabled = false
+  return next
+}
 
 /** The definition as saved: trimmed command and address, empty optional fields left out. */
 export function preparedMcpDefinition(definition: JsonRecord): JsonRecord {

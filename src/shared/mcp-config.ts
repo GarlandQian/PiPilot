@@ -31,7 +31,7 @@ export type McpConfigDiagnostic = z.infer<typeof mcpConfigDiagnosticSchema>
 export const mcpConfigServerSchema = z
   .object({
     name: z.string().min(1).max(128),
-    transport: z.enum(['stdio', 'http', 'socket', 'invalid']),
+    transport: z.enum(['stdio', 'http', 'override', 'socket', 'invalid']),
     definition: z.record(z.string(), z.unknown()),
   })
   .strict()

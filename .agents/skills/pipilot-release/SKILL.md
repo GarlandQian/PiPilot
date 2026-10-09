@@ -18,7 +18,7 @@ description: Prepare, version, verify, and publish PiPilot desktop releases thro
 
 ## 本地验证与预览
 
-使用 Node.js 24.18.0、pnpm 12.8.1 和冻结锁文件。按变更执行检查；同一代码状态的已有通过结果可复用，不为流程形式重复完整测试。
+使用 Node.js 24.18.0、pnpm 12.10.1 和冻结锁文件。按变更执行检查；同一代码状态的已有通过结果可复用，不为流程形式重复完整测试。
 
 ~~~sh
 pnpm install --frozen-lockfile

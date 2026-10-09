@@ -96,7 +96,7 @@ export function projectRuntimeAssistantMessage(
 }
 
 /**
- * Reproduces Pi 0.99.1's public JSON/RPC event shape without importing the
+ * Reproduces Pi's public JSON/RPC event shape without importing the
  * stdio-owned `runRpcMode()` implementation. Streaming assistant snapshots are
  * intentionally removed; the bounded delta and cumulative usage remain.
  */

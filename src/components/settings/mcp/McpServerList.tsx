@@ -64,7 +64,8 @@ export function McpServerList({ servers, disabled, busyName, recent, onEdit, onT
     {visible.length === 0 ? <div className="mac-group"><p className="py-10 text-center text-caption text-muted-foreground">{t('settings.integrations.mcp.noMatches')}</p></div>
       : <div className="mac-group min-w-0" role="list">
         {visible.map((server) => {
-          const transport = transportOf(server.definition)
+          const override = server.transport === 'override'
+          const transport = override ? 'override' : transportOf(server.definition)
           const enabled = server.definition.enabled !== false
           const template = templateForServer(server.definition)
           const invalid = server.transport === 'invalid' || server.transport === 'socket'
@@ -81,12 +82,13 @@ export function McpServerList({ servers, disabled, busyName, recent, onEdit, onT
                     {invalid ? <span className="shrink-0 rounded-full bg-destructive/12 px-1.5 text-micro text-destructive">{t('settings.mcp.page.needsFix')}</span> : null}
                   </span>
                   <span className="mt-0.5 block truncate text-caption text-muted-foreground" title={serverEndpoint(server)}>
-                    {t(`settings.mcp.page.transport.${transport}` as MessageKey)} · <span className="font-mono">{serverEndpoint(server) || '—'}</span>
+                    {override ? t('settings.mcp.page.overrideDescription') : <>{t(`settings.mcp.page.transport.${transport}` as MessageKey)} · <span className="font-mono">{serverEndpoint(server) || '—'}</span></>}
                   </span>
                 </span>
               </button>
-              <Switch checked={enabled} disabled={disabled || busyName !== null || invalid} aria-label={t('settings.mcp.page.toggle', { name: server.name })}
-                onCheckedChange={(checked) => onToggle(server, checked)} />
+              {override && server.definition.enabled === undefined ? <span className="text-micro text-muted-foreground" title={t('settings.mcp.page.overrideEnabledInherited')}>{t('settings.mcp.page.inherited')}</span>
+                : <Switch checked={enabled} disabled={disabled || busyName !== null || invalid} aria-label={t('settings.mcp.page.toggle', { name: server.name })}
+                  onCheckedChange={(checked) => onToggle(server, checked)} />}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild><Button variant="ghost" size="icon-xs" className="shrink-0 text-muted-foreground" disabled={disabled} aria-label={t('settings.mcp.page.actions', { name: server.name })}><TbDots aria-hidden /></Button></DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
@@ -94,7 +96,7 @@ export function McpServerList({ servers, disabled, busyName, recent, onEdit, onT
                   <DropdownMenuItem onSelect={() => onCopy(server)}><TbCopy aria-hidden />{t('settings.mcp.page.copyJson')}</DropdownMenuItem>
                   {template ? <DropdownMenuItem onSelect={() => window.open(template.docs, '_blank', 'noopener')}><TbExternalLink aria-hidden />{t('settings.mcp.page.openDocs', { name: localizedText(template.title, locale) })}</DropdownMenuItem> : null}
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem variant="destructive" onSelect={() => onRemove(server)}><TbTrash aria-hidden />{t('settings.mcp.removeServer')}</DropdownMenuItem>
+                  <DropdownMenuItem variant="destructive" onSelect={() => onRemove(server)}><TbTrash aria-hidden />{t(override ? 'settings.mcp.page.removeOverride' : 'settings.mcp.removeServer')}</DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
               <Button variant="ghost" size="icon-xs" className="-mr-1 shrink-0 text-muted-foreground" tabIndex={-1} aria-hidden disabled={disabled} onClick={() => onEdit(server)}><TbChevronRight aria-hidden /></Button>

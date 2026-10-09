@@ -4,6 +4,7 @@ import { constants } from 'node:fs'
 import { access, readFile, readdir, realpath, stat } from 'node:fs/promises'
 import { posix, win32 } from 'node:path'
 import type { TerminalCustomProfile, TerminalShellProfile } from '../../shared/terminal-profiles'
+import { resolveWindowsAppExecutionAlias } from './windows-app-execution-alias'
 
 export interface ShellLaunch {
   file: string
@@ -109,9 +110,22 @@ export function parseWslDistributions(output: string | Buffer) {
  */
 const LEGACY_SHELLS = new Set(['sh', 'csh', 'tcsh', 'ksh', 'dash'])
 
+/** Interactive PTYs need no command string. Only shells supporting login mode get it. */
+export function shellArguments(file: string, platform: NodeJS.Platform): string[] {
+  const name = (platform === 'win32' ? win32 : posix).basename(file).toLowerCase().replace(/\.exe$/, '')
+  if (platform === 'win32') return name === 'bash' ? ['--login', '-i'] : []
+  if (name === 'pwsh') return ['-Login', '-NoLogo']
+  if (name === 'nu') return ['--login']
+  if (name === 'elvish') return []
+  if (name === 'xonsh') return ['--login', '--interactive']
+  return ['bash', 'zsh', 'fish', 'sh', 'dash', 'ksh', 'csh', 'tcsh'].includes(name) ? ['-l'] : []
+}
+
 export class TerminalProfileDiscovery {
   readonly platform: NodeJS.Platform
   readonly environment: NodeJS.ProcessEnv
+  private nativeInventory?: Promise<Array<ResolvedShellProfile & { legacy?: boolean }>>
+  private wslInventory?: Promise<ResolvedShellProfile[]>
 
   constructor(private readonly options: TerminalDiscoveryOptions = {}) {
     this.platform = options.platform ?? process.platform
@@ -125,8 +139,11 @@ export class TerminalProfileDiscovery {
   async executable(candidate: string): Promise<string | undefined> {
     if (!candidate || candidate.length > 4_096 || /[\0\r\n]/.test(candidate) || !this.path.isAbsolute(candidate)) return undefined
     if (this.options.resolveExecutable) return this.options.resolveExecutable(candidate)
+    let canonical: string
+    try { canonical = await realpath(candidate) } catch {
+      return this.platform === 'win32' ? resolveWindowsAppExecutionAlias(candidate, this.environment) : undefined
+    }
     try {
-      const canonical = await realpath(candidate)
       const details = await stat(canonical)
       await access(canonical, this.platform === 'win32' ? constants.F_OK : constants.X_OK)
       return details.isFile() ? canonical : undefined
@@ -183,7 +200,7 @@ export class TerminalProfileDiscovery {
       ...['zsh', 'bash', 'fish', 'nu', 'pwsh', 'elvish', 'xonsh'].flatMap((command) => this.candidates(command, [`/bin/${command}`, `/usr/bin/${command}`, `/usr/local/bin/${command}`, `/opt/homebrew/bin/${command}`])),
     ])]
     return candidates.map((candidate) => ({
-      label: posix.basename(candidate), candidates: [candidate], args: ['-l'],
+      label: posix.basename(candidate), candidates: [candidate], args: shellArguments(candidate, this.platform),
       legacy: candidate !== login && LEGACY_SHELLS.has(posix.basename(candidate)),
     }))
   }
@@ -210,22 +227,19 @@ export class TerminalProfileDiscovery {
   }
 
   /** `keep` names shells listed even if legacy: the default shell and a chosen profile. */
-  async discover(custom: TerminalCustomProfile[] = [], keep: { files?: readonly string[]; ids?: readonly string[] } = {}): Promise<ResolvedShellProfile[]> {
+  private async scanNative(): Promise<Array<ResolvedShellProfile & { legacy?: boolean }>> {
     const definitions: { label: string; candidates: string[]; args: string[]; legacy?: boolean }[] =
       await (this.platform === 'win32' ? this.windowsDefinitions() : this.unixDefinitions())
-    const keptFiles = new Set(keep.files?.map((file) => this.identity(file)))
-    const keptIds = new Set(keep.ids)
-    const profiles: ResolvedShellProfile[] = []
+    const profiles: Array<ResolvedShellProfile & { legacy?: boolean }> = []
     const seen = new Set<string>()
     for (const definition of definitions) {
       for (const candidate of definition.candidates) {
         const file = await this.executable(candidate)
         if (!file || seen.has(this.identity(file))) continue
         const id = stableId('detected', this.identity(file))
-        if (definition.legacy && !keptIds.has(id) && !keptFiles.has(this.identity(file)) && !keptFiles.has(this.identity(candidate))) continue
         seen.add(this.identity(file))
         const label = definition.label.slice(0, 128) || this.path.basename(file)
-        profiles.push({ id, label, isDefault: false, source: 'detected', executable: file, args: definition.args, available: true, launch: { file, args: definition.args, label } })
+        profiles.push({ id, label, isDefault: false, source: 'detected', executable: file, args: definition.args, available: true, legacy: definition.legacy, launch: { file, args: definition.args, label } })
       }
     }
     // The same shell installed twice (system bash and Homebrew bash, PowerShell 7
@@ -235,9 +249,39 @@ export class TerminalProfileDiscovery {
     for (const profile of profiles) {
       if ((labels.get(profile.label) ?? 0) > 1) profile.label = `${profile.label} · ${this.path.dirname(profile.executable)}`.slice(0, 128)
     }
-    profiles.push(...await this.wslProfiles())
-    for (const profile of custom) profiles.push(await this.resolveCustom(profile))
     return profiles
+  }
+
+  invalidate() {
+    this.nativeInventory = undefined
+    this.wslInventory = undefined
+  }
+
+  private nativeProfiles() { return this.nativeInventory ??= this.scanNative() }
+  private distributionProfiles() { return this.wslInventory ??= this.wslProfiles() }
+
+  async discover(custom: TerminalCustomProfile[] = [], keep: { files?: readonly string[]; ids?: readonly string[] } = {}, refresh = false): Promise<ResolvedShellProfile[]> {
+    if (refresh) this.invalidate()
+    const [native, wsl, configured] = await Promise.all([
+      this.nativeProfiles(), this.distributionProfiles(), Promise.all(custom.map((profile) => this.resolveCustom(profile))),
+    ])
+    const keptFiles = new Set(keep.files?.map((file) => this.identity(file)))
+    const keptIds = new Set(keep.ids)
+    return [...native.filter((profile) => !profile.legacy || keptIds.has(profile.id) || keptFiles.has(this.identity(profile.executable)))
+      .map(({ legacy: _legacy, ...profile }) => structuredClone(profile)), ...structuredClone(wsl), ...configured]
+  }
+
+  /** A native selection never waits for the unrelated WSL inventory. Recheck only its executable. */
+  async selected(id: string): Promise<ResolvedShellProfile | undefined> {
+    const profiles = id.startsWith('wsl:') ? await this.distributionProfiles() : await this.nativeProfiles()
+    const profile = profiles.find((entry) => entry.id === id)
+    if (!profile || !profile.launch || !await this.executable(profile.executable)) return undefined
+    return structuredClone(profile)
+  }
+
+  async distributionAvailable(file: string, distribution: string) {
+    return (await this.distributionProfiles()).some((profile) =>
+      profile.launch?.distribution?.toLowerCase() === distribution.toLowerCase() && this.identity(profile.executable) === this.identity(file))
   }
 
   async resolveCustom(profile: TerminalCustomProfile): Promise<ResolvedShellProfile> {
@@ -247,15 +291,25 @@ export class TerminalProfileDiscovery {
   }
 
   async automatic(): Promise<ShellLaunch | undefined> {
-    const configured = this.env(this.platform === 'win32' ? 'ComSpec' : 'SHELL')
-    const candidates = this.platform === 'win32'
-      ? [configured ?? '', win32.join(this.env('SystemRoot') ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), win32.join(this.env('SystemRoot') ?? 'C:\\Windows', 'System32', 'cmd.exe')]
-      : [configured ?? '', this.platform === 'darwin' ? '/bin/zsh' : '/bin/bash', '/bin/sh']
+    if (this.platform === 'win32') {
+      const profiles = await this.nativeProfiles()
+      // Prefer stable PowerShell installations. A preview never supersedes a stable shell.
+      for (const label of ['PowerShell', 'Windows PowerShell', 'Command Prompt (CMD)']) {
+        for (const profile of profiles.filter((entry) => entry.launch?.label === label)) {
+          if (label === 'PowerShell' && /preview/i.test(profile.executable)) continue
+          const file = await this.executable(profile.executable)
+          if (file && profile.launch) return { ...profile.launch, file }
+        }
+      }
+      return undefined
+    }
+    const configured = this.env('SHELL')
+    const candidates = [configured ?? '', this.platform === 'darwin' ? '/bin/zsh' : '/bin/bash', '/bin/sh']
     for (const candidate of candidates) {
       const file = await this.executable(candidate)
-      if (file) return { file, args: this.platform === 'win32' ? [] : ['-l'], label: this.path.basename(file).slice(0, 128) }
+      if (file) return { file, args: shellArguments(file, this.platform), label: this.path.basename(file).slice(0, 128) }
     }
-    const fallback = (await this.discover()).find((profile) => profile.source === 'detected')
+    const fallback = (await this.nativeProfiles())[0]
     return fallback?.launch
   }
 }

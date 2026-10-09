@@ -178,14 +178,16 @@ function reduceEvent(activity: RuntimeActivity, event: LocalPiRpcEvent): Runtime
       // agent_end can precede follow-up work. Only agent_settled ends the execution.
       return activity.outcome === outcome ? activity : advance(activity, { outcome })
     }
-    case 'agent_settled':
-      return !activity.agentRunning && activity.activeToolCalls.size === 0 && activity.outcome !== undefined
+    case 'agent_settled': {
+      const outcome = event.aborted ? 'cancelled' : activity.outcome ?? 'completed'
+      return !activity.agentRunning && activity.activeToolCalls.size === 0 && activity.outcome === outcome
         ? activity
         : advance(activity, {
           agentRunning: false,
           activeToolCalls: new Set(),
-          outcome: activity.outcome ?? 'completed',
+          outcome,
         })
+    }
     case 'tool_execution_start':
     case 'tool_execution_update':
       return updateSet(activity, 'activeToolCalls', event.toolCallId, true)

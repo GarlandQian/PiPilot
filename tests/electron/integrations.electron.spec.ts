@@ -7,6 +7,7 @@ import {
   type ElectronApplication,
 } from '@playwright/test'
 import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from '../../src/shared/settings'
+import { SUPPORTED_PI_VERSION } from '../../src/shared/local-pi'
 import { startPiSdkFixture } from './pi-sdk-fixture'
 
 async function selectDirectory(
@@ -178,7 +179,7 @@ test('manages bundled Pi SDK integrations and MCP drafts across responsive Setti
     }, projectScope)
     expect(snapshots.global).toMatchObject({
       state: 'ready',
-      executable: { version: '0.99.1' },
+      executable: { version: SUPPORTED_PI_VERSION },
       packages: [expect.objectContaining({
         displayName: 'fixture-global-package',
         installedVersion: '1.2.3',
@@ -276,7 +277,7 @@ test('manages bundled Pi SDK integrations and MCP drafts across responsive Setti
     await settingsNavigation.getByRole('button', { name: 'Integrations', exact: true }).click()
     await page.getByRole('button', { name: 'Current project', exact: true }).click()
     await expect(page.getByRole('heading', { name: 'Integrations', exact: true })).toBeVisible()
-    await expect(page.getByText(/Pi 0\.99\.1/)).toBeVisible()
+    await expect(page.getByText(`Pi ${SUPPORTED_PI_VERSION}`, { exact: false })).toBeVisible()
     await expect(page.getByText(
       'Package changes are saved but not confirmed loaded. Apply changes to try again.',
     )).toHaveCount(0)
@@ -484,7 +485,7 @@ test('manages bundled Pi SDK integrations and MCP drafts across responsive Setti
       runtimeSync: 'synchronized',
       snapshot: {
         state: 'ready',
-        executable: { version: '0.99.1' },
+        executable: { version: SUPPORTED_PI_VERSION },
         restartRequired: false,
       },
     })

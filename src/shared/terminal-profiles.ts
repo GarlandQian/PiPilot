@@ -29,3 +29,38 @@ export const terminalShellProfileSchema = z.object({
   unavailableReason: z.enum(['executable-not-found', 'distribution-unavailable']).optional(),
 }).strict()
 export type TerminalShellProfile = z.infer<typeof terminalShellProfileSchema>
+
+export const terminalDefaultProfileSnapshotSchema = z.object({
+  id: terminalShellProfileIdSchema,
+  label: z.string().min(1).max(128),
+  executable: z.string().max(4_096),
+}).strict()
+export type TerminalDefaultProfileSnapshot = z.infer<typeof terminalDefaultProfileSnapshotSchema>
+
+export const terminalExternalAdapterSchema = z.enum([
+  'mac-terminal', 'mac-iterm', 'ghostty', 'windows-terminal', 'windows-powershell', 'windows-cmd',
+  'gnome-terminal', 'konsole', 'xfce4-terminal', 'kitty', 'alacritty',
+])
+export type TerminalExternalAdapter = z.infer<typeof terminalExternalAdapterSchema>
+export const terminalExternalAppIdSchema = z.string().min(1).max(160).regex(/^external:[a-zA-Z0-9:._-]+$/)
+export const terminalCustomExternalAppSchema = z.object({
+  id: terminalExternalAppIdSchema.regex(/^external:custom:[a-zA-Z0-9_-]+$/),
+  name: z.string().trim().min(1).max(128),
+  executable: z.string().trim().min(1).max(4_096).refine((value) => !/[\0\r\n]/.test(value)),
+  adapter: terminalExternalAdapterSchema,
+}).strict()
+export type TerminalCustomExternalApp = z.infer<typeof terminalCustomExternalAppSchema>
+export const terminalCustomExternalAppsSchema = z.array(terminalCustomExternalAppSchema).max(64)
+  .refine((apps) => new Set(apps.map(({ id }) => id)).size === apps.length)
+export const terminalExternalAppSchema = z.object({
+  id: terminalExternalAppIdSchema,
+  label: z.string().min(1).max(128),
+  source: z.enum(['detected', 'custom']),
+  adapter: terminalExternalAdapterSchema,
+  executable: z.string().max(4_096),
+  available: z.boolean(),
+  unavailableReason: z.enum(['executable-not-found', 'unsupported-platform']).optional(),
+}).strict()
+export type TerminalExternalApp = z.infer<typeof terminalExternalAppSchema>
+export const terminalDefaultExternalAppSnapshotSchema = terminalExternalAppSchema.pick({ id: true, label: true, executable: true, adapter: true })
+export type TerminalDefaultExternalAppSnapshot = z.infer<typeof terminalDefaultExternalAppSnapshotSchema>

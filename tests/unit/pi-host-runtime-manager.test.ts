@@ -570,14 +570,14 @@ describe('Pi Host RuntimeManager', () => {
     expect(prompt).not.toHaveBeenCalled()
     expect(session.getFollowUpMessages()).toEqual([])
     streaming.mockReturnValue(false)
-    emitSessionEvent(manager, created.runtimeId, { type: 'agent_settled' })
+    emitSessionEvent(manager, created.runtimeId, { type: 'agent_settled', aborted: false })
     await manager.command(created.runtimeId, { type: 'get_state' })
     expect(prompt).toHaveBeenCalledTimes(1)
     expect(prompt).toHaveBeenCalledWith('one', expect.any(Object))
     const remaining = await manager.command(created.runtimeId, { type: 'get_delivery_state' })
     expect(remaining.response).toMatchObject({ success: true, data: { items: [{ message: 'two', status: 'queued' }] } })
     streaming.mockReturnValue(false)
-    emitSessionEvent(manager, created.runtimeId, { type: 'agent_settled' })
+    emitSessionEvent(manager, created.runtimeId, { type: 'agent_settled', aborted: false })
     await manager.command(created.runtimeId, { type: 'get_state' })
     expect(prompt).toHaveBeenCalledTimes(2)
     expect(prompt).toHaveBeenLastCalledWith('two', expect.any(Object))
@@ -677,14 +677,18 @@ describe('Pi Host RuntimeManager', () => {
     await writeFile(join(agentDir, 'models.json'), JSON.stringify({ providers: {
       'fixture-config-apply': {
         baseUrl: 'https://fixture.invalid/v1', api: 'openai-completions', apiKey: 'fixture-no-network',
-        models: [{ id: 'configured-model', name: 'Configured model' }],
+        models: [{ id: 'configured-model', name: 'Configured model',
+          samplingParamsByThinkingLevel: { off: { temperature: 0 }, high: { temperature: 0.7 } },
+        }],
       },
     } }))
     const reloaded = await manager.reloadRuntime(created.runtimeId, created.generation, undefined, true)
     const models = await manager.command(created.runtimeId, { type: 'get_available_models' }, reloaded.generation)
     expect(models.response.success, JSON.stringify(models.response)).toBe(true)
     expect(models.response).toMatchObject({ success: true, data: { models: expect.arrayContaining([
-      expect.objectContaining({ provider: 'fixture-config-apply', id: 'configured-model' }),
+      expect.objectContaining({ provider: 'fixture-config-apply', id: 'configured-model',
+        samplingParamsByThinkingLevel: { off: { temperature: 0 }, high: { temperature: 0.7 } },
+      }),
     ]) } })
   })
 

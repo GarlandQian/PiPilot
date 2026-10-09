@@ -1360,8 +1360,12 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
       generation: runtimeRef.current.generation,
       sessionId: sessionRef.current?.sessionId ?? null,
     } : null)
-    setLoading(true)
-    setTranscriptLoading(true)
+    // Recovery and capability refreshes keep the already hydrated conversation
+    // visible. Only a new conversation/generation needs the loading surface.
+    if (hydrationRequired) {
+      setLoading(true)
+      setTranscriptLoading(true)
+    }
 
     try {
       // Model discovery can be slower than the transcript. Reuse it across

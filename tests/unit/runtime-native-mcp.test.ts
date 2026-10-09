@@ -84,6 +84,80 @@ describe('native Pi MCP Host integration', () => {
     expect(loaded.errors).toHaveLength(3)
   })
 
+  it('matches native project override merging and normalizes exposure aliases without copying credentials to the project', async () => {
+    const { agentDir, cwd } = await fixture()
+    const globalPath = join(agentDir, 'mcp.json')
+    const projectPath = join(cwd, '.pi', 'mcp.json')
+    const globalDefinition = {
+      url: 'https://global.invalid/mcp', auth: { provider: 'openai' }, headers: { 'X-Fixture': 'fixture-credential' },
+      enabled: false, exposure: 'codemode-deferred', toolExposure: { previous: 'hidden' }, future: 'preserved',
+    }
+    await config(globalPath, { mcpServers: { shared: globalDefinition } })
+    await config(projectPath, { mcpServers: { shared: { enabled: true, toolExposure: { current: 'codemode-deferred' } } } })
+    const loaded = loadRuntimeMcpConfig(agentDir, cwd, true)
+    expect(loaded).toEqual({
+      errors: [], projectConfig: projectPath,
+      servers: [{ name: 'shared', source: globalPath, scope: 'global', override: projectPath,
+        config: { ...globalDefinition, enabled: true, exposure: 'codemode', toolExposure: { current: 'codemode' } } }],
+    })
+    const entry = import.meta.resolve('@earendil-works/pi-coding-agent')
+    const sdk = await import(/* @vite-ignore */ new URL('./extensions/mcp/config.js', entry).href) as {
+      loadMcpConfig(options: { agentDir: string; cwd: string; projectTrusted: boolean }): unknown
+    }
+    expect(loaded).toEqual(sdk.loadMcpConfig({ agentDir, cwd, projectTrusted: true }))
+    const untrusted = loadRuntimeMcpConfig(agentDir, cwd, false)
+    expect(untrusted).not.toHaveProperty('projectConfig')
+    expect(untrusted.servers[0]).not.toHaveProperty('override')
+    expect(untrusted.servers[0]?.config.enabled).toBe(false)
+  })
+
+  it('replaces full project definitions without inheriting global credentials', async () => {
+    const { agentDir, cwd } = await fixture()
+    await config(join(agentDir, 'mcp.json'), { mcpServers: { shared: {
+      url: 'https://global.invalid/mcp', auth: { provider: 'openai' }, headers: { Authorization: 'fixture-key' }, oauth: { clientId: 'fixture-client' },
+    } } })
+    const projectPath = join(cwd, '.pi', 'mcp.json')
+    await config(projectPath, { mcpServers: { shared: { url: 'https://project.invalid/mcp' } } })
+    expect(loadRuntimeMcpConfig(agentDir, cwd, true).servers).toEqual([
+      { name: 'shared', source: projectPath, scope: 'project', config: { url: 'https://project.invalid/mcp' } },
+    ])
+  })
+
+  it('rejects credential changes in project overrides and does not reactivate the global server', async () => {
+    const { agentDir, cwd } = await fixture()
+    await config(join(agentDir, 'mcp.json'), { mcpServers: { shared: { url: 'https://global.invalid/mcp', auth: { provider: 'openai' } } } })
+    for (const definition of [
+      { enabled: true, headers: { Authorization: 'fixture-secret-do-not-echo' } },
+      { enabled: true, auth: { provider: 'fixture-secret-do-not-echo' } },
+      { url: 'https://project.invalid/mcp', auth: { provider: 'fixture-secret-do-not-echo' } },
+      { enabled: 'false' },
+    ]) {
+      await config(join(cwd, '.pi', 'mcp.json'), { mcpServers: { shared: definition } })
+      const loaded = loadRuntimeMcpConfig(agentDir, cwd, true)
+      expect(loaded.servers).toEqual([])
+      expect(loaded.errors).toHaveLength(1)
+      expect(loaded.errors.join()).not.toContain('fixture-secret-do-not-echo')
+    }
+  })
+
+  it('reports missing override bases and retains the trusted project path even without a file', async () => {
+    const { agentDir, cwd } = await fixture()
+    const projectPath = join(cwd, '.pi', 'mcp.json')
+    expect(loadRuntimeMcpConfig(agentDir, cwd, true)).toEqual({ servers: [], errors: [], projectConfig: projectPath })
+    await config(projectPath, { mcpServers: { missing: { enabled: false } } })
+    expect(loadRuntimeMcpConfig(agentDir, cwd, true)).toMatchObject({ servers: [], errors: [expect.stringContaining('global server')] })
+  })
+
+  it('rejects colliding namespaces across global and project definitions', async () => {
+    const { agentDir, cwd } = await fixture()
+    await config(join(agentDir, 'mcp.json'), { mcpServers: { 'internal-tools': { command: 'first' } } })
+    await config(join(cwd, '.pi', 'mcp.json'), { mcpServers: { internal_tools: { command: 'second' } } })
+    const loaded = loadRuntimeMcpConfig(agentDir, cwd, true)
+    expect(loaded.servers).toHaveLength(1)
+    expect(loaded.servers[0]?.name).toBe('internal-tools')
+    expect(loaded.errors).toEqual([expect.stringContaining('conflicts')])
+  })
+
   it('rejects JSONC and never includes malformed credential text in diagnostics', async () => {
     const { agentDir, cwd } = await fixture()
     await writeFile(join(agentDir, 'mcp.json'), '{"mcpServers": {/* secret-fixture-do-not-echo */}}')

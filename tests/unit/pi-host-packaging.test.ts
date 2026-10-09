@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { SUPPORTED_PI_VERSION } from '../../src/shared/local-pi'
+import { PI_HOST_EXPECTED_SDK_VERSION } from '../../src/main/pi-host/pi-host-controller'
 
 const projectRoot = process.cwd()
 
@@ -13,7 +15,9 @@ describe('embedded Pi host packaging', () => {
       devDependencies?: Record<string, string>
     }
 
-    expect(manifest.dependencies?.['@earendil-works/pi-coding-agent']).toBe('0.99.1')
+    expect(manifest.dependencies?.['@earendil-works/pi-coding-agent']).toBe('1.1.0')
+    expect(SUPPORTED_PI_VERSION).toBe(manifest.dependencies?.['@earendil-works/pi-coding-agent'])
+    expect(PI_HOST_EXPECTED_SDK_VERSION).toBe(SUPPORTED_PI_VERSION)
     expect(manifest.devDependencies?.['@earendil-works/pi-coding-agent']).toBeUndefined()
   })
 

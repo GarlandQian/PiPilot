@@ -10,11 +10,19 @@ import { cn } from '@/lib/utils'
 import type { PiPilotApi } from '@/shared/pipilot-api'
 import type { ConversationScope } from '@/shared/conversation-scope'
 import type { TerminalSummary } from '@/shared/terminal'
+import { useSettings } from '@/store/settings'
 import { TerminalLoadingFallback } from './TerminalPanel'
+import { TerminalShellMenu } from './TerminalShellMenu'
 import type { RealTerminalPanelHandle } from './RealTerminalPanel'
 import { TerminalExitLedger, TerminalOperationQueue } from './terminal-workspace-state'
 
 const RealTerminalPanel = React.lazy(() => import('./RealTerminalPanel').then((module) => ({ default: module.RealTerminalPanel })))
+
+export interface TerminalCreateRequest {
+  id: number
+  scope: ConversationScope
+  relativeDirectory?: string
+}
 
 interface TerminalWorkspaceProps {
   terminalApi: PiPilotApi['terminal']
@@ -41,6 +49,8 @@ interface TerminalWorkspaceProps {
   }
   /** Bump to open another terminal (the strip's "+"). */
   newSessionRequest?: number
+  createRequest?: TerminalCreateRequest
+  onCreateRequestHandled?(id: number): void
 }
 
 function sameScope(left: ConversationScope, right: ConversationScope) {
@@ -48,18 +58,24 @@ function sameScope(left: ConversationScope, right: ConversationScope) {
 }
 
 function operationErrorKey(error: unknown) {
-  return typeof error === 'object' && error !== null && 'code' in error && error.code === 'TERMINAL_SHELL_UNAVAILABLE'
-    ? 'terminal.drawer.shellUnavailable'
-    : 'terminal.drawer.operationFailed'
+  const code = typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined
+  if (code === 'TERMINAL_SHELL_UNAVAILABLE') return 'terminal.drawer.shellUnavailable'
+  if (code === 'TERMINAL_CWD_UNAVAILABLE' || code === 'TERMINAL_CWD_NOT_DIRECTORY') return 'terminal.drawer.directoryUnavailable'
+  if (code === 'TERMINAL_EXTERNAL_APP_UNAVAILABLE') return 'terminal.drawer.externalUnavailable'
+  if (code === 'TERMINAL_EXTERNAL_LAUNCH_FAILED') return 'terminal.drawer.externalLaunchFailed'
+  return 'terminal.drawer.operationFailed'
 }
 
-export function TerminalWorkspace({ terminalApi, scope, name, visible, maximized, onMaximize, onHide, onOpenTerminalSettings, hosts, newSessionRequest = 0 }: TerminalWorkspaceProps) {
+export function TerminalWorkspace({ terminalApi, scope, name, visible, maximized, onMaximize, onHide, onOpenTerminalSettings, hosts, newSessionRequest = 0, createRequest, onCreateRequestHandled }: TerminalWorkspaceProps) {
   const t = useT()
+  const { terminal: terminalSettings } = useSettings()
   const [sessions, setSessions] = React.useState<TerminalSummary[]>([])
   const [selectedId, setSelectedId] = React.useState<string | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [busy, setBusy] = React.useState(false)
   const [error, setError] = React.useState<ReturnType<typeof operationErrorKey> | null>(null)
+  const [shellMenuOpen, setShellMenuOpen] = React.useState(false)
+  const [failedProfileName, setFailedProfileName] = React.useState<string | null>(null)
   const [renaming, setRenaming] = React.useState<TerminalSummary | null>(null)
   const [title, setTitle] = React.useState('')
   const [renameError, setRenameError] = React.useState<string | null>(null)
@@ -70,6 +86,10 @@ export function TerminalWorkspace({ terminalApi, scope, name, visible, maximized
   const busyRef = React.useRef(false)
   const visibleRef = React.useRef(visible)
   const loadRef = React.useRef<Promise<void> | null>(null)
+  const retryRef = React.useRef<(() => void) | null>(null)
+  const failedCreateDirectory = React.useRef<string | undefined>(undefined)
+  const handledCreateRequest = React.useRef<number | undefined>(undefined)
+  const createRequestRef = React.useRef(createRequest)
   const operationQueue = React.useRef(new TerminalOperationQueue())
   const exitLedger = React.useRef(new TerminalExitLedger())
   const terminalHandles = React.useRef(new Map<string, RealTerminalPanelHandle>())
@@ -80,11 +100,13 @@ export function TerminalWorkspace({ terminalApi, scope, name, visible, maximized
   const titleInputId = React.useId()
   const idPrefix = React.useId()
   const selected = sessions.find((item) => item.terminalId === selectedId)
+  const externalError = error === 'terminal.drawer.externalUnavailable' || error === 'terminal.drawer.externalLaunchFailed'
   const hostsRef = React.useRef(hosts)
   hostsRef.current = hosts
   visibleRef.current = visible
   selectionRef.current = selectedId
   sessionsRef.current = sessions
+  createRequestRef.current = createRequest
 
   React.useEffect(() => {
     mounted.current = true
@@ -96,7 +118,10 @@ export function TerminalWorkspace({ terminalApi, scope, name, visible, maximized
         if (!mounted.current || !visibleRef.current) return
         let list = await terminalApi.list(scope)
         if (!mounted.current) return
-        if (!initialized.current && list.length === 0 && visibleRef.current) {
+        const explicitRequest = createRequestRef.current
+        const awaitingExplicitCreate = explicitRequest && explicitRequest.id !== handledCreateRequest.current
+        if (!initialized.current && list.length === 0 && visibleRef.current && !awaitingExplicitCreate) {
+          failedCreateDirectory.current = undefined
           const created = await terminalApi.create(scope, 80, 24)
           list = [created]
         }
@@ -106,7 +131,10 @@ export function TerminalWorkspace({ terminalApi, scope, name, visible, maximized
         setSelectedId((current) => list.some((item) => item.terminalId === current) ? current : list[list.length - 1]?.terminalId ?? null)
         setError(null)
       } catch (error) {
-        if (mounted.current) setError(operationErrorKey(error))
+        if (mounted.current) {
+          retryRef.current = () => void refresh()
+          setError(operationErrorKey(error))
+        }
       } finally {
         if (mounted.current) setLoading(false)
       }
@@ -145,28 +173,35 @@ export function TerminalWorkspace({ terminalApi, scope, name, visible, maximized
 
   React.useEffect(() => { if (!visible) setRenaming(null) }, [visible])
 
-  const run = async (operation: () => Promise<void>) => {
+  const run = async (operation: () => Promise<void>, retry?: () => void) => {
     if (busyRef.current || !visibleRef.current) return
     busyRef.current = true
     setBusy(true)
     setError(null)
+    retryRef.current = null
     try {
       await operationQueue.current.run(async () => {
         if (mounted.current && visibleRef.current) await operation()
       })
     } catch (error) {
-      if (mounted.current) setError(operationErrorKey(error))
+      if (mounted.current) {
+        retryRef.current = retry ?? null
+        setError(operationErrorKey(error))
+      }
     } finally {
       busyRef.current = false
       if (mounted.current) setBusy(false)
     }
   }
 
-  const create = () => {
+  const create = (profileId?: string, relativeDirectory?: string, profileName?: string) => {
     const revision = selectionRevision.current
+    failedCreateDirectory.current = relativeDirectory
+    setFailedProfileName(profileName ?? terminalSettings.defaultProfileSnapshot?.label ?? null)
     void run(async () => {
-      const created = await terminalApi.create(scope, 80, 24)
+      const created = await terminalApi.create(scope, 80, 24, profileId, relativeDirectory)
       if (!mounted.current) return
+      initialized.current = true
       setSessions((current) => {
         const session = exitLedger.current.apply(created)
         return current.some((item) => item.terminalId === session.terminalId)
@@ -177,21 +212,37 @@ export function TerminalWorkspace({ terminalApi, scope, name, visible, maximized
         setAutoFocusTerminal(true)
         setSelectedId(created.terminalId)
       }
-    })
+    }, () => create(profileId, relativeDirectory, profileName))
   }
 
   const handledNewSession = React.useRef(newSessionRequest)
   React.useEffect(() => {
-    if (newSessionRequest === handledNewSession.current || !visible || loading) return
+    if (newSessionRequest === handledNewSession.current || !visible || loading || busy || busyRef.current) return
     handledNewSession.current = newSessionRequest
     create()
   // `create` is recreated every render; the request number decides.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [newSessionRequest, visible, loading])
+  }, [newSessionRequest, visible, loading, busy])
+
+  React.useEffect(() => {
+    if (!createRequest || createRequest.id === handledCreateRequest.current || !visible || loading || busy || busyRef.current) return
+    handledCreateRequest.current = createRequest.id
+    onCreateRequestHandled?.(createRequest.id)
+    create(undefined, createRequest.relativeDirectory)
+  // The request id, visibility and operation queue determine when to create.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [createRequest, visible, loading, busy, onCreateRequestHandled])
+
+  const openExternal = (appId?: string, appName?: string) => {
+    setFailedProfileName(appName ?? terminalSettings.defaultExternalAppSnapshot?.label ?? null)
+    void run(async () => { await terminalApi.openExternal(scope, appId) }, () => openExternal(appId, appName))
+  }
 
   const restart = () => {
     if (!selected || selected.status !== 'exited') return
     const target = selected
+    setFailedProfileName(target.shell)
+    failedCreateDirectory.current = undefined
     const revision = selectionRevision.current
     void run(async () => {
       const replacement = await terminalApi.restart(scope, target.terminalId, target.cols, target.rows)
@@ -202,7 +253,7 @@ export function TerminalWorkspace({ terminalApi, scope, name, visible, maximized
         : item))
       if (revision === selectionRevision.current) setAutoFocusTerminal(true)
       setSelectedId((current) => current === target.terminalId ? replacement.terminalId : current)
-    })
+    }, restart)
   }
 
   const end = () => {
@@ -212,7 +263,7 @@ export function TerminalWorkspace({ terminalApi, scope, name, visible, maximized
       await terminalApi.kill(scope, target)
       // Already inside the operation queue: refresh directly, without nesting it.
       await loadSessions()
-    })
+    }, end)
   }
 
   const close = (target: string) => {
@@ -229,7 +280,7 @@ export function TerminalWorkspace({ terminalApi, scope, name, visible, maximized
         initialized.current = false
         hostsRef.current.onEmpty()
       }
-    })
+    }, () => close(target))
   }
 
   const rename = async (event: React.FormEvent) => {
@@ -314,13 +365,17 @@ export function TerminalWorkspace({ terminalApi, scope, name, visible, maximized
         {item.status === 'exited' ? <span className={cn('shrink-0 text-micro tabular-nums', item.exitCode ? 'text-destructive' : 'text-muted-foreground')} aria-label={t('inspector.terminal.exited', { code: item.exitCode ?? 0 })}>{item.exitCode ?? 0}</span> : null}
       </button>
       <Button variant="ghost" size="icon-xs" className={cn('mr-0.5 size-[18px] shrink-0 rounded-[5px]', place === 'strip' && !active && 'opacity-0 group-hover/terminal-tab:opacity-100 focus-visible:opacity-100')}
-        disabled={busy} data-close-terminal-id={item.terminalId} aria-label={t('terminal.drawer.closeNamed', { name: item.title })} title={t('terminal.drawer.closeNamed', { name: item.title })}
+        disabled={busy} data-close-terminal-id={item.terminalId} aria-label={t(item.status === 'running' ? 'terminal.drawer.endAndCloseNamed' : 'terminal.drawer.closeNamed', { name: item.title })} title={t(item.status === 'running' ? 'terminal.drawer.endAndCloseNamed' : 'terminal.drawer.closeNamed', { name: item.title })}
         onClick={() => close(item.terminalId)}><TbX className="size-3" aria-hidden /></Button>
     </div>
   })
   const tools = <>
     <div ref={setToolbarContainer} className="flex shrink-0 items-center gap-1" data-terminal-toolbar-controls />
     <Button variant="ghost" size="icon-xs" disabled={busy || loading} aria-label={t('terminal.drawer.new')} title={t('terminal.drawer.new')} onClick={() => create()}><TbPlus aria-hidden /></Button>
+    <TerminalShellMenu terminalApi={terminalApi} open={shellMenuOpen} onOpenChange={setShellMenuOpen} disabled={busy || loading}
+      focusExternal={externalError}
+      onCreate={(profileId, profileName) => create(profileId, error === 'terminal.drawer.shellUnavailable' ? failedCreateDirectory.current : undefined, profileName)}
+      onOpenExternal={openExternal} onOpenSettings={onOpenTerminalSettings} />
     <DropdownMenu>
       <DropdownMenuTrigger asChild><Button variant="ghost" size="icon-xs" aria-label={t('terminal.drawer.more')} title={t('terminal.drawer.more')} disabled={!selected || busy}><TbDots aria-hidden /></Button></DropdownMenuTrigger>
       <DropdownMenuContent align="end">
@@ -329,7 +384,7 @@ export function TerminalWorkspace({ terminalApi, scope, name, visible, maximized
         {selected?.status === 'running'
           ? <DropdownMenuItem variant="destructive" onSelect={end}><TbPlayerStop aria-hidden />{t('terminal.drawer.end')}</DropdownMenuItem>
           : <DropdownMenuItem onSelect={restart}><TbRefresh aria-hidden />{t('terminal.drawer.restart')}</DropdownMenuItem>}
-        <DropdownMenuItem onSelect={() => { if (selected) close(selected.terminalId) }}><TbX aria-hidden />{t('terminal.drawer.close')}</DropdownMenuItem>
+        <DropdownMenuItem variant={selected?.status === 'running' ? 'destructive' : 'default'} onSelect={() => { if (selected) close(selected.terminalId) }}><TbX aria-hidden />{t(selected?.status === 'running' ? 'terminal.drawer.endAndClose' : 'terminal.drawer.close')}</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   </>
@@ -349,7 +404,14 @@ export function TerminalWorkspace({ terminalApi, scope, name, visible, maximized
       {onMaximize ? <Button variant="ghost" size="icon-xs" aria-label={t(maximized ? 'terminal.drawer.restore' : 'terminal.drawer.maximize')} title={t(maximized ? 'terminal.drawer.restore' : 'terminal.drawer.maximize')} onClick={onMaximize}>{maximized ? <TbArrowsMinimize aria-hidden /> : <TbArrowsMaximize aria-hidden />}</Button> : null}
       {onHide ? <Button variant="ghost" size="icon-xs" aria-label={t('terminal.drawer.hide')} title={t('terminal.drawer.hide')} onClick={onHide}><TbChevronDown aria-hidden /></Button> : null}
     </div>}
-    {error ? <div role="alert" className="flex shrink-0 flex-wrap items-center gap-2 px-3 py-2 text-caption text-destructive"><p className="min-w-0 flex-1">{t(error)}</p>{error === 'terminal.drawer.shellUnavailable' && onOpenTerminalSettings ? <Button variant="ghost" size="sm" onClick={onOpenTerminalSettings}>{t('terminal.drawer.openSettings')}</Button> : null}<Button variant="ghost" size="sm" disabled={busy} onClick={() => void refresh()}>{t('terminal.surface.retry')}</Button></div> : null}
+    {error ? <div role="alert" className="flex shrink-0 flex-wrap items-center gap-2 px-3 py-2 text-caption text-destructive">
+      <p className="min-w-0 flex-1">{error === 'terminal.drawer.shellUnavailable' ? `${failedProfileName ?? terminalSettings.defaultProfileSnapshot?.label ?? t('settings.terminal.profiles.savedDefault')}: ` : externalError && failedProfileName ? `${failedProfileName}: ` : ''}{t(error)}</p>
+      {error === 'terminal.drawer.shellUnavailable' || externalError ? <>
+        <Button variant="ghost" size="sm" disabled={busy} onClick={() => setShellMenuOpen(true)}>{t(externalError ? 'terminal.drawer.chooseExternalOnce' : 'terminal.drawer.chooseOnce')}</Button>
+        {onOpenTerminalSettings ? <Button variant="ghost" size="sm" onClick={onOpenTerminalSettings}>{t('terminal.drawer.openSettings')}</Button> : null}
+      </> : null}
+      <Button variant="ghost" size="sm" disabled={busy} onClick={() => retryRef.current ? retryRef.current() : void refresh()}>{t('terminal.drawer.retry')}</Button>
+    </div> : null}
     {loading ? <TerminalLoadingFallback /> : null}
     {!loading && sessions.length === 0 ? <div className="grid min-h-0 flex-1 place-items-center p-4"><div className="text-center"><p className="mb-3 text-caption text-muted-foreground">{t('terminal.drawer.empty')}</p><Button variant="outline" size="sm" disabled={busy} onClick={() => create()}><TbPlus aria-hidden />{t('terminal.drawer.new')}</Button></div></div> : null}
     {sessions.map((item) => <div

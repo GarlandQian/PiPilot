@@ -110,7 +110,7 @@ export class McpConfigService {
         `MCP configuration cannot exceed ${MCP_CONFIG_CONTENT_LIMIT} bytes.`,
       )
     }
-    const parsed = parseMcpConfigDocument(content)
+    const parsed = parseMcpConfigDocument(content, target.kind)
     if (!parsed.valid) {
       throw new McpConfigError(
         'MCP_CONFIG_INVALID',
@@ -156,7 +156,7 @@ export class McpConfigService {
       exists,
       content,
       fingerprint: exists ? fingerprint(content) : MISSING_FINGERPRINT,
-      ...parseMcpConfigDocument(content),
+      ...parseMcpConfigDocument(content, target.kind),
     })
   }
 

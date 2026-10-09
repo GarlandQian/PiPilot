@@ -24,7 +24,19 @@
   Current PiPilot exports restore user/assistant history; ordinary or unrecognized Markdown becomes
   background content. Importing never submits a prompt or replays old tools or plan approvals.
 - **Project tools** — inspect files and diffs, search command output, review subagent activity, and
-  use per-project terminal tabs.
+  use per-project terminal tabs. The **+** button opens the global default shell immediately;
+  its dropdown opens another detected or custom shell once without changing that default.
+  Set the default in **Settings > Terminal**, or refresh the inventory after installing a shell.
+  Auto follows the login shell on macOS/Linux and prefers stable PowerShell 7, Windows PowerShell,
+  then CMD on Windows. Right-click a project, folder, or file to open a terminal in that project,
+  folder, or file's parent directory. Hiding the panel keeps processes running; ending an
+  individual terminal stops only that instance.
+- **External terminals** — configure a separate default application in **Settings > Terminal**.
+  **Open in external terminal** launches the selected directory in a supported installed application,
+  including Terminal/iTerm2/Ghostty on macOS, Windows Terminal/PowerShell/CMD on Windows, and common
+  Linux terminals. Custom application paths are supported. A missing explicit default stays marked
+  unavailable; choose another application once or update the setting. Opening an external terminal
+  for another project does not switch the current conversation.
 - **References and review** — quote selected message, file or command text with its source snapshot;
   comment on selected diff lines, then collect the comments into your draft before sending.
 - **Conversation search** — search current message content with Cmd/Ctrl+F, or all registered
@@ -170,9 +182,17 @@ application data directory. Do not commit API keys, tokens, or real session cont
 
 In **Settings → Models**, add a provider from the presets or enter a custom endpoint. Pi's built-in API-key providers save credentials in `auth.json`; custom providers remain in `models.json`. Fetch a remote model list, add an ID manually, and test the selected model. Forms and JSON stay synchronized, sensitive values are masked by default, and unsaved edits receive an exit prompt. The conversation model menu also links to provider setup.
 
+The custom endpoint's API type selects the request protocol; it does not sign in to a subscription. Address and credential guidance changes with the selected protocol. Model-list discovery supports OpenAI Chat Completions/Responses, Anthropic and Gemini; other protocols require model IDs added manually. Azure uses deployment names as model IDs. A custom Vertex or Bedrock provider needs its own key or bearer token; use Pi's built-in provider for ADC or AWS credential-chain authentication. Existing extension protocols and advanced JSON remain editable.
+
+The legacy `openai-codex-responses` adapter requires an OAuth access token containing the account ID, even with a custom URL, so it is not offered as a new generic API-key endpoint. Existing configurations remain editable with a warning. For subscription sign-in, use Pi's `/login` with the same Agent directory as PiPilot; PiPilot does not yet provide a graphical OAuth login flow. The current built-in OpenAI provider supports both API keys and ChatGPT subscription login. Selecting `openai-responses` on a custom provider does not inherit that login.
+
+Pi 1.1 uses `azure` as the built-in Azure provider ID. Existing configurations using the former provider ID `azure-openai-responses` need that provider reference updated in `auth.json`, `models.json`, and model preferences (or a new login). The API protocol remains `azure-openai-responses`; do not rename the `api` field. PiPilot does not rewrite those personal files during an application upgrade.
+
 Model capabilities come from Pi's built-in catalog and, when enabled, the public models.dev catalog. The online catalog is cached locally and can be disabled in model settings. Unknown capabilities stay marked as unknown; metadata does not prove that an endpoint supports a model.
 
 In **Settings → Integrations → MCP**, choose global or project scope, then add a template, paste configuration, or import selected servers from another supported app. Import previews preserve existing same-name servers and do not modify the source files. Templates may require credentials, shared folders, or an installed runtime before a server can start. Server switches save immediately; editor changes apply when saved.
+
+A project may override only `enabled`, `exposure`, or `toolExposure` for a same-name global server without repeating its connection settings. These overrides use JSON editing and retain the global server's credentials; deleting one restores the global settings. HTTP `auth.provider` is allowed only in global configuration. Native OAuth metadata, including `clientName` and `authServerMetadataUrl`, is preserved and validated.
 
 ## Scheduled tasks
 

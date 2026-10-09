@@ -44,6 +44,7 @@ import {
 } from './recommended-packages'
 import { createPiManagementOutput } from './pi-management-output'
 import { safePiManagementMessage } from './pi-management-diagnostics'
+import { createBuiltinProviderKeyInteraction } from './builtin-provider-key-interaction'
 
 const HELPER_INPUT_LIMIT = 4 * 1_024 * 1_024
 const PACKAGE_MANIFEST_LIMIT = 256 * 1_024
@@ -401,17 +402,7 @@ async function builtinProviders(
       if (command.action === 'set-provider-key') {
         if (!provider.auth.apiKey?.login) throw new PiModelTestError('PI_MODEL_TEST_NOT_FOUND', `${provider.name} does not take an API key.`)
         // Pi asks for the key through its own login flow, which also stores it.
-        let answered = false
-        await runtime.login(provider.id, 'api_key', {
-          prompt: async (prompt) => {
-            if (answered || (prompt.type !== 'secret' && prompt.type !== 'text')) {
-              throw new Error(`${provider.name} needs more than an API key; set it up with the Pi CLI.`)
-            }
-            answered = true
-            return command.key
-          },
-          notify: () => undefined,
-        })
+        await runtime.login(provider.id, 'api_key', createBuiltinProviderKeyInteraction(provider, command.key))
       } else {
         await runtime.logout(provider.id)
       }

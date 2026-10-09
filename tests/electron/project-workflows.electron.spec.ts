@@ -147,7 +147,7 @@ test('creates a managed branch with confirmed setup and preserves dirty files an
     await expect.poll(() => page.evaluate(async () => (await window.pipilot!.localPi.runtime.status()).cwd)).toBe(created.path)
     if (await terminalToggle.getAttribute('aria-expanded') !== 'true') await terminalToggle.click()
     await drawer.getByRole('button', { name: 'More terminal actions', exact: true }).click()
-    await page.getByRole('menuitem', { name: 'Close terminal', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'End and close terminal', exact: true }).click()
     await expect.poll(() => page.evaluate((workspaceId) => window.pipilot!.terminal.list({ kind: 'project', workspaceId }), created.workspaceId!)).toEqual([])
     if (await terminalToggle.getAttribute('aria-expanded') === 'true') await terminalToggle.click()
     await page.getByRole('button', { name: 'New task in Workflow project', exact: true }).click()

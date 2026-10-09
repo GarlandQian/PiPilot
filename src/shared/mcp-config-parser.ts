@@ -17,12 +17,13 @@ import {
   type McpConfigDiagnostic,
   type McpConfigDocument,
   type McpConfigServer,
+  type McpConfigTarget,
 } from './mcp-config'
 
 const PARSE_OPTIONS = { allowTrailingComma: true, disallowComments: false }
 const NATIVE_PARSE_OPTIONS = { allowTrailingComma: false, disallowComments: true }
 const LEGACY_SERVER_FIELDS = [
-  'inheritEnv', 'caFile', 'requestHeadersCommand', 'auth', 'bearerToken', 'bearerTokenEnv',
+  'inheritEnv', 'caFile', 'requestHeadersCommand', 'bearerToken', 'bearerTokenEnv',
   'bearerTokenStore', 'lifecycle', 'idleTimeout', 'requestTimeoutMs', 'exposeResources',
   'directTools', 'toolPrefix', 'includeTools', 'excludeTools', 'searchKeywords', 'approveTools',
   'debug', 'trace', 'httpTransport', 'pluginDataDir', 'literalEnv', 'protocolVersion', 'tasks',
@@ -33,6 +34,11 @@ const EDIT_OPTIONS = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** Native project overrides change global-server settings without copying credentials. */
+export function isMcpServerOverride(value: unknown): value is Record<string, unknown> {
+  return isRecord(value) && value.command === undefined && value.url === undefined && value.type === undefined
 }
 
 function locationForOffset(text: string, offset: number) {
@@ -86,7 +92,9 @@ function transportFor(
   name: string,
   definition: Record<string, unknown>,
   diagnostics: McpConfigDiagnostic[],
+  scope: McpConfigTarget['kind'],
 ): McpConfigServer['transport'] {
+  const override = scope === 'project' && isMcpServerOverride(definition)
   const selectors = [
     ['command', 'stdio'],
     ['url', 'http'],
@@ -114,8 +122,8 @@ function transportFor(
     : valid.length === 0 && declared.length === 1
       ? declared[0]
       : undefined
-  const transport: McpConfigServer['transport'] = selected?.[1] ?? 'invalid'
-  if (declared.length === 0 || valid.length > 1) {
+  const transport: McpConfigServer['transport'] = override ? 'override' : selected?.[1] ?? 'invalid'
+  if ((!override && declared.length === 0) || valid.length > 1) {
     diagnostics.push(diagnosticAtPath(
       text,
       root,
@@ -155,6 +163,13 @@ function transportFor(
   const fieldError = (field: string, message: string) => diagnostics.push(diagnosticAtPath(
     text, root, ['mcpServers', name, ...field.split('.')], 'MCP_NATIVE_FIELD_INVALID', message,
   ))
+  if (override) {
+    for (const field of Object.keys(definition)) {
+      if (!['enabled', 'exposure', 'toolExposure'].includes(field)) {
+        fieldError(field, 'A project override can only set enabled, exposure, and toolExposure of a global server.')
+      }
+    }
+  }
   if (definition.socket !== undefined) fieldError('socket', 'Native Pi MCP does not support Unix socket transport. Configure stdio or streamable HTTP instead.')
   if (definition.disabled !== undefined) fieldError('disabled', 'Native Pi uses enabled, not disabled. Convert this document to native JSON before saving.')
   for (const field of LEGACY_SERVER_FIELDS) {
@@ -172,21 +187,34 @@ function transportFor(
     } catch { fieldError('url', 'Server URL must be an http or https URL.') }
   }
   if (definition.enabled !== undefined && typeof definition.enabled !== 'boolean') fieldError('enabled', 'Server enabled must be a boolean.')
+  if (definition.description !== undefined && typeof definition.description !== 'string') fieldError('description', 'Server description must be a string.')
   if (definition.cwd !== undefined && typeof definition.cwd !== 'string') fieldError('cwd', 'Server cwd must be a string.')
   if (definition.timeout !== undefined && (typeof definition.timeout !== 'number' || !(definition.timeout > 0))) fieldError('timeout', 'Server timeout must be a positive number of seconds.')
   const isExposure = (value: unknown) => MCP_EXPOSURES.some((candidate) => candidate === value)
   if (definition.exposure !== undefined && !isExposure(definition.exposure)) fieldError('exposure', `Server exposure must be one of: ${MCP_EXPOSURES.join(', ')}.`)
   if (definition.toolExposure !== undefined && (!isRecord(definition.toolExposure) || Object.values(definition.toolExposure).some((value) => !isExposure(value)))) fieldError('toolExposure', 'toolExposure must map tool names or patterns to supported exposures.')
+  if (definition.auth !== undefined) {
+    if (scope === 'project') fieldError('auth', 'Provider authentication is only allowed in the global MCP configuration.')
+    if (transport !== 'http') fieldError('auth', 'Provider authentication requires an HTTP server.')
+    if (!isRecord(definition.auth) || typeof definition.auth.provider !== 'string' || !definition.auth.provider) {
+      fieldError('auth.provider', 'Provider authentication must name a provider.')
+    }
+    try {
+      const url = new URL(String(definition.url))
+      if (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))) throw new Error()
+    } catch { fieldError('auth', 'Provider authentication requires HTTPS, or HTTP on a loopback host.') }
+  }
   if (definition.oauth !== undefined) {
     const oauth = definition.oauth
     if (!isRecord(oauth)) fieldError('oauth', 'OAuth configuration must be an object.')
     else {
-      for (const field of ['scopes', 'grantType', 'clientMetadataUrl', 'redirectUri', 'authorizationParams', 'authorizationUrl', 'tokenUrl', 'clientName', 'clientUri', 'logoUri', 'authServerMetadataUrl', 'skipIssuerMetadataValidation']) {
+      for (const field of ['scopes', 'grantType', 'clientMetadataUrl', 'redirectUri', 'authorizationParams', 'authorizationUrl', 'tokenUrl', 'clientUri', 'logoUri', 'skipIssuerMetadataValidation']) {
         if (oauth[field] !== undefined) fieldError(`oauth.${field}`, `Native Pi does not use the adapter OAuth field ${field}. Review the native OAuth configuration before saving.`)
       }
       for (const key of ['clientId', 'clientSecret', 'scope']) {
         if (oauth[key] !== undefined && typeof oauth[key] !== 'string') fieldError(`oauth.${key}`, `OAuth ${key} must be a string.`)
       }
+      if (oauth.clientName !== undefined && (typeof oauth.clientName !== 'string' || !oauth.clientName.trim())) fieldError('oauth.clientName', 'OAuth clientName must be a non-empty string.')
       const port = oauth.callbackPort
       if (port !== undefined && (typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535)) fieldError('oauth.callbackPort', 'OAuth callbackPort must be between 1 and 65535.')
       if (oauth.callbackUrl !== undefined) {
@@ -196,6 +224,24 @@ function transportFor(
           if (url.protocol !== 'http:' || !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) || url.search || url.hash) throw new Error()
           if (url.port && port !== undefined && Number(url.port) !== port) fieldError('oauth.callbackUrl', 'OAuth callbackUrl and callbackPort must use the same port.')
         } catch { fieldError('oauth.callbackUrl', 'OAuth callbackUrl must be an HTTP loopback URL without a query or fragment.') }
+      }
+      if (oauth.clientRegistration !== undefined && oauth.clientRegistration !== 'dcr' && oauth.clientRegistration !== 'cimd') {
+        fieldError('oauth.clientRegistration', 'OAuth clientRegistration must be dcr or cimd.')
+      } else if (oauth.clientRegistration === 'cimd') {
+        if (oauth.clientId !== undefined || oauth.clientName !== undefined) fieldError('oauth.clientRegistration', 'OAuth cimd registration cannot be combined with clientId or clientName.')
+        if (typeof oauth.callbackUrl === 'string') {
+          try {
+            const callback = new URL(oauth.callbackUrl)
+            if (callback.hostname === '[::1]' || callback.pathname !== '/callback') fieldError('oauth.callbackUrl', 'OAuth cimd registration requires a localhost or 127.0.0.1 callback with path /callback.')
+          } catch { /* The callback URL diagnostic above already explains this value. */ }
+        }
+      }
+      if (oauth.authServerMetadataUrl !== undefined) {
+        try {
+          if (typeof oauth.authServerMetadataUrl !== 'string') throw new Error()
+          const url = new URL(oauth.authServerMetadataUrl)
+          if (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))) throw new Error()
+        } catch { fieldError('oauth.authServerMetadataUrl', 'OAuth authServerMetadataUrl requires HTTPS, or HTTP on a loopback host.') }
       }
     }
   }
@@ -227,7 +273,7 @@ function duplicateKeyDiagnostics(text: string) {
   return diagnostics
 }
 
-export function parseMcpConfigDocument(text: string): McpConfigDocument {
+export function parseMcpConfigDocument(text: string, scope: McpConfigTarget['kind'] = 'global'): McpConfigDocument {
   const parseErrors: ParseError[] = []
   // Keep an editable projection of old JSONC, but never call it valid for Pi's JSON.parse reader.
   parseTree(text, parseErrors, NATIVE_PARSE_OPTIONS)
@@ -295,9 +341,11 @@ export function parseMcpConfigDocument(text: string): McpConfigDocument {
           ))
           continue
         }
+        const clash = servers.find((server) => server.name !== name && server.name.replace(/-/gu, '_') === name.replace(/-/gu, '_'))
+        if (clash) diagnostics.push(diagnosticAtPath(text, root, ['mcpServers', name], 'MCP_SERVER_NAME_CONFLICT', `Server ${name} conflicts with ${clash.name} after namespace normalization.`))
         servers.push({
           name,
-          transport: transportFor(text, root, name, value, diagnostics),
+          transport: transportFor(text, root, name, value, diagnostics, scope),
           definition: value,
         })
       }
@@ -306,7 +354,7 @@ export function parseMcpConfigDocument(text: string): McpConfigDocument {
       diagnostics.push(diagnosticAtPath(text, root, ['autoEnableCodemode'], 'MCP_NATIVE_FIELD_INVALID', 'autoEnableCodemode must be a boolean.'))
     }
     if (isRecord(document) && isRecord(document.settings)) {
-      for (const field of LEGACY_SERVER_FIELDS) {
+      for (const field of ['auth', ...LEGACY_SERVER_FIELDS]) {
         if (document.settings[field] !== undefined) diagnostics.push(diagnosticAtPath(text, root, ['settings', field], 'MCP_LEGACY_SETTING_UNSUPPORTED', `Native Pi does not use adapter settings.${field}. Review its effect before saving.`))
       }
     }
@@ -338,8 +386,8 @@ export function convertMcpConfigToNativeJson(text: string): string {
   return `${JSON.stringify(document, null, 2)}\n`
 }
 
-export function validateMcpServerDefinition(name: string, definition: unknown): string | null {
-  const parsed = parseMcpConfigDocument(JSON.stringify({ mcpServers: { [name]: definition } }))
+export function validateMcpServerDefinition(name: string, definition: unknown, scope: McpConfigTarget['kind'] = 'global'): string | null {
+  const parsed = parseMcpConfigDocument(JSON.stringify({ mcpServers: { [name]: definition } }), scope)
   return parsed.diagnostics[0]?.message ?? null
 }
 

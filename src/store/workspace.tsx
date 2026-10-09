@@ -37,6 +37,18 @@ export interface ScopedSessionCatalog {
   errorMessage: string | null
 }
 
+function catalogDuringRefresh(previous: ScopedSessionCatalog | undefined): ScopedSessionCatalog {
+  // An empty successful catalog is still a settled result. New conversations
+  // may stay in memory until the first prompt, so background invalidations
+  // must not alternate their "Start task" row with the initial loading state.
+  return {
+    status: previous?.status === 'ready' || previous?.status === 'notLoaded'
+      ? previous.status : 'loading',
+    rows: previous?.rows ?? [],
+    errorMessage: null,
+  }
+}
+
 export function conversationScopeKey(scope: ConversationScope) {
   return scope.kind === 'project'
     ? `project:${scope.workspaceId}`
@@ -333,6 +345,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     updateState((current) => {
       const sessions = invalidateCatalog ? [] : current.sessions
       const activeCatalogKey = conversationScopeKey(current.activeScope)
+      const refreshingCatalog = catalogDuringRefresh(current.sessionCatalogs[activeCatalogKey])
       return {
         ...current,
         runtime,
@@ -341,15 +354,11 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         activeId: sessions.some((session) => session.id === nextSessionId)
           ? nextSessionId
           : '',
-        catalogStatus: invalidateCatalog ? 'loading' : current.catalogStatus,
+        catalogStatus: invalidateCatalog ? refreshingCatalog.status : current.catalogStatus,
         sessionCatalogs: invalidateCatalog
           ? {
               ...current.sessionCatalogs,
-              [activeCatalogKey]: {
-                status: 'loading',
-                rows: current.sessionCatalogs[activeCatalogKey]?.rows ?? [],
-                errorMessage: null,
-              },
+              [activeCatalogKey]: refreshingCatalog,
             }
           : current.sessionCatalogs,
       }
@@ -370,28 +379,27 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     }
     invalidateCatalogRequest(result.scope)
     const catalogKey = conversationScopeKey(result.scope)
-    updateState((previous) => ({
-      ...previous,
-      activeScope: result.scope,
-      workspace: workspaceForScope(
-        result.scope,
-        previous.recentProjects,
-        previous.workspace,
-      ),
-      sessions: [],
-      activeId: '',
-      activeSessionId: result.sessionId,
-      catalogStatus: 'loading',
-      sessionCatalogs: {
-        ...previous.sessionCatalogs,
-        [catalogKey]: {
-          status: 'loading',
-          rows: previous.sessionCatalogs[catalogKey]?.rows ?? [],
-          errorMessage: null,
+    updateState((previous) => {
+      const refreshingCatalog = catalogDuringRefresh(previous.sessionCatalogs[catalogKey])
+      return {
+        ...previous,
+        activeScope: result.scope,
+        workspace: workspaceForScope(
+          result.scope,
+          previous.recentProjects,
+          previous.workspace,
+        ),
+        sessions: [],
+        activeId: '',
+        activeSessionId: result.sessionId,
+        catalogStatus: refreshingCatalog.status,
+        sessionCatalogs: {
+          ...previous.sessionCatalogs,
+          [catalogKey]: refreshingCatalog,
         },
-      },
-      ...(scopeChanged ? { filesModified: 0 } : {}),
-    }))
+        ...(scopeChanged ? { filesModified: 0 } : {}),
+      }
+    })
   }, [invalidateCatalogRequest, updateState])
 
   const refreshCatalogFor = React.useCallback((
@@ -402,20 +410,19 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     const key = conversationScopeKey(scope)
     const operation = (async () => {
       const requestId = invalidateCatalogRequest(scope)
-      updateState((previous) => ({
-        ...previous,
-        ...(sameConversationScope(scope, previous.activeScope)
-          ? { catalogStatus: 'loading' as const }
-          : {}),
-        sessionCatalogs: {
-          ...previous.sessionCatalogs,
-          [key]: {
-            status: 'loading',
-            rows: previous.sessionCatalogs[key]?.rows ?? [],
-            errorMessage: null,
+      updateState((previous) => {
+        const refreshingCatalog = catalogDuringRefresh(previous.sessionCatalogs[key])
+        return {
+          ...previous,
+          ...(sameConversationScope(scope, previous.activeScope)
+            ? { catalogStatus: refreshingCatalog.status }
+            : {}),
+          sessionCatalogs: {
+            ...previous.sessionCatalogs,
+            [key]: refreshingCatalog,
           },
-        },
-      }))
+        }
+      })
 
       try {
         const result = await loadOfficialSessionCatalog(
