@@ -13,6 +13,14 @@ describe('other apps’ MCP servers', () => {
     expect(paths('darwin')).toContain('/home/u/Library/Application Support/Claude/claude_desktop_config.json')
     expect(paths('linux', { XDG_CONFIG_HOME: '/cfg' })).toContain('/cfg/Code/User/mcp.json')
     expect(paths('linux', { CODEX_HOME: '/codex' })).toContain('/codex/config.toml')
+    const windows = mcpImportCandidates('win32', 'C:\\Users\\Tester', {}).map((candidate) => candidate.path)
+    expect(windows).toContain('C:\\Users\\Tester\\AppData\\Roaming\\Claude\\claude_desktop_config.json')
+    expect(windows).toContain('C:\\Users\\Tester\\.cursor\\mcp.json')
+    const relocated = mcpImportCandidates('win32', 'C:\\Users\\Tester', {
+      APPDATA: 'D:\\App Data', CODEX_HOME: 'D:\\Codex Home',
+    }).map((candidate) => candidate.path)
+    expect(relocated).toContain('D:\\App Data\\Code\\User\\mcp.json')
+    expect(relocated).toContain('D:\\Codex Home\\config.toml')
   })
 
   it('reads what exists, skips what does not, and reports what it cannot read', async () => {
@@ -25,7 +33,7 @@ describe('other apps’ MCP servers', () => {
     await writeFile(join(home, '.claude.json'), '{ broken')
     // A settings file without servers is not listed.
     await writeFile(join(home, '.gemini', 'settings.json'), '{ "theme": "dark" }')
-    const { sources } = await readMcpImportSources(mcpImportCandidates('linux', home, {}))
+    const { sources } = await readMcpImportSources(mcpImportCandidates(process.platform, home, {}))
     expect(sources.map((source) => [source.app, source.servers.map((server) => server.name), source.error])).toEqual([
       ['claude-code', [], 'unreadable'],
       ['codex', ['docs'], undefined],

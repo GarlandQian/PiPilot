@@ -1,6 +1,6 @@
 import { readFile, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { posix, win32 } from 'node:path'
 import { parseMcpImport, type McpImportFormat } from '../../shared/mcp-import'
 import { MCP_IMPORT_APPS, mcpImportSourcesResultSchema, type McpImportApp, type McpImportSourcesResult } from '../../shared/mcp-config'
 
@@ -15,6 +15,7 @@ interface Candidate {
 
 /** Where each app keeps its MCP servers on this platform. */
 export function mcpImportCandidates(platform: NodeJS.Platform = process.platform, home = homedir(), environment: NodeJS.ProcessEnv = process.env): Candidate[] {
+  const { join } = platform === 'win32' ? win32 : posix
   const appData = platform === 'win32' ? environment.APPDATA || join(home, 'AppData', 'Roaming')
     : platform === 'darwin' ? join(home, 'Library', 'Application Support')
       : environment.XDG_CONFIG_HOME || join(home, '.config')
