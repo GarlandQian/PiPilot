@@ -15,7 +15,9 @@ import {
   definitionFromEditor,
   editorFromDefinition,
   editorIssues,
+  fillableCount,
   fillFromDetails,
+  isReferencePrice,
   maskSecrets,
   MASKED_SECRET,
   restoreSecrets,
@@ -255,6 +257,20 @@ describe('provider editor model', () => {
       id: 'big', name: 'Big Model', reasoning: true, input: ['text', 'image'], contextWindow: 1000, maxTokens: 8192, cost: details.cost,
     })
     expect(fillFromDetails({ id: 'big' }, null, 'Remote Name')).toEqual({ id: 'big', name: 'Remote Name' })
+    // Thinking levels come with a reasoning model only, and not over levels already set.
+    const levels = { off: null, low: 'low', max: 'max' }
+    expect(fillFromDetails({ id: 'big' }, { ...details, thinkingLevelMap: levels }).thinkingLevelMap).toEqual(levels)
+    expect(fillFromDetails({ id: 'big', reasoning: false }, { ...details, thinkingLevelMap: levels }).thinkingLevelMap).toBeUndefined()
+    expect(fillFromDetails({ id: 'big', thinkingLevelMap: { high: 'h' } }, { ...details, thinkingLevelMap: levels }).thinkingLevelMap).toEqual({ high: 'h' })
+    expect(fillableCount({ id: 'big', name: 'Mine', contextWindow: 1000 }, { ...details, thinkingLevelMap: levels })).toBe(5)
+  })
+
+  it('tells a maker\'s list price filled in for a reseller from a price of one\'s own', () => {
+    const listed = { reasoning: true, input: ['text'] as ('text' | 'image')[], cost: { input: 0.15, output: 0.6, cacheRead: 0.003, cacheWrite: 0 }, price: { by: 'maker' as const, name: 'DeepSeek' } }
+    expect(isReferencePrice({ id: 'm', cost: { ...listed.cost } }, listed)).toBe(true)
+    expect(isReferencePrice({ id: 'm', cost: { ...listed.cost, output: 0.5 } }, listed)).toBe(false)
+    expect(isReferencePrice({ id: 'm', cost: { ...listed.cost } }, { ...listed, price: { by: 'provider' } })).toBe(false)
+    expect(isReferencePrice({ id: 'm' }, listed)).toBe(false)
   })
 
   it('suggests provider IDs nobody uses', () => {

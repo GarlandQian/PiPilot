@@ -6,6 +6,18 @@ Each version section supplies the highlights for its GitHub Release. Download li
 
 ## Unreleased
 
+## 0.8.0
+
+### 中文
+
+- **改进模型信息补全**：优先使用 models.dev，并通过模型规范 ID 匹配不同服务商提供的同一模型；依次采用当前服务商、模型厂商和多来源共识信息，未知模型仍回退到 Pi 内置目录。
+- **标明目录来源与参考价格**：编辑自定义模型时说明信息来自哪个目录及服务商/厂商；厂商价格会明确标为参考价，并根据模型目录自动补全其支持的 thinking levels，不覆盖已有自定义值。
+
+### English
+
+- **More accurate model details:** Prefer models.dev and use canonical model IDs to match the same model across providers. Fill details from the endpoint provider, then the model maker, then source consensus; unknown models still fall back to Pi's built-in catalog.
+- **Model attribution and reference pricing:** Show which catalog and provider or maker supplied model details. Clearly label a maker's price as a list-price reference, and fill supported thinking levels without overwriting existing custom values.
+
 ## 0.7.0
 
 ### 中文

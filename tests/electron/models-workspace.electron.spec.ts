@@ -127,7 +127,7 @@ test('manages providers through the list, the preset picker and full-page editor
     const gateway = createServer((request, response) => {
       if (request.url === '/v1/models' && request.headers.authorization === 'Bearer list-key') {
         response.writeHead(200, { 'content-type': 'application/json' })
-          .end(JSON.stringify({ object: 'list', data: [{ id: 'gateway-small' }, { id: 'gateway-large' }] }))
+          .end(JSON.stringify({ object: 'list', data: [{ id: 'gateway-small' }, { id: 'gateway-large' }, { id: 'gpt-4o-mini' }] }))
         return
       }
       response.writeHead(401, { 'content-type': 'application/json' }).end('{"error":"unauthorized"}')
@@ -149,11 +149,15 @@ test('manages providers through the list, the preset picker and full-page editor
       await added.locator('#models-editor-key').fill('list-key')
       await added.getByRole('button', { name: 'Fetch List', exact: true }).click()
       const remote = page.getByRole('dialog', { name: 'Models at This Address', exact: true })
-      await remote.getByText('Select all (2)', { exact: true }).click()
-      await remote.getByRole('button', { name: 'Add 2 Models', exact: true }).click()
+      await remote.getByText('Select all (3)', { exact: true }).click()
+      await remote.getByRole('button', { name: 'Add 3 Models', exact: true }).click()
       await expect(remote).toBeHidden()
-      await expect(added.locator('[data-model-row]')).toHaveCount(2)
+      await expect(added.locator('[data-model-row]')).toHaveCount(3)
       await expect(added.locator('[data-model-row="gateway-small"]')).toContainText('Capabilities unknown')
+      // Adding fills in what the catalog knows at once, without choosing Fill In Capabilities.
+      await expect(added.locator('[data-model-row="gpt-4o-mini"]')).toContainText('GPT-4o mini')
+      await expect(added.locator('[data-model-row="gpt-4o-mini"] [data-model-reference-price]')).toBeVisible()
+      await expect(added).toContainText('Added 3 models and filled them in from Pi’s model catalog.')
       await added.getByRole('button', { name: 'Add…', exact: true }).click()
       const modelSheet = page.locator('[data-models-model-sheet]')
       const modelId = modelSheet.getByRole('textbox', { name: 'Model ID', exact: true })
@@ -161,13 +165,18 @@ test('manages providers through the list, the preset picker and full-page editor
       await modelId.fill('gpt-4o')
       await modelId.press('Enter')
       await expect(modelSheet.getByRole('textbox', { name: 'Display name', exact: true })).toHaveValue('GPT-4o')
+      // A reselling endpoint gets the maker's list price, and says so.
+      await expect(modelSheet).toContainText('Filled in from Pi’s model catalog (OpenAI’s own entry) · the price is OpenAI’s list price')
+      await expect(modelSheet.locator('[data-model-sheet-price="reference"]')).toContainText('Filled in with OpenAI’s list price')
       await modelSheet.getByRole('button', { name: 'Done', exact: true }).click()
-      await expect(added.locator('[data-model-row="gpt-4o"]')).toBeVisible()
+      await expect(added.locator('[data-model-row="gpt-4o"] [data-model-reference-price]')).toHaveText('List price')
       await footer(page).getByRole('button', { name: 'Save', exact: true }).click()
       await expect(list.locator('[data-models-provider-card="custom"]')).toBeVisible()
       expect((await readJson(modelPath)).providers.custom).toEqual({
         baseUrl: endpoint, api: 'openai-completions', apiKey: 'list-key',
-        models: [{ id: 'gateway-small' }, { id: 'gateway-large' }, { id: 'gpt-4o', name: 'GPT-4o', input: ['text', 'image'], contextWindow: 128000, maxTokens: 16384 }],
+        models: [{ id: 'gateway-small' }, { id: 'gateway-large' },
+          { id: 'gpt-4o-mini', name: 'GPT-4o mini', input: ['text', 'image'], contextWindow: 128000, maxTokens: 16384, cost: { input: 0.15, output: 0.6, cacheRead: 0.075, cacheWrite: 0 } },
+          { id: 'gpt-4o', name: 'GPT-4o', input: ['text', 'image'], contextWindow: 128000, maxTokens: 16384, cost: { input: 2.5, output: 10, cacheRead: 1.25, cacheWrite: 0 } }],
       })
     } finally {
       await new Promise((done) => gateway.close(done))

@@ -165,7 +165,24 @@ export function fillFromDetails(raw: JsonRecord, details: ModelCatalogDetails | 
   if (next.contextWindow === undefined && details.contextWindow) next.contextWindow = details.contextWindow
   if (next.maxTokens === undefined && details.maxTokens) next.maxTokens = details.maxTokens
   if (next.cost === undefined && details.cost) next.cost = { ...details.cost }
+  if (next.thinkingLevelMap === undefined && details.thinkingLevelMap && next.reasoning === true) next.thinkingLevelMap = { ...details.thinkingLevelMap }
   return next
+}
+
+const FILLED_FIELDS = ['name', 'reasoning', 'input', 'contextWindow', 'maxTokens', 'cost', 'thinkingLevelMap'] as const
+
+/** How many of a model's fields filling in would set (it never changes one already set). */
+export function fillableCount(raw: JsonRecord, details: ModelCatalogDetails | null | undefined) {
+  if (!details) return 0
+  const filled = fillFromDetails(raw, details)
+  return FILLED_FIELDS.filter((field) => raw[field] === undefined && filled[field] !== undefined).length
+}
+
+/** The model's price is still the maker's list price filled in for a reselling endpoint. */
+export function isReferencePrice(raw: JsonRecord, details: ModelCatalogDetails | null | undefined) {
+  if (details?.price?.by !== 'maker' || !details.cost || !isRecord(raw.cost)) return false
+  const cost = raw.cost
+  return (['input', 'output', 'cacheRead', 'cacheWrite'] as const).every((field) => cost[field] === details.cost![field])
 }
 
 /* ----------------------------- validation ---------------------------- */

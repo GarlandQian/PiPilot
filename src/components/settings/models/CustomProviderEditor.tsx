@@ -18,8 +18,9 @@ import { ModelSheet } from './ModelSheet'
 import { ProviderIcon } from './ProviderIcon'
 import { TestStatus } from './ProviderCardList'
 import { RemoteModelsDialog } from './RemoteModelsDialog'
+import { catalogNames, referencePriceText } from './catalog-source'
 import {
-  capabilitiesUnknown, definitionFromEditor, editorFromDefinition, editorIssues, fillFromDetails, hasIssues, isLiteralSecret, isRecord, maskSecrets,
+  capabilitiesUnknown, definitionFromEditor, editorFromDefinition, editorIssues, fillFromDetails, hasIssues, isLiteralSecret, isRecord, isReferencePrice, maskSecrets,
   MASKED_SECRET, newRowKey, numberField, restoreSecrets, rowsFromModels, stringField, validEndpoint, withField, type JsonRecord, type ModelRow, type ProviderEditorState,
 } from './provider-editor-model'
 
@@ -151,11 +152,29 @@ export function CustomProviderEditor({ manager, target, takenIds, builtinIds, on
     }
   }
 
-  /** Fill each row (or only `keys`) with what the catalog and models.dev know; never overwrite. */
-  const fillRows = async (keys?: ReadonlySet<string>, remoteNames: Readonly<Record<string, string>> = {}) => {
-    const rows = editorRef.current.models.filter((row) => (!keys || keys.has(row.key)) && stringField(row.raw, 'id').trim())
-    if (!rows.length) return 0
+  /** What the catalogs said about each model ID, to tell a list price filled in for a reseller. */
+  const [catalogDetails, setCatalogDetails] = React.useState<Readonly<Record<string, ModelCatalogDetails | null>>>({})
+  const pricedIds = editor.models.filter((row) => isRecord(row.raw.cost)).map((row) => stringField(row.raw, 'id').trim()).filter((id) => id && !(id in catalogDetails))
+  const pricedKey = [...new Set(pricedIds)].sort().join('\n')
+  React.useEffect(() => {
+    if (!pricedKey) return
+    let current = true
+    void lookup(pricedKey.split('\n')).then((details) => { if (current) setCatalogDetails((known) => ({ ...known, ...details })) })
+    return () => { current = false }
+    // Looked up again only when priced models are added; the endpoint changing is caught on the next fill.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pricedKey])
+
+  /**
+   * Fill each row (or only `targets`) with what models.dev (or Pi's catalog) knows; never overwrite.
+   * Rows just added are passed in: the page has not rendered them yet.
+   */
+  const fillRows = async (targets?: readonly ModelRow[], remoteNames: Readonly<Record<string, string>> = {}) => {
+    const keys = targets ? new Set(targets.map((row) => row.key)) : undefined
+    const rows = (targets ?? editorRef.current.models).filter((row) => stringField(row.raw, 'id').trim())
+    if (!rows.length) return { changed: 0, catalog: '' }
     const details = await lookup(rows.map((row) => stringField(row.raw, 'id').trim()))
+    setCatalogDetails((known) => ({ ...known, ...details }))
     // Rows may have been edited meanwhile: fill each as it is now, missing fields only.
     const fill = (row: ModelRow) => {
       if (keys && !keys.has(row.key)) return row
@@ -164,17 +183,17 @@ export function CustomProviderEditor({ manager, target, takenIds, builtinIds, on
       const filled = fillFromDetails(row.raw, details[id], remoteNames[id])
       return JSON.stringify(filled) === JSON.stringify(row.raw) ? row : { ...row, raw: filled }
     }
-    const changed = editorRef.current.models.filter((row) => fill(row) !== row).length
-    if (changed) update((current) => ({ ...current, models: current.models.map(fill) }))
-    return changed
+    const changedRows = rows.filter((row) => fill(row) !== row)
+    if (changedRows.length) update((current) => ({ ...current, models: current.models.map(fill) }))
+    return { changed: changedRows.length, catalog: catalogNames(t, changedRows.map((row) => details[stringField(row.raw, 'id').trim()])) }
   }
 
   const fillAll = async () => {
     setFilling(true)
     setNotice(null)
     try {
-      const changed = await fillRows()
-      setNotice(changed ? t('settings.models.editor.filled', { count: changed }) : t('settings.models.editor.nothingToFill'))
+      const { changed, catalog } = await fillRows()
+      setNotice(changed ? t('settings.models.editor.filled', { count: changed, catalog }) : t('settings.models.editor.nothingToFill'))
     } finally {
       setFilling(false)
     }
@@ -211,7 +230,10 @@ export function CustomProviderEditor({ manager, target, takenIds, builtinIds, on
     if (!added.length) return
     update((current) => ({ ...current, models: [...current.models, ...added], defaultKey: current.defaultKey ?? (noDefaultYet ? added[0]!.key : null) }))
     const names = Object.fromEntries(models.filter((model) => model.name).map((model) => [model.id, model.name!]))
-    void fillRows(new Set(added.map((row) => row.key)), names).then(() => setNotice(t('settings.models.editor.added', { count: added.length })))
+    // Adding fills them in at once: capabilities, thinking levels and price, as far as they are known.
+    void fillRows(added, names).then(({ changed, catalog }) => setNotice(changed
+      ? t('settings.models.editor.added', { count: added.length, catalog })
+      : t('settings.models.editor.addedUnknown', { count: added.length })))
   }
 
   const removeRow = (key: string) => update((current) => ({ ...current, models: current.models.filter((row) => row.key !== key), defaultKey: current.defaultKey === key ? null : current.defaultKey }))
@@ -398,8 +420,11 @@ export function CustomProviderEditor({ manager, target, takenIds, builtinIds, on
           context ? t('settings.models.workspace.context', { count: numberFormat.format(context) }) : null,
         ].filter(Boolean).join(' · ')
         const isDefault = editor.defaultKey === row.key
+        const known = catalogDetails[id.trim()]
+        const referencePrice = known && isReferencePrice(row.raw, known) ? referencePriceText(t, known) : null
         return <SettingsListRow key={row.key} data-model-row={id || row.key} title={rowTitle}
           badges={<>{isDefault ? <SettingsBadge tone="accent">{t('settings.models.defaultBadge')}</SettingsBadge> : null}
+            {referencePrice ? <span title={referencePrice} data-model-reference-price><SettingsBadge>{t('settings.models.editor.referenceBadge')}</SettingsBadge></span> : null}
             {issue ? <SettingsBadge tone="warning">{t(issue === 'required' ? 'settings.models.editor.modelIdRequired' : 'settings.models.editor.modelIdDuplicate')}</SettingsBadge> : null}</>}
           subtitle={capabilitiesUnknown(row.raw) && id ? <span className="text-warning" title={t('settings.models.editor.unknownHint')}>{[details, t('settings.models.unknownCapabilities')].filter(Boolean).join(' · ')}</span> : details || undefined}
           status={<TestStatus test={tests[row.key]} />}

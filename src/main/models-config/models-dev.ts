@@ -7,7 +7,11 @@ const FRESH_MS = 24 * 60 * 60 * 1_000
 const FETCH_TIMEOUT_MS = 10_000
 const RESPONSE_LIMIT = 32 * 1_024 * 1_024
 
+/** Bumped when the compacted shape gains fields; an older copy is refreshed, and still used while offline. */
+const CACHE_VERSION = 2
+
 interface CachedIndex {
+  version?: number
   fetchedAt: number
   index: ModelsDevIndex
 }
@@ -45,7 +49,7 @@ export class ModelsDevService {
     }
     try {
       const index = await this.download()
-      this.memory = { fetchedAt: now, index }
+      this.memory = { version: CACHE_VERSION, fetchedAt: now, index }
       await this.writeDisk(this.memory).catch(() => undefined)
       return index
     } catch {
@@ -75,7 +79,7 @@ export class ModelsDevService {
     try {
       const value = JSON.parse(await readFile(this.options.cachePath, 'utf8')) as Partial<CachedIndex>
       return typeof value.fetchedAt === 'number' && value.index && Array.isArray(value.index.providers)
-        ? { fetchedAt: value.fetchedAt, index: value.index }
+        ? { version: CACHE_VERSION, fetchedAt: value.version === CACHE_VERSION ? value.fetchedAt : 0, index: value.index }
         : null
     } catch {
       return null

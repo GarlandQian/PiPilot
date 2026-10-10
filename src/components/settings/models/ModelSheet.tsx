@@ -3,8 +3,10 @@ import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { useLocale, useT, type MessageKey } from '@/i18n'
 import type { ModelCatalogDetails } from '@/shared/model-catalog'
+import { Button } from '@/components/ui/button'
 import { FormActions, SettingsField, SettingsGroup, SettingsRow, SettingsSheet } from '../kit'
-import { fillFromDetails, isRecord, numberField, stringField, THINKING_LEVELS, withField, type JsonRecord, type ThinkingLevel } from './provider-editor-model'
+import { catalogName, fillSourceText, referencePriceText } from './catalog-source'
+import { fillableCount, fillFromDetails, isRecord, isReferencePrice, numberField, stringField, THINKING_LEVELS, withField, type JsonRecord, type ThinkingLevel } from './provider-editor-model'
 
 /** A whole number or a price, typed freely and written once it is valid. */
 export function NumberInput({ id, value, onChange, integer = false, placeholder, label, className }: {
@@ -70,14 +72,20 @@ export function ModelSheet({ open, onOpenChange, initial, isNew, takenIds, looku
   const locale = useLocale()
   const [raw, setRaw] = React.useState(initial)
   const [showIssues, setShowIssues] = React.useState(false)
-  const [filled, setFilled] = React.useState<string | null>(null)
+  /** What the catalogs know about the ID last looked up, and whether it was filled in. */
+  const [known, setKnown] = React.useState<{ id: string; details: ModelCatalogDetails | null; filled: boolean } | null>(null)
   const lookedUp = React.useRef<string | null>(null)
   React.useEffect(() => {
     if (!open) return
     setRaw(initial)
     setShowIssues(false)
-    setFilled(null)
-    lookedUp.current = isNew ? null : stringField(initial, 'id')
+    setKnown(null)
+    const existing = isNew ? null : stringField(initial, 'id').trim()
+    lookedUp.current = existing
+    // An existing model is not filled in by itself: the sheet offers it (and reads whose price it has).
+    if (existing) void lookup(existing).then((details) => {
+      if (lookedUp.current === existing) setKnown({ id: existing, details, filled: false })
+    })
     // A new sheet each time it opens.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
@@ -93,10 +101,13 @@ export function ModelSheet({ open, onOpenChange, initial, isNew, takenIds, looku
     if (!id || lookedUp.current === id) return
     lookedUp.current = id
     const details = await lookup(id)
-    if (!details) return
-    setRaw((current) => stringField(current, 'id').trim() === id ? fillFromDetails(current, details) : current)
-    setFilled(id)
+    if (lookedUp.current !== id) return
+    setKnown({ id, details, filled: Boolean(details) })
+    if (details) setRaw((current) => stringField(current, 'id').trim() === id ? fillFromDetails(current, details) : current)
   }
+  const details = known?.id === id ? known.details : null
+  const canFill = !isNew && known?.id === id && !known.filled ? fillableCount(raw, details) : 0
+  const referencePrice = isReferencePrice(raw, details)
 
   const setLevel = (level: ThinkingLevel, value: string | null | undefined) => {
     const next = { ...map }
@@ -115,9 +126,17 @@ export function ModelSheet({ open, onOpenChange, initial, isNew, takenIds, looku
 
   return <SettingsSheet open={open} onOpenChange={onOpenChange} wide data-models-model-sheet
     title={t(isNew ? 'settings.models.sheet.addTitle' : 'settings.models.sheet.editTitle')}
-    description={filled ? t('settings.models.sheet.filled') : t('settings.models.sheet.description')}
+    description={known?.filled && details ? t('settings.models.sheet.filled', { source: fillSourceText(t, details, isRecord(raw.cost)) }) : t('settings.models.sheet.description')}
     footer={<FormActions onCancel={() => onOpenChange(false)} onSave={submit} saveLabel={t('common.done')} />}>
     <div className="space-y-5">
+      {canFill > 0 ? <div className="flex items-center gap-3 rounded-[12px] bg-primary/8 px-3.5 py-2" data-model-sheet-can-fill>
+        <p className="min-w-0 flex-1 text-caption text-foreground">{t('settings.models.sheet.canFill', { catalog: catalogName(t, details), count: canFill })}</p>
+        <Button size="sm" variant="outline" onClick={() => {
+          if (!details) return
+          setRaw((current) => fillFromDetails(current, details))
+          setKnown({ id, details, filled: true })
+        }}>{t('settings.models.sheet.fillNow')}</Button>
+      </div> : null}
       <SettingsGroup>
         <SettingsField label={t('settings.models.editor.modelId')} htmlFor="model-sheet-id"
           error={showIssues && issue ? t(issue === 'required' ? 'settings.models.editor.modelIdRequired' : 'settings.models.editor.modelIdDuplicate') : undefined}>
@@ -151,12 +170,12 @@ export function ModelSheet({ open, onOpenChange, initial, isNew, takenIds, looku
         </SettingsField>
       </SettingsGroup>
 
-      <SettingsGroup title={t('settings.models.editor.price')} info={t('settings.models.editor.priceHint')}
-        footer={cost ? t('settings.models.editor.priceSummary', {
+      <SettingsGroup title={t('settings.models.editor.price')} info={t('settings.models.editor.priceHint')} data-model-sheet-price={referencePrice ? 'reference' : cost ? 'set' : 'unset'}
+        footer={cost ? [t('settings.models.editor.priceSummary', {
           input: price.format(typeof cost.input === 'number' ? cost.input : 0), output: price.format(typeof cost.output === 'number' ? cost.output : 0),
-        }) : undefined}>
+        }), referencePrice && details ? referencePriceText(t, details) : null].filter(Boolean).join(' ') : t('settings.models.editor.priceUnsetFooter')}>
         {COST_FIELDS.map((field) => <SettingsField key={field} label={t(`settings.models.editor.cost.${field}` as MessageKey)} htmlFor={`model-sheet-cost-${field}`}>
-          <NumberInput id={`model-sheet-cost-${field}`} value={typeof cost?.[field] === 'number' ? cost[field] as number : undefined} placeholder="0"
+          <NumberInput id={`model-sheet-cost-${field}`} value={typeof cost?.[field] === 'number' ? cost[field] as number : undefined} placeholder={t('settings.models.editor.priceUnset')}
             className="w-44 font-mono tabular-nums" label={t(`settings.models.editor.cost.${field}` as MessageKey)}
             onChange={(value) => setRaw((current) => withCost(current, field, value))} />
         </SettingsField>)}

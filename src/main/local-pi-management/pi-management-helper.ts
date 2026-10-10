@@ -22,7 +22,7 @@ import {
   type PiResourceKind,
   type PiResourceSummary,
 } from '../../shared/pi-integrations'
-import { MODEL_CATALOG_LIMIT, modelCatalogEntrySchema } from '../../shared/model-catalog'
+import { CATALOG_THINKING_LEVELS, MODEL_CATALOG_LIMIT, modelCatalogEntrySchema } from '../../shared/model-catalog'
 import { builtinProviderSchema } from '../../shared/models-config'
 import { compatibilityForPackage } from '../../shared/pi-package-adapters'
 import {
@@ -343,6 +343,8 @@ async function modelCatalog(
         ...(model.contextWindow ? { contextWindow: model.contextWindow } : {}),
         ...(model.maxTokens ? { maxTokens: model.maxTokens } : {}),
         ...(model.cost ? { cost: { input: model.cost.input, output: model.cost.output, cacheRead: model.cost.cacheRead, cacheWrite: model.cost.cacheWrite } } : {}),
+        ...(model.thinkingLevelMap ? { thinkingLevelMap: Object.fromEntries(Object.entries(model.thinkingLevelMap)
+          .filter(([level, value]) => (CATALOG_THINKING_LEVELS as readonly string[]).includes(level) && (value === null || (typeof value === 'string' && value.length > 0 && value.length <= 64)))) } : {}),
       })
       return entry.success ? [entry.data] : []
     }).slice(0, MODEL_CATALOG_LIMIT)
