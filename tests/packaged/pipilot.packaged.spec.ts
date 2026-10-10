@@ -710,26 +710,18 @@ test('runs the bundled Pi SDK workflow without system npm from the packaged appl
     })
 
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
-    await page
-      .getByRole('region', { name: 'Settings', exact: true })
-      .getByRole('button', { name: 'Integrations', exact: true })
-      .click()
-    const integrationsMain = page.getByRole('main', {
-      name: 'Integrations',
-      exact: true,
-    })
-    await expect(integrationsMain.getByRole('heading', {
-      name: 'Integrations',
-      exact: true,
-    })).toBeVisible()
-    await expect(integrationsMain.getByText(`Pi ${SUPPORTED_PI_VERSION}`, { exact: false })).toBeVisible()
-    await integrationsMain.getByRole('tab', {
+    const settingsNavigation = page.getByRole('region', { name: 'Settings', exact: true })
+    await settingsNavigation.getByRole('button', { name: 'Packages', exact: true }).click()
+    const packagesMain = page.getByRole('main', {
       name: 'Packages',
       exact: true,
-    }).click()
-    await expect(integrationsMain.getByRole('button', {
+    })
+    await expect(packagesMain.getByRole('button', {
       name: /packaged-fixture-package/iu,
     }).first()).toBeVisible()
+    await settingsNavigation.getByRole('button', { name: 'About', exact: true }).click()
+    const aboutMain = page.getByRole('main', { name: 'About', exact: true })
+    await expect(aboutMain.getByText(`Pi ${SUPPORTED_PI_VERSION}`, { exact: false })).toBeVisible()
     await page.getByRole('button', { name: 'Back to app', exact: true }).click()
 
     await page.getByRole('button', { name: 'New chat', exact: true }).click()
@@ -1249,14 +1241,14 @@ test('runs the installed stable MCP command headlessly through the private bridg
       expect(launcher.managed).toBe(false)
       expect(await readFile(legacyWindowsReceiptPath, 'utf8')).toBe(legacyWindowsReceipt)
       await page.getByRole('button', { name: 'Settings', exact: true }).click()
-      await page.getByRole('region', { name: 'Settings', exact: true })
-        .getByRole('button', { name: 'Integrations', exact: true }).click()
-      await page.getByRole('tab', { name: 'External Control', exact: true }).click()
-      await expect(page.getByText('Unavailable', { exact: true })).toHaveCount(0)
+      const settingsNavigation = page.getByRole('region', { name: 'Settings', exact: true })
+      await settingsNavigation.getByRole('button', { name: 'External Control', exact: true }).click()
+      const externalControlMain = page.getByRole('main', { name: 'External Control', exact: true })
+      await expect(externalControlMain.getByText('Unavailable', { exact: true })).toHaveCount(0)
       if (launcher.state === 'missing') {
-        await expect(page.getByRole('button', { name: 'Install', exact: true })).toBeVisible()
+        await expect(externalControlMain.getByRole('button', { name: 'Install', exact: true })).toBeVisible()
       } else {
-        await expect(page.getByRole('button', { name: 'Uninstall', exact: true })).toHaveCount(0)
+        await expect(externalControlMain.getByRole('button', { name: 'Uninstall', exact: true })).toHaveCount(0)
       }
       await page.screenshot({ path: testInfo.outputPath('windows-legacy-launcher.png') })
       if (process.env.CI === 'true') {
