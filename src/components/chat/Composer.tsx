@@ -1616,17 +1616,8 @@ function SessionComposer({
         }}
         className="group/item py-1.5 data-[disabled]:opacity-100 data-[disabled]:text-muted-foreground"
       >
-        <span
-          aria-hidden
-          className={cn(
-            'grid size-[22px] shrink-0 place-items-center rounded-[6px] bg-[linear-gradient(to_bottom,rgb(255_255_255/0.2),transparent)] text-white',
-            mode === 'plan' ? 'bg-primary' : 'bg-[#34c759]',
-            'group-data-[disabled]/item:opacity-45',
-            blocked === 'notInstalled' && 'opacity-50',
-          )}
-        >
-          <Icon className="size-3.5 text-white" />
-        </span>
+        {/* The same plain glyph as the menu's other items; a mode is a command, not an app. */}
+        <Icon aria-hidden className={cn('self-start mt-0.5', blocked === 'notInstalled' && 'opacity-50')} />
         <span className="flex min-w-0 flex-1 flex-col">
           <span className={cn(blocked === 'notInstalled' && 'text-muted-foreground')}>{label}</span>
           <span className="text-micro text-muted-foreground">{hint}</span>

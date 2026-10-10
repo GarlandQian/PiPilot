@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { filterIntegrationPackages, filterIntegrationResources } from '../../src/components/settings/integrations/catalog-model'
+import { filterIntegrationPackages, filterIntegrationResources } from '../../src/components/settings/packages/catalog-model'
 import type { PiPackageSummary, PiResourceSummary } from '../../src/shared/pi-integrations'
 
 const packages: PiPackageSummary[] = [

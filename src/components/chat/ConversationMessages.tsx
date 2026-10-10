@@ -296,7 +296,8 @@ export const ThinkingMessage = React.memo(function ThinkingMessage({
         </button>
       </CollapsibleTrigger>
       <CollapsibleContent id={contentId}>
-        <div className="mac-box mt-1.5 mb-2 px-4 py-3 text-caption leading-relaxed text-muted-foreground">
+        {/* An aside, not a card: a thin rule and quieter text, as in Codex. */}
+        <div className="mt-1 mb-2 ml-[11px] border-l-2 border-border py-0.5 pl-3.5 text-caption leading-relaxed text-muted-foreground" data-thinking-content>
           <MarkdownContent markdown={turn.text} streaming={streaming} />
         </div>
       </CollapsibleContent>
@@ -571,9 +572,12 @@ interface ResponseActionsProps {
   onFork: (turn: Extract<Turn, { kind: 'response-actions' }>) => void
   canFork: boolean
   onExportResponse?: (anchorEntryId: string) => void
+  /** Shown only while the reply is hovered or focused (Codex); the newest reply keeps them. */
+  hoverOnly?: boolean
 }
 
 export const ResponseActions = React.memo(function ResponseActions({
+  hoverOnly = false,
   turn,
   forkBusy,
   forking,
@@ -610,7 +614,8 @@ export const ResponseActions = React.memo(function ResponseActions({
     : t('chat.response.forkUnavailable')
 
   return (
-    <div className="flex min-h-9 items-center gap-1 text-muted-foreground">
+    <div className="flex min-h-9 items-center gap-1 text-muted-foreground" data-response-actions
+      data-hover-only={hoverOnly && copyState === 'idle' && !forking ? true : undefined}>
       <Tooltip>
         <TooltipTrigger asChild>
           <Button

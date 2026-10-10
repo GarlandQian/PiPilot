@@ -18,11 +18,14 @@ export const COMPACT_SETTINGS_MAX_WIDTH = 959
 export const SETTINGS_ROUTE_IDS = [
   'general',
   'appearance',
-  'language',
-  'models',
-  'integrations',
-  'scheduled-tasks',
   'terminal',
+  'models',
+  'mcp',
+  'packages',
+  'resources',
+  'local-environment',
+  'scheduled-tasks',
+  'external-control',
   'about',
 ] as const
 
@@ -134,7 +137,13 @@ export function normalizeAppRoute(value: unknown): AppRoute {
       (value as { context?: unknown }).context === 'activity'
     )
   ) return DEFAULT_APP_ROUTE
-  if (value === 'integrations') return { workspace: 'settings', section: 'integrations' }
+  if (value === 'integrations') return { workspace: 'settings', section: 'mcp' }
+  // Language became a row of General; Integrations became separate panes, MCP Servers first.
+  if (typeof value === 'object' && value !== null && (value as { workspace?: unknown }).workspace === 'settings') {
+    const section = (value as { section?: unknown }).section
+    if (section === 'language') return { workspace: 'settings', section: 'general' }
+    if (section === 'integrations') return { workspace: 'settings', section: 'mcp' }
+  }
   if (value === 'settings') return { workspace: 'settings', section: 'appearance' }
   return DEFAULT_APP_ROUTE
 }

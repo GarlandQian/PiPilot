@@ -4,7 +4,6 @@ import {
   SETTINGS_SECTIONS,
   type SettingsSectionId,
 } from '@/components/settings/settings-navigation'
-import type { IntegrationsTabId } from '@/components/settings/IntegrationsSettings'
 import type { MessageKey } from '@/i18n'
 import { APP_SHORTCUTS } from './app-shortcuts'
 import type { ShortcutSpec } from './keyboard-shortcuts'
@@ -22,7 +21,6 @@ export interface CommandContext {
   toggleInspector(): void
   newSession(): void
   openSettingsSection(section: SettingsSectionId): void
-  openIntegrationsTab(tab: IntegrationsTabId): void
   stopGeneration(): void
   selectSession(item: SidebarConversationItem): void
   /** A project is open, so review and files are available. */
@@ -165,12 +163,6 @@ export const NAVIGATION_COMMANDS: readonly AppCommand[] = [
     shortcut: '2',
     keywords: 'preferences options',
     run: (ctx) => ctx.setRail('settings'),
-  },
-  {
-    id: 'nav:integrations-mcp',
-    titleKey: 'palette.command.openMcp',
-    keywords: 'mcp servers json',
-    run: (ctx) => ctx.openIntegrationsTab('mcp'),
   },
 ]
 

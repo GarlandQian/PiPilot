@@ -327,8 +327,7 @@ test('uses one keyboard-safe Composer picker and middle-column extension surface
     await page.getByRole('button', { name: 'Send', exact: true }).click()
     // Settings opened (the sidebar is hidden here, so the title bar leads back).
     await expect(page.getByRole('button', { name: 'Back to app', exact: true })).toBeVisible()
-    await expect(page.getByRole('tab', { name: 'MCP', exact: true }))
-      .toHaveAttribute('aria-selected', 'true')
+    await expect(page.getByRole('main', { name: 'MCP Servers', exact: true })).toBeVisible()
   } finally {
     await electronApp.close()
     await piFixture.close()

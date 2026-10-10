@@ -52,12 +52,14 @@ export interface ConversationJumpRequest {
 const NO_TURN_KEYS: ReadonlySet<string> = new Set()
 
 /** Completed rows receive stable data and flags while the live row advances. */
-const ConversationRow = React.memo(function ConversationRow({ response, anchorNodes, highlighted,
+const ConversationRow = React.memo(function ConversationRow({ response, latest, anchorNodes, highlighted,
   sessionKey, selectedSubagentId, subagentFocusRequest, onOpenSubagent, onOpenCommand, onPlanAction, onExportResponse, onExportMessage,
   animateAgentKeys, streamingAgentKeys, hiddenResponseActionIds, motionEnabled,
   onTypingChange, thinkingDurations, forkBusy, forkingId, onFork, canFork, searchRequest,
 }: Pick<MessageListProps, 'sessionKey' | 'selectedSubagentId' | 'subagentFocusRequest' | 'onOpenSubagent' | 'onOpenCommand' | 'onPlanAction' | 'onExportResponse' | 'onExportMessage'> & {
   response: ResponsePresentation
+  /** The newest reply keeps its actions in view; earlier ones show them on hover. */
+  latest: boolean
   anchorNodes: Map<string, HTMLDivElement>
   highlighted: boolean
   searchRequest?: ConversationJumpRequest
@@ -97,7 +99,7 @@ const ConversationRow = React.memo(function ConversationRow({ response, anchorNo
       case 'plan': return <PlanModeMessage turn={turn} onAction={onPlanAction} />
       case 'activity': return <ResponseActivityRow activity={turn.activity} />
       case 'response-actions': return hiddenResponseActionIds.has(turn.id) ? null : <ResponseActions
-        turn={turn} forkBusy={forkBusy} forking={forkingId === turn.id} onFork={onFork} canFork={Boolean(turn.forkEntryId && canFork)} onExportResponse={onExportResponse} />
+        turn={turn} forkBusy={forkBusy} forking={forkingId === turn.id} onFork={onFork} canFork={Boolean(turn.forkEntryId && canFork)} onExportResponse={onExportResponse} hoverOnly={!latest} />
       default: return null
     }
   }
@@ -334,9 +336,10 @@ export function MessageList({
                 {t('chat.historyTruncated')}
               </div>
             )}
-            {projectedResponseGroups.map((response) => <ConversationRow
+            {projectedResponseGroups.map((response, index) => <ConversationRow
               key={`${sessionKey}:${response.id}`}
               response={response}
+              latest={index === projectedResponseGroups.length - 1}
               sessionKey={sessionKey}
               subagentFocusRequest={subagentFocusRequest}
               highlighted={Boolean(response.anchorEntryId && highlightedEntryId === response.anchorEntryId)}

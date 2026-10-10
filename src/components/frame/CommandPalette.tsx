@@ -1,17 +1,24 @@
 import * as React from 'react'
 import {
-  TbCheck,
   TbArrowLeft,
-  TbLoader2,
+  TbArrowsMaximize,
+  TbCheck,
   TbCpu,
+  TbFileSearch,
+  TbFolder,
+  TbGitCompare,
+  TbLayoutBottombar,
+  TbLayoutColumns,
   TbLayoutSidebar,
   TbLayoutSidebarRight,
+  TbListDetails,
+  TbLoader2,
   TbMessage,
   TbMessagePlus,
   TbMessages,
   TbPlayerStop,
-  TbServer,
   TbSettings,
+  TbTerminal2,
 } from 'react-icons/tb'
 import {
   CommandDialog,
@@ -23,6 +30,7 @@ import {
   CommandShortcut,
 } from '@/components/ui/command'
 import { SETTINGS_SECTIONS } from '@/components/settings/settings-navigation'
+import { SettingsIconTile } from '@/components/settings/common'
 import { useT } from '@/i18n'
 import {
   ACTION_COMMANDS,
@@ -48,18 +56,28 @@ export interface CommandPaletteProps {
   sessions: readonly SessionCommandEntry[]
 }
 
+/** Every command has its own glyph, as in Raycast and Spotlight. */
 const COMMAND_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   'action:new-session': TbMessagePlus,
   [CHANGE_MODEL_COMMAND_ID]: TbCpu,
   'action:toggle-context-panel': TbLayoutSidebar,
   'action:toggle-inspector': TbLayoutSidebarRight,
+  'action:toggle-bottom-panel': TbLayoutBottombar,
+  'action:toggle-terminal': TbTerminal2,
+  'action:open-review': TbGitCompare,
+  'action:search-files': TbFileSearch,
+  'action:toggle-file-tree': TbFolder,
+  'action:cycle-layout': TbLayoutColumns,
+  'action:toggle-full-view': TbArrowsMaximize,
+  'action:toggle-summary': TbListDetails,
   'action:stop-generation': TbPlayerStop,
   'nav:sessions': TbMessages,
   'nav:settings': TbSettings,
-  'nav:integrations-mcp': TbServer,
 }
 
-const SETTINGS_ICONS = new Map(SETTINGS_SECTIONS.map((meta) => [`settings:${meta.id}`, meta.icon]))
+/** What most people reach for first: the conversation's own commands, then finding things. */
+const SUGGESTED = new Set(['action:new-session', CHANGE_MODEL_COMMAND_ID, 'action:stop-generation', 'action:open-review', 'action:search-files'])
+const SETTINGS_META = new Map(SETTINGS_SECTIONS.map((meta) => [`settings:${meta.id}`, meta]))
 
 type PalettePage = 'root' | 'models'
 
@@ -118,8 +136,14 @@ export function CommandPalette({ open, onOpenChange, ctx, sessions }: CommandPal
   const sessionCommands = buildSessionCommands(sessions, ctx)
   const settingsCommands = buildSettingsCommands()
 
+  const suggestedCommands = actionCommands.filter((command) => SUGGESTED.has(command.id))
+    .sort((left, right) => [...SUGGESTED].indexOf(left.id) - [...SUGGESTED].indexOf(right.id))
+  const viewCommands = [...actionCommands.filter((command) => !SUGGESTED.has(command.id)), ...NAVIGATION_COMMANDS.filter((command) => command.id !== 'nav:settings')]
+  const settingsGroup = [...NAVIGATION_COMMANDS.filter((command) => command.id === 'nav:settings'), ...settingsCommands]
+
   const renderCommand = (command: AppCommand) => {
-    const Icon = COMMAND_ICONS[command.id] ?? SETTINGS_ICONS.get(command.id) ?? TbSettings
+    const section = SETTINGS_META.get(command.id)
+    const Icon = COMMAND_ICONS[command.id] ?? TbSettings
     return (
       <CommandItem
         key={command.id}
@@ -134,7 +158,7 @@ export function CommandPalette({ open, onOpenChange, ctx, sessions }: CommandPal
           runCommand(() => command.run(ctx))
         }}
       >
-        <Icon aria-hidden />
+        {section ? <SettingsIconTile section={section} className="size-[18px] rounded-[5px]" /> : <Icon aria-hidden />}
         <span className="truncate">{t(command.titleKey)}</span>
         {command.shortcut
           ? <CommandShortcut>{typeof command.shortcut === 'string' ? primaryShortcut(command.shortcut) : formatShortcut(command.shortcut)}</CommandShortcut>
@@ -209,8 +233,8 @@ export function CommandPalette({ open, onOpenChange, ctx, sessions }: CommandPal
       ) : (
         <CommandList>
           <CommandEmpty>{t('palette.empty')}</CommandEmpty>
-          <CommandGroup heading={t('palette.group.actions')}>
-            {[...actionCommands, ...NAVIGATION_COMMANDS].map(renderCommand)}
+          <CommandGroup heading={t('palette.group.suggested')}>
+            {suggestedCommands.map(renderCommand)}
           </CommandGroup>
           {sessionCommands.length > 0 && (
             <CommandGroup heading={t('palette.group.sessions')}>
@@ -230,8 +254,11 @@ export function CommandPalette({ open, onOpenChange, ctx, sessions }: CommandPal
               ))}
             </CommandGroup>
           )}
+          <CommandGroup heading={t('palette.group.view')}>
+            {viewCommands.map(renderCommand)}
+          </CommandGroup>
           <CommandGroup heading={t('palette.group.settings')}>
-            {settingsCommands.map(renderCommand)}
+            {settingsGroup.map(renderCommand)}
           </CommandGroup>
         </CommandList>
       )}

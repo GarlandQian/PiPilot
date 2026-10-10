@@ -33,17 +33,17 @@ test('adds MCP servers from a template, pasted configuration and other apps, and
     page.on('pageerror', (error) => errors.push(error.message))
     await page.setViewportSize({ width: 1280, height: 860 })
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
-    await page.locator('[data-context-panel-nav-id="integrations"]').click()
-    const settings = page.getByRole('main', { name: 'Integrations', exact: true })
-    await settings.getByRole('tab', { name: 'MCP', exact: true }).click()
-    const panel = settings.getByRole('tabpanel', { name: 'MCP', exact: true })
+    await page.locator('[data-context-panel-nav-id="mcp"]').click()
+    const panel = page.getByRole('main', { name: 'MCP Servers', exact: true })
     await expect(panel.locator('[data-mcp-empty]')).toBeVisible()
-    const header = panel.locator('[data-mcp-settings] > section > header')
-    const footer = panel.locator('[data-models-editor-footer]')
+    const header = panel.locator('[data-mcp-server-list] header')
+    const footer = panel.locator('[data-settings-actions]')
+    const addSheet = page.locator('[data-mcp-add-page]')
 
     // A template fills in the command; saving writes it and applies it.
     await header.getByRole('button', { name: 'Add Server…', exact: true }).click()
-    await panel.locator('[data-mcp-template="playwright"]').click()
+    await addSheet.locator('[data-mcp-template="playwright"]').click()
+    await expect(addSheet).toHaveCount(0)
     const editor = panel.locator('[data-mcp-server-editor="new"]')
     await expect(editor.getByRole('textbox', { name: 'Server name', exact: true })).toHaveValue('playwright')
     await expect(editor.getByRole('textbox', { name: 'Arguments', exact: true })).toHaveValue('-y\n@playwright/mcp@latest')
@@ -58,25 +58,26 @@ test('adds MCP servers from a template, pasted configuration and other apps, and
 
     // Pasted configuration: a server with a name already used is kept as it is.
     await header.getByRole('button', { name: 'Add Server…', exact: true }).click()
-    await panel.getByRole('radio', { name: 'Paste Configuration', exact: true }).click()
-    await panel.getByRole('textbox', { name: 'Configuration to paste', exact: true }).fill(JSON.stringify({ mcpServers: {
+    await addSheet.getByRole('radio', { name: 'Paste Configuration', exact: true }).click()
+    await addSheet.getByRole('textbox', { name: 'Configuration to paste', exact: true }).fill(JSON.stringify({ mcpServers: {
       playwright: { command: 'npx', args: ['other'] },
       fetch: { type: 'stdio', command: 'uvx', args: ['mcp-server-fetch'] },
     } }))
-    await expect(panel.getByRole('status').filter({ hasText: 'Found 2 servers' })).toBeVisible()
-    await expect(panel.locator('[data-mcp-import-candidate="playwright"]')).toContainText('Exists, kept')
-    await footer.getByRole('button', { name: 'Add 1 Servers', exact: true }).click()
+    await expect(addSheet.getByRole('status').filter({ hasText: 'Found 2 servers' })).toBeVisible()
+    await expect(addSheet.locator('[data-mcp-import-candidate="playwright"]')).toContainText('Exists, kept')
+    await addSheet.getByRole('button', { name: 'Add 1 Servers', exact: true }).click()
     await expect(panel.locator('[data-mcp-server="fetch"]')).toBeVisible()
     expect(await servers()).toMatchObject({ playwright: { args: ['-y', '@playwright/mcp@latest'], enabled: false }, fetch: { command: 'uvx', args: ['mcp-server-fetch'] } })
 
     // Other apps' servers are read, never changed; SSE ones Pi cannot use start unchosen.
-    await header.getByRole('button', { name: 'Import from Other Apps…', exact: true }).click()
-    const imports = panel.locator('[data-mcp-import-page]')
+    await header.getByRole('button', { name: 'More', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Import from Other Apps…', exact: true }).click()
+    const imports = page.locator('[data-mcp-import-page]')
     await expect(imports.locator('[data-mcp-import-source="cursor"]')).toBeVisible()
     await expect(imports.locator('[data-mcp-import-source="codex"]')).toBeVisible()
     await expect(imports.locator('[data-mcp-import-candidate="legacy"]')).toContainText('Uses SSE')
     await expect(imports.getByRole('checkbox', { name: 'legacy', exact: true })).not.toBeChecked()
-    await footer.getByRole('button', { name: 'Import 2 Servers', exact: true }).click()
+    await imports.getByRole('button', { name: 'Import 2 Servers', exact: true }).click()
     await expect(panel.locator('[data-mcp-server="docs"]')).toBeVisible()
     expect(await servers()).toMatchObject({ browser: { command: 'npx', args: ['@browser/mcp'] }, docs: { command: 'uvx', args: ['docs-mcp'] } })
     expect((await servers()).legacy).toBeUndefined()

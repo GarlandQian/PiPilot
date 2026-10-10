@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { TbFileSearch, TbFolder, TbGitCompare, TbMessages, TbRobot, TbTerminal, TbTerminal2 } from 'react-icons/tb'
+import { TbFileSearch, TbFolder, TbGitCompare, TbMessages, TbPlayerPlay, TbRobot, TbTerminal, TbTerminal2 } from 'react-icons/tb'
 import { useT } from '@/i18n'
 import { APP_SHORTCUTS } from '@/lib/app-shortcuts'
 import { formatShortcut } from '@/lib/keyboard-shortcuts'
@@ -38,6 +38,7 @@ export function usePanelStrip({ state, projectAvailable, onOpenReview, onOpenFil
       sidechat: [t('inspector.tab.sidechat'), <TbMessages key="icon" />],
       subagent: [t('inspector.tab.subagent'), <TbRobot key="icon" />],
       command: [t('inspector.tab.command'), <TbTerminal key="icon" />],
+      action: [t('projectActions.output'), <TbPlayerPlay key="icon" />],
     } as const
     const [label, icon] = labels[tab.kind]
     return { id: tab.id, label, icon, ...(tab.kind === 'terminal' && terminalSlot ? { slot: terminalSlot } : {}) }

@@ -32,7 +32,7 @@ test('settings preferences support search, custom fonts, reset confirmation and 
     await expect(navigation.getByRole('button', { name: 'Appearance', exact: true })).toBeFocused()
     await page.keyboard.press('Enter')
     const appearance = page.getByRole('main', { name: 'Appearance', exact: true })
-    await expect(appearance.locator('[data-appearance-preview]')).toBeVisible()
+    await expect(appearance.locator('[data-appearance-theme]')).toBeVisible()
     await appearance.getByRole('combobox', { name: 'UI font', exact: true }).click()
     await page.getByRole('option', { name: 'Custom…', exact: true }).click()
     const customUi = appearance.getByRole('textbox', { name: 'Custom UI font name', exact: true })
@@ -44,10 +44,10 @@ test('settings preferences support search, custom fonts, reset confirmation and 
     await page.getByRole('option', { name: 'Custom…', exact: true }).click()
     await expect(appearance.getByRole('textbox', { name: 'Custom monospace font name', exact: true })).toBeVisible()
     await appearance.getByRole('textbox', { name: 'Custom monospace font name', exact: true }).fill('Example Mono')
-    await appearance.getByRole('button', { name: 'Reset appearance settings', exact: true }).click()
+    await appearance.getByRole('button', { name: 'Reset to defaults', exact: true }).click()
     await page.getByRole('alertdialog').getByRole('button', { name: 'Cancel', exact: true }).click()
     await expect(customUi).toHaveValue('Example Sans')
-    await appearance.getByRole('button', { name: 'Reset appearance settings', exact: true }).click()
+    await appearance.getByRole('button', { name: 'Reset to defaults', exact: true }).click()
     await page.getByRole('alertdialog').getByRole('button', { name: 'Reset', exact: true }).click()
     await expect(customUi).toHaveCount(0)
     await expect.poll(() => page.evaluate(() => window.pipilot!.settings.get().then((result) => result.settings.appearance))).toEqual(DEFAULT_SETTINGS.appearance)
@@ -72,7 +72,7 @@ test('settings preferences support search, custom fonts, reset confirmation and 
     await expect(terminal.locator('[data-terminal-font-preview]')).toHaveAttribute('data-terminal-font-family', 'Fira Code')
     await page.screenshot({ path: testInfo.outputPath('settings-terminal-light.png') })
 
-    for (const section of ['general', 'language', 'about', 'appearance']) {
+    for (const section of ['general', 'about', 'appearance']) {
       await page.locator(`[data-context-panel-nav-id="${section}"]`).click()
       await page.locator(`[data-settings-section="${section}"]`).evaluate((element) => { element.scrollTop = 0 })
       await page.screenshot({ path: testInfo.outputPath(`settings-${section}-light.png`) })

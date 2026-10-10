@@ -77,8 +77,12 @@ test('runs a saved schedule in the background, preserves history and never repla
     await page.getByRole('region', { name: 'Settings', exact: true }).getByRole('button', { name: 'Scheduled tasks', exact: true }).click()
     const panel = page.locator('[data-scheduled-tasks]')
     await panel.getByRole('button', { name: 'New scheduled task', exact: true }).click()
-    // The editor is a sheet (dialog) layered above the settings pane.
-    const sheet = page.getByRole('dialog', { name: 'New scheduled task', exact: true })
+    // A task is edited on a page of its own; its actions sit in the row's ⋯ menu.
+    const sheet = page.locator('[data-scheduled-task-page]')
+    const taskAction = async (name: string) => {
+      await panel.getByRole('button', { name: 'Actions for Scheduled fixture', exact: true }).click()
+      await page.getByRole('menuitem', { name, exact: true }).click()
+    }
     await sheet.getByLabel('Name', { exact: true }).fill('Scheduled fixture')
     const targetPicker = sheet.getByLabel('Existing conversation', { exact: true })
     try { await expect(targetPicker.locator('option').filter({ hasText: 'Scheduled target' })).toHaveCount(1) }
@@ -107,7 +111,7 @@ test('runs a saved schedule in the background, preserves history and never repla
       state.__scheduledSounds = 0
       state.__scheduledBackground = true
     })
-    await panel.getByRole('button', { name: 'Run now', exact: true }).click()
+    await taskAction('Run now')
     try { await expect.poll(() => page.evaluate(async () => (await window.pipilot!.scheduledTasks.get()).runs[0]?.status), { timeout: 20_000 }).toBe('completed') }
     catch (error) {
       const status = await page.evaluate(() => window.pipilot!.localPi.runtime.status())
@@ -122,16 +126,16 @@ test('runs a saved schedule in the background, preserves history and never repla
     await expect(panel.locator('strong').filter({ hasText: `Fixture response: ${prompt}` })).toHaveCount(1)
     await panel.getByRole('heading', { name: 'Scheduled report', exact: true }).scrollIntoViewIfNeeded()
     await page.screenshot({ path: testInfo.outputPath('scheduled-success.png') })
-    await panel.getByRole('button', { name: 'Pause', exact: true }).click()
+    await taskAction('Pause')
     const editPrompt = async (value: string) => {
-      await panel.getByRole('button', { name: 'Edit task', exact: true }).click()
-      const editSheet = page.getByRole('dialog', { name: 'Edit task', exact: true })
+      await taskAction('Edit task')
+      const editSheet = page.locator('[data-scheduled-task-page]')
       await editSheet.getByLabel('Prompt', { exact: true }).fill(value)
       await editSheet.getByRole('button', { name: 'Save task', exact: true }).click()
       await expect(editSheet).toHaveCount(0)
     }
     await editPrompt(failedPrompt)
-    await panel.getByRole('button', { name: 'Run now', exact: true }).click()
+    await taskAction('Run now')
     await expect.poll(() => page.evaluate(async () => (await window.pipilot!.scheduledTasks.get()).runs[1]?.status)).toBe('failed')
     const failed = await page.evaluate(async () => (await window.pipilot!.scheduledTasks.get()).runs[1])
     expect(failed.error).toContain('Fixture provider rejected this scheduled request.')
@@ -144,7 +148,7 @@ test('runs a saved schedule in the background, preserves history and never repla
     ])
     expect(await app!.evaluate(() => (globalThis as typeof globalThis & { __scheduledSounds: number }).__scheduledSounds)).toBe(1)
     await editPrompt(cancelledPrompt)
-    await panel.getByRole('button', { name: 'Run now', exact: true }).click()
+    await taskAction('Run now')
     await expect.poll(() => fixture.prompts.filter((value) => value === cancelledPrompt).length).toBe(1)
     await expect.poll(() => page.evaluate(async () => (await window.pipilot!.scheduledTasks.get()).runs[2]?.status)).toBe('accepted')
     // A user may open the officially selected target and stop its active turn.
@@ -159,7 +163,7 @@ test('runs a saved schedule in the background, preserves history and never repla
     await expect.poll(() => page.evaluate(async () => (await window.pipilot!.scheduledTasks.get()).runs[2]?.status)).toBe('aborted')
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
     await editPrompt(interruptedPrompt)
-    await panel.getByRole('button', { name: 'Run now', exact: true }).click()
+    await taskAction('Run now')
     await expect.poll(() => page.evaluate(async () => (await window.pipilot!.scheduledTasks.get()).runs[3]?.status)).toBe('accepted')
     await expect.poll(() => fixture.prompts.filter((value) => value === interruptedPrompt).length).toBe(1)
     const closed = app!.waitForEvent('close')
@@ -180,7 +184,8 @@ test('runs a saved schedule in the background, preserves history and never repla
     await page.getByRole('region', { name: 'Settings', exact: true }).getByRole('button', { name: 'Scheduled tasks', exact: true }).click()
     await expect(page.locator('[data-scheduled-tasks]')).toContainText('Outcome unknown')
     await page.screenshot({ path: testInfo.outputPath('scheduled-tasks-recovered.png') })
-    await page.getByRole('button', { name: 'Delete Scheduled fixture', exact: true }).click()
+    await page.getByRole('button', { name: 'Actions for Scheduled fixture', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Delete Scheduled fixture', exact: true }).click()
     await page.getByRole('alertdialog').getByRole('button', { name: 'Delete scheduled task', exact: true }).click()
     await expect.poll(() => page.evaluate(async () => (await window.pipilot!.scheduledTasks.get()).tasks.length)).toBe(0)
     expect((await page.evaluate(() => window.pipilot!.scheduledTasks.get())).runs).toHaveLength(4)

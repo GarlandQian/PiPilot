@@ -26,6 +26,8 @@ export interface PiIntegrationsState {
   status: PiIntegrationsStatus
   scope: PiIntegrationScope
   snapshot: PiIntegrationSnapshot | null
+  /** Global packages and resources while a project is open (the same as `snapshot` otherwise). */
+  globalSnapshot: PiIntegrationSnapshot | null
   operation: PiIntegrationOperation | null
   errorCode: string | null
   errorMessage: string | null
@@ -34,15 +36,19 @@ export interface PiIntegrationsState {
 export interface PiIntegrationsActions {
   checkUpdates(): Promise<void>
   clearError(): void
-  install(source: string): Promise<void>
+  /** Install into the open project, or into Global with `target`. */
+  install(source: string, target?: PiPackageTarget): Promise<void>
   loadScope(scope: PiIntegrationScope): Promise<PiIntegrationSnapshot | null>
   refresh(): Promise<void>
-  remove(source: string): Promise<void>
+  remove(source: string, target?: PiPackageTarget): Promise<void>
   restart(): Promise<void>
   setRetryEnabled(enabled: boolean): Promise<PiIntegrationOperationResult | null>
   setScope(scope: PiIntegrationScope): void
-  update(source: string): Promise<void>
+  update(source: string, target?: PiPackageTarget): Promise<void>
 }
+
+/** Where a package operation applies: the open project's settings or the global ones. */
+export type PiPackageTarget = 'global' | 'project'
 
 export interface PiIntegrationsStoreValue
   extends PiIntegrationsState,
@@ -134,6 +140,7 @@ export function PiIntegrationsProvider({ children }: { children: React.ReactNode
     status: adapter ? 'checking' : 'unavailable',
     scope: initialScope(workspace.activeScope),
     snapshot: null,
+    globalSnapshot: null,
     operation: null,
     errorCode: adapter ? null : 'PIPILOT_PRELOAD_UNAVAILABLE',
     errorMessage: adapter ? null : 'The PiPilot desktop bridge is unavailable.',
@@ -180,6 +187,7 @@ export function PiIntegrationsProvider({ children }: { children: React.ReactNode
       return {
         ...previous,
         snapshot,
+        globalSnapshot: snapshot.scope.kind === 'global' ? snapshot : previous.globalSnapshot,
         status: failed ? 'error' : statusFor(snapshot, previous.operation),
         errorCode: failed ? 'PI_INTEGRATIONS_OPERATION_FAILED' : null,
         errorMessage: failed ? failed.message ?? 'The operation failed.' : null,
@@ -241,6 +249,7 @@ export function PiIntegrationsProvider({ children }: { children: React.ReactNode
       ...previous,
       scope,
       snapshot: null,
+      globalSnapshot: scope.kind === 'global' ? null : previous.globalSnapshot,
       operation: null,
       status: adapter ? 'loading' : 'unavailable',
       errorCode: null,
@@ -248,16 +257,38 @@ export function PiIntegrationsProvider({ children }: { children: React.ReactNode
     }))
   }, [adapter, updateState])
 
+  // Settings show the open project's items together with the global ones, so the scope follows the open project.
   React.useEffect(() => {
-    const current = stateRef.current.scope
-    if (current.kind !== 'project') return
-    if (
-      workspace.activeScope.kind !== 'project' ||
-      workspace.activeScope.workspaceId !== current.workspaceId
-    ) {
-      setScope(initialScope(workspace.activeScope))
-    }
+    setScope(initialScope(workspace.activeScope))
   }, [setScope, workspace.activeScope])
+
+  /** The global side while a project is open: its own packages, read beside the project's. */
+  const refreshGlobal = React.useCallback(async () => {
+    if (!adapter || stateRef.current.scope.kind !== 'project') return
+    try {
+      const snapshot = await adapter.load({ kind: 'global' })
+      if (stateRef.current.scope.kind === 'project') updateState((previous) => ({ ...previous, globalSnapshot: snapshot }))
+    } catch {
+      // The project's own view still works; the global part stays as it was.
+    }
+  }, [adapter, updateState])
+
+  /** A package operation on Global while a project is open. */
+  const runGlobal = React.useCallback(async (
+    invoke: (adapter: PiIntegrationsAdapter, scope: PiIntegrationScope) => Promise<PiIntegrationOperationResult>,
+  ) => {
+    if (!adapter) return
+    updateState((previous) => ({ ...previous, status: 'operating', errorCode: null, errorMessage: null }))
+    try {
+      const result = await invoke(adapter, { kind: 'global' })
+      updateState((previous) => ({ ...previous, globalSnapshot: result.snapshot, status: statusFor(previous.snapshot, previous.operation) }))
+      // Global packages also add resources to the project's view.
+      await refresh()
+    } catch (error) {
+      const details = errorDetails(error)
+      updateState((previous) => ({ ...previous, status: 'error', errorCode: details.code, errorMessage: details.message }))
+    }
+  }, [adapter, refresh, updateState])
 
   React.useEffect(() => {
     if (!adapter) return
@@ -300,7 +331,8 @@ export function PiIntegrationsProvider({ children }: { children: React.ReactNode
 
   React.useEffect(() => {
     void refresh()
-  }, [refresh, state.scope])
+    void refreshGlobal()
+  }, [refresh, refreshGlobal, state.scope])
 
   const actions = React.useMemo<PiIntegrationsActions>(() => ({
     checkUpdates: async () => {
@@ -314,13 +346,15 @@ export function PiIntegrationsProvider({ children }: { children: React.ReactNode
         ? statusFor(previous.snapshot, previous.operation)
         : previous.mode === 'electron' ? 'loading' : 'unavailable',
     })),
-    install: async (source) => {
-      await runOperation((nextAdapter, scope) => nextAdapter.install(scope, source))
+    install: async (source, target) => {
+      if (target === 'global' && stateRef.current.scope.kind === 'project') await runGlobal((nextAdapter, scope) => nextAdapter.install(scope, source))
+      else await runOperation((nextAdapter, scope) => nextAdapter.install(scope, source))
     },
     loadScope: async (scope) => adapter ? adapter.load(scope) : null,
-    refresh: () => refresh(),
-    remove: async (source) => {
-      await runOperation((nextAdapter, scope) => nextAdapter.remove(scope, source))
+    refresh: async () => { await Promise.all([refresh(), refreshGlobal()]) },
+    remove: async (source, target) => {
+      if (target === 'global' && stateRef.current.scope.kind === 'project') await runGlobal((nextAdapter, scope) => nextAdapter.remove(scope, source))
+      else await runOperation((nextAdapter, scope) => nextAdapter.remove(scope, source))
     },
     restart: async () => {
       await runOperation((nextAdapter, scope) => nextAdapter.restart(scope))
@@ -328,10 +362,11 @@ export function PiIntegrationsProvider({ children }: { children: React.ReactNode
     setRetryEnabled: (enabled) => runOperation((nextAdapter, scope) =>
       nextAdapter.setRetryEnabled(scope, enabled)),
     setScope,
-    update: async (source) => {
-      await runOperation((nextAdapter, scope) => nextAdapter.update(scope, source))
+    update: async (source, target) => {
+      if (target === 'global' && stateRef.current.scope.kind === 'project') await runGlobal((nextAdapter, scope) => nextAdapter.update(scope, source))
+      else await runOperation((nextAdapter, scope) => nextAdapter.update(scope, source))
     },
-  }), [adapter, refresh, runOperation, setScope, updateState])
+  }), [adapter, refresh, refreshGlobal, runGlobal, runOperation, setScope, updateState])
 
   const value = React.useMemo<PiIntegrationsStoreValue>(
     () => ({ ...state, ...actions }),

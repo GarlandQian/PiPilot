@@ -15,7 +15,7 @@ async function addProject(electronApp: ElectronApplication, page: Page, path: st
   await page.getByRole('button', { name: 'Add project folder', exact: true }).click()
 }
 
-test('retains target-owned MCP drafts through project A/B/A and semantic tab navigation', async ({}, testInfo) => {
+test('retains target-owned MCP drafts through project A/B/A and pane navigation', async ({}, testInfo) => {
   test.setTimeout(90_000)
   const userData = testInfo.outputPath('user-data')
   const agentDir = testInfo.outputPath('pi-agent')
@@ -45,52 +45,38 @@ test('retains target-owned MCP drafts through project A/B/A and semantic tab nav
       .getByRole('button', { name: 'New task in project-A', exact: true }).click()
     await expect(page.getByRole('button', { name: 'Project actions for project-A', exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
-    await page.locator('[data-context-panel-nav-id="integrations"]').click()
-    const settings = page.getByRole('main', { name: 'Integrations', exact: true })
-    await settings.getByRole('button', { name: 'Current project', exact: true }).click()
-    const mcpTab = settings.getByRole('tab', { name: 'MCP', exact: true })
-    await mcpTab.click()
-    const mcpPanel = settings.getByRole('tabpanel', { name: 'MCP', exact: true })
-    const openFile = async () => {
-      await mcpPanel.getByRole('button', { name: 'More', exact: true }).click()
-      await page.getByRole('menuitem', { name: 'Edit mcp.json…', exact: true }).click()
+    await page.locator('[data-context-panel-nav-id="mcp"]').click()
+    const mcpPanel = page.getByRole('main', { name: 'MCP Servers', exact: true })
+    // The pane follows the open project; its note names it once the project's file is in.
+    const projectReady = (name: string) => expect(mcpPanel).toContainText(`Servers marked Project apply only to ${name}.`)
+    const openFile = async (scope: 'project' | 'global') => {
+      await mcpPanel.locator('[data-mcp-server-list] header').getByRole('button', { name: 'More', exact: true }).click()
+      await page.getByRole('menuitem', { name: scope === 'project' ? 'Edit project mcp.json…' : 'Edit global mcp.json…', exact: true }).click()
     }
-    await openFile()
+    await projectReady('project-A')
+    await openFile('project')
     const editor = mcpPanel.getByRole('textbox', { name: 'mcp.json', exact: true })
     await expect(editor).toHaveValue(baselineA)
+    await expect(mcpPanel.getByText(join(projectA, '.pi', 'mcp.json'), { exact: true })).toBeVisible()
     const draftA = '{ "mcpServers": {}, "future": { "keep": true } }\n'
     await editor.fill(draftA)
     await expect(mcpPanel.getByText('Unsaved changes', { exact: true })).toBeVisible()
 
-    await mcpTab.focus()
-    await mcpTab.press('ArrowRight')
-    const externalTab = settings.getByRole('tab', { name: 'External Control', exact: true })
-    await expect(externalTab).toBeFocused()
-    await expect(externalTab).toHaveAttribute('aria-selected', 'true')
-    const externalPanel = settings.getByRole('tabpanel', { name: 'External Control', exact: true })
-    await expect(externalPanel).toHaveAttribute('id', (await externalTab.getAttribute('aria-controls'))!)
-    await expect(settings.getByRole('textbox', { name: 'mcp.json', exact: true })).toHaveCount(0)
-    await externalTab.press('Home')
-    await expect(settings.getByRole('tab', { name: 'Overview', exact: true })).toBeFocused()
-    await page.keyboard.press('ArrowRight')
-    await expect(settings.getByRole('tab', { name: 'Packages', exact: true })).toBeFocused()
-    await page.keyboard.press('End')
-    await expect(externalTab).toBeFocused()
-    await mcpTab.click()
+    // Another pane and back: the file page and its draft are where they were.
+    await page.locator('[data-context-panel-nav-id="external-control"]').click()
+    await expect(page.getByRole('main', { name: 'External Control', exact: true })).toBeVisible()
+    await expect(page.getByRole('textbox', { name: 'mcp.json', exact: true })).toHaveCount(0)
+    await page.locator('[data-context-panel-nav-id="mcp"]').click()
     await expect(editor).toHaveValue(draftA)
 
-    await settings.getByRole('button', { name: 'Global', exact: true }).click()
-    await openFile()
-    const globalDraft = '{ "mcpServers": {} }\n'
-    await editor.fill(globalDraft)
-    await settings.getByRole('button', { name: 'Current project', exact: true }).click()
-    await expect(editor).toHaveValue(draftA)
-
+    // Each project owns its draft.
     await page.getByRole('button', { name: 'Back to app', exact: true }).click()
     await addProject(app, page, projectB)
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
-    await expect(settings.getByText('project-B', { exact: true })).toBeVisible()
-    await openFile()
+    // A newly opened project starts at its list; its file opens as its own document.
+    await projectReady('project-B')
+    await openFile('project')
+    await expect(mcpPanel.getByText(join(projectB, '.pi', 'mcp.json'), { exact: true })).toBeVisible()
     await expect(editor).toHaveValue(baselineB)
     const draftB = '{ "mcpServers": {}, "future": "B" }\n'
     await editor.fill(draftB)
@@ -100,11 +86,8 @@ test('retains target-owned MCP drafts through project A/B/A and semantic tab nav
       .getByRole('button', { name: 'New task in project-A', exact: true }).click()
     await expect.poll(() => page.evaluate(async () => (await window.pipilot!.localPi.runtime.status()).cwd), { timeout: 20_000 }).toBe(projectA)
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
-    await expect(settings.getByText('project-A', { exact: true })).toBeVisible()
-    await expect(editor).toHaveValue(draftA)
-    await settings.getByRole('button', { name: 'Global', exact: true }).click()
-    await expect(editor).toHaveValue(globalDraft)
-    await settings.getByRole('button', { name: 'Current project', exact: true }).click()
+    // Back in project A, its file page and draft are where they were.
+    await expect(mcpPanel.getByText(join(projectA, '.pi', 'mcp.json'), { exact: true })).toBeVisible()
     await expect(editor).toHaveValue(draftA)
 
     await mcpPanel.getByRole('button', { name: 'Refresh', exact: true }).click()
@@ -117,12 +100,19 @@ test('retains target-owned MCP drafts through project A/B/A and semantic tab nav
     await expect(editor).toHaveValue(baselineA)
     expect(await readFile(join(projectB, '.pi', 'mcp.json'), 'utf8')).toBe(baselineB)
     await editor.fill(draftA)
-    await mcpPanel.locator('[data-models-editor-footer]').getByRole('button', { name: 'Save', exact: true }).click()
+    await mcpPanel.locator('[data-settings-actions]').getByRole('button', { name: 'Save', exact: true }).click()
     await expect.poll(() => readFile(join(projectA, '.pi', 'mcp.json'), 'utf8')).toBe(draftA)
-    await expect(mcpPanel.getByText('Unsaved changes', { exact: true })).toHaveCount(0)
+    await expect(mcpPanel.locator('[data-mcp-server-list]')).toBeVisible()
+
+    // The global file is a document of its own.
+    await openFile('global')
+    await expect(mcpPanel.getByText(join(agentDir, 'mcp.json'), { exact: true })).toBeVisible()
+    await expect(editor).not.toHaveValue(draftA)
+    await mcpPanel.locator('[data-settings-actions]').getByRole('button', { name: 'Cancel', exact: true }).click()
+    await expect(mcpPanel.locator('[data-mcp-server-list]')).toBeVisible()
 
     await page.setViewportSize({ width: 1_100, height: 680 })
-    await expect.poll(() => settings.getByRole('tablist').evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
+    await expect.poll(() => page.locator('[data-settings-section="mcp"]').evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
     await page.mouse.move(1_090, 670)
     await page.screenshot({ path: testInfo.outputPath('mcp-draft-target-minimum.png'), animations: 'disabled' })
   } finally {

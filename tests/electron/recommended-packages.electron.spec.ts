@@ -54,8 +54,7 @@ else if (args[0] === 'install') {
     await page.setViewportSize({ width: 1440, height: 900 })
     const openPackages = async () => {
       await page.getByRole('button', { name: 'Settings', exact: true }).click()
-      await page.getByRole('region', { name: 'Settings', exact: true }).getByRole('button', { name: 'Integrations', exact: true }).click()
-      await page.getByRole('tab', { name: 'Packages', exact: true }).click()
+      await page.getByRole('region', { name: 'Settings', exact: true }).getByRole('button', { name: 'Packages', exact: true }).click()
       return page.getByRole('region', { name: 'Recommended plugins', exact: true })
     }
     let defaults = await openPackages()
@@ -68,9 +67,9 @@ else if (args[0] === 'install') {
     await expect(defaults.getByRole('alert')).toHaveCount(0)
     const installedSettings = JSON.parse(await readFile(settingsPath, 'utf8'))
     expect(installedSettings.packages).toEqual([configuredPlan, goal.source])
-    const packages = page.getByRole('tabpanel', { name: 'Packages', exact: true })
+    const packages = page.getByRole('main', { name: 'Packages', exact: true })
     await packages.locator('[data-integration-row]').filter({ hasText: goal.packageName }).click()
-    await packages.getByRole('button', { name: 'Remove', exact: true }).click()
+    await packages.locator('[data-package-detail]').getByRole('button', { name: 'Remove Package', exact: true }).click()
     await page.getByRole('alertdialog').getByRole('button', { name: 'Remove', exact: true }).click()
     await expect(defaults.getByRole('listitem').filter({ hasText: goal.packageName })).toContainText('Removed ·', { timeout: 20_000 })
     await page.evaluate(() => window.pipilot!.settings.update({ appearance: { theme: 'dark' } }))

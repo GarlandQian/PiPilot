@@ -25,7 +25,7 @@ describe('workbench navigation ownership', () => {
   })
 
   it('keeps panel and palette actions independent of route identity', () => {
-    const initial = createWorkbenchNavigationState({ workspace: 'settings', section: 'integrations' }, false)
+    const initial = createWorkbenchNavigationState({ workspace: 'settings', section: 'mcp' }, false)
     const toggled = reduceWorkbenchNavigation(initial, { type: 'toggle-context-panel' })
     const opened = reduceWorkbenchNavigation(toggled, { type: 'palette', open: true })
     expect(opened.contextPanelOpen).toBe(true)

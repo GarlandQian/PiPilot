@@ -133,7 +133,7 @@ export default function modelOperationGate(pi) {
     await expect(composer).toHaveAttribute('aria-invalid', 'false')
     expect(fixture.prompts).not.toContain(unconfirmedDraft)
     await modelTrigger.click()
-    await expect(page.getByRole('slider', { name: 'Reasoning effort', exact: true })).toBeEnabled()
+    await expect(page.getByRole('radiogroup', { name: 'Reasoning effort', exact: true }).getByRole('radio', { checked: true })).toBeEnabled()
     await page.screenshot({ path: testInfo.outputPath('model-picker-desktop-light.png') })
   } finally {
     await writeFile(join(gateDir, 'fake-fast.release'), 'release')

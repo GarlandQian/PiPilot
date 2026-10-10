@@ -37,7 +37,7 @@ export class PanelTabsStore {
   leave(key: string) {
     const state = this.memory.get(key)
     if (!state) return
-    const kept = retainPanelTabs(state, (tab) => tab.kind !== 'sidechat' && tab.kind !== 'subagent' && tab.kind !== 'command')
+    const kept = retainPanelTabs(state, (tab) => tab.kind !== 'sidechat' && tab.kind !== 'subagent' && tab.kind !== 'command' && tab.kind !== 'action')
     if (kept !== state) this.memory.set(key, kept)
   }
 

@@ -12,7 +12,7 @@ import {
   TbEdit,
   TbFileImport,
   TbFolder,
-  TbFolderCog,
+  TbGitBranch,
   TbFolderOpen,
   TbLoader2,
   TbMessagePlus,
@@ -60,7 +60,10 @@ import type { WorkspaceSummary } from '@/shared/schemas/workspace'
 import type { AgentStatus } from '@/types/chat'
 import type { SessionActivityState } from '@/store/workspace-state'
 import { sidebarConversationTitle, type SidebarProjectIndicator } from './session-navigation'
-import { ProjectWorkflowsDialog } from '@/components/projects/ProjectWorkflowsDialog'
+import { ArchiveWorktreeDialog, NewWorktreeSheet } from '@/components/projects/WorktreeSheets'
+import { useProjectWorkflowActions } from '@/components/projects/project-workflow-actions'
+import { useWorktreeIndex } from '@/store/project-workflows'
+import type { ManagedWorktree } from '@/shared/project-workflows'
 import { useTerminalActions } from '@/components/inspector/TerminalActions'
 
 export interface SidebarConversationItem {
@@ -586,14 +589,17 @@ function ProjectChildren({
 
 /** The platform's name for its file browser. */
 /** One project's ⋯ / right-click menu (Codex: new task, organize, archive, remove). */
-function ProjectMenuItems({ navigation, kind, onStartProjectTask, onImportProject, onRevealProject, onPinProject, onOpenWorkflows, onArchiveAll, onRemoveProject }: {
+function ProjectMenuItems({ navigation, kind, worktree, onStartProjectTask, onImportProject, onRevealProject, onPinProject, onNewWorktree, onArchiveWorktree, onArchiveAll, onRemoveProject }: {
   navigation: SidebarProjectNavigation
   kind: 'dropdown' | 'context'
   onStartProjectTask(projectId: string): void
   onImportProject?(projectId: string): void
   onRevealProject?(projectId: string): void
   onPinProject(projectId: string, pinned: boolean): void
-  onOpenWorkflows(): void
+  /** Set when this project is a working copy. */
+  worktree?: ManagedWorktree
+  onNewWorktree(): void
+  onArchiveWorktree(): void
   onArchiveAll(): void
   onRemoveProject(project: WorkspaceSummary): void
 }) {
@@ -615,10 +621,12 @@ function ProjectMenuItems({ navigation, kind, onStartProjectTask, onImportProjec
       {project.pinned ? <TbPinnedOff aria-hidden /> : <TbPin aria-hidden />}
       {t(project.pinned ? 'sidebar.workspace.unpinShort' : 'sidebar.workspace.pinShort')}
     </Item>
-    <Item disabled={!project.available} onSelect={onOpenWorkflows}><TbFolderCog aria-hidden />{t('worktree.tools')}</Item>
+    <Item disabled={!project.available} onSelect={onNewWorktree}><TbGitBranch aria-hidden />{t('worktree.newMenu')}</Item>
     <Item disabled={navigation.taskCount === 0} onSelect={onArchiveAll}><TbArchive aria-hidden />{t('sidebar.project.archiveAll')}</Item>
     <Separator />
-    <Item variant="destructive" onSelect={() => onRemoveProject(project)}><TbTrash aria-hidden />{t('sidebar.project.remove')}</Item>
+    {worktree?.state === 'active'
+      ? <Item variant="destructive" onSelect={onArchiveWorktree}><TbArchive aria-hidden />{t('worktree.archiveMenu')}</Item>
+      : <Item variant="destructive" onSelect={() => onRemoveProject(project)}><TbTrash aria-hidden />{t('sidebar.project.remove')}</Item>}
   </>
 }
 
@@ -651,13 +659,22 @@ export function ProjectNavigationGroup({
   ...conversationActions
 }: ProjectNavigationGroupProps) {
   const t = useT()
-  const [workflowProject, setWorkflowProject] = React.useState<WorkspaceSummary | null>(null)
+  const shell = useProjectWorkflowActions()
+  const [worktreeSource, setWorktreeSource] = React.useState<WorkspaceSummary | null>(null)
+  const [archivingWorktree, setArchivingWorktree] = React.useState<ManagedWorktree | null>(null)
   const [archiveProject, setArchiveProject] = React.useState<SidebarProjectNavigation | null>(null)
+  const worktrees = useWorktreeIndex(projects.map((navigation) => navigation.project.id))
 
   return (
     <SidebarSection id="sidebar-projects-heading" title={t('sidebar.projects')} actions={headerActions}>
-      {workflowProject && <ProjectWorkflowsDialog workspaceId={workflowProject.id} projectName={workflowProject.name}
-        open onOpenChange={(open) => { if (!open) setWorkflowProject(null) }} onOpenProject={onStartProjectTask} />}
+      {worktreeSource ? <NewWorktreeSheet open onOpenChange={(open) => { if (!open) setWorktreeSource(null) }} workspaceId={worktreeSource.id}
+        projectName={worktrees.get(worktreeSource.id)?.projectName ?? worktreeSource.name}
+        onCreated={(created, ranSetup) => {
+          if (!created.workspaceId) return
+          onStartProjectTask(created.workspaceId)
+          if (ranSetup) shell?.openActionRun(created.workspaceId)
+        }} /> : null}
+      <ArchiveWorktreeDialog worktree={archivingWorktree} onOpenChange={(open) => { if (!open) setArchivingWorktree(null) }} />
       <AlertDialog open={archiveProject !== null} onOpenChange={(open) => { if (!open) setArchiveProject(null) }}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -685,9 +702,11 @@ export function ProjectNavigationGroup({
         <ul className="flex flex-col gap-px">
           {projects.map((navigation) => {
             const { project } = navigation
+            const worktree = worktrees.get(project.id)
             const menuProps = {
-              navigation, onStartProjectTask, onImportProject, onRevealProject, onPinProject, onRemoveProject,
-              onOpenWorkflows: () => setWorkflowProject(project),
+              navigation, worktree, onStartProjectTask, onImportProject, onRevealProject, onPinProject, onRemoveProject,
+              onNewWorktree: () => setWorktreeSource(project),
+              onArchiveWorktree: () => { if (worktree) setArchivingWorktree(worktree) },
               onArchiveAll: () => setArchiveProject(navigation),
             }
             return (
@@ -708,11 +727,12 @@ export function ProjectNavigationGroup({
                       />
                       <span className="pointer-events-none relative flex min-w-0 items-center gap-1.5">
                         <span className="relative flex size-4 shrink-0 items-center justify-center text-muted-foreground" aria-hidden>
-                          <TbFolder className="size-4 transition-opacity duration-(--duration-fast) group-hover/row:opacity-0" />
+                          {worktree ? <TbGitBranch className="size-4 transition-opacity duration-(--duration-fast) group-hover/row:opacity-0" />
+                            : <TbFolder className="size-4 transition-opacity duration-(--duration-fast) group-hover/row:opacity-0" />}
                           <TbChevronRight className={cn('absolute size-3.5 stroke-[2.4] opacity-0 transition-[opacity,transform] duration-(--duration-fast) group-hover/row:opacity-100', navigation.expanded && 'rotate-90')} />
                         </span>
-                        <span className={cn('min-w-0 truncate text-app text-foreground/90', !project.available && 'opacity-55')} title={project.name}>
-                          {project.name}
+                        <span className={cn('min-w-0 truncate text-app text-foreground/90', !project.available && 'opacity-55')} title={project.name} data-worktree-project={worktree ? worktree.branch : undefined}>
+                          {worktree ? <>{worktree.name}<span className="ml-1.5 font-mono text-micro text-muted-foreground">{worktree.branch}</span></> : project.name}
                         </span>
                       </span>
                       <span className="relative flex h-[22px] min-w-[46px] items-center justify-end">

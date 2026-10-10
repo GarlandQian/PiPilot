@@ -117,7 +117,7 @@ export function ChatHeader({
     : t('header.showChanges')
 
   return (
-    <header className="app-drag toolbar-material flex h-(--frame-header-h) min-w-0 shrink-0 items-center gap-2.5 pr-3 titlebar-leading-[20px]">
+    <header className="titlebar-drag toolbar-material relative flex h-(--frame-header-h) min-w-0 shrink-0 items-center gap-2.5 pr-3 titlebar-leading-[20px]">
       <div className="min-w-0 flex-1">
         <h1 className="truncate text-[calc(var(--app-font-size)+2px)] leading-tight font-bold text-foreground">{title}</h1>
         <div className="flex min-w-0 items-center gap-1.5 text-micro leading-tight text-muted-foreground">
@@ -185,9 +185,12 @@ export function ChatHeader({
       <div className="glass toolbar-group">
         {onShowChanges ? <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size={reviewCounts ? 'sm' : 'icon-sm'} onClick={onShowChanges} aria-label={reviewLabel} data-review-button
-              className={reviewCounts ? 'gap-1 px-2 font-mono text-caption tabular-nums' : undefined}>
-              {reviewCounts ? <><span className="text-success">+{reviewCounts.added}</span><span className="text-destructive">−{reviewCounts.deleted}</span></> : <TbFileDiff aria-hidden />}
+            {/* One icon like its neighbours; how many files changed rides on it as a badge. */}
+            <Button variant="ghost" size="icon-sm" onClick={onShowChanges} aria-label={reviewLabel} data-review-button className="relative">
+              <TbFileDiff aria-hidden />
+              {reviewCounts ? <span aria-hidden data-review-count className="absolute -top-0.5 -right-0.5 flex h-[15px] min-w-[15px] items-center justify-center rounded-full bg-primary px-1 text-[10px] leading-none font-semibold tabular-nums text-primary-foreground shadow-[0_0_0_1.5px_var(--color-surface)]">
+                {reviewCounts.files > 99 ? '99+' : reviewCounts.files}
+              </span> : null}
             </Button>
           </TooltipTrigger>
           <TooltipContent side="bottom">{reviewLabel}<span className="ml-2 text-muted-foreground">{formatShortcut(APP_SHORTCUTS.openReview)}</span></TooltipContent>

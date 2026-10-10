@@ -86,6 +86,21 @@ export function useMcpConfigurationDocument(target: McpConfigTarget) {
   return { document, available: Boolean(adapter) }
 }
 
+/** The global mcp.json and, while a project is open, the project's: MCP Servers shows them together. */
+export function useMcpConfigurationDocuments(project: Extract<McpConfigTarget, { kind: 'project' }> | null) {
+  const documents = useDocuments()
+  const adapter = documents.mcpAdapter
+  const open = (target: McpConfigTarget) => {
+    const validated = mcpConfigTargetSchema.parse(target)
+    const key = validated.kind === 'global' ? 'global' : `project:${validated.workspaceId}`
+    return adapter ? documents.mcp.get(key, {
+      load: () => adapter.load(validated),
+      save: (content, fingerprint, apply) => adapter.save(validated, content, fingerprint, apply),
+    }) : null
+  }
+  return { global: open({ kind: 'global' }), project: project ? open(project) : null, available: Boolean(adapter) }
+}
+
 export function useConfigurationDocument<TSnapshot extends ConfigDocumentSnapshot>(
   document: ConfigurationDocument<TSnapshot>,
   active: boolean,

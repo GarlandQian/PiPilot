@@ -85,7 +85,7 @@ async function openProjectImport(app: ElectronApplication, page: Page, project: 
   await chooseFile(app, filePath)
   await page.getByRole('button', { name: `Project actions for ${basename(project)}`, exact: true }).click()
   await page.getByRole('menuitem', { name: 'Import conversation from Markdown…', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: 'Import conversation from Markdown…', exact: true })
+  const dialog = page.getByRole('dialog', { name: 'Import conversation from Markdown', exact: true })
   await expect(dialog.getByRole('button', { name: 'Create conversation', exact: true })).toBeEnabled()
   return dialog
 }
@@ -113,7 +113,7 @@ test('imports exported history and images into a separate project conversation w
     }) }, exportedPath)
     await projectRow(page, originalName).getByRole('button', { name: 'More actions', exact: true }).click()
     await page.getByRole('menuitem', { name: 'Export Markdown…', exact: true }).click()
-    const exportDialog = page.getByRole('dialog', { name: 'Export Markdown…', exact: true })
+    const exportDialog = page.getByRole('dialog', { name: 'Export Markdown', exact: true })
     await exportDialog.getByRole('switch', { name: 'Include tool logs', exact: true }).click()
     await exportDialog.getByRole('button', { name: 'Choose save location', exact: true }).click()
     await expect(exportDialog).toContainText('Saved original-report.md')
@@ -126,7 +126,7 @@ test('imports exported history and images into a separate project conversation w
     await expect(importDialog).toContainText('1 images')
     await expect(importDialog.getByRole('textbox', { name: 'Conversation name', exact: true })).toHaveValue(originalName)
     await expect(importDialog.getByRole('combobox', { name: 'Add to', exact: true })).toContainText('Import project')
-    await importDialog.getByText('Preview content', { exact: true }).click()
+    await importDialog.getByRole('button', { name: 'Preview content', exact: true }).click()
     await expect(importDialog.locator('[data-import-preview]')).toContainText('Diagram review')
     await page.screenshot({ path: testInfo.outputPath('import-history-preview-light.png'), animations: 'disabled' })
     await importDialog.getByRole('button', { name: 'Cancel', exact: true }).click()
@@ -184,7 +184,7 @@ test('imports an ordinary Markdown file as inert background through the global m
     await app.evaluate(({ Menu }) => Menu.getApplicationMenu()?.items
       .find((item) => item.label === 'File')?.submenu?.items
       .find((item) => item.label === 'Import Conversation…')?.click())
-    const importDialog = page.getByRole('dialog', { name: 'Import conversation from Markdown…', exact: true })
+    const importDialog = page.getByRole('dialog', { name: 'Import conversation from Markdown', exact: true })
     await expect(importDialog.getByRole('alert')).toContainText('This document exceeds the import limits.')
     await expect(importDialog.getByRole('button', { name: 'Create conversation', exact: true })).toBeDisabled()
     expect(await readdir(sessionDirectory)).toEqual(originalFiles)
@@ -201,7 +201,7 @@ test('imports an ordinary Markdown file as inert background through the global m
     await page.evaluate(() => window.pipilot!.settings.update({ appearance: { theme: 'dark' } }))
     await expect(page.locator('html')).toHaveClass(/dark/)
     await page.setViewportSize({ width: 1100, height: 680 })
-    await importDialog.getByText('Preview content', { exact: true }).click()
+    await importDialog.getByRole('button', { name: 'Preview content', exact: true }).click()
     await expect(importDialog.locator('[data-import-preview]')).toContainText('/goal resume')
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true)
     await page.screenshot({ path: testInfo.outputPath('import-document-minimum-dark.png'), animations: 'disabled' })

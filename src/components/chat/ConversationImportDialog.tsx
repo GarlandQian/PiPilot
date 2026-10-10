@@ -1,10 +1,10 @@
 import * as React from 'react'
 import { TbFileImport, TbLoader2 } from 'react-icons/tb'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { MarkdownContent } from '@/components/chat/markdown/MarkdownContent'
+import { FormActions, SettingsDisclosure, SettingsField, SettingsGroup, SettingsRow, SettingsSheet } from '@/components/settings/kit'
 import { useLocale, useT } from '@/i18n'
 import type { ConversationScope } from '@/shared/conversation-scope'
 import type { RecentProject } from '@/types/chat'
@@ -74,29 +74,44 @@ export function ConversationImportDialog({ initialScope, projects, onCommit, onC
       setPhase('idle')
     }
   }
-  return <Dialog open onOpenChange={(open) => { if (!open && phase !== 'creating') onClose() }}>
-    <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl" showCloseButton={phase !== 'creating'} aria-busy={busy}>
-      <DialogHeader><DialogTitle>{t('import.open')}</DialogTitle><DialogDescription>{t('import.description')}</DialogDescription></DialogHeader>
-      <div className="flex min-w-0 items-center gap-3">
-        <TbFileImport className="size-5 shrink-0 text-muted-foreground" aria-hidden />
-        <span className="min-w-0 flex-1 truncate text-caption">{preview?.fileName ?? t('import.chooseHint')}</span>
-        <Button variant="outline" size="sm" disabled={busy} onClick={() => void chooseFile()}>{t(preview ? 'import.changeFile' : 'import.chooseFile')}</Button>
-      </div>
-      {phase === 'reading' ? <div role="status" className="flex min-h-36 items-center justify-center gap-2 text-caption text-muted-foreground"><TbLoader2 className="size-4 animate-spin motion-reduce:animate-none" aria-hidden />{t('import.reading')}</div> : null}
+  const [previewOpen, setPreviewOpen] = React.useState(false)
+  return <SettingsSheet open onOpenChange={(open) => { if (!open && phase !== 'creating') onClose() }} wide aria-busy={busy}
+    title={t('import.open')} description={t('import.description')}
+    footer={<FormActions onCancel={onClose} onSave={() => void create()} saving={phase === 'creating'} canSave={!busy && Boolean(preview) && Boolean(title.trim()) && scopeAvailable}
+      saveLabel={t(phase === 'creating' ? 'import.creating' : 'import.create')}
+      error={error ? t(error === 'read' ? 'import.readFailed' : error === 'tooLarge' ? 'import.tooLarge' : error === 'expired' ? 'import.expired' : 'import.createFailed') : null} />}>
+    <div className="space-y-5">
+      <SettingsGroup>
+        <SettingsRow label={<span className="truncate" title={preview?.fileName}>{preview?.fileName ?? t('import.chooseHint')}</span>}
+          icon={<TbFileImport className="size-5 shrink-0 text-muted-foreground" aria-hidden />}>
+          <Button variant="outline" size="sm" disabled={busy} onClick={() => void chooseFile()}>{t(preview ? 'import.changeFile' : 'import.chooseFile')}</Button>
+        </SettingsRow>
+      </SettingsGroup>
+      {phase === 'reading' ? <div role="status" className="settings-group flex min-h-36 items-center justify-center gap-2 text-caption text-muted-foreground"><TbLoader2 className="size-4 animate-spin motion-reduce:animate-none" aria-hidden />{t('import.reading')}</div> : null}
       {preview ? <>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="min-w-0 space-y-1.5"><label htmlFor={titleId} className="text-caption font-medium">{t('import.title')}</label><Input id={titleId} value={title} maxLength={256} disabled={busy} onChange={(event) => setTitle(event.target.value)} aria-invalid={!title.trim()} aria-describedby={!title.trim() ? titleErrorId : undefined} />{!title.trim() ? <p id={titleErrorId} className="text-caption text-destructive">{t('import.titleRequired')}</p> : null}</div>
-          <div className="min-w-0 space-y-1.5"><label htmlFor={scopeId} className="text-caption font-medium">{t('import.destination')}</label><Select value={scopeValue} onValueChange={setScopeValue} disabled={busy}><SelectTrigger id={scopeId} className="w-full" aria-describedby={hintId}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="projectless">{t('conversation.projectless')}</SelectItem>{projects.map((project) => <SelectItem key={project.id} value={`project:${project.id}`} disabled={!project.available}>{project.name}</SelectItem>)}</SelectContent></Select></div>
-        </div>
-        <div className="space-y-1 text-caption"><p className="font-medium">{t(preview.format === 'pipilot' ? 'import.history' : 'import.document')}</p><p id={hintId} className="text-muted-foreground">{t(preview.format === 'pipilot' ? 'import.historyHint' : 'import.documentHint')}</p><p className="text-micro text-muted-foreground">{t('import.counts', { messages: preview.messageCount, images: preview.imageCount })}</p></div>
-        {preview.warnings.length ? <ul role="status" className="space-y-1 border-l-2 border-warning pl-3 text-caption text-muted-foreground">{preview.warnings.map((warning) => <li key={warning}>{t(`import.warning.${warning}`)}</li>)}</ul> : null}
-        <details className="min-w-0 rounded-lg border border-border">
-          <summary className="cursor-pointer rounded-lg px-3 py-2 text-caption font-medium focus-visible:focus-ring">{t('import.preview')}</summary>
-          <div className="scroll-slim max-h-56 overflow-auto border-t border-border p-3 [&_.md-body]:text-caption" data-import-preview><MarkdownContent markdown={preview.previewMarkdown} /></div>
-        </details>
+        <SettingsGroup footer={<>
+          <span className="block">{t(preview.format === 'pipilot' ? 'import.historyHint' : 'import.documentHint')}</span>
+          <span className="mt-0.5 block">{t('import.counts', { messages: preview.messageCount, images: preview.imageCount })}</span>
+        </>}>
+          <SettingsField label={t('import.title')} htmlFor={titleId} error={!title.trim() ? <span id={titleErrorId}>{t('import.titleRequired')}</span> : undefined}>
+            <Input id={titleId} value={title} maxLength={256} disabled={busy} onChange={(event) => setTitle(event.target.value)} aria-invalid={!title.trim()} aria-describedby={!title.trim() ? titleErrorId : undefined} />
+          </SettingsField>
+          <SettingsRow label={t('import.destination')} htmlFor={scopeId} description={t(preview.format === 'pipilot' ? 'import.history' : 'import.document')}>
+            <Select value={scopeValue} onValueChange={setScopeValue} disabled={busy}>
+              <SelectTrigger id={scopeId} className="w-56 max-w-full" aria-describedby={hintId}><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="projectless">{t('conversation.projectless')}</SelectItem>
+                {projects.map((project) => <SelectItem key={project.id} value={`project:${project.id}`} disabled={!project.available}>{project.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <span id={hintId} className="sr-only">{t(preview.format === 'pipilot' ? 'import.historyHint' : 'import.documentHint')}</span>
+          </SettingsRow>
+          <SettingsDisclosure label={t('import.preview')} open={previewOpen} onOpenChange={setPreviewOpen}>
+            <div data-settings-row className="scroll-slim max-h-56 overflow-auto px-3 py-2.5 [&_.md-body]:text-caption" data-import-preview><MarkdownContent markdown={preview.previewMarkdown} /></div>
+          </SettingsDisclosure>
+        </SettingsGroup>
+        {preview.warnings.length ? <ul role="status" className="space-y-1 rounded-[12px] bg-warning/10 px-3.5 py-2.5 text-caption">{preview.warnings.map((warning) => <li key={warning}>{t(`import.warning.${warning}`)}</li>)}</ul> : null}
       </> : null}
-      {error ? <p role="alert" className="text-caption text-destructive">{t(error === 'read' ? 'import.readFailed' : error === 'tooLarge' ? 'import.tooLarge' : error === 'expired' ? 'import.expired' : 'import.createFailed')}</p> : null}
-      <DialogFooter><Button variant="outline" disabled={phase === 'creating'} onClick={onClose}>{t('common.cancel')}</Button><Button disabled={busy || !preview || !title.trim() || !scopeAvailable} onClick={() => void create()}>{phase === 'creating' ? <TbLoader2 className="animate-spin motion-reduce:animate-none" aria-hidden /> : <TbFileImport aria-hidden />}{t(phase === 'creating' ? 'import.creating' : 'import.create')}</Button></DialogFooter>
-    </DialogContent>
-  </Dialog>
+    </div>
+  </SettingsSheet>
 }

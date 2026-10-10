@@ -223,7 +223,7 @@ describe('extension dialog Markdown', () => {
       onRespond: () => undefined,
     }))
 
-    const title = markup.match(/<h2 data-slot="dialog-title">([\s\S]*?)<\/h2>/u)?.[1]
+    const title = markup.match(/<h2 data-slot="dialog-title"[^>]*>([\s\S]*?)<\/h2>/u)?.[1]
     expect(title).toContain('<strong>Review</strong>')
     expect(title).not.toMatch(/<(?:div|p|h[1-6]|a|button)\b/u)
     expect(markup).toMatch(/<div\b[^>]*data-slot="dialog-description"/u)

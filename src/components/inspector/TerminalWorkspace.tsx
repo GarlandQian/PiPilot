@@ -1,11 +1,12 @@
 import * as React from 'react'
 import { createPortal } from 'react-dom'
-import { TbArrowsMaximize, TbArrowsMinimize, TbChevronDown, TbDots, TbPencil, TbPlayerStop, TbPlus, TbRefresh, TbTerminal2, TbX } from 'react-icons/tb'
+import { TbArrowsMaximize, TbArrowsMinimize, TbChevronDown, TbClipboard, TbCopy, TbDots, TbEraser, TbPencil, TbPlayerStop, TbPlus, TbRefresh, TbSearch, TbTerminal2, TbX } from 'react-icons/tb'
 import { useT } from '@/i18n'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { SettingsField, SettingsGroup, SettingsSheet } from '@/components/settings/kit'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { primaryShortcut } from '@/lib/keyboard-shortcuts'
 import { cn } from '@/lib/utils'
 import type { PiPilotApi } from '@/shared/pipilot-api'
 import type { ConversationScope } from '@/shared/conversation-scope'
@@ -80,7 +81,6 @@ export function TerminalWorkspace({ terminalApi, scope, name, visible, maximized
   const [title, setTitle] = React.useState('')
   const [renameError, setRenameError] = React.useState<string | null>(null)
   const [autoFocusTerminal, setAutoFocusTerminal] = React.useState(true)
-  const [toolbarContainer, setToolbarContainer] = React.useState<HTMLDivElement | null>(null)
   const initialized = React.useRef(false)
   const mounted = React.useRef(true)
   const busyRef = React.useRef(false)
@@ -93,6 +93,7 @@ export function TerminalWorkspace({ terminalApi, scope, name, visible, maximized
   const operationQueue = React.useRef(new TerminalOperationQueue())
   const exitLedger = React.useRef(new TerminalExitLedger())
   const terminalHandles = React.useRef(new Map<string, RealTerminalPanelHandle>())
+  const [selectionInMenu, setSelectionInMenu] = React.useState(false)
   const selectionRevision = React.useRef(0)
   const selectionRef = React.useRef(selectedId)
   const sessionsRef = React.useRef(sessions)
@@ -370,15 +371,23 @@ export function TerminalWorkspace({ terminalApi, scope, name, visible, maximized
     </div>
   })
   const tools = <>
-    <div ref={setToolbarContainer} className="flex shrink-0 items-center gap-1" data-terminal-toolbar-controls />
     <Button variant="ghost" size="icon-xs" disabled={busy || loading} aria-label={t('terminal.drawer.new')} title={t('terminal.drawer.new')} onClick={() => create()}><TbPlus aria-hidden /></Button>
     <TerminalShellMenu terminalApi={terminalApi} open={shellMenuOpen} onOpenChange={setShellMenuOpen} disabled={busy || loading}
       focusExternal={externalError}
       onCreate={(profileId, profileName) => create(profileId, error === 'terminal.drawer.shellUnavailable' ? failedCreateDirectory.current : undefined, profileName)}
       onOpenExternal={openExternal} onOpenSettings={onOpenTerminalSettings} />
-    <DropdownMenu>
+    <DropdownMenu onOpenChange={(open) => { if (open) setSelectionInMenu(Boolean(selected && terminalHandles.current.get(selected.terminalId)?.hasSelection())) }}>
       <DropdownMenuTrigger asChild><Button variant="ghost" size="icon-xs" aria-label={t('terminal.drawer.more')} title={t('terminal.drawer.more')} disabled={!selected || busy}><TbDots aria-hidden /></Button></DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
+      <DropdownMenuContent align="end" onCloseAutoFocus={(event) => { if (selected) { event.preventDefault(); terminalHandles.current.get(selected.terminalId)?.focus() } }}>
+        {/* What used to be separate toolbar buttons: find, copy, paste and clear. */}
+        <DropdownMenuItem onSelect={() => { if (selected) terminalHandles.current.get(selected.terminalId)?.find() }}>
+          <TbSearch aria-hidden />{t('terminal.surface.search')}<DropdownMenuShortcut>{primaryShortcut('F')}</DropdownMenuShortcut>
+        </DropdownMenuItem>
+        <DropdownMenuItem disabled={!selectionInMenu} onSelect={() => { if (selected) void terminalHandles.current.get(selected.terminalId)?.copy() }}><TbCopy aria-hidden />{t('terminal.surface.copySelection')}</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => { if (selected) void terminalHandles.current.get(selected.terminalId)?.copyAll() }}><TbCopy aria-hidden />{t('terminal.surface.copyAll')}</DropdownMenuItem>
+        <DropdownMenuItem disabled={selected?.status !== 'running'} onSelect={() => { if (selected) void terminalHandles.current.get(selected.terminalId)?.paste() }}><TbClipboard aria-hidden />{t('terminal.surface.paste')}</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => { if (selected) void terminalHandles.current.get(selected.terminalId)?.clear() }}><TbEraser aria-hidden />{t('workbenchReview.terminal.clear')}</DropdownMenuItem>
+        <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => { if (selected) beginRename(selected) }}><TbPencil aria-hidden />{t('terminal.drawer.rename')}</DropdownMenuItem>
         <DropdownMenuSeparator />
         {selected?.status === 'running'
@@ -430,21 +439,24 @@ export function TerminalWorkspace({ terminalApi, scope, name, visible, maximized
           terminalId={item.terminalId}
           visible={visible && selectedId === item.terminalId}
           autoFocus={autoFocusTerminal}
-          toolbarContainer={toolbarContainer}
+          toolbarContainer={null}
           onExit={(exit) => recordExit(item.terminalId, exit)}
           onSessionChange={(session) => setSessions((current) => current.map((value) => value.terminalId === session.terminalId ? exitLedger.current.apply({ ...value, status: session.status, exitCode: session.exitCode, signal: session.signal }) : value))}
         />
       </React.Suspense>
     </div>)}
     {selected?.status === 'exited' ? <div role="status" className="flex shrink-0 items-center gap-2 border-t border-border px-3 py-1 text-caption text-muted-foreground"><span className="min-w-0 flex-1 truncate">{t('inspector.terminal.exited', { code: selected.exitCode ?? -1 })}</span><Button variant="ghost" size="xs" disabled={busy} onClick={restart}><TbRefresh aria-hidden />{t('terminal.drawer.restart')}</Button></div> : null}
-    <Dialog open={Boolean(renaming)} onOpenChange={(next) => { if (!next && !busy) setRenaming(null) }}>
-      <DialogContent onOpenAutoFocus={(event) => { event.preventDefault(); requestAnimationFrame(() => { const input = document.getElementById(titleInputId) as HTMLInputElement | null; input?.focus(); input?.select() }) }}>
-        <form onSubmit={(event) => void rename(event)} className="space-y-4">
-          <DialogHeader><DialogTitle>{t('terminal.drawer.rename')}</DialogTitle><DialogDescription>{t('terminal.drawer.renameDescription')}</DialogDescription></DialogHeader>
-          <div className="space-y-1.5"><label htmlFor={titleInputId} className="text-caption">{t('terminal.drawer.name')}</label><Input id={titleInputId} value={title} maxLength={128} autoComplete="off" onChange={(event) => setTitle(event.target.value)} aria-invalid={Boolean(renameError)} aria-describedby={renameError ? `${titleInputId}-error` : undefined} />{renameError ? <p id={`${titleInputId}-error`} role="alert" className="text-caption text-destructive">{renameError}</p> : null}</div>
-          <DialogFooter><Button type="button" variant="ghost" disabled={busy} onClick={() => setRenaming(null)}>{t('common.cancel')}</Button><Button type="submit" disabled={busy || !title.trim()}>{t('common.save')}</Button></DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+    <SettingsSheet open={Boolean(renaming)} onOpenChange={(next) => { if (!next && !busy) setRenaming(null) }} title={t('terminal.drawer.rename')} description={t('terminal.drawer.renameDescription')}
+      onOpenAutoFocus={(event) => { event.preventDefault(); requestAnimationFrame(() => { const input = document.getElementById(titleInputId) as HTMLInputElement | null; input?.focus(); input?.select() }) }}
+      footer={<div className="flex justify-end gap-2"><Button type="button" variant="outline" className="min-w-[76px]" disabled={busy} onClick={() => setRenaming(null)}>{t('common.cancel')}</Button>
+        <Button type="submit" form={`${titleInputId}-form`} className="min-w-[76px]" disabled={busy || !title.trim()}>{t('common.save')}</Button></div>}>
+      <form id={`${titleInputId}-form`} onSubmit={(event) => void rename(event)}>
+        <SettingsGroup>
+          <SettingsField label={t('terminal.drawer.name')} htmlFor={titleInputId} error={renameError ? <span id={`${titleInputId}-error`}>{renameError}</span> : undefined}>
+            <Input id={titleInputId} value={title} maxLength={128} autoComplete="off" onChange={(event) => setTitle(event.target.value)} aria-invalid={Boolean(renameError)} aria-describedby={renameError ? `${titleInputId}-error` : undefined} />
+          </SettingsField>
+        </SettingsGroup>
+      </form>
+    </SettingsSheet>
   </div>
 }

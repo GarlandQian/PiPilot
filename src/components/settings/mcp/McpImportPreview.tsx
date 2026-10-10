@@ -1,6 +1,6 @@
+import type * as React from 'react'
 import { TbAlertTriangle } from 'react-icons/tb'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
 import type { McpImportNote } from '@/shared/mcp-import'
@@ -48,13 +48,10 @@ export function McpClashSelect({ value, onChange }: { value: McpClashPolicy; onC
   const t = useT()
   return <label className="flex min-w-0 flex-wrap items-center gap-2 text-caption text-muted-foreground">
     {t('settings.mcp.import.clash')}
-    <Select value={value} onValueChange={(next) => onChange(next === 'replace' ? 'replace' : 'skip')}>
-      <SelectTrigger size="sm" className="w-40" aria-label={t('settings.mcp.import.clash')}><SelectValue /></SelectTrigger>
-      <SelectContent>
-        <SelectItem value="skip">{t('settings.mcp.import.skip')}</SelectItem>
-        <SelectItem value="replace">{t('settings.mcp.import.replace')}</SelectItem>
-      </SelectContent>
-    </Select>
+    <select className="mac-select" value={value} aria-label={t('settings.mcp.import.clash')} onChange={(event) => onChange(event.target.value === 'replace' ? 'replace' : 'skip')}>
+      <option value="skip">{t('settings.mcp.import.skip')}</option>
+      <option value="replace">{t('settings.mcp.import.replace')}</option>
+    </select>
   </label>
 }
 
@@ -68,10 +65,10 @@ export function McpImportPreview({ candidates, selected, onToggle, existing, pol
 }) {
   const t = useT()
   const taken = new Set(existing.map((name) => name.toLowerCase()))
-  return <div className="mac-group min-w-0" role="list">
+  return <div className="settings-group min-w-0" role="list">
     {candidates.map((candidate) => {
       const clash = taken.has(candidate.name.toLowerCase())
-      return <label key={candidate.key} role="listitem" data-mcp-import-candidate={candidate.name} className="flex min-w-0 cursor-default items-start gap-3 py-2.5">
+      return <label key={candidate.key} role="listitem" data-settings-row data-mcp-import-candidate={candidate.name} className="flex min-w-0 cursor-default items-start gap-3 px-3 py-2.5" style={{ '--settings-row-inset': '80px' } as React.CSSProperties}>
         <Checkbox className="mt-2" checked={selected.has(candidate.key)} onCheckedChange={(on) => onToggle(candidate.key, on === true)} aria-label={candidate.name} />
         <McpServerIcon transport={transportOf(candidate.definition)} />
         <span className="min-w-0 flex-1">

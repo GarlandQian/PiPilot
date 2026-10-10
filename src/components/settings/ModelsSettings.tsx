@@ -13,7 +13,7 @@ import type { ConfigurationDocument } from '@/renderer/configuration-documents'
 import { useModelsConfigurationDocument } from '@/store/configuration-documents'
 import { useSettings, useUpdateSettings } from '@/store/settings'
 import { subscribeModelsQuickAddRequest, takeModelsQuickAddRequest } from '@/renderer/models-intent'
-import { SettingRow, SettingSection } from './common'
+import { SettingsGroup, SettingsPage, SettingsRow } from './kit'
 import { ConfigApplyNotice } from './ConfigApplyNotice'
 import { ConfigurationDocumentError, ConfigurationDocumentUnavailable, ConfigurationReloadConfirmation } from './ConfigurationDocumentFeedback'
 import { ModelsRuntimeSettings } from './ModelsRuntimeSettings'
@@ -23,15 +23,14 @@ import { BuiltinProviderEditor } from './models/BuiltinProviderEditor'
 import { CustomProviderEditor, type CustomEditorTarget } from './models/CustomProviderEditor'
 import { DiscardChangesDialog, type TestState } from './editor-page'
 import { ModelsFileEditor } from './models/ModelsFileEditor'
-import { ProviderCardList, ProvidersEmpty, type ProviderCardEntry } from './models/ProviderCardList'
-import { ProviderPresetPicker } from './models/ProviderPresetPicker'
+import { ProviderCardList, type ProviderCardEntry } from './models/ProviderCardList'
+import { ProviderPresetSheet } from './models/ProviderPresetPicker'
 import { uniqueProviderId } from './models/provider-editor-model'
 
 type Route =
   | { page: 'list' }
-  | { page: 'presets' }
-  | { page: 'custom'; target: CustomEditorTarget; from: 'list' | 'presets'; nonce: number }
-  | { page: 'builtin'; providerId: string; preset: PresetMatch | null; isNew: boolean; from: 'list' | 'presets'; nonce: number }
+  | { page: 'custom'; target: CustomEditorTarget; nonce: number }
+  | { page: 'builtin'; providerId: string; preset: PresetMatch | null; isNew: boolean; nonce: number }
   | { page: 'file'; nonce: number }
 
 export function ModelsSettings({ operationOwnerKey, active = true }: { operationOwnerKey: string; active?: boolean }) {
@@ -106,12 +105,12 @@ function ModelsDocumentSettings({ document, operationOwnerKey, active }: {
     if ((route.page === 'custom' || route.page === 'builtin' || route.page === 'file') && editorDirty.current) setPending(next)
     else show(next)
   }
-  const back = () => navigate(route.page === 'custom' || route.page === 'builtin' ? (route.from === 'presets' ? { page: 'presets' } : { page: 'list' }) : { page: 'list' })
+  const back = () => navigate({ page: 'list' })
+  const [presetsOpen, setPresetsOpen] = React.useState(false)
 
   const subpageTitle = (() => {
     switch (route.page) {
       case 'list': return null
-      case 'presets': return t('settings.models.presets.title')
       case 'file': return t('settings.models.file.title')
       case 'builtin': {
         const provider = builtinProviders.find((candidate) => candidate.id === route.providerId)
@@ -134,11 +133,11 @@ function ModelsDocumentSettings({ document, operationOwnerKey, active }: {
 
   const editEntry = (entry: ProviderCardEntry, fill = false) => {
     if (entry.kind === 'builtin') {
-      show({ page: 'builtin', providerId: entry.id, preset: presetForProvider({ id: entry.id, builtin: true }), isNew: false, from: 'list', nonce: ++nonce })
+      show({ page: 'builtin', providerId: entry.id, preset: presetForProvider({ id: entry.id, builtin: true }), isNew: false, nonce: ++nonce })
       return
     }
     const target = customTarget(entry.id, fill)
-    if (target) show({ page: 'custom', target, from: 'list', nonce: ++nonce })
+    if (target) show({ page: 'custom', target, nonce: ++nonce })
   }
 
   /** A preset version is set up already: a configured Pi provider, or a models.json provider at its address. */
@@ -147,18 +146,19 @@ function ModelsDocumentSettings({ document, operationOwnerKey, active }: {
     : version.baseUrl ? parsed.providers.find((provider) => endpoint(provider.baseUrl) === endpoint(version.baseUrl))?.id ?? null : null
 
   const openPreset = (preset: ProviderPreset, versionKey?: string) => {
+    setPresetsOpen(false)
     const version = (versionKey ? preset.versions.find((candidate) => candidate.key === versionKey) : undefined)
       ?? preset.versions.find((candidate) => !existingFor(candidate)) ?? preset.versions[0]
     const go = navigate
     const match: PresetMatch = { preset, version, exact: true }
     const existing = existingFor(version)
     if (version.kind === 'builtin') {
-      go({ page: 'builtin', providerId: version.providerId, preset: match, isNew: !existing, from: 'presets', nonce: ++nonce })
+      go({ page: 'builtin', providerId: version.providerId, preset: match, isNew: !existing, nonce: ++nonce })
       return
     }
     if (existing) {
       const target = customTarget(existing)
-      if (target) go({ page: 'custom', target: { ...target, preset: match }, from: 'presets', nonce: ++nonce })
+      if (target) go({ page: 'custom', target: { ...target, preset: match }, nonce: ++nonce })
       return
     }
     const presetName = localizedText(preset.name, locale)
@@ -166,7 +166,7 @@ function ModelsDocumentSettings({ document, operationOwnerKey, active }: {
     const name = preset.category === 'custom' ? '' : customVersions > 1 || preset.versions.length > 1 ? `${presetName} · ${localizedText(version.label, locale)}` : presetName
     const id = uniqueProviderId(version.providerId, [...customIds, ...builtinIds])
     go({
-      page: 'custom', from: 'presets', nonce: ++nonce,
+      page: 'custom', nonce: ++nonce,
       target: {
         previousId: null, id, preset: preset.category === 'custom' ? null : match,
         definition: {
@@ -184,7 +184,7 @@ function ModelsDocumentSettings({ document, operationOwnerKey, active }: {
   // "Add model" from the composer's model picker opens the preset list here.
   React.useEffect(() => {
     if (!ready) return
-    const take = () => { if (takeModelsQuickAddRequest()) navigate({ page: 'presets' }) }
+    const take = () => { if (takeModelsQuickAddRequest()) setPresetsOpen(true) }
     take()
     return subscribeModelsQuickAddRequest(take)
     // `navigate` is recreated each render; the request is what matters.
@@ -242,32 +242,36 @@ function ModelsDocumentSettings({ document, operationOwnerKey, active }: {
 
   const page = (() => {
     switch (route.page) {
-      case 'presets': return <ProviderPresetPicker added={added} onPick={(preset) => openPreset(preset)} />
       case 'file': return <ModelsFileEditor key={route.nonce} manager={manager} onDone={() => done({ id: '' })} onCancel={back} onDirtyChange={onDirtyChange} />
       case 'builtin': return <BuiltinProviderEditor key={route.nonce} manager={manager} providerId={route.providerId} preset={route.preset} isNew={route.isNew}
         onVersion={route.preset ? (key) => openPreset(route.preset!.preset, key) : undefined}
-        onChangePreset={() => navigate({ page: 'presets' })} onDone={done} onCancel={back} onDirtyChange={onDirtyChange} />
+        onChangePreset={() => setPresetsOpen(true)} onDone={done} onCancel={back} onDirtyChange={onDirtyChange} />
       case 'custom': return <CustomProviderEditor key={route.nonce} manager={manager} target={route.target}
         takenIds={customIds.filter((id) => id !== route.target.previousId)} builtinIds={builtinIds}
         onVersion={route.target.previousId === null && route.target.preset ? (key) => openPreset(route.target.preset!.preset, key) : undefined}
-        onChangePreset={route.target.previousId === null ? () => navigate({ page: 'presets' }) : undefined}
+        onChangePreset={route.target.previousId === null ? () => setPresetsOpen(true) : undefined}
         onDone={done} onCancel={back} onDirtyChange={onDirtyChange} />
       case 'list': return null
     }
   })()
 
   return <div ref={rootRef} className="min-w-0" data-models-settings data-models-page={route.page}>
-    {route.page !== 'list' ? (manager.loading ? <Loading /> : page) : <div className="min-w-0 space-y-7">
-      <ModelsRuntimeSettings snapshot={snapshot} operationOwnerKey={operationOwnerKey} />
-      <section className="min-w-0" aria-label={t('settings.models.cards.title')} data-models-providers>
-        <header className="mb-2 flex min-w-0 flex-wrap items-end gap-x-3 gap-y-2 px-1">
-          <div className="min-w-0 flex-1 basis-64">
-            <h2 className="text-app font-semibold text-foreground">{t('settings.models.cards.title')}</h2>
-            <p className="mt-0.5 max-w-[72ch] text-caption leading-snug text-muted-foreground">{t('settings.models.cards.description')}</p>
-          </div>
-          <div className="flex shrink-0 items-center gap-1">
+    {route.page !== 'list' ? (manager.loading ? <Loading /> : page) : <SettingsPage>
+      <ModelsRuntimeSettings snapshot={snapshot} operationOwnerKey={operationOwnerKey} onSetDefault={manager.setDefault} defaultBusy={manager.defaultBusy} />
+      <div className="min-w-0 space-y-2" data-models-providers>
+        <ConfigApplyNotice status={manager.apply.status} readFailed={manager.apply.readFailed} />
+        <ConfigurationDocumentError error={manager.documentError} />
+        {notice ? <div role={notice.error ? 'alert' : 'status'} className={cn('px-2.5 text-caption [&_.md-body]:text-caption', notice.error ? 'text-destructive [&_.md-body]:text-destructive' : 'text-muted-foreground')}><MarkdownContent markdown={notice.text} /></div> : null}
+        {!snapshot?.applyStatus && manager.savedApply && manager.savedApply !== 'applied' && manager.savedApply !== 'saved' ? <p className="px-2.5 text-caption text-muted-foreground" role="status">{t(`settings.models.apply.${manager.savedApply}`)}</p> : null}
+        {!manager.loading && !parsed.valid ? <div className="flex min-w-0 flex-wrap items-center gap-3 rounded-[12px] bg-destructive/8 px-3.5 py-2.5" role="alert">
+          <TbAlertTriangle className="size-4 shrink-0 text-destructive" aria-hidden />
+          <p className="min-w-0 flex-1 text-caption text-destructive">{t('settings.models.cards.invalidFile')}</p>
+          <Button variant="outline" size="sm" onClick={() => show({ page: 'file', nonce: ++nonce })}>{t('settings.models.file.open')}</Button>
+        </div> : <ProviderCardList title={t('settings.models.cards.title')} entries={manager.loading ? [] : entries} defaultProvider={snapshot?.defaultProvider}
+          builtinBaseUrls={builtinBaseUrls} tests={cardTests} recent={recent} disabled={!editable}
+          headerActions={<>
             {manager.saving ? <TbLoader2 className="mr-1 size-3.5 animate-spin text-muted-foreground motion-reduce:animate-none" aria-label={t('settings.models.workspace.saving')} /> : null}
-            <Button variant="outline" size="sm" disabled={!editable} onClick={() => navigate({ page: 'presets' })}><TbPlus aria-hidden />{t('settings.models.cards.add')}</Button>
+            <Button variant="outline" size="sm" disabled={!editable} onClick={() => setPresetsOpen(true)}><TbPlus aria-hidden />{t('settings.models.cards.add')}</Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild><Button variant="ghost" size="icon-sm" aria-label={t('settings.models.cards.more')}><TbDots aria-hidden /></Button></DropdownMenuTrigger>
               <DropdownMenuContent align="end">
@@ -276,39 +280,31 @@ function ModelsDocumentSettings({ document, operationOwnerKey, active }: {
                 <DropdownMenuItem disabled={!manager.available || manager.loading || manager.saving} onSelect={() => { void manager.load(true); void manager.refreshBuiltin() }}><TbRefresh aria-hidden />{t('common.refresh')}</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-          </div>
-        </header>
-        <div className="min-w-0 space-y-2">
-          <ConfigApplyNotice status={manager.apply.status} readFailed={manager.apply.readFailed} />
-          <ConfigurationDocumentError error={manager.documentError} />
-          {notice ? <div role={notice.error ? 'alert' : 'status'} className={cn('px-1 text-caption [&_.md-body]:text-caption', notice.error ? 'text-destructive [&_.md-body]:text-destructive' : 'text-muted-foreground')}><MarkdownContent markdown={notice.text} /></div> : null}
-          {!snapshot?.applyStatus && manager.savedApply && manager.savedApply !== 'applied' && manager.savedApply !== 'saved' ? <p className="px-1 text-caption text-muted-foreground" role="status">{t(`settings.models.apply.${manager.savedApply}`)}</p> : null}
-          {manager.loading ? <div className="mac-group"><Loading /></div>
-            : !parsed.valid ? <div className="flex min-w-0 flex-wrap items-center gap-3 rounded-lg bg-destructive/8 px-3.5 py-2.5" role="alert">
-              <TbAlertTriangle className="size-4 shrink-0 text-destructive" aria-hidden />
-              <p className="min-w-0 flex-1 text-caption text-destructive">{t('settings.models.cards.invalidFile')}</p>
-              <Button variant="outline" size="sm" onClick={() => show({ page: 'file', nonce: ++nonce })}>{t('settings.models.file.open')}</Button>
-            </div>
-              : entries.length === 0 ? (manager.builtin.state === 'loading' ? <div className="mac-group"><Loading /></div> : <ProvidersEmpty disabled={!editable} onAdd={() => navigate({ page: 'presets' })} />)
-                : <ProviderCardList entries={entries} defaultProvider={snapshot?.defaultProvider} builtinBaseUrls={builtinBaseUrls} tests={cardTests} recent={recent}
-                  disabled={!editable} actions={{
-                    edit: (entry) => editEntry(entry),
-                    test: (entry) => void testEntry(entry),
-                    duplicate: (id) => void duplicate(id),
-                    fill: (id) => editEntry({ kind: 'custom', id, provider: parsed.providers.find((provider) => provider.id === id)! }, true),
-                    remove: setRemoving,
-                  }} />}
-          {manager.builtin.state === 'error' ? <p className="px-1 text-micro text-muted-foreground" role="status">{t('settings.models.cards.builtinFailed')}</p> : null}
-        </div>
-      </section>
-      <SettingSection title={t('settings.models.metadata.title')}>
-        <SettingRow label={t('settings.models.metadata.online')} desc={t('settings.models.metadata.onlineDescription')}>
+          </>}
+          empty={manager.loading || manager.builtin.state === 'loading' ? <div data-settings-row><Loading /></div>
+            : <div data-settings-row data-models-empty className="flex flex-col items-center gap-1.5 px-4 py-8 text-center">
+              <p className="text-app font-medium">{t('settings.models.noProviders')}</p>
+              <p className="max-w-sm text-caption leading-relaxed text-muted-foreground">{t('settings.models.cards.emptyDescription')}</p>
+              <Button variant="outline" size="sm" className="mt-1.5" disabled={!editable} onClick={() => setPresetsOpen(true)}>{t('settings.models.cards.add')}</Button>
+            </div>}
+          actions={{
+            edit: (entry) => editEntry(entry),
+            test: (entry) => void testEntry(entry),
+            duplicate: (id) => void duplicate(id),
+            fill: (id) => editEntry({ kind: 'custom', id, provider: parsed.providers.find((provider) => provider.id === id)! }, true),
+            remove: setRemoving,
+          }} />}
+        {manager.builtin.state === 'error' ? <p className="px-2.5 text-caption text-muted-foreground" role="status">{t('settings.models.cards.builtinFailed')}</p> : null}
+      </div>
+      <SettingsGroup title={t('settings.models.metadata.title')}>
+        <SettingsRow label={t('settings.models.metadata.online')} info={t('settings.models.metadata.onlineDescription')}>
           <Switch checked={settings.models.onlineMetadata} aria-label={t('settings.models.metadata.online')}
             onCheckedChange={(onlineMetadata) => updateSettings({ models: { onlineMetadata } })} />
-        </SettingRow>
-      </SettingSection>
-    </div>}
+        </SettingsRow>
+      </SettingsGroup>
+    </SettingsPage>}
 
+    <ProviderPresetSheet open={presetsOpen} onOpenChange={setPresetsOpen} added={added} onPick={(preset) => openPreset(preset)} />
     <ConfigurationReloadConfirmation open={manager.reloadOpen} onOpenChange={manager.setReloadOpen} onReload={() => { manager.setReloadOpen(false); void manager.load() }} />
     <DiscardChangesDialog open={pending !== null} onOpenChange={(open) => { if (!open) setPending(null) }}
       onDiscard={() => { const next = pending; setPending(null); if (route.page === 'file') manager.revertDraft(); if (next) show(next) }} />

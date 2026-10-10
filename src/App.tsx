@@ -75,11 +75,14 @@ import { TerminalActionsContext } from '@/components/inspector/TerminalActions'
 import { TerminalExternalAppMenu } from '@/components/inspector/TerminalExternalAppMenu'
 import { SubagentExecutionPanel } from '@/components/inspector/SubagentExecutionPanel'
 import { CommandExecutionPanel } from '@/components/inspector/CommandExecutionPanel'
+import { ActionRunPanel } from '@/components/projects/ActionRunPanel'
+import { ProjectRunButton } from '@/components/projects/ProjectRunButton'
+import { ProjectWorkflowActionsProvider, requestLocalEnvironmentProject, type ProjectWorkflowActions } from '@/components/projects/project-workflow-actions'
+import { useWorktreeIndex } from '@/store/project-workflows'
 import { usePanelStrip } from '@/components/inspector/panel-strip-tabs'
 import { useConversationPanel } from '@/components/frame/useConversationPanel'
 import { createDefaultWorkspaceAdapter } from '@/renderer/adapters/workspace-adapter'
 import { PanelResizeHandle } from '@/components/layout/PanelResizeHandle'
-import type { IntegrationsTabId } from '@/components/settings/SettingsLayout'
 import {
   type CommandContext,
   type SessionCommandEntry,
@@ -177,7 +180,6 @@ export default function App() {
     compactInspectorReturnFocusRef, setRail, setSettingsSection, setPaletteOpen,
     toggleContextPanel,
   } = useWorkbenchNavigation()
-  const [integrationsTab, setIntegrationsTab] = React.useState<IntegrationsTabId>('overview')
   const [searchScope, setSearchScope] = React.useState<'current' | 'all'>('current')
   const [searchOpen, setSearchOpen] = React.useState(false)
   const [exportTarget, setExportTarget] = React.useState<ConversationExportTarget | null>(null)
@@ -273,6 +275,9 @@ export default function App() {
   const subagentSelectionSequence = React.useRef(0)
   const subagentReturnFocus = React.useRef<HTMLElement | null>(null)
   const [commandSelection, setCommandSelection] = React.useState<{ sessionKey: string; toolCallId: string } | null>(null)
+  /** The action run the bottom panel shows; a request for another project waits until it is open. */
+  const [actionRun, setActionRun] = React.useState<{ workspaceId: string; runId: string | null } | null>(null)
+  const [pendingActionRun, setPendingActionRun] = React.useState<{ workspaceId: string; runId: string | null } | null>(null)
   const commandReturnFocus = React.useRef<HTMLElement | null>(null)
 
   const run = React.useCallback((operation: () => Promise<void>) => {
@@ -563,6 +568,7 @@ export default function App() {
   const projectAvailable = workspace.activeScope.kind === 'project' && workspace.workspace?.available === true
   /** Closing a tab also lets go of what it showed. */
   const closePanelTab = React.useCallback((id: string) => {
+    if (id === 'action') setActionRun(null)
     if (id === 'subagent') setSubagentSelection(null)
     if (id === 'command') setCommandSelection(null)
     if (id === 'sidechat') setSideQuestion(null)
@@ -663,10 +669,6 @@ export default function App() {
     openSettingsSection: (section) => {
       setSettingsSection(section)
     },
-    openIntegrationsTab: (tab) => {
-      setIntegrationsTab(tab)
-      setSettingsSection('integrations')
-    },
     stopGeneration: () => {
       if (!conversationReady) return
       void paletteStopFeedback.run('stop', () => actions.abort(), t('composer.stopFailed'))
@@ -727,8 +729,7 @@ export default function App() {
     submissionId?: string,
   ) => {
     if (images.length === 0 && opensMcpSettings(text)) {
-      setIntegrationsTab('mcp')
-      setSettingsSection('integrations')
+      setSettingsSection('mcp')
       return
     }
     await actions.send(text, action, images, submissionId)
@@ -835,6 +836,34 @@ export default function App() {
   const visibleFile = fileTabs.find((path) => panel.isVisible(`file:${path}`)) ?? null
   const panelWorkspace = workspace.activeScope.kind === 'project' && workspace.workspace?.id === workspace.activeScope.workspaceId && workspace.workspace.available
     ? workspace.workspace : null
+  const activeProjectId = workspace.activeScope.kind === 'project' ? workspace.activeScope.workspaceId : null
+  // A working copy is named "task · branch"; the toolbar already shows the branch, so it shows the task alone.
+  const activeWorktree = useWorktreeIndex(activeProjectId ? [activeProjectId] : []).get(activeProjectId ?? '')
+  const activeProjectName = workspace.activeScope.kind === 'project' ? activeWorktree?.name ?? workspace.workspace?.name : undefined
+  const showActionRun = React.useCallback((workspaceId: string, runId: string | null) => {
+    setActionRun({ workspaceId, runId })
+    panel.open(panelTab('action'), { dock: 'bottom' })
+  }, [panel])
+  // A run asked for in a project that is still opening (a new working copy's setup) shows once its conversation is ready.
+  React.useEffect(() => {
+    if (!pendingActionRun || pendingActionRun.workspaceId !== activeProjectId || !conversationReady) return
+    setPendingActionRun(null)
+    showActionRun(pendingActionRun.workspaceId, pendingActionRun.runId)
+  }, [activeProjectId, conversationReady, pendingActionRun, showActionRun])
+  const projectWorkflowActions = React.useMemo<ProjectWorkflowActions>(() => ({
+    startProjectTask: (workspaceId) => {
+      requestSwitch(() => workspace.newSession({ kind: 'project', workspaceId }))
+      setRail('sessions')
+    },
+    openActionRun: (workspaceId, runId) => {
+      if (workspaceId === activeProjectId && conversationReady) showActionRun(workspaceId, runId ?? null)
+      else setPendingActionRun({ workspaceId, runId: runId ?? null })
+    },
+    openLocalEnvironment: (workspaceId) => {
+      if (workspaceId) requestLocalEnvironmentProject(workspaceId)
+      setSettingsSection('local-environment')
+    },
+  }), [activeProjectId, conversationReady, requestSwitch, setRail, setSettingsSection, showActionRun, workspace])
   // A restored conversation drops tabs for files deleted since (Codex reopens them otherwise).
   const tabsKeyRef = React.useRef(conversationTabsKey)
   tabsKeyRef.current = conversationTabsKey
@@ -902,6 +931,8 @@ export default function App() {
       visible={conversationWorkspace && panel.isVisible('sidechat')} />, panelContainers.get('sidechat')) : null}
     {panel.state.tabs.subagent && selectedSubagentCall ? createPortal(<SubagentExecutionPanel call={selectedSubagentCall} onClose={closeSubagentExecution} />, panelContainers.get('subagent')) : null}
     {panel.state.tabs.command && selectedCommandCall ? createPortal(<CommandExecutionPanel call={selectedCommandCall} onClose={closeCommandExecution} />, panelContainers.get('command')) : null}
+    {panel.state.tabs.action && actionRun ? createPortal(<ActionRunPanel workspaceId={actionRun.workspaceId} runId={actionRun.runId}
+      onSelectRun={(runId) => setActionRun({ workspaceId: actionRun.workspaceId, runId })} onClose={() => closePanelTab('action')} />, panelContainers.get('action')) : null}
   </>
   const compactSettingsDetailVisible = frameLayoutMode === 'settings-compact' && compactSettingsDetailOpen
   const contextPanelVisible = frameNav.contextPanelOpen && !compactSettingsDetailVisible
@@ -909,6 +940,7 @@ export default function App() {
   return (
     <TooltipProvider delayDuration={350}>
       <TerminalActionsContext.Provider value={{ scope: workspace.activeScope, open: openTerminalHere, openExternal: openExternalHere }}>
+      <ProjectWorkflowActionsProvider value={projectWorkflowActions}>
       <PrecisionReferencesProvider ownerKey={`${conversationScopeKey(workspace.activeScope)}:${workspace.activeSessionId ?? 'unselected'}`}
         askSideQuestion={conversationReady ? askSideQuestion : undefined}
         workspaceId={workspace.activeScope.kind === 'project' ? workspace.activeScope.workspaceId : null}>
@@ -1048,7 +1080,7 @@ export default function App() {
               onSearch={() => { setSearchScope('current'); setSearchOpen(true) }}
               title={title}
               ownerKey={conversationSessionKey}
-              projectName={workspace.activeScope.kind === 'project' ? workspace.workspace?.name : undefined}
+              projectName={activeProjectName}
               status={conversationReady ? pi.status : undefined}
               onNavigate={navigateConversationOutline}
               onNewConversation={newPrimarySession}
@@ -1057,6 +1089,8 @@ export default function App() {
               onShowChanges={projectAvailable ? openReview : undefined}
               changeTotals={projectAvailable ? changeTotals : null}
               gitControls={panelWorkspace ? <div className="glass toolbar-group" data-git-controls>
+                <ProjectRunButton workspaceId={panelWorkspace.id} onOpenOutput={(runId) => showActionRun(panelWorkspace.id, runId)}
+                  onEditActions={() => projectWorkflowActions.openLocalEnvironment(panelWorkspace.id)} />
                 <OpenInEditorButton workspaceId={panelWorkspace.id} variant="icon" />
                 {changeTotals?.gitAvailable ? <CommitButton workspaceId={panelWorkspace.id} model={commitModel} disabled={!changeTotals.files}
                   onCommitted={() => setCommitRevision((value) => value + 1)} /> : null}
@@ -1094,7 +1128,7 @@ export default function App() {
                 selected={conversationReady}
                 onStartWriting={startWriting}
                 starting={starting}
-                projectName={workspace.activeScope.kind === 'project' ? workspace.workspace?.name : undefined}
+                projectName={activeProjectName}
                 onOpenProject={() => { requestSwitch(async () => { await workspace.chooseWorkspace() }); setRail('sessions') }}
               />}
               presentation={conversation}
@@ -1126,10 +1160,7 @@ export default function App() {
               goalMode={conversationReady ? extension.goalMode : null}
               conversationEmpty={conversationReady && pi.session?.messageCount === 0}
               onExitPlanMode={() => runPlanAction('exit')}
-              onOpenIntegrations={() => {
-                setIntegrationsTab('packages')
-                setSettingsSection('integrations')
-              }}
+              onOpenIntegrations={() => setSettingsSection('packages')}
               connected={conversationReady}
               draftEditable={!switching && Boolean(workspace.activeSessionId)}
               loadingModels={conversation.status === 'loading'}
@@ -1197,8 +1228,7 @@ export default function App() {
               hidden={conversationWorkspace}
               operationOwnerKey={operationOwnerKey}
               section={settingsSection}
-              integrationsTab={integrationsTab}
-              onIntegrationsTab={setIntegrationsTab}
+              onNavigate={setSettingsSection}
               compact={frameLayoutMode === 'settings-compact'}
               detailVisible={frameLayoutMode !== 'settings-compact' || compactSettingsDetailOpen}
               onBack={frameLayoutMode === 'settings-compact' ? closeCompactSettingsDetail : undefined}
@@ -1476,6 +1506,7 @@ export default function App() {
         </AlertDialogContent>
       </AlertDialog>
       </PrecisionReferencesProvider>
+      </ProjectWorkflowActionsProvider>
       </TerminalActionsContext.Provider>
     </TooltipProvider>
   )

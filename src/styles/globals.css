@@ -315,6 +315,35 @@
   -webkit-app-region: no-drag;
 }
 
+/* Page toolbars share their leading space with the collapsed navigation.
+   Padding alone still makes that space draggable in Electron. Keep the
+   native drag rectangle physically clear of those floating controls. */
+@utility titlebar-drag {
+  -webkit-user-select: none;
+  user-select: none;
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0 0 0 var(--titlebar-leading, 0px);
+    -webkit-app-region: drag;
+    pointer-events: none;
+  }
+}
+
+/* Codex: an earlier reply's copy / branch / export appear while it is hovered or focused. */
+[data-response-actions][data-hover-only] {
+  opacity: 0;
+  transition: opacity var(--duration-fast) ease;
+}
+[data-conversation-response]:is(:hover, :focus-within) [data-response-actions][data-hover-only] {
+  opacity: 1;
+}
+@media (hover: none) {
+  [data-response-actions][data-hover-only] {
+    opacity: 1;
+  }
+}
+
 /* Leaves room for the inset traffic lights on macOS. */
 @utility traffic-light-gutter {
   padding-left: var(--traffic-light-gutter);
@@ -373,7 +402,7 @@
   a[href] {
     cursor: pointer;
   }
-  .app-drag :is(button, a, input, select, textarea, [role='button'], [role='tab'], [role='combobox'], [role='separator'], [contenteditable='true'], [data-app-no-drag]) {
+  :is(.app-drag, .titlebar-drag) :is(button, a, input, select, textarea, [role='button'], [role='tab'], [role='combobox'], [role='separator'], [contenteditable='true'], [data-app-no-drag]) {
     -webkit-app-region: no-drag;
   }
   :focus-visible {
@@ -651,27 +680,37 @@
 }
 
 /* ==================================================================
-   System Settings–style grouped form boxes
+   Settings kit (System Settings, macOS 27): a grouped box of rows.
+   Rows are separated by hairlines inset to where their text starts.
    ================================================================== */
-.mac-group {
-  border-radius: var(--radius-lg);
+.settings-group {
+  position: relative;
+  border-radius: 12px;
   background: var(--color-group);
   box-shadow: inset 0 0 0 0.5px var(--color-group-border);
 }
-.mac-group > * + * {
-  border-top: 0.5px solid var(--color-border);
+.settings-group > [data-settings-row] {
+  position: relative;
 }
-.mac-group > * {
-  padding-inline: 14px;
+.settings-group > [data-settings-row]:first-child { border-top-left-radius: inherit; border-top-right-radius: inherit; }
+.settings-group > [data-settings-row]:last-child { border-bottom-left-radius: inherit; border-bottom-right-radius: inherit; }
+.settings-group > [data-settings-row] + [data-settings-row]::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: var(--settings-row-inset, 12px);
+  right: 12px;
+  height: 0.5px;
+  background: var(--color-border);
+  pointer-events: none;
 }
-.mac-group > :where(p, div:not([data-setting-row]):not(.mac-group-raw)) {
-  padding-block: 10px;
+/* A clickable row presses like a table cell. */
+.settings-group > [data-settings-row][data-pressable]:has(> [data-settings-row-action]:active) {
+  background: var(--color-fill);
 }
-.mac-group > .mac-group-raw {
-  padding: 0;
-}
-.mac-group > :empty {
-  display: none;
+.settings-group > [data-settings-row][data-recent] {
+  background: color-mix(in srgb, var(--color-primary) 9%, transparent);
+  transition: background-color 700ms;
 }
 
 /* Native <select> drawn as a macOS 27 pop-up button (capsule + accent chevron disc). */

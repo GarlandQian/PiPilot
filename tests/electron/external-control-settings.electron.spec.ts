@@ -9,7 +9,7 @@ import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from '../../src/shared/sett
 import { ConversationMcpBridgeClient } from '../../src/main/external-control/bridge-client'
 import { ExternalControlDescriptorRepository } from '../../src/main/external-control/descriptor-repository'
 
-test('manages External Control in the compact Integrations tab', async ({}, testInfo) => {
+test('manages External Control in its own Settings pane', async ({}, testInfo) => {
   test.setTimeout(60_000)
   const userDataPath = testInfo.outputPath('user-data')
   const launcherDirectory = join(userDataPath, 'launcher-bin')
@@ -46,11 +46,10 @@ test('manages External Control in the compact Integrations tab', async ({}, test
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
     await page
       .getByRole('region', { name: 'Settings', exact: true })
-      .getByRole('button', { name: 'Integrations', exact: true })
+      .getByRole('button', { name: 'External Control', exact: true })
       .click()
-    await page.getByRole('tab', { name: 'External Control', exact: true }).click()
 
-    const launcher = page.locator('section[aria-labelledby="external-control-launcher-title"]')
+    const launcher = page.locator('[data-external-control-launcher]')
     const enableSwitch = page.getByRole('switch', {
       name: 'Enable External Control',
       exact: true,
@@ -108,13 +107,9 @@ test('manages External Control in the compact Integrations tab', async ({}, test
     await expect.poll(() => page.evaluate(() => (
       document.documentElement.scrollWidth <= document.documentElement.clientWidth
     ))).toBe(true)
-    await expect.poll(() => page.getByRole('tablist', {
-      name: 'Integrations',
-      exact: true,
-    }).evaluate((tablist) => {
-      const scroller = tablist.parentElement
-      return Boolean(scroller && scroller.scrollWidth <= scroller.clientWidth)
-    })).toBe(true)
+    await expect.poll(() => page.locator('[data-settings-section="external-control"]').evaluate((pane) => (
+      pane.scrollWidth <= pane.clientWidth
+    ))).toBe(true)
     await expect.poll(() => page.evaluate(() => (
       document.getAnimations().every((animation) => animation.playState !== 'running')
     ))).toBe(true)
@@ -157,7 +152,7 @@ test('manages External Control in the compact Integrations tab', async ({}, test
       appearance: { theme: 'dark' },
       locale: 'zh-CN',
     }))
-    await expect(page.getByRole('tab', { name: '外部控制', exact: true })).toBeVisible()
+    await expect(page.getByRole('main', { name: '外部控制', exact: true })).toBeVisible()
     await expect(page.getByText('就绪', { exact: true })).toBeVisible()
     await expect.poll(() => page.evaluate(() => (
       document.documentElement.classList.contains('dark') &&

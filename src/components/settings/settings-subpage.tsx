@@ -31,3 +31,14 @@ export function useSettingsSubpage(section: SettingsSectionId, page: SettingsSub
   }, [publish, section, title])
   React.useLayoutEffect(() => () => publish?.(section, null), [publish, section])
 }
+
+/** Opens another Settings pane (Packages → its resources, MCP Servers → Packages). */
+const SettingsNavigateContext = React.createContext<((section: SettingsSectionId) => void) | null>(null)
+
+export function SettingsNavigateProvider({ navigate, children }: { navigate(section: SettingsSectionId): void; children: React.ReactNode }) {
+  return <SettingsNavigateContext.Provider value={navigate}>{children}</SettingsNavigateContext.Provider>
+}
+
+export function useSettingsNavigate() {
+  return React.useContext(SettingsNavigateContext) ?? (() => undefined)
+}

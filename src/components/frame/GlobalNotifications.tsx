@@ -3,11 +3,14 @@ import {
   TbAlertTriangle,
   TbBell,
   TbCheck,
+  TbChecks,
+  TbDots,
   TbDownload,
   TbExternalLink,
   TbMessageCircleQuestion,
   TbLoader2,
   TbRefresh,
+  TbTrash,
   TbX,
 } from 'react-icons/tb'
 import {
@@ -21,6 +24,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Progress } from '@/components/ui/progress'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -88,7 +92,7 @@ function UpdateNotification({
 
   return (
     <>
-      <li className="border-b border-border/60 px-3 py-2.5 last:border-b-0">
+      <li className="px-3.5 py-2.5">
         <div className="flex items-start gap-2">
           {snapshot.state === 'downloaded'
             ? <TbCheck className="mt-0.5 size-3.5 shrink-0 text-success" aria-hidden />
@@ -228,16 +232,40 @@ function TaskNotificationRow({ notification, now, busy, onOpen }: {
   const name = notification.sessionName ?? t('sidebar.session.untitled')
   const source = notification.scope.kind === 'projectless' ? t('conversation.projectless') : notification.projectName ?? t('notifications.project')
   const kind = t(notification.kind === 'completed' ? 'notifications.kind.completed' : notification.kind === 'failed' ? 'notifications.kind.failed' : 'notifications.kind.inputRequired')
-  return <li data-task-notification-id={notification.id} className="border-b border-border/60 last:border-b-0">
-    <button type="button" disabled={busy} onClick={onOpen} aria-label={t('notifications.openTask', { kind, name, source })} className={cn('flex w-full min-w-0 items-start gap-2 px-3 py-3 text-left outline-none transition-colors hover:bg-accent focus-visible:focus-ring disabled:opacity-60', !notification.read && 'bg-sage/5')}>
-      {notification.kind === 'completed' ? <TbCheck className="mt-0.5 size-4 shrink-0 text-success" aria-hidden /> : notification.kind === 'failed' ? <TbAlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden /> : <TbMessageCircleQuestion className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />}
+  const Icon = notification.kind === 'completed' ? TbCheck : notification.kind === 'failed' ? TbAlertTriangle : TbMessageCircleQuestion
+  return <li data-task-notification-id={notification.id} data-unread={notification.read ? undefined : true}>
+    <button type="button" disabled={busy} onClick={onOpen} aria-label={t('notifications.openTask', { kind, name, source })}
+      className="relative flex w-full min-w-0 items-start gap-2.5 rounded-[10px] px-2.5 py-2 text-left outline-none transition-colors hover:bg-fill focus-visible:focus-ring disabled:opacity-60">
+      {/* Unread is a dot, as in Mail; the word stays for screen readers. */}
+      <span aria-hidden className={cn('mt-[7px] size-2 shrink-0 rounded-full', notification.read ? 'bg-transparent' : 'bg-primary')} />
+      <span aria-hidden className={cn('flex size-7 shrink-0 items-center justify-center rounded-full',
+        notification.kind === 'completed' ? 'bg-success/14 text-success' : notification.kind === 'failed' ? 'bg-destructive/12 text-destructive' : 'bg-warning/14 text-warning')}>
+        <Icon className="size-4" />
+      </span>
       <span className="min-w-0 flex-1">
-        <span className="flex min-w-0 items-baseline justify-between gap-2"><span className="min-w-0 text-caption font-medium text-foreground">{kind}</span><NotificationTime createdAt={notification.createdAt} now={now} /></span>
-        <span className="mt-0.5 block truncate text-caption text-foreground" title={name}>{name}</span>
-        <span className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-micro text-muted-foreground"><span className="min-w-0 truncate" title={source}>{source}</span>{notification.kind === 'input-required' && notification.resolved ? <span>{t('notifications.resolved')}</span> : null}<span className={cn('ml-auto inline-flex shrink-0 items-center gap-1', !notification.read && 'text-foreground')}>{!notification.read ? <span aria-hidden className="size-1.5 rounded-full bg-sage" /> : null}{t(notification.read ? 'notifications.read' : 'notifications.unread')}</span></span>
+        <span className="flex min-w-0 items-baseline justify-between gap-2">
+          <span className={cn('min-w-0 truncate text-caption text-foreground', !notification.read && 'font-semibold')}>{kind}</span>
+          <NotificationTime createdAt={notification.createdAt} now={now} />
+        </span>
+        <span className="mt-0.5 block truncate text-caption text-foreground/85" title={name}>{name}</span>
+        <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-micro text-muted-foreground">
+          <span className="min-w-0 truncate" title={source}>{source}</span>
+          {notification.kind === 'input-required' && notification.resolved ? <span className="shrink-0">· {t('notifications.resolved')}</span> : null}
+        </span>
+        {!notification.read ? <span className="sr-only">{t('notifications.unread')}</span> : null}
       </span>
     </button>
   </li>
+}
+
+/** "Today" and "Earlier", newest first. */
+function groupByDay(items: readonly TaskNotification[], now: number) {
+  const startOfToday = new Date(now)
+  startOfToday.setHours(0, 0, 0, 0)
+  return {
+    today: items.filter((item) => item.createdAt >= startOfToday.getTime()),
+    earlier: items.filter((item) => item.createdAt < startOfToday.getTime()),
+  }
 }
 
 export function GlobalNotifications({ onOpenAbout, onOpenNotification }: {
@@ -287,6 +315,7 @@ export function GlobalNotifications({ onOpenAbout, onOpenNotification }: {
     }
   }
   const disabled = busy || openingId !== null
+  const groups = groupByDay(visibleNotifications, now)
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -318,26 +347,35 @@ export function GlobalNotifications({ onOpenAbout, onOpenNotification }: {
         side="right"
         align="end"
         sideOffset={8}
-        className="flex w-[min(22rem,calc(100vw-2rem))] max-h-(--radix-popover-content-available-height) flex-col overflow-hidden p-0"
+        className="flex w-[min(340px,calc(100vw-2rem))] max-h-(--radix-popover-content-available-height) flex-col overflow-hidden p-0"
         aria-label={t('rail.notifications')}
       >
-        <div className="flex shrink-0 items-center gap-2 border-b border-border px-3.5 py-2.5">
-          <h2 className="text-app font-semibold text-foreground">
-            {t('rail.notifications')}
-          </h2>
-          <span className="text-micro tabular-nums text-muted-foreground">{t('notifications.unreadTotal', { count })}</span>
+        <div className="flex shrink-0 items-center gap-2 px-3.5 pt-3 pb-1.5">
+          <h2 className="text-app font-semibold text-foreground">{t('rail.notifications')}</h2>
+          {count > 0 ? <span className="text-micro tabular-nums text-muted-foreground">{t('notifications.unreadTotal', { count })}</span> : null}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon-xs" className="ml-auto text-muted-foreground" aria-label={t('notifications.options')} disabled={disabled}><TbDots aria-hidden /></Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem disabled={count === 0} onSelect={() => void run(() => notifications.markRead())}><TbChecks aria-hidden />{t('notifications.markAllRead')}</DropdownMenuItem>
+              <DropdownMenuItem disabled={visibleNotifications.length === 0} onSelect={() => void run(() => notifications.clear())}><TbTrash aria-hidden />{t('notifications.clearHistory')}</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
-        <div className="scroll-slim min-h-0 max-h-[min(32rem,75vh)] overflow-y-auto">
-          {updateSnapshot ? <section className="border-b border-border" aria-label={t('notifications.applicationUpdate')}><h3 className="px-3 pt-2 text-micro font-medium text-muted-foreground">{t('notifications.applicationUpdate')}</h3><ul><UpdateNotification snapshot={updateSnapshot} onOpenAbout={() => { setOpen(false); onOpenAbout() }} /></ul></section> : null}
+        <div className="scroll-slim min-h-0 max-h-[min(32rem,75vh)] overflow-y-auto px-1 pb-1.5">
+          {updateSnapshot ? <section className="mx-1 mb-1.5 rounded-[12px] bg-fill" aria-label={t('notifications.applicationUpdate')}><ul><UpdateNotification snapshot={updateSnapshot} onOpenAbout={() => { setOpen(false); onOpenAbout() }} /></ul></section> : null}
           <section aria-label={t('notifications.taskActivity')}>
-            <div className="flex flex-wrap items-center gap-1 border-b border-border px-2 py-1.5">
-              <h3 className="mr-auto px-1 text-micro font-medium text-muted-foreground">{t('notifications.taskActivity')}</h3>
-              <Button variant="ghost" size="xs" disabled={disabled || count === 0} onClick={() => void run(() => notifications.markRead())}>{t('notifications.markAllRead')}</Button>
-              <Button variant="ghost" size="xs" disabled={disabled || visibleNotifications.length === 0} onClick={() => void run(() => notifications.clear())}>{t('notifications.clearHistory')}</Button>
-            </div>
-            {notifications.errorMessage ? <div role="alert" className="space-y-2 border-b border-border px-3 py-2"><p className="text-caption text-destructive">{notifications.errorMessage}</p><Button variant="outline" size="xs" disabled={disabled || notifications.loading} onClick={() => void run(notifications.reload)}><TbRefresh aria-hidden />{t('notifications.retry')}</Button></div> : null}
-            {openFailed ? <div role="alert" className="space-y-2 border-b border-border px-3 py-2"><p className="text-caption text-destructive">{t('notifications.openFailed')}</p><div className="flex flex-wrap gap-1"><Button variant="outline" size="xs" disabled={disabled} onClick={() => void openNotification(openFailed)}>{t('notifications.retry')}</Button><Button variant="ghost" size="xs" disabled={disabled} onClick={() => void run(async () => { const cleared = await notifications.clear(openFailed); if (cleared) setOpenFailed(null); return cleared })}>{t('notifications.localDismiss')}</Button></div></div> : null}
-            {notifications.loading && visibleNotifications.length === 0 ? <p role="status" className="flex items-center gap-2 px-3 py-4 text-caption text-muted-foreground"><TbLoader2 aria-hidden className="size-3.5 animate-spin motion-reduce:animate-none" />{t('notifications.loading')}</p> : visibleNotifications.length === 0 ? <p className="px-3 py-4 text-caption text-muted-foreground">{t('rail.notifications.empty')}</p> : <ul>{visibleNotifications.map((notification) => <TaskNotificationRow key={notification.id} notification={notification} now={now} busy={disabled} onOpen={() => void openNotification(notification.id)} />)}</ul>}
+            {notifications.errorMessage ? <div role="alert" className="mx-1 mb-1.5 space-y-2 rounded-[12px] bg-destructive/8 px-3 py-2"><p className="text-caption text-destructive">{notifications.errorMessage}</p><Button variant="outline" size="xs" disabled={disabled || notifications.loading} onClick={() => void run(notifications.reload)}><TbRefresh aria-hidden />{t('notifications.retry')}</Button></div> : null}
+            {openFailed ? <div role="alert" className="mx-1 mb-1.5 space-y-2 rounded-[12px] bg-destructive/8 px-3 py-2"><p className="text-caption text-destructive">{t('notifications.openFailed')}</p><div className="flex flex-wrap gap-1"><Button variant="outline" size="xs" disabled={disabled} onClick={() => void openNotification(openFailed)}>{t('notifications.retry')}</Button><Button variant="ghost" size="xs" disabled={disabled} onClick={() => void run(async () => { const cleared = await notifications.clear(openFailed); if (cleared) setOpenFailed(null); return cleared })}>{t('notifications.localDismiss')}</Button></div></div> : null}
+            {notifications.loading && visibleNotifications.length === 0
+              ? <p role="status" className="flex items-center gap-2 px-3 py-4 text-caption text-muted-foreground"><TbLoader2 aria-hidden className="size-3.5 animate-spin motion-reduce:animate-none" />{t('notifications.loading')}</p>
+              : visibleNotifications.length === 0
+                ? <div className="flex flex-col items-center gap-2 px-3 py-8 text-center"><TbBell className="size-6 text-muted-foreground/50" aria-hidden /><p className="text-caption text-muted-foreground">{t('rail.notifications.empty')}</p></div>
+                : (['today', 'earlier'] as const).map((day) => groups[day].length ? <div key={day} data-notification-day={day}>
+                  <h3 className="px-3.5 pt-1.5 pb-0.5 text-micro font-semibold text-muted-foreground">{t(day === 'today' ? 'notifications.today' : 'notifications.earlier')}</h3>
+                  <ul>{groups[day].map((notification) => <TaskNotificationRow key={notification.id} notification={notification} now={now} busy={disabled} onOpen={() => void openNotification(notification.id)} />)}</ul>
+                </div> : null)}
           </section>
         </div>
       </PopoverContent>

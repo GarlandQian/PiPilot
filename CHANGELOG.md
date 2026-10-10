@@ -6,6 +6,22 @@ Each version section supplies the highlights for its GitHub Release. Download li
 
 ## Unreleased
 
+## 0.7.0
+
+### 中文
+
+- **重做设置界面**：设置按偏好、Pi 配置和应用管理分组，统一列表、说明和编辑页样式；模型、MCP、终端配置和扩展包使用独立页面与编辑面板。
+- **增加本地环境管理**：按项目配置安装、测试、开发等命令，可设工作目录和系统专属命令；在工作区运行并查看实时输出和历史记录。支持从分支创建 Git 工作副本，可选运行初始化命令，并可归档、恢复和切换工作副本。
+- **快捷运行项目命令**：项目工具栏可一键运行上次使用的命令，也可选其他命令、停止运行中的命令或打开输出；工作副本可沿用来源项目的命令配置。
+- **拆分扩展与外部控制管理**：扩展包、Pi 资源、本地环境和外部控制各有独立设置页，便于查看安装状态、资源、项目操作和 MCP 启动器连接状态。
+
+### English
+
+- **Redesigned Settings:** Organize preferences, Pi configuration, and app management into focused groups with consistent lists, guidance, and editors. Models, MCP, terminal profiles, and extensions each have dedicated pages and editing sheets.
+- **Local environment management:** Configure per-project install, test, and development commands, including working directories and platform-specific variants. Run them from the workspace and inspect live output and history. Create Git worktrees from a branch, optionally run a setup command, and archive, restore, or switch worktrees.
+- **Run project actions from the toolbar:** Run the last-used action with one click, choose another action, stop a running command, or open its output. A worktree can reuse its source project's action configuration.
+- **Separate extension and external-control settings:** Give packages, Pi resources, local environment, and external control dedicated pages for reviewing installation state, resources, project actions, and MCP launcher connections.
+
 ## 0.6.0
 
 ### 中文

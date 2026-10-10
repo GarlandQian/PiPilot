@@ -1,17 +1,36 @@
 import * as React from 'react'
-import { TbAlertTriangle, TbCheck, TbLoader2, TbPencil, TbPlus, TbRefresh, TbTerminal2, TbTrash } from 'react-icons/tb'
+import { TbAlertTriangle, TbCheck, TbDots, TbPencil, TbPlus, TbRefresh, TbTerminal2, TbTrash } from 'react-icons/tb'
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
 import type { TerminalCustomProfile, TerminalShellProfile } from '@/shared/terminal-profiles'
 import { useSettings, useSettingsSaveStatus, useUpdateSettings } from '@/store/settings'
-import { SettingRow, SettingSection } from './common'
-import { TerminalProfileFormDialog } from './TerminalProfileFormDialog'
+import { SettingsBadge, SettingsGroup, SettingsListRow, SettingsRow, StatusText } from './kit'
+import { TerminalProfileSheet } from './TerminalProfileSheet'
 
 const AUTOMATIC_PROFILE = '__automatic__'
 
+export function TerminalRowIcon({ available = true, icon: Icon = TbTerminal2 }: { available?: boolean; icon?: React.ComponentType<{ className?: string }> }) {
+  return <span className={cn('grid size-8 shrink-0 place-items-center rounded-[9px] bg-[linear-gradient(to_bottom,rgb(255_255_255/0.16),transparent)] text-white shadow-[inset_0_0_0_0.5px_rgb(0_0_0/0.1)]',
+    available ? 'bg-[#2c2c2e] dark:bg-[#48484a]' : 'bg-[#8e8e93]')} aria-hidden>
+    <Icon className="size-[18px]" />
+  </span>
+}
+
+/** A saved default that is gone: say so in the group, with a way back to Auto. */
+export function UnavailableDefaultRow({ id, message, busy, onUseAutomatic }: { id?: string; message: string; busy: boolean; onUseAutomatic(): void }) {
+  const t = useT()
+  return <div id={id} data-settings-row role="alert" className="flex min-w-0 flex-wrap items-center gap-3 bg-warning/8 px-3 py-2">
+    <TbAlertTriangle className="size-4 shrink-0 text-warning" aria-hidden />
+    <p className="min-w-0 flex-1 text-caption text-foreground">{message}</p>
+    <Button variant="outline" size="sm" disabled={busy} onClick={onUseAutomatic}>{t('settings.terminal.profiles.useAutomatic')}</Button>
+  </div>
+}
+
+/** The shells new integrated terminals can run: which one is the default, and the custom ones. */
 export function TerminalProfilesSettings() {
   const t = useT()
   const { terminal } = useSettings()
@@ -88,6 +107,10 @@ export function TerminalProfilesSettings() {
   const defaultUnavailable = terminal.defaultProfileId !== null && loaded && !loading && !loadFailed && (!defaultProfile || !defaultProfile.available)
   const automaticProfile = profiles.find(({ isDefault, source, available }) => isDefault && available && source !== 'custom')
 
+  const setDefault = (value: string) => {
+    const profile = mergedProfiles.find(({ id }) => id === value)
+    void updateTerminal({ defaultProfileId: value === AUTOMATIC_PROFILE ? null : value, defaultProfileSnapshot: profile ? { id: profile.id, label: profile.label, executable: profile.executable } : null })
+  }
   const add = () => setEditing({ mode: 'add', profile: { id: `custom:${crypto.randomUUID()}`, name: '', executable: '', args: [], env: {} } })
   const saveProfile = async (profile: TerminalCustomProfile) => {
     const existing = terminal.profiles.some(({ id }) => id === profile.id)
@@ -120,13 +143,11 @@ export function TerminalProfilesSettings() {
   }
 
   return <>
-    <SettingSection title={t('settings.terminal.profiles.title')} desc={t('settings.terminal.profiles.description')}>
-      <SettingRow label={t('settings.terminal.profiles.default')} desc={t('settings.terminal.profiles.defaultDescription')}>
-        <Select value={terminal.defaultProfileId ?? AUTOMATIC_PROFILE} disabled={busy} onValueChange={(value) => {
-          const profile = mergedProfiles.find(({ id }) => id === value)
-          void updateTerminal({ defaultProfileId: value === AUTOMATIC_PROFILE ? null : value, defaultProfileSnapshot: profile ? { id: profile.id, label: profile.label, executable: profile.executable } : null })
-        }}>
-          <SelectTrigger id={selectionId} className="w-full min-w-0 sm:w-64" aria-label={t('settings.terminal.profiles.default')} aria-describedby={defaultUnavailable ? `${selectionId}-warning` : undefined}>
+    <SettingsGroup title={t('settings.terminal.profiles.title')} info={t('settings.terminal.profiles.description')} data-terminal-profiles-default>
+      <SettingsRow label={t('settings.terminal.profiles.default')} info={t('settings.terminal.profiles.defaultDescription')}
+        description={terminal.defaultProfileId === null && automaticProfile && !loading && !busy && !loadFailed ? t('settings.terminal.profiles.automaticResolved', { name: automaticProfile.label }) : undefined}>
+        <Select value={terminal.defaultProfileId ?? AUTOMATIC_PROFILE} disabled={busy} onValueChange={setDefault}>
+          <SelectTrigger id={selectionId} className="w-56 max-w-full" aria-label={t('settings.terminal.profiles.default')} aria-describedby={defaultUnavailable ? `${selectionId}-warning` : undefined}>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -135,47 +156,54 @@ export function TerminalProfilesSettings() {
             {missingDefault ? <SelectItem value={terminal.defaultProfileId!} disabled>{terminal.defaultProfileSnapshot?.label ?? t('settings.terminal.profiles.savedDefault')} · {t('settings.terminal.profiles.unavailable')}</SelectItem> : null}
           </SelectContent>
         </Select>
-      </SettingRow>
-      {terminal.defaultProfileId === null && automaticProfile && !loading && !busy && !loadFailed ? <p className="text-caption text-muted-foreground">{t('settings.terminal.profiles.automaticResolved', { name: automaticProfile.label })}</p> : null}
-      {defaultUnavailable ? <div id={`${selectionId}-warning`} role="alert" className="flex min-w-0 flex-wrap items-center gap-3 bg-warning/8">
-        <TbAlertTriangle className="size-4 shrink-0 text-warning" aria-hidden />
-        <p className="min-w-0 flex-1 text-caption text-foreground">{t('settings.terminal.profiles.defaultUnavailable')}</p>
-        <Button variant="outline" size="sm" disabled={busy} onClick={() => { void updateTerminal({ defaultProfileId: null, defaultProfileSnapshot: null }) }}>{t('settings.terminal.profiles.useAutomatic')}</Button>
-      </div> : null}
-    </SettingSection>
-    {/* Available profiles: a grouped list whose section header carries its actions. */}
-    <section className="min-w-0 pb-6" aria-label={t('settings.terminal.profiles.listTitle')}>
-      <header className="mb-2 flex min-w-0 flex-wrap items-center gap-2 px-1">
-        <h2 className="min-w-0 flex-1 text-app font-semibold">{t('settings.terminal.profiles.listTitle')}</h2>
-        <Button variant="ghost" size="sm" className="text-foreground/75" disabled={loading || busy} onClick={() => void refresh(true)}><TbRefresh aria-hidden className={loading ? 'animate-spin' : undefined} />{t('settings.terminal.profiles.refresh')}</Button>
+      </SettingsRow>
+      {defaultUnavailable ? <UnavailableDefaultRow id={`${selectionId}-warning`} message={t('settings.terminal.profiles.defaultUnavailable')} busy={busy}
+        onUseAutomatic={() => { void updateTerminal({ defaultProfileId: null, defaultProfileSnapshot: null }) }} /> : null}
+    </SettingsGroup>
+
+    <SettingsGroup title={t('settings.terminal.profiles.listTitle')} boxRole="list" data-terminal-profiles
+      actions={<>
+        <Button variant="ghost" size="icon-sm" aria-label={t('settings.terminal.profiles.refresh')} title={t('settings.terminal.profiles.refresh')} disabled={loading || busy} onClick={() => void refresh(true)}>
+          <TbRefresh aria-hidden className={loading ? 'animate-spin motion-reduce:animate-none' : undefined} />
+        </Button>
         <Button variant="outline" size="sm" disabled={busy || terminal.profiles.length >= 64} onClick={add}><TbPlus aria-hidden />{t('settings.terminal.profiles.add')}</Button>
-      </header>
-      {loading ? <p role="status" className="flex items-center gap-2 px-1 pb-2 text-caption text-muted-foreground"><TbLoader2 aria-hidden className="size-3.5 animate-spin" />{t('settings.terminal.profiles.loading')}</p> : null}
-      {loadFailed ? <p role="alert" className="px-1 pb-2 text-caption text-destructive">{t('settings.terminal.profiles.loadFailed')}</p> : null}
-      <ul className="mac-group min-w-0 overflow-hidden" aria-label={t('settings.terminal.profiles.listTitle')}>
-        {mergedProfiles.map((profile) => {
-          const custom = terminal.profiles.find(({ id }) => id === profile.id)
-          const isSelected = terminal.defaultProfileId === profile.id
-          return <li key={profile.id} data-terminal-profile-id={profile.id} className="group/profile flex min-w-0 items-center gap-3 py-2.5">
-            <span className={cn('grid size-7 shrink-0 place-items-center rounded-[7px] bg-[linear-gradient(to_bottom,rgb(255_255_255/0.16),transparent)] text-white shadow-[0_0.5px_1px_rgb(0_0_0/0.2)]', profile.available ? 'bg-[#2c2c2e]' : 'bg-[#8e8e93]')} aria-hidden>
-              <TbTerminal2 className="size-4" />
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5"><span className="min-w-0 break-words text-app font-medium">{profile.label}</span><span className="text-micro text-muted-foreground">{t(profile.source === 'custom' ? 'settings.terminal.profiles.sourceCustom' : profile.source === 'wsl' ? 'settings.terminal.profiles.sourceWsl' : 'settings.terminal.profiles.sourceDetected')}</span>{isSelected ? <span className="inline-flex items-center gap-0.5 rounded-full bg-primary/12 px-2 py-px text-micro font-medium text-primary"><TbCheck className="size-3" aria-hidden />{t('settings.terminal.profiles.selected')}</span> : null}</div>
-              <p className="mt-0.5 break-all font-mono text-micro text-muted-foreground">{profile.executable}</p>
-              {!profile.available ? <p className="mt-0.5 text-caption text-destructive">{t(profile.unavailableReason === 'distribution-unavailable' ? 'settings.terminal.profiles.distributionUnavailable' : 'settings.terminal.profiles.executableUnavailable')}</p> : null}
-            </div>
-            {custom ? <div className="flex shrink-0 items-center gap-0.5 opacity-60 group-hover/profile:opacity-100 focus-within:opacity-100">
-              <Button variant="ghost" size="icon-sm" disabled={busy} aria-label={t('settings.terminal.profiles.editNamed', { name: profile.label })} title={t('settings.terminal.profiles.editNamed', { name: profile.label })} onClick={() => setEditing({ mode: 'edit', profile: custom })}><TbPencil aria-hidden /></Button>
-              <Button variant="ghost" size="icon-sm" className="hover:text-destructive" disabled={busy} aria-label={t('settings.terminal.profiles.removeNamed', { name: profile.label })} title={t('settings.terminal.profiles.removeNamed', { name: profile.label })} onClick={() => { setRemoveFailed(false); setRemoving(custom) }}><TbTrash aria-hidden /></Button>
-            </div> : null}
-          </li>
-        })}
-        {!loading && mergedProfiles.length === 0 ? <li className="py-6 text-center text-caption text-muted-foreground">{t('settings.terminal.profiles.empty')}</li> : null}
-      </ul>
-      {terminal.profiles.length >= 64 ? <p className="px-1 pt-2 text-caption text-muted-foreground">{t('settings.terminal.profiles.limit')}</p> : null}
-    </section>
-    {editing ? <TerminalProfileFormDialog key={editing.profile.id} initial={editing.profile} mode={editing.mode} saveBlocked={busy} onClose={() => setEditing(null)} onSave={saveProfile} /> : null}
+      </>}
+      footer={loadFailed ? <span className="text-destructive" role="alert">{t('settings.terminal.profiles.loadFailed')}</span>
+        : terminal.profiles.length >= 64 ? t('settings.terminal.profiles.limit') : undefined}>
+      {mergedProfiles.map((profile) => {
+        const custom = terminal.profiles.find(({ id }) => id === profile.id)
+        const isDefault = terminal.defaultProfileId === profile.id
+        return <SettingsListRow key={profile.id} data-terminal-profile-id={profile.id} disabled={busy}
+          icon={<TerminalRowIcon available={profile.available} />}
+          title={profile.label}
+          badges={<>
+            <SettingsBadge>{t(profile.source === 'custom' ? 'settings.terminal.profiles.sourceCustom' : profile.source === 'wsl' ? 'settings.terminal.profiles.sourceWsl' : 'settings.terminal.profiles.sourceDetected')}</SettingsBadge>
+            {isDefault ? <SettingsBadge tone="accent">{t('settings.terminal.profiles.selected')}</SettingsBadge> : null}
+          </>}
+          subtitle={<span className="font-mono">{profile.executable}</span>}
+          status={!profile.available ? <StatusText tone="danger" title={t(profile.unavailableReason === 'distribution-unavailable' ? 'settings.terminal.profiles.distributionUnavailable' : 'settings.terminal.profiles.executableUnavailable')}>
+            {t('settings.terminal.profiles.unavailable')}
+          </StatusText> : undefined}
+          onOpen={custom ? () => setEditing({ mode: 'edit', profile: custom }) : undefined}
+          openLabel={custom ? t('settings.terminal.profiles.editNamed', { name: profile.label }) : undefined}
+          menu={<DropdownMenu>
+            <DropdownMenuTrigger asChild><Button variant="ghost" size="icon-xs" className="text-muted-foreground" disabled={busy} aria-label={t('settings.terminal.profiles.actions', { name: profile.label })}><TbDots aria-hidden /></Button></DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem disabled={isDefault || !profile.available} onSelect={() => setDefault(profile.id)}><TbCheck aria-hidden />{t('settings.terminal.profiles.makeDefault')}</DropdownMenuItem>
+              {custom ? <>
+                <DropdownMenuItem onSelect={() => setEditing({ mode: 'edit', profile: custom })}><TbPencil aria-hidden />{t('settings.terminal.profiles.edit')}</DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem variant="destructive" onSelect={() => { setRemoveFailed(false); setRemoving(custom) }}><TbTrash aria-hidden />{t('settings.terminal.profiles.remove')}</DropdownMenuItem>
+              </> : null}
+            </DropdownMenuContent>
+          </DropdownMenu>} />
+      })}
+      {mergedProfiles.length === 0 ? <div data-settings-row role="status" className="px-3 py-8 text-center text-caption text-muted-foreground">
+        {t(loading ? 'settings.terminal.profiles.loading' : 'settings.terminal.profiles.empty')}
+      </div> : null}
+    </SettingsGroup>
+
+    {editing ? <TerminalProfileSheet key={editing.profile.id} initial={editing.profile} mode={editing.mode} saveBlocked={busy} onClose={() => setEditing(null)} onSave={saveProfile} /> : null}
     <AlertDialog open={Boolean(removing)} onOpenChange={(open) => { if (!open && !removeBusyRef.current) setRemoving(null) }}>
       <AlertDialogContent>
         <AlertDialogHeader><AlertDialogTitle>{t('settings.terminal.profiles.removeTitle', { name: removing?.name ?? '' })}</AlertDialogTitle><AlertDialogDescription>{t(removing?.id === terminal.defaultProfileId ? 'settings.terminal.profiles.removeDefaultDescription' : 'settings.terminal.profiles.removeDescription')}</AlertDialogDescription></AlertDialogHeader>

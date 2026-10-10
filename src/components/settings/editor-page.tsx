@@ -1,50 +1,11 @@
 import * as React from 'react'
-import { TbAlertTriangle, TbCheck, TbChevronRight, TbExternalLink, TbEye, TbEyeOff, TbLoader2, TbMinus, TbPlus } from 'react-icons/tb'
+import { TbExternalLink, TbEye, TbEyeOff, TbMinus, TbPlus } from 'react-icons/tb'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
-import { MarkdownContent } from '@/components/chat/markdown/MarkdownContent'
 import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
-
-/** A titled group of fields, like a System Settings box. */
-export function EditorSection({ title, description, actions, children, className }: {
-  title: string
-  description?: React.ReactNode
-  actions?: React.ReactNode
-  children: React.ReactNode
-  className?: string
-}) {
-  return <section className={cn('min-w-0 space-y-2', className)} aria-label={title}>
-    <header className="flex min-w-0 flex-wrap items-end gap-x-3 gap-y-1.5 px-1">
-      <div className="min-w-0 flex-1">
-        <h2 className="text-app font-semibold text-foreground">{title}</h2>
-        {description ? <p className="mt-0.5 max-w-[72ch] text-caption leading-snug text-muted-foreground">{description}</p> : null}
-      </div>
-      {actions ? <div className="flex flex-wrap items-center gap-1.5">{actions}</div> : null}
-    </header>
-    <div className="mac-box min-w-0 space-y-4 p-4">{children}</div>
-  </section>
-}
-
-export function EditorField({ label, htmlFor, hint, error, children, className }: {
-  label: React.ReactNode
-  htmlFor?: string
-  hint?: React.ReactNode
-  error?: React.ReactNode
-  children: React.ReactNode
-  className?: string
-}) {
-  const feedbackId = htmlFor ? `${htmlFor}-feedback` : undefined
-  return <div className={cn('min-w-0 space-y-1.5', className)}>
-    <label htmlFor={htmlFor} className="block text-caption font-medium text-foreground/85">{label}</label>
-    {children}
-    {error ? <p id={feedbackId} className="text-caption text-destructive" role="alert">{error}</p>
-      : hint ? <p id={feedbackId} className="text-micro leading-relaxed text-muted-foreground">{hint}</p> : null}
-  </div>
-}
 
 /** A key or token: hidden until asked, never autocompleted or spell-checked. */
 export function SecretInput({ id, value, onChange, placeholder, invalid, describedBy, disabled, className, label }: {
@@ -86,54 +47,6 @@ export function ApiKeyLink({ href }: { href?: string }) {
   return <OutboundLink href={href}>{t('settings.models.editor.getApiKey')}</OutboundLink>
 }
 
-/** A collapsed group for what most people never change. */
-export function EditorDisclosure({ title, description, open, onOpenChange, children, badge }: {
-  title: string
-  description?: string
-  open: boolean
-  onOpenChange(open: boolean): void
-  children: React.ReactNode
-  badge?: React.ReactNode
-}) {
-  return <Collapsible open={open} onOpenChange={onOpenChange} className="mac-box min-w-0">
-    <CollapsibleTrigger asChild>
-      <button type="button" className="flex w-full min-w-0 items-start gap-2 rounded-[inherit] px-4 py-3 text-left outline-none focus-visible:focus-ring" aria-expanded={open}>
-        <TbChevronRight className={cn('mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none', open && 'rotate-90')} aria-hidden />
-        <span className="min-w-0 flex-1">
-          <span className="flex flex-wrap items-center gap-2 text-app font-medium">{title}{badge}</span>
-          {description ? <span className="mt-0.5 block text-caption leading-snug text-muted-foreground">{description}</span> : null}
-        </span>
-      </button>
-    </CollapsibleTrigger>
-    <CollapsibleContent><div className="min-w-0 space-y-4 border-t border-border px-4 pt-3.5 pb-4">{children}</div></CollapsibleContent>
-  </Collapsible>
-}
-
-/** Cancel and Save float over the page's end, as in a sheet. */
-export function EditorFooter({ onCancel, onSave, saving, canSave, status, error, leading, saveLabel }: {
-  onCancel(): void
-  onSave(): void
-  saving: boolean
-  canSave: boolean
-  status?: React.ReactNode
-  error?: string | null
-  leading?: React.ReactNode
-  /** Instead of "Save", for a page that adds or imports. */
-  saveLabel?: string
-}) {
-  const t = useT()
-  return <div className="pointer-events-none sticky bottom-3 z-20 mt-6 flex justify-end" data-models-editor-footer>
-    <div className="glass pointer-events-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2 rounded-[22px] px-2.5 py-2">
-      {leading}
-      {error ? <span className="flex min-w-0 max-w-[min(32rem,100%)] items-start gap-1.5 px-1 text-caption text-destructive [&_.md-body]:text-caption [&_.md-body]:text-destructive" role="alert">
-        <TbAlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden /><MarkdownContent markdown={error} />
-      </span> : status ? <span className="px-1 text-caption text-muted-foreground" role="status">{status}</span> : null}
-      <Button variant="outline" disabled={saving} onClick={onCancel}>{t('common.cancel')}</Button>
-      <Button disabled={!canSave || saving} onClick={onSave}>{saving ? <TbLoader2 className="animate-spin" aria-hidden /> : null}{saveLabel ?? t('common.save')}</Button>
-    </div>
-  </div>
-}
-
 export function DiscardChangesDialog({ open, onOpenChange, onDiscard }: {
   open: boolean
   onOpenChange(open: boolean): void
@@ -158,18 +71,6 @@ export type TestState =
   | { state: 'testing' }
   | { state: 'success'; latencyMs: number; preview: string }
   | { state: 'error'; message: string }
-
-export function TestResultLine({ test, className }: { test?: TestState; className?: string }) {
-  const t = useT()
-  if (!test || test.state === 'testing') return null
-  return test.state === 'success'
-    ? <p className={cn('flex min-w-0 items-center gap-1.5 text-caption text-success', className)} role="status" data-models-test-result="success">
-      <TbCheck className="size-3.5 shrink-0" aria-hidden /><span className="truncate">{t('settings.models.testSuccess', { latency: test.latencyMs })}{test.preview ? ` · ${test.preview}` : ''}</span>
-    </p>
-    : <div className={cn('min-w-0 text-caption text-destructive [&_.md-body]:text-caption [&_.md-body]:text-destructive', className)} role="alert" data-models-test-result="error">
-      <MarkdownContent markdown={test.message} />
-    </div>
-}
 
 /** The provider as JSON: edits here and in the form above follow each other. */
 export function JsonEditor({ id, value, onChange, error, label }: {

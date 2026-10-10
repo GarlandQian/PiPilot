@@ -133,7 +133,7 @@ export function ActivityRail({
     <>
       {!expanded && (
         <div ref={clusterRef} data-navigation-layout="rail"
-          className="app-drag absolute top-0 left-0 z-40 flex h-(--frame-header-h) items-center gap-1.5 pl-3 mac:pl-(--traffic-light-gutter)">
+          className="app-no-drag absolute top-0 left-0 z-40 flex h-(--frame-header-h) items-center gap-1.5 pl-3 mac:pl-(--traffic-light-gutter)">
           {exitFullScreen}
           <div className="glass toolbar-group">
             {toggle}

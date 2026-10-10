@@ -274,29 +274,21 @@ test('manages bundled Pi SDK integrations and MCP drafts across responsive Setti
 
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
     const settingsNavigation = page.getByRole('region', { name: 'Settings', exact: true })
-    await settingsNavigation.getByRole('button', { name: 'Integrations', exact: true }).click()
-    await page.getByRole('button', { name: 'Current project', exact: true }).click()
-    await expect(page.getByRole('heading', { name: 'Integrations', exact: true })).toBeVisible()
-    await expect(page.getByText(`Pi ${SUPPORTED_PI_VERSION}`, { exact: false })).toBeVisible()
+    // Packages: global and project packages in one list; project ones are marked.
+    await settingsNavigation.getByRole('button', { name: 'Packages', exact: true }).click()
+    const packagesPane = page.getByRole('main', { name: 'Packages', exact: true })
+    await expect(packagesPane.getByRole('region', { name: 'Installed', exact: true })).toBeVisible()
     await expect(page.getByText(
       'Package changes are saved but not confirmed loaded. Apply changes to try again.',
     )).toHaveCount(0)
-    const overview = page.getByRole('tabpanel', { name: 'Overview', exact: true })
-    const packageSummary = overview.getByRole('button', { name: /Installed packages/u })
-    const resourceSummary = overview.getByRole('button', { name: /Resolved resources/u })
-    await expect(packageSummary).toContainText(String(mutation.result.snapshot.packages.length))
-    await expect(resourceSummary).toContainText(String(mutation.result.snapshot.resources.length))
-    await expect(overview.getByText('Themes', { exact: true })).toHaveCount(0)
-    const runtimeSupport = page.getByRole('region', {
-      name: 'Active runtime support',
-      exact: true,
-    })
-    await expect(runtimeSupport.getByText(
-      'No compatibility problems have been observed in the active Pi runtime.',
-      { exact: true },
-    )).toBeVisible()
+    const packageRows = packagesPane.locator('[data-integration-row]')
+    await expect(packageRows).toHaveCount(3)
+    await expect(packagesPane.locator('[data-package-scope="global"]')).toContainText('fixture-global-package')
+    const projectPackageRow = packagesPane.locator('[data-package-scope="project"]').filter({ hasText: 'fixture-project-package' })
+    await expect(projectPackageRow).toContainText('Project')
+    await expect(projectPackageRow).toContainText('v2.0.0')
     await page.screenshot({
-      path: testInfo.outputPath('integrations-overview-light.png'),
+      path: testInfo.outputPath('integrations-packages-light.png'),
       fullPage: true,
     })
     await page.evaluate(() => window.pipilot!.settings.update({
@@ -306,7 +298,7 @@ test('manages bundled Pi SDK integrations and MCP drafts across responsive Setti
       document.documentElement.classList.contains('dark')
     ))).toBe(true)
     await page.screenshot({
-      path: testInfo.outputPath('integrations-overview-dark.png'),
+      path: testInfo.outputPath('integrations-packages-dark.png'),
       fullPage: true,
     })
     await page.evaluate(() => window.pipilot!.settings.update({
@@ -316,57 +308,43 @@ test('manages bundled Pi SDK integrations and MCP drafts across responsive Setti
       document.documentElement.classList.contains('dark')
     ))).toBe(false)
 
-    const retrySettings = page.getByRole('region', {
-      name: 'Automatic provider retry',
-      exact: true,
-    })
-    const globalRetry = retrySettings.getByRole('switch', {
-      name: 'Global persisted setting',
-      exact: true,
-    })
+    // Retrying failed requests now lives with the models; it changes the global value.
+    await settingsNavigation.getByRole('button', { name: 'Models', exact: true }).click()
+    const modelsPane = page.getByRole('main', { name: 'Models', exact: true })
+    const globalRetry = modelsPane.getByRole('switch', { name: 'Retry failed requests', exact: true })
     await expect(globalRetry).toBeChecked()
-    await expect(retrySettings.getByText(
+    await expect(modelsPane.getByText(
       'A project override makes the effective value differ from the persisted global value.',
     )).toBeVisible()
     await globalRetry.click()
     await expect(globalRetry).not.toBeChecked()
-    await expect(retrySettings.getByText(
-      'Global setting saved and synchronized with the matching Pi process.',
-    )).toBeVisible()
     await expect.poll(async () => JSON.parse(
       await readFile(join(agentDir, 'settings.json'), 'utf8'),
     )).toMatchObject({ retry: { enabled: false } })
 
-    await page.getByRole('tab', { name: 'Packages', exact: true }).click()
-    const packageRow = page.getByRole('button', {
-      name: /fixture-project-package/,
-    }).first()
-    await expect(packageRow).toBeVisible()
-    await packageRow.click()
-    await expect(page.getByText('Installed version', { exact: true })).toBeVisible()
-    await expect(page.getByRole('definition').filter({ hasText: /^2\.0\.0$/u }))
-      .toBeVisible()
+    // A package opens as a page of its own.
+    await settingsNavigation.getByRole('button', { name: 'Packages', exact: true }).click()
+    await projectPackageRow.locator('[data-settings-row-action]').click()
+    const packageDetail = packagesPane.locator('[data-package-detail]')
+    await expect(packageDetail).toContainText('fixture-project-package')
+    await expect(packageDetail.locator('[data-settings-row]').filter({ hasText: 'Installed version' })).toContainText('2.0.0')
+    await expect(page.locator('[data-settings-subpage-back]')).toBeVisible()
     await page.screenshot({
       path: testInfo.outputPath('integrations-wide.png'),
       fullPage: true,
     })
 
-    await page.getByRole('button', { name: 'View resources', exact: true }).click()
-    const resourcesPanel = page.getByRole('tabpanel', { name: 'Resources', exact: true })
-    await expect(resourcesPanel.getByText('Resources from fixture-project-package', { exact: true })).toBeVisible()
-    await expect(resourcesPanel.getByRole('button', { name: /global-fixture-skill/u })).toHaveCount(0)
-    const resourceSearch = resourcesPanel.getByRole('searchbox', { name: 'Search integrations', exact: true })
+    // Its skills open the resources pane, narrowed to this package.
+    await packageDetail.getByRole('button', { name: 'Skills', exact: true }).click()
+    const resourcesPane = page.getByRole('main', { name: 'Skills & Resources', exact: true })
+    await expect(resourcesPane.getByText('Resources from fixture-project-package', { exact: true })).toBeVisible()
+    await expect(resourcesPane.locator('[data-integration-row]').filter({ hasText: 'global-fixture-skill' })).toHaveCount(0)
+    const resourceSearch = resourcesPane.getByRole('searchbox', { name: 'Search skills and resources', exact: true })
     await resourceSearch.fill('/skill:project-fixture-skill')
-    await resourceSearch.press('ArrowDown')
-    await expect(resourcesPanel.getByRole('button', { name: /project-fixture-skill/u })).toBeFocused()
-    await page.getByRole('tab', { name: 'Packages', exact: true }).click()
-    await expect(page.getByText('Installed version', { exact: true })).toBeVisible()
-    await page.getByRole('tab', { name: 'Resources', exact: true }).click()
-    await expect(resourceSearch).toHaveValue('/skill:project-fixture-skill')
-    await resourceSearch.press('Escape')
-    await expect(resourceSearch).toHaveValue('')
-    await resourcesPanel.getByRole('button', { name: 'Show all resources', exact: true }).click()
-    await page.getByRole('tab', { name: 'Packages', exact: true }).click()
+    await expect(resourcesPane.locator('[data-integration-row]')).toHaveCount(1)
+    await resourcesPane.getByRole('button', { name: 'Show all resources', exact: true }).click()
+    await resourceSearch.fill('')
+    await expect(resourcesPane.locator('[data-integration-row]').filter({ hasText: 'global-fixture-skill' })).toHaveCount(1)
 
     await electronApp.evaluate(({ BrowserWindow }) => {
       BrowserWindow.getAllWindows()[0]?.setSize(1100, 680)
@@ -375,11 +353,8 @@ test('manages bundled Pi SDK integrations and MCP drafts across responsive Setti
     await expect.poll(() => page.evaluate(() => (
       window.innerWidth === 1100 && window.innerHeight === 680
     ))).toBe(true)
-    await page
-      .getByRole('region', { name: 'Settings', exact: true })
-      .getByRole('button', { name: 'Integrations', exact: true })
-      .click()
-    await expect(page.getByText('Installed version', { exact: true })).toBeVisible()
+    await settingsNavigation.getByRole('button', { name: 'Packages', exact: true }).click()
+    await expect(packageDetail).toBeVisible()
     await expect.poll(() => page.evaluate(() => (
       document.documentElement.scrollWidth <= document.documentElement.clientWidth
     ))).toBe(true)
@@ -404,46 +379,37 @@ test('manages bundled Pi SDK integrations and MCP drafts across responsive Setti
     await expect.poll(() => page.evaluate(() => (
       document.documentElement.classList.contains('dark')
     ))).toBe(false)
+    await page.locator('[data-settings-subpage-back]').click()
+    await expect(projectPackageRow).toBeVisible()
 
-    await page.setViewportSize({ width: 960, height: 700 })
-    await expect(page.getByRole('button', { name: 'Back', exact: true }).last())
-      .toBeVisible()
-    await expect(packageRow).not.toBeVisible()
-    await page.screenshot({
-      path: testInfo.outputPath('integrations-narrow-detail.png'),
-      fullPage: true,
-    })
-    await page.getByRole('button', { name: 'Back', exact: true }).last().click()
-    await expect(page.getByRole('button', {
-      name: /fixture-project-package/,
-    }).first()).toBeVisible()
-
-    await page.getByRole('tab', { name: 'Resources', exact: true }).click()
-    await page.getByRole('button', { name: /project-fixture-skill/ }).click()
-    await expect(page.getByText('/skill:project-fixture-skill', { exact: true }))
-      .toBeVisible()
-    await expect(page.getByText(
+    // A resource shows its details in a sheet; its state is read-only here.
+    await settingsNavigation.getByRole('button', { name: 'Skills & Resources', exact: true }).click()
+    await resourcesPane.locator('[data-integration-row]').filter({ hasText: 'project-fixture-skill' }).locator('[data-settings-row-action]').click()
+    const resourceSheet = page.locator('[data-resource-sheet]')
+    await expect(resourceSheet.getByText('/skill:project-fixture-skill', { exact: true })).toBeVisible()
+    await expect(resourceSheet.getByRole('switch')).toHaveCount(0)
+    await resourceSheet.getByRole('button', { name: 'Done', exact: true }).click()
+    await expect(resourcesPane.getByText(
       "Resource state is read-only here. Use Pi's interactive `pi config` flow to change resource filters.",
       { exact: true },
     )).toBeVisible()
-    await expect(page.getByRole('switch')).toHaveCount(0)
 
-    await page.setViewportSize({ width: 1100, height: 680 })
-    await page.getByRole('tab', { name: 'MCP', exact: true }).click()
-    const mcpPanel = page.getByRole('tabpanel', { name: 'MCP', exact: true })
-    await expect(mcpPanel.locator('[data-mcp-server]')).toHaveCount(2)
-    await expect(mcpPanel.locator('[data-mcp-server="mux"]')).toContainText('https://example.test/mcp')
-    await expect(mcpPanel).not.toContainText('fixture-only')
-    // A server opens as a page of its own; the tabs step aside.
-    await mcpPanel.getByRole('button', { name: 'Edit docs', exact: true }).click()
-    const editor = mcpPanel.locator('[data-mcp-server-editor="docs"]')
-    await expect(page.getByRole('tab', { name: 'MCP', exact: true })).toBeHidden()
+    // MCP servers: the project file's servers, edited on a page of their own.
+    await settingsNavigation.getByRole('button', { name: 'MCP Servers', exact: true }).click()
+    const mcpPane = page.getByRole('main', { name: 'MCP Servers', exact: true })
+    await expect(mcpPane.locator('[data-mcp-server]')).toHaveCount(2)
+    await expect(mcpPane.locator('[data-mcp-server="mux"]')).toHaveAttribute('data-mcp-scope', 'project')
+    await expect(mcpPane.locator('[data-mcp-server="mux"]')).toContainText('https://example.test/mcp')
+    await expect(mcpPane).not.toContainText('fixture-only')
+    await mcpPane.getByRole('button', { name: 'Edit docs', exact: true }).click()
+    const editor = mcpPane.locator('[data-mcp-server-editor="docs"]')
+    await expect(page.locator('[data-settings-subpage-back]')).toBeVisible()
     await expect(editor.getByRole('textbox', { name: 'Server name', exact: true })).toBeDisabled()
     await page.screenshot({ path: testInfo.outputPath('integrations-mcp-structured-minimum.png') })
     await editor.getByRole('radio', { name: 'Online service', exact: true }).click()
     const urlInput = editor.getByRole('textbox', { name: 'URL', exact: true })
     await expect(urlInput).toBeVisible()
-    const footer = mcpPanel.locator('[data-models-editor-footer]')
+    const footer = mcpPane.locator('[data-settings-actions]')
     await footer.getByRole('button', { name: 'Save', exact: true }).click()
     await expect(urlInput).toHaveAttribute('aria-invalid', 'true')
     await expect(editor.getByText('URL is required.', { exact: true })).toBeVisible()
@@ -456,21 +422,21 @@ test('manages bundled Pi SDK integrations and MCP drafts across responsive Setti
     await expect(editor.getByRole('textbox', { name: 'Arguments', exact: true })).toHaveValue('server.js')
     await editor.getByRole('textbox', { name: 'Command', exact: true }).fill('node-updated')
     await footer.getByRole('button', { name: 'Save', exact: true }).click()
-    await expect(mcpPanel.locator('[data-mcp-server-list]')).toBeVisible()
-    await expect(page.getByRole('tab', { name: 'MCP', exact: true })).toBeVisible()
+    await expect(mcpPane.locator('[data-mcp-server-list]')).toBeVisible()
+    await expect(page.locator('[data-settings-subpage-back]')).toHaveCount(0)
     await expect.poll(async () => readFile(mcpPath, 'utf8')).toContain('node-updated')
     const structuredSaved = await readFile(mcpPath, 'utf8')
     expect(JSON.parse(structuredSaved).mcpServers.docs).toEqual({ command: 'node-updated', args: ['server.js'], env: { TOKEN: 'fixture-only' }, enabled: false, future: { keep: true } })
     expect(structuredSaved).toContain('"futureTop": true')
 
     // The whole file stays editable for what the pages do not show.
-    await mcpPanel.getByRole('button', { name: 'More', exact: true }).click()
-    await page.getByRole('menuitem', { name: 'Edit mcp.json…', exact: true }).click()
-    const rawEditor = mcpPanel.getByRole('textbox', { name: 'mcp.json', exact: true })
+    await mcpPane.locator('[data-mcp-server-list] header').getByRole('button', { name: 'More', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Edit project mcp.json…', exact: true }).click()
+    const rawEditor = mcpPane.getByRole('textbox', { name: 'mcp.json', exact: true })
     await page.screenshot({ path: testInfo.outputPath('integrations-mcp-raw-minimum.png') })
     const rawDraft = await rawEditor.inputValue()
     await rawEditor.fill(rawDraft.replace('"futureTop": true', '"futureTop": true,\n  "rawRoundTrip": true'))
-    await footer.getByRole('button', { name: 'Save', exact: true }).click()
+    await mcpPane.locator('[data-settings-actions]').getByRole('button', { name: 'Save', exact: true }).click()
     await expect.poll(async () => readFile(mcpPath, 'utf8')).toContain('"rawRoundTrip": true')
     await expect(page.getByRole('status').filter({ hasText: 'Saved configuration is applied.' })).toBeVisible()
     await expect.poll(() => page.evaluate(() => (

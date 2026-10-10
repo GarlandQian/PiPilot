@@ -1,5 +1,4 @@
 import * as React from 'react'
-import { createPortal } from 'react-dom'
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import { TbArrowDown, TbArrowUp, TbCheck, TbChevronDown, TbCopy, TbEraser, TbSearch, TbX } from 'react-icons/tb'
@@ -20,7 +19,10 @@ type TerminalStatus = 'starting' | 'running' | 'exited' | 'error'
 export interface RealTerminalPanelHandle {
   focus(): void
   find(): void
+  /** The selection when there is one, otherwise everything. */
   copy(): Promise<void>
+  copyAll(): Promise<void>
+  hasSelection(): boolean
   paste(): Promise<void>
   clear(): Promise<void>
 }
@@ -189,7 +191,8 @@ export const RealTerminalPanel = React.forwardRef<RealTerminalPanelHandle, RealT
   }, [terminalApi, terminalId, focus, reportError])
 
   React.useImperativeHandle(ref, () => ({
-    focus, find, copy: () => copy(!terminalRef.current?.hasSelection()), paste, clear,
+    focus, find, copy: () => copy(!terminalRef.current?.hasSelection()), copyAll: () => copy(true),
+    hasSelection: () => Boolean(terminalRef.current?.hasSelection()), paste, clear,
   }), [focus, find, copy, paste, clear])
 
   const selectMatch = React.useCallback((index: number) => {
@@ -536,9 +539,10 @@ export const RealTerminalPanel = React.forwardRef<RealTerminalPanelHandle, RealT
         }
       }}
     >
+      {/* Hosted in the terminal workspace, these live in its ⋯ menu; standing alone, the panel keeps its own bar. */}
       {toolbarContainer === undefined
         ? <div className="flex h-8 shrink-0 items-center justify-end gap-1 border-b border-border/60 px-2">{toolbarControls}</div>
-        : visible && toolbarContainer ? createPortal(toolbarControls, toolbarContainer) : null}
+        : null}
       {searchOpen ? (
         <div className="flex shrink-0 items-center gap-1 border-b border-border px-2 py-1" role="search" aria-label={t('terminal.surface.search')}>
           <TbSearch aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />

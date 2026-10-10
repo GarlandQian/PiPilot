@@ -10,7 +10,7 @@ import { workspaceRelativePathSchema } from '@/shared/workspace-content'
 export type PanelDock = 'right' | 'bottom'
 /** `full`: the right dock fills the window. `hidden`: the right dock is put away. */
 export type PanelLayout = 'split' | 'full' | 'hidden'
-export type PanelTabKind = 'review' | 'files' | 'file' | 'terminal' | 'sidechat' | 'subagent' | 'command'
+export type PanelTabKind = 'review' | 'files' | 'file' | 'terminal' | 'sidechat' | 'subagent' | 'command' | 'action'
 export type PanelTab =
   | { id: string; kind: Exclude<PanelTabKind, 'file'> }
   | { id: string; kind: 'file'; path: string }

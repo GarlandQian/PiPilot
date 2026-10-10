@@ -77,6 +77,7 @@ function tint(name: string) {
 }
 
 const SIZES = {
+  xs: 'size-4 rounded-[4px] text-[7px]',
   sm: 'size-6 rounded-[7px] text-[10px]',
   row: 'size-8 rounded-[9px] text-[12px]',
   md: 'size-9 rounded-[10px] text-[13px]',

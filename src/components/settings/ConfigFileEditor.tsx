@@ -3,7 +3,7 @@ import { TbRefresh } from 'react-icons/tb'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { useT } from '@/i18n'
-import { EditorFooter } from './editor-page'
+import { FormActions } from './kit'
 
 interface Diagnostic {
   code: string
@@ -55,20 +55,20 @@ export function ConfigFileEditor({ draftText, savedText, onChange, path, descrip
   }
 
   return <div className="min-w-0 space-y-3" data-config-file-editor>
-    <p className="px-1 text-caption leading-relaxed text-muted-foreground">{description}</p>
-    {path || onReload ? <div className="flex min-w-0 items-center gap-2 px-1">
+    <p className="px-2.5 text-caption leading-relaxed text-muted-foreground">{description}</p>
+    {path || onReload ? <div className="settings-group flex min-w-0 items-center gap-2 px-3 py-1.5">
       <p className="min-w-0 flex-1 break-all font-mono text-micro text-muted-foreground">{path}</p>
       {onReload ? <Button variant="ghost" size="icon-sm" aria-label={t('common.refresh')} title={t('common.refresh')} disabled={saving} onClick={onReload}><TbRefresh aria-hidden /></Button> : null}
     </div> : null}
     {notice}
     <Textarea value={draftText} onChange={(event) => onChange(event.target.value)} spellCheck={false} disabled={saving}
       aria-invalid={!parsed.valid} aria-describedby={parsed.diagnostics.length ? diagnosticsId : undefined} aria-label={label}
-      className="scroll-slim min-h-[28rem] resize-y rounded-lg bg-surface-inset p-4 font-mono text-caption leading-relaxed dark:bg-black/20" />
+      className="scroll-slim min-h-[28rem] resize-y rounded-[12px] bg-surface-inset p-4 font-mono text-caption leading-relaxed dark:bg-black/20" />
     {parsed.diagnostics.length > 0 ? <div id={diagnosticsId} className="space-y-1 rounded-lg bg-destructive/8 px-3 py-2" role="alert">
       {parsed.diagnostics.slice(0, 5).map((diagnostic, index) => <p key={`${diagnostic.code}:${diagnostic.offset}:${index}`} className="text-caption text-destructive">
         {t('settings.editor.diagnostic', { line: diagnostic.line, column: diagnostic.column, message: diagnostic.message })}</p>)}
     </div> : null}
-    <EditorFooter onCancel={onCancel} onSave={() => void submit()} saving={saving} canSave={dirty && parsed.valid && !disabled} error={error}
+    <FormActions onCancel={onCancel} onSave={() => void submit()} saving={saving} canSave={dirty && parsed.valid && !disabled} error={error}
       status={dirty ? t('settings.document.unsaved') : undefined} />
   </div>
 }

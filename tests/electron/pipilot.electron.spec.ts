@@ -2420,12 +2420,14 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
     await page.screenshot({
       path: testInfo.outputPath('model-thinking-picker-desktop-light.png'),
     })
-    // Reasoning effort is a slider over the model's own levels, under the models.
-    const effort = page.getByRole('slider', { name: 'Reasoning effort', exact: true })
-    await effort.focus()
-    await effort.press('Home')
-    for (let step = 0; step < 8 && (await effort.getAttribute('aria-valuetext')) !== 'High'; step += 1) await effort.press('ArrowRight')
-    await expect(effort).toHaveAttribute('aria-valuetext', 'High')
+    // Reasoning effort is a segmented control over the model's own levels, under the models.
+    const effort = page.getByRole('radiogroup', { name: 'Reasoning effort', exact: true })
+    const checkedLevel = effort.getByRole('radio', { checked: true })
+    await checkedLevel.focus()
+    await page.keyboard.press('Home')
+    for (let step = 0; step < 8 && (await checkedLevel.textContent()) !== 'High'; step += 1) await page.keyboard.press('ArrowRight')
+    await expect(checkedLevel).toHaveText('High')
+    await expect(checkedLevel).toBeFocused()
     // Keyboard steps settle first, then one change reaches Pi; the panel stays open.
     await expect(page.getByRole('button', {
       name: 'Model Fake Reasoning, reasoning effort High; click to change',
@@ -3911,21 +3913,22 @@ test('launches a sandboxed shell with a narrow validated bridge', { tag: '@integ
 
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
     await expect(page.getByRole('main', { name: 'Appearance' })).toBeVisible()
-    await page.getByRole('button', { name: 'Light', exact: true }).click()
+    await page.getByRole('radio', { name: 'Light', exact: true }).click()
     await expect.poll(() => page.evaluate(() =>
       document.documentElement.classList.contains('dark'))).toBe(false)
 
-    await page.getByRole('button', { name: 'Language', exact: true }).click()
-    await page.getByRole('radio', { name: '简体中文', exact: true }).click()
+    // Language is a row of General.
+    await page.getByRole('button', { name: 'General', exact: true }).click()
+    await page.getByRole('combobox', { name: 'App language', exact: true }).selectOption('zh-CN')
     await expect.poll(() => page.evaluate(() => document.documentElement.lang))
       .toBe('zh-CN')
-    await expect(page.getByRole('main', { name: '语言' })).toBeVisible()
+    await expect(page.getByRole('main', { name: '常规' })).toBeVisible()
 
-    await page.getByRole('radio', { name: 'English', exact: true }).click()
+    await page.getByRole('combobox', { name: '界面语言', exact: true }).selectOption('en-US')
     await expect.poll(() => page.evaluate(() => document.documentElement.lang))
       .toBe('en-US')
     await page.getByRole('button', { name: 'Appearance', exact: true }).click()
-    await page.getByRole('button', { name: 'Dark', exact: true }).click()
+    await page.getByRole('radio', { name: 'Dark', exact: true }).click()
     await expect.poll(() => page.evaluate(() => ({
       dark: document.documentElement.classList.contains('dark'),
       locale: document.documentElement.lang,

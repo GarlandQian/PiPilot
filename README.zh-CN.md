@@ -51,7 +51,7 @@ Pi 继续管理自己的会话、配置与资源。PiPilot 使用官方 SDK 和�
 
 README 描述当前源码；某个已发布版本具体提供哪些安装包，以其 Release 附件为准。功能对应版本见[更新日志](CHANGELOG.md)。
 
-文件名包含版本、系统和架构，例如 `PiPilot-0.6.0-windows-x64-setup.exe`。便携版以 `-portable.exe`、`-portable.zip` 区分。Linux 格式可能使用 `x86_64` / `amd64` 表示 x64、`aarch64` 表示 ARM64。各平台均附带 SHA-256 校验清单。
+文件名包含版本、系统和架构，例如 `PiPilot-0.7.0-windows-x64-setup.exe`。便携版以 `-portable.exe`、`-portable.zip` 区分。Linux 格式可能使用 `x86_64` / `amd64` 表示 x64、`aarch64` 表示 ARM64。各平台均附带 SHA-256 校验清单。
 
 macOS 使用 ad-hoc 签名，尚未配置 Developer ID 签名和公证；Windows 安装包未签名。系统可能要求批准打开应用，或显示未知发布者提示。
 

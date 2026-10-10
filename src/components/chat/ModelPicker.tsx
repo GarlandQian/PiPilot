@@ -2,7 +2,8 @@ import * as React from 'react'
 import { TbCheck, TbChevronDown, TbLoader2, TbPlus } from 'react-icons/tb'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { Slider } from '@/components/ui/slider'
+import { ProviderIcon } from '@/components/settings/models/ProviderIcon'
+import { presetForProvider } from '@/shared/model-provider-presets'
 import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { MarkdownContent } from './markdown/MarkdownContent'
@@ -52,6 +53,12 @@ function groupModels(models: readonly PiModelOption[]) {
 
 const modelKey = (model: Pick<PiModelOption, 'provider' | 'id'>) => `${model.provider}\0${model.id}`
 
+/** A provider's logo when it is one Pi knows by name; otherwise its initials. */
+function ProviderMark({ provider }: { provider: string }) {
+  const match = presetForProvider({ id: provider, builtin: true })
+  return <ProviderIcon icon={match?.preset.icon} name={provider} size="xs" />
+}
+
 /**
  * One button for model and effort, as in Codex. Its panel lists the models
  * and, below them, a slider over the reasoning levels the current model
@@ -86,10 +93,9 @@ export function ModelPicker({
   const listRef = React.useRef<HTMLDivElement>(null)
   const typeahead = React.useRef({ text: '', at: 0 })
 
-  // While dragging only the label follows; the level is applied on release.
+  // Arrow keys move the choice at once; Pi is asked once they settle.
   const [draft, setDraft] = React.useState<number | null>(null)
   const commitTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
-  const pointerDown = React.useRef(false)
   const slider = projectReasoningSlider(thinkingLevels, selectedThinkingLevel)
   const adjustable = connected && !loading && thinkingLevels.length > 1 && slider.index >= 0
   const shownIndex = draft ?? slider.index
@@ -202,7 +208,7 @@ export function ModelPicker({
         collisionPadding={12}
         aria-label={t('composer.modelPanel')}
         aria-busy={Boolean(selecting)}
-        className="flex w-[min(300px,calc(100vw-24px))] max-h-[min(480px,calc(100vh-96px))] flex-col gap-0 overflow-hidden p-[6px]"
+        className="flex w-[min(340px,calc(100vw-24px))] max-h-[min(480px,calc(100vh-96px))] flex-col gap-0 overflow-hidden p-[6px]"
         onOpenAutoFocus={(event) => {
           event.preventDefault()
           const current = listRef.current?.querySelector<HTMLElement>('[role="option"][aria-selected="true"]')
@@ -234,7 +240,7 @@ export function ModelPicker({
           >
             {groups.map((group) => (
               <div key={group.provider} role="group" aria-label={group.provider}>
-                {groups.length > 1 ? <p aria-hidden className="px-2.5 pt-1.5 pb-0.5 text-micro font-semibold text-muted-foreground">{group.provider}</p> : null}
+                <p aria-hidden className="flex items-center gap-1.5 px-2.5 pt-2 pb-1 text-micro font-semibold text-muted-foreground"><ProviderMark provider={group.provider} />{group.provider}</p>
                 {group.models.map((model) => {
                   const key = modelKey(model)
                   const active = key === selectedKey
@@ -263,9 +269,7 @@ export function ModelPicker({
                     >
                       {active ? <TbCheck className="absolute left-2 size-3.5 stroke-[2.6]" aria-hidden /> : null}
                       <span className="min-w-0 flex-1 truncate">{model.name || model.id}</span>
-                      {selecting === key
-                        ? <TbLoader2 className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden />
-                        : groups.length === 1 ? <span className="shrink-0 text-micro text-muted-foreground">{model.provider}</span> : null}
+                      {selecting === key ? <TbLoader2 className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden /> : null}
                     </div>
                   )
                 })}
@@ -274,60 +278,31 @@ export function ModelPicker({
           </div>
         )}
 
-        {!unavailable && selected ? (
-          <section aria-labelledby="model-reasoning-title" data-model-reasoning className="mt-[5px] shrink-0 border-t border-border px-2.5 pt-2.5 pb-1.5">
-            <div className="mb-2 flex items-baseline gap-2">
-              <span id="model-reasoning-title" className="min-w-0 flex-1 text-caption font-medium">{t('composer.reasoning')}</span>
-              {adjustable ? <span className="text-caption font-semibold text-primary" data-model-reasoning-value>{t(`settings.models.thinking.${shownLevel!}`)}</span> : null}
+        {/* A model without levels to choose from shows no reasoning row at all. */}
+        {!unavailable && selected && adjustable ? (
+          <section aria-labelledby="model-reasoning-title" data-model-reasoning className="mt-[5px] shrink-0 border-t border-border px-1.5 pt-2.5 pb-1.5">
+            <p id="model-reasoning-title" className="mb-1.5 px-1 text-caption font-medium">{t('composer.reasoning')}</p>
+            <div role="radiogroup" aria-labelledby="model-reasoning-title" className="mac-segmented flex w-full"
+              onKeyDown={(event) => {
+                if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight' && event.key !== 'Home' && event.key !== 'End') return
+                event.preventDefault()
+                const next = event.key === 'Home' ? 0 : event.key === 'End' ? thinkingLevels.length - 1
+                  : Math.min(thinkingLevels.length - 1, Math.max(0, shownIndex + (event.key === 'ArrowRight' ? 1 : -1)))
+                setDraft(next)
+                event.currentTarget.querySelectorAll<HTMLElement>('[role="radio"]')[next]?.focus()
+                commit(next, KEYBOARD_COMMIT_DELAY_MS)
+              }}>
+              {thinkingLevels.map((level, index) => {
+                const checked = index === shownIndex
+                return <button key={level} type="button" role="radio" aria-checked={checked} data-state={checked ? 'active' : 'inactive'} tabIndex={checked ? 0 : -1}
+                  data-model-reasoning-level={level} disabled={Boolean(selecting) && !selecting?.startsWith('thinking')}
+                  className="min-w-0 flex-1 justify-center px-1 text-micro outline-none focus-visible:focus-ring"
+                  onClick={() => { setDraft(index); commit(index, 0) }}>
+                  <span className="truncate">{t(`settings.models.thinking.${level}`)}</span>
+                </button>
+              })}
             </div>
-            {adjustable ? (
-              <>
-                <div className="flex items-start gap-2.5">
-                  {/* Named steps already say which way is which. */}
-                  {slider.labelEachStop ? null : <span aria-hidden className="shrink-0 pt-[3px] text-micro text-muted-foreground">{t('composer.reasoningFaster')}</span>}
-                  <div className="min-w-0 flex-1">
-                    <Slider
-                      min={0}
-                      max={thinkingLevels.length - 1}
-                      step={1}
-                      value={[shownIndex]}
-                      ticks={thinkingLevels.length}
-                      // Only a model switch blocks it; a level change in flight queues the next.
-                      disabled={Boolean(selecting) && !selecting?.startsWith('thinking')}
-                      thumbLabel={t('composer.reasoning')}
-                      thumbValueText={shownLevel ? t(`settings.models.thinking.${shownLevel}`) : undefined}
-                      onPointerDown={() => { pointerDown.current = true }}
-                      onValueChange={([value]) => { if (value !== undefined) setDraft(value) }}
-                      onValueCommit={([value]) => {
-                        if (value === undefined) return
-                        // Release applies at once; arrow keys wait for the steps to settle.
-                        commit(value, pointerDown.current ? 0 : KEYBOARD_COMMIT_DELAY_MS)
-                        pointerDown.current = false
-                      }}
-                    />
-                    {slider.labelEachStop ? (
-                      // Each mark's name sits under it, over the knob's travel.
-                      <div aria-hidden className="relative mx-[10px] mt-0.5 h-4">
-                        {thinkingLevels.map((level, index) => (
-                          <span
-                            key={level}
-                            className={cn('absolute -translate-x-1/2 text-micro whitespace-nowrap', index === shownIndex ? 'font-medium text-foreground' : 'text-muted-foreground')}
-                            style={{ left: `${(index / (thinkingLevels.length - 1)) * 100}%` }}
-                          >
-                            {t(`settings.models.thinking.${level}`)}
-                          </span>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                  {/* Named steps already say which way is which. */}
-                  {slider.labelEachStop ? null : <span aria-hidden className="shrink-0 pt-[3px] text-micro text-muted-foreground">{t('composer.reasoningDeeper')}</span>}
-                </div>
-                {shownCostly ? <p className="mt-1.5 text-micro text-muted-foreground" data-model-reasoning-cost>{t('composer.reasoningCostly')}</p> : null}
-              </>
-            ) : (
-              <p className="text-micro text-muted-foreground">{t('composer.reasoningUnsupported')}</p>
-            )}
+            {shownCostly ? <p className="mt-1.5 px-1 text-micro text-muted-foreground" data-model-reasoning-cost>{t('composer.reasoningCostly')}</p> : null}
           </section>
         ) : null}
 

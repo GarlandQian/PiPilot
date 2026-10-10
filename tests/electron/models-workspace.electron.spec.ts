@@ -31,7 +31,7 @@ async function launch(testInfo: Parameters<Parameters<typeof test>[2]>[1], prepa
 const readJson = async (path: string) => JSON.parse(await readFile(path, 'utf8'))
 
 function footer(page: Page) {
-  return page.getByRole('main', { name: 'Models', exact: true }).locator('[data-models-editor-footer]')
+  return page.getByRole('main', { name: 'Models', exact: true }).locator('[data-settings-actions]')
 }
 
 test('manages providers through the list, the preset picker and full-page editors', async ({}, testInfo) => {
@@ -54,32 +54,39 @@ test('manages providers through the list, the preset picker and full-page editor
     await expect(list.locator('[data-models-provider-card="fixture"]')).toContainText('Default model')
     await expect(main).not.toContainText('fixture-key')
 
-    // A provider's test tries its default model.
+    // A provider's test (in its ⋯ menu) tries its default model.
     const fixtureCard = list.locator('[data-models-provider-card="fixture"]')
-    await fixtureCard.getByRole('button', { name: 'Test fixture', exact: true }).click()
-    await expect(fixtureCard.getByRole('status')).toContainText('Connected', { timeout: 20_000 })
+    await fixtureCard.getByRole('button', { name: 'Actions for fixture', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Test Connection', exact: true }).click()
+    await expect(fixtureCard).toContainText(/\d+ ms/u, { timeout: 20_000 })
 
     // Editing is a page of its own, with the toolbar's back button.
     await fixtureCard.getByRole('button', { name: 'Edit fixture', exact: true }).click()
     const editor = main.locator('[data-models-custom-editor="fixture"]')
     await expect(main.locator('header h1')).toHaveText('fixture')
+    // A model opens in a sheet; Done hands it back to the page.
     const chat = editor.locator('[data-model-row="fake-chat"]')
-    await chat.locator('button[aria-expanded]').click()
-    const context = chat.getByRole('textbox', { name: 'Context window', exact: true })
+    await chat.getByRole('button', { name: 'Edit Fake Chat', exact: true }).click()
+    const sheet = page.locator('[data-models-model-sheet]')
+    const context = sheet.getByRole('textbox', { name: 'Context window', exact: true })
     await context.fill('not a number')
     await expect(context).toHaveAttribute('aria-invalid', 'true')
     await context.fill('1000000')
-    await chat.getByRole('textbox', { name: 'Display name', exact: true }).fill('Updated Chat')
+    await sheet.getByRole('textbox', { name: 'Display name', exact: true }).fill('Updated Chat')
+    await sheet.getByRole('button', { name: 'Done', exact: true }).click()
+    await expect(sheet).toHaveCount(0)
+    await expect(chat).toContainText('Updated Chat')
     // Tests use what the page shows, saved or not.
-    await chat.getByRole('button', { name: 'Test Updated Chat', exact: true }).click()
-    await expect(chat.getByRole('status')).toContainText('Connected', { timeout: 20_000 })
+    await chat.getByRole('button', { name: 'Actions for Updated Chat', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Test Connection', exact: true }).click()
+    await expect(chat).toContainText(/\d+ ms/u, { timeout: 20_000 })
     // The JSON view follows the form, with the key masked.
     await editor.getByRole('button', { name: /^Config JSON/u }).click()
     const json = editor.getByRole('textbox', { name: 'Config JSON', exact: true })
     await expect(json).toHaveValue(/"name": "Updated Chat"/u)
     await expect(json).not.toHaveValue(/fixture-key/u)
     await json.fill((await json.inputValue()).replace('"Updated Chat"', '"Edited in JSON"'))
-    await expect(chat.getByRole('textbox', { name: 'Display name', exact: true })).toHaveValue('Edited in JSON')
+    await expect(chat).toContainText('Edited in JSON')
     await footer(page).getByRole('button', { name: 'Save', exact: true }).click()
     await expect(list).toBeVisible()
     const saved = await readJson(modelPath)
@@ -129,7 +136,7 @@ test('manages providers through the list, the preset picker and full-page editor
     try {
       const endpoint = `http://127.0.0.1:${(gateway.address() as AddressInfo).port}/v1`
       await main.getByRole('button', { name: 'Add Provider…', exact: true }).click()
-      const picker = main.locator('[data-models-preset-picker]')
+      const picker = page.locator('[data-models-preset-picker]')
       const search = picker.getByRole('searchbox', { name: 'Search by name or address', exact: true })
       await expect(search).toBeFocused()
       await search.fill('硅基')
@@ -147,12 +154,15 @@ test('manages providers through the list, the preset picker and full-page editor
       await expect(remote).toBeHidden()
       await expect(added.locator('[data-model-row]')).toHaveCount(2)
       await expect(added.locator('[data-model-row="gateway-small"]')).toContainText('Capabilities unknown')
-      await added.getByRole('button', { name: 'Add Manually', exact: true }).click()
-      const modelId = added.getByRole('textbox', { name: 'Model ID', exact: true })
+      await added.getByRole('button', { name: 'Add…', exact: true }).click()
+      const modelSheet = page.locator('[data-models-model-sheet]')
+      const modelId = modelSheet.getByRole('textbox', { name: 'Model ID', exact: true })
       await expect(modelId).toBeFocused()
       await modelId.fill('gpt-4o')
       await modelId.press('Enter')
-      await expect(added.getByRole('textbox', { name: 'Display name', exact: true })).toHaveValue('GPT-4o')
+      await expect(modelSheet.getByRole('textbox', { name: 'Display name', exact: true })).toHaveValue('GPT-4o')
+      await modelSheet.getByRole('button', { name: 'Done', exact: true }).click()
+      await expect(added.locator('[data-model-row="gpt-4o"]')).toBeVisible()
       await footer(page).getByRole('button', { name: 'Save', exact: true }).click()
       await expect(list.locator('[data-models-provider-card="custom"]')).toBeVisible()
       expect((await readJson(modelPath)).providers.custom).toEqual({
@@ -165,7 +175,7 @@ test('manages providers through the list, the preset picker and full-page editor
 
     // One of Pi's own providers needs only a key, kept in auth.json.
     await main.getByRole('button', { name: 'Add Provider…', exact: true }).click()
-    await main.locator('[data-models-preset="deepseek"]').click()
+    await page.locator('[data-models-preset-picker] [data-models-preset="deepseek"]').click()
     const builtin = main.locator('[data-models-builtin-editor="deepseek"]')
     await expect(builtin.locator('[data-model-row]').first()).toBeVisible({ timeout: 20_000 })
     await builtin.locator('#models-builtin-key').fill('sk-deepseek-test')

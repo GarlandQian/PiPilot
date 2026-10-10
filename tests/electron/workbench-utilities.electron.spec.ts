@@ -92,7 +92,8 @@ test('preserves file reading and PTY identity while navigating and refreshing wo
       if (!terminal || terminals.length !== 1) throw new Error('Expected one active terminal')
       return window.pipilot!.terminal.attach(navigation.activeScope, terminal.terminalId, terminal.cols, terminal.rows)
     })
-    await drawer.getByRole('button', { name: 'Clear terminal display', exact: true }).click()
+    await drawer.getByRole('button', { name: 'More terminal actions', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Clear terminal display', exact: true }).click()
     const afterClear = await page.evaluate(async ({ scope, terminalId }) => {
       const terminal = (await window.pipilot!.terminal.list(scope)).find((candidate) => candidate.terminalId === terminalId)
       if (!terminal) throw new Error('Clearing removed the terminal')

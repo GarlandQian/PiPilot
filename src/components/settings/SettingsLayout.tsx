@@ -1,10 +1,8 @@
 import * as React from 'react'
 import { TbAlertTriangle, TbCheck, TbChevronLeft, TbLoader2 } from 'react-icons/tb'
 import { Button } from '@/components/ui/button'
-import { SettingsIconTile } from './common'
-import type { IntegrationsTabId } from './IntegrationsSettings'
 import { SETTINGS_SECTIONS, type SettingsSectionId } from './settings-navigation'
-import { SettingsSubpageProvider, type SettingsSubpage } from './settings-subpage'
+import { SettingsNavigateProvider, SettingsSubpageProvider, type SettingsSubpage } from './settings-subpage'
 import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { usePiRpcActions, usePiRuntime } from '@/store/pi-rpc'
@@ -13,23 +11,25 @@ import { SETTINGS_ROUTE_IDS } from '@/renderer/layout-preferences'
 
 const GeneralSettings = React.lazy(() => import('./GeneralSettings').then((module) => ({ default: module.GeneralSettings })))
 const AppearanceSettings = React.lazy(() => import('./AppearanceSettings').then((module) => ({ default: module.AppearanceSettings })))
-const LanguageSettings = React.lazy(() => import('./LanguageSettings').then((module) => ({ default: module.LanguageSettings })))
 const ModelsSettings = React.lazy(() => import('./ModelsSettings').then((module) => ({ default: module.ModelsSettings })))
-const IntegrationsSettings = React.lazy(() => import('./IntegrationsSettings').then((module) => ({ default: module.IntegrationsSettings })))
+const McpSettings = React.lazy(() => import('./McpSettings').then((module) => ({ default: module.McpSettings })))
+const PackagesSettings = React.lazy(() => import('./packages/PackagesSettings').then((module) => ({ default: module.PackagesSettings })))
+const ResourcesSettings = React.lazy(() => import('./packages/ResourcesSettings').then((module) => ({ default: module.ResourcesSettings })))
+const LocalEnvironmentSettings = React.lazy(() => import('./LocalEnvironmentSettings').then((module) => ({ default: module.LocalEnvironmentSettings })))
+const ExternalControlSettings = React.lazy(() => import('./ExternalControlSettings').then((module) => ({ default: module.ExternalControlSettings })))
 const TerminalSettings = React.lazy(() => import('./TerminalSettings').then((module) => ({ default: module.TerminalSettings })))
 const AboutSettings = React.lazy(() => import('./AboutSettings').then((module) => ({ default: module.AboutSettings })))
 const ScheduledTasksSettings = React.lazy(() => import('./ScheduledTasksSettings').then((module) => ({ default: module.ScheduledTasksSettings })))
 
 export { SETTINGS_GROUPS, SETTINGS_SECTIONS, isSettingsSectionId } from './settings-navigation'
 export type { SettingsSectionId, SettingsGroupId, SettingsSectionMeta, SettingsGroupMeta } from './settings-navigation'
-export type { IntegrationsTabId }
 
 export interface SettingsLayoutProps {
   hidden?: boolean
   operationOwnerKey: string
   section: SettingsSectionId
-  integrationsTab: IntegrationsTabId
-  onIntegrationsTab: (tab: IntegrationsTabId) => void
+  /** Opens another pane, when one pane points at another (MCP Servers → Packages). */
+  onNavigate: (section: SettingsSectionId) => void
   compact?: boolean
   detailVisible?: boolean
   onBack?: () => void
@@ -39,8 +39,7 @@ export function SettingsLayout({
   hidden = false,
   operationOwnerKey,
   section,
-  integrationsTab,
-  onIntegrationsTab,
+  onNavigate,
   compact = false,
   detailVisible = true,
   onBack,
@@ -105,9 +104,12 @@ export function SettingsLayout({
         />
       )
       case 'appearance': return <AppearanceSettings />
-      case 'language': return <LanguageSettings />
       case 'models': return <ModelsSettings operationOwnerKey={operationOwnerKey} active={!hidden && detailVisible && section === 'models'} />
-      case 'integrations': return <IntegrationsSettings tab={integrationsTab} onTab={onIntegrationsTab} active={!hidden && detailVisible && section === 'integrations'} />
+      case 'mcp': return <McpSettings active={!hidden && detailVisible && section === 'mcp'} />
+      case 'packages': return <PackagesSettings active={!hidden && detailVisible && section === 'packages'} />
+      case 'resources': return <ResourcesSettings active={!hidden && detailVisible && section === 'resources'} />
+      case 'local-environment': return <LocalEnvironmentSettings active={!hidden && detailVisible && section === 'local-environment'} />
+      case 'external-control': return <ExternalControlSettings active={!hidden && detailVisible && section === 'external-control'} />
       case 'terminal': return <TerminalSettings />
       case 'about': return <AboutSettings />
       case 'scheduled-tasks': return <ScheduledTasksSettings />
@@ -115,7 +117,8 @@ export function SettingsLayout({
   }
 
   const metadata = SETTINGS_SECTIONS.find((item) => item.id === section)!
-  const showSaveStatus = section !== 'models' && section !== 'integrations' && section !== 'about' && section !== 'scheduled-tasks'
+  // Panes whose rows save as they change report it in the toolbar; the others save with their own buttons.
+  const showSaveStatus = section === 'general' || section === 'appearance' || section === 'terminal'
 
   return (
     <main
@@ -124,7 +127,7 @@ export function SettingsLayout({
       aria-label={t(metadata.labelKey)}
     >
       {/* Unified toolbar, like a System Settings pane title. */}
-      <header className="app-drag toolbar-material absolute inset-x-0 top-0 z-30 flex h-(--frame-header-h) items-center gap-2 pr-4 titlebar-leading-[12px]">
+      <header className="titlebar-drag toolbar-material absolute inset-x-0 top-0 z-30 flex h-(--frame-header-h) items-center gap-2 pr-4 titlebar-leading-[12px]">
         {subpage ? (
           <Button
             ref={compact ? compactBackRef : undefined}
@@ -166,21 +169,11 @@ export function SettingsLayout({
           data-settings-section={id}
           className="scroll-slim min-h-0 min-w-0 flex-1 scroll-pt-[calc(var(--frame-header-h)+12px)] overflow-x-hidden overflow-y-auto"
         >
-          <div className={cn(
-            '@container/settings-workspace mx-auto w-full px-6 pt-[calc(var(--frame-header-h)+1.5rem)] pb-10 @min-[880px]/frame:px-8',
-            id === 'integrations' || id === 'models' ? 'max-w-6xl' : 'max-w-[720px]',
-          )}>
-            {id === 'about' || subpages[id] ? null : (() => {
-              const meta = SETTINGS_SECTIONS.find((item) => item.id === id)!
-              // System Settings pane hero: big tile, bold name, one-line summary.
-              return <div className="mb-6 flex flex-col items-center gap-1 rounded-xl bg-group px-6 pt-5 pb-4 text-center shadow-[inset_0_0_0_0.5px_var(--color-group-border)]">
-                <SettingsIconTile section={meta} className="mb-1.5 size-14 rounded-[15px] [&_svg]:size-[58%]" />
-                <p className="text-[calc(var(--app-font-size)+4px)] leading-tight font-bold text-foreground">{t(meta.labelKey)}</p>
-                <p className="max-w-md text-caption text-muted-foreground">{t(meta.descriptionKey)}</p>
-              </div>
-            })()}
+          <div className="@container/settings-workspace mx-auto w-full max-w-[720px] px-6 pt-[calc(var(--frame-header-h)+1.25rem)] pb-12 @min-[880px]/frame:px-8">
             <React.Suspense fallback={<div className="flex min-h-40 items-center justify-center gap-2 text-sm text-muted-foreground" role="status"><TbLoader2 className="size-4 animate-spin" aria-hidden />{t('settings.loadingPage')}</div>}>
-              <SettingsSubpageProvider onChange={publishSubpage}>{content(id)}</SettingsSubpageProvider>
+              <SettingsNavigateProvider navigate={onNavigate}>
+                <SettingsSubpageProvider onChange={publishSubpage}>{content(id)}</SettingsSubpageProvider>
+              </SettingsNavigateProvider>
             </React.Suspense>
           </div>
         </div>

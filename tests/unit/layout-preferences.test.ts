@@ -43,7 +43,15 @@ describe('renderer layout preferences', () => {
     })
     expect(normalizeAppRoute('integrations')).toEqual({
       workspace: 'settings',
-      section: 'integrations',
+      section: 'mcp',
+    })
+    expect(normalizeAppRoute({ workspace: 'settings', section: 'integrations' })).toEqual({
+      workspace: 'settings',
+      section: 'mcp',
+    })
+    expect(normalizeAppRoute({ workspace: 'settings', section: 'language' })).toEqual({
+      workspace: 'settings',
+      section: 'general',
     })
     expect(normalizeAppRoute('unknown')).toEqual({
       workspace: 'conversation',
@@ -90,7 +98,7 @@ describe('renderer layout preferences', () => {
       1_100,
     )).toBe('conversation-compact')
     expect(deriveFrameLayoutMode(
-      { workspace: 'settings', section: 'integrations' },
+      { workspace: 'settings', section: 'mcp' },
       1_440,
     )).toBe('settings-wide')
     expect(deriveFrameLayoutMode(

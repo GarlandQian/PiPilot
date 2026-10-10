@@ -59,7 +59,7 @@ export function RightDock({ width, full, containers, tabIds, onToggleFull, onHid
   return <aside aria-label={t('inspector.title')} style={{ width, maxWidth: '100%' }} data-panel-dock="right" data-panel-layout={full ? 'full' : 'split'}
     className="relative flex h-full min-w-0 flex-col border-l border-border bg-surface">
     <header className="shrink-0 border-b border-border bg-toolbar">
-      <div className={cn('app-drag flex h-(--frame-header-h) min-w-0 items-center pr-2', full ? 'titlebar-leading-[10px]' : 'pl-2')}>
+      <div className={cn('relative flex h-(--frame-header-h) min-w-0 items-center pr-2', full ? 'titlebar-drag titlebar-leading-[10px]' : 'app-drag pl-2')}>
         <PanelTabStrip dock="right" {...strip} className="min-w-0 flex-1"
           actions={<div className="glass toolbar-group shrink-0">
             {onToggleFull ? <DockButton label={t(full ? 'panel.layout.exitFull' : 'panel.layout.full')} onClick={onToggleFull}>
