@@ -10,6 +10,9 @@ import {
   type McpServerConfig,
 } from '@earendil-works/pi-coding-agent'
 import { MCP_CONFIG_CONTENT_LIMIT } from '../../shared/mcp-config'
+import type { LocalPiMcpServerStatus } from '../../shared/local-pi'
+import { loadDefaultMcpTransports, McpStatusTracker, mcpStatusTracker, registerMcpStatusTracker } from './runtime-mcp-status'
+import type { AgentSessionRuntime } from '@earendil-works/pi-coding-agent'
 import { isMcpServerOverride, validateMcpServerDefinition } from '../../shared/mcp-config-parser'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -129,7 +132,7 @@ export function createRuntimeNativeMcpExtensions(agentDir: string): InlineExtens
     { name: 'tool-search', factory: createToolSearchExtension(), builtin: true, replaceable: true },
     {
       name: 'mcp',
-      factory: (pi) => {
+      factory: async (pi) => {
         // The SDK currently exposes no public constructor for its OAuth
         // credential store; its default uses getAgentDir(), not loadConfig.
         // Refuse cross-directory credential access rather than silently using
@@ -137,13 +140,61 @@ export function createRuntimeNativeMcpExtensions(agentDir: string): InlineExtens
         if (canonicalDirectory(getAgentDir()) !== canonicalDirectory(agentDir)) {
           throw new Error('Native MCP requires PI_CODING_AGENT_DIR to match the Host agent directory.')
         }
+        // One tracker per conversation, found again by its Pi session id. If
+        // Pi's transports cannot be loaded, MCP still runs, just unobserved.
+        const createDefault = await loadDefaultMcpTransports().catch(() => null)
+        const tracker = createDefault ? new McpStatusTracker(createDefault) : null
+        let release: (() => void) | undefined
+        pi.on('session_start', (_event, context) => {
+          release?.()
+          if (tracker) release = registerMcpStatusTracker(context.sessionManager.getSessionId(), tracker)
+        })
+        pi.on('session_shutdown', () => { release?.(); release = undefined })
         return createMcpExtension({
           loadConfig: (context) => loadRuntimeMcpConfig(agentDir, context.cwd, context.isProjectTrusted()),
           logPath: join(agentDir, 'mcp.log'),
+          ...(tracker ? { createTransport: tracker.createTransport } : {}),
         })(pi)
       },
       builtin: true,
       replaceable: true,
     },
   ]
+}
+
+function usesOAuth(config: McpServerConfig) {
+  if (!('url' in config) || (config as { auth?: unknown }).auth) return false
+  return !Object.keys((config as { headers?: Record<string, unknown> }).headers ?? {}).some((header) => header.toLowerCase() === 'authorization')
+}
+
+/** Every MCP server this conversation knows of, with what its connection is doing now. */
+export function runtimeMcpStatus(runtime: AgentSessionRuntime) {
+  const { session } = runtime
+  const config = loadRuntimeMcpConfig(runtime.services.agentDir, runtime.cwd, session.settingsManager.isProjectTrusted())
+  const tracker = mcpStatusTracker(session.sessionId)
+  const servers: LocalPiMcpServerStatus[] = config.servers.map((server) => {
+    const enabled = (server.config as { enabled?: unknown }).enabled !== false
+    const observed = enabled ? tracker?.observation(server.name) : undefined
+    return {
+      name: server.name.slice(0, 256),
+      scope: server.scope ?? 'global',
+      enabled,
+      transport: 'url' in server.config ? 'http' as const : 'stdio' as const,
+      state: !enabled ? 'disabled' as const : observed?.state ?? 'starting' as const,
+      ...(observed?.state === 'connected' ? { tools: observed.tools } : {}),
+      ...(observed?.error && observed.state !== 'connected' ? { error: observed.error } : {}),
+      ...(observed?.stderr ? { stderr: observed.stderr } : {}),
+      oauth: usesOAuth(server.config),
+    }
+  })
+  // Servers that extensions registered connect too; they have no mcp.json entry.
+  for (const name of tracker?.names() ?? []) {
+    if (servers.some((server) => server.name === name)) continue
+    const observed = tracker!.observation(name)!
+    servers.push({ name: name.slice(0, 256), scope: 'extension', enabled: true, transport: 'stdio', state: observed.state,
+      ...(observed.state === 'connected' ? { tools: observed.tools } : {}),
+      ...(observed.error && observed.state !== 'connected' ? { error: observed.error } : {}),
+      ...(observed.stderr ? { stderr: observed.stderr } : {}), oauth: false })
+  }
+  return { servers: servers.slice(0, 200), errors: config.errors.slice(0, 20).map((error) => error.slice(0, 2_000)) }
 }

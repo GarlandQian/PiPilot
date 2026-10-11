@@ -215,6 +215,8 @@ Model capabilities come from Pi's built-in catalog and, when enabled, the public
 
 In **Settings → Integrations → MCP**, choose global or project scope, then add a template, paste configuration, or import selected servers from another supported app. Import previews preserve existing same-name servers and do not modify the source files. Templates may require credentials, shared folders, or an installed runtime before a server can start. Server switches save immediately; editor changes apply when saved.
 
+Each conversation connects its MCP servers itself. The conversation header's **MCP n/m** button lists them with their state (connecting, connected with its tool count, needs sign-in, failed, disconnected, or disabled), the error and the server's stderr output, and offers **Reconnect**, **Sign In**, or **Sign out** through Pi's `/mcp` command once Pi is idle. **Settings → MCP** shows the state the open conversation last saw beside each server.
+
 A project may override only `enabled`, `exposure`, or `toolExposure` for a same-name global server without repeating its connection settings. These overrides use JSON editing and retain the global server's credentials; deleting one restores the global settings. HTTP `auth.provider` is allowed only in global configuration. Native OAuth metadata, including `clientName` and `authServerMetadataUrl`, is preserved and validated.
 
 ## Scheduled tasks

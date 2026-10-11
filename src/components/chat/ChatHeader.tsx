@@ -56,6 +56,8 @@ export interface ChatHeaderProps {
   onToggleSummary?: () => void
   /** Open-in-editor and commit menus, in their own capsule. */
   gitControls?: React.ReactNode
+  /** This conversation's MCP connections, when it has servers. */
+  mcpStatus?: React.ReactNode
   terminalOpen?: boolean
   onToggleTerminal?: () => void
 }
@@ -97,6 +99,7 @@ export function ChatHeader({
   summaryOpen = false,
   onToggleSummary,
   gitControls,
+  mcpStatus,
   terminalOpen,
   onToggleTerminal,
 }: ChatHeaderProps) {
@@ -132,6 +135,7 @@ export function ChatHeader({
 
       {/* macOS 27 toolbar: related items share one Liquid Glass capsule. */}
       <div className="glass toolbar-group">
+        {mcpStatus}
         {onSearch ? <Button variant="ghost" size="icon-sm" onClick={onSearch} aria-label={t('conversationSearch.title')} title={t('conversationSearch.title')}><TbSearch aria-hidden /></Button> : null}
         {onNavigate ? <ConversationNavigation ownerKey={ownerKey} items={outline} onNavigate={onNavigate} /> : null}
         {sessionVisible && (

@@ -11,6 +11,9 @@ import { localizedText } from '@/shared/model-provider-presets'
 import { McpServerIcon } from './McpServerEditor'
 import { transportOf } from './mcp-editor-model'
 import { SettingsBadge, SettingsGroup, SettingsListRow } from '../kit'
+import { mcpStateText, mcpStateTone } from '@/components/chat/McpStatusMenu'
+import { cn } from '@/lib/utils'
+import { useLastMcpServerStatus } from '@/store/mcp-status'
 
 const text = (value: unknown) => typeof value === 'string' ? value : ''
 
@@ -59,6 +62,8 @@ export function McpServerList({ entries, title, headerActions, empty, busyKey, r
   const t = useT()
   const locale = useLocale()
   const [query, setQuery] = React.useState('')
+  // What the open conversation last saw of each server (connections are per conversation).
+  const seen = useLastMcpServerStatus()
   const visible = query.trim() ? entries.filter((entry) => filterServers([entry.server], query).length > 0) : entries
 
   return <SettingsGroup title={title} boxRole={visible.length ? 'list' : undefined} data-mcp-server-list
@@ -86,6 +91,12 @@ export function McpServerList({ entries, title, headerActions, empty, busyKey, r
             {!enabled && !entry.overridden ? <SettingsBadge>{t('settings.mcp.disabled')}</SettingsBadge> : null}
             {invalid ? <SettingsBadge tone="warning">{t('settings.mcp.page.needsFix')}</SettingsBadge> : null}
           </>}
+          status={(() => {
+            const live = enabled && !entry.overridden ? seen?.servers.find((candidate) => candidate.name === server.name && candidate.scope === entry.scope) : undefined
+            return live && live.state !== 'disabled' ? <span data-mcp-live-state={live.state} className="flex items-center gap-1.5 text-micro text-muted-foreground" title={live.error ?? t('mcpStatus.lastSeen', { state: mcpStateText(t, live) })}>
+              <span className={cn('size-1.5 rounded-full', mcpStateTone(live.state))} aria-hidden />{mcpStateText(t, live)}
+            </span> : undefined
+          })()}
           subtitle={entry.overridden ? t('settings.mcp.page.overriddenByProject')
             : override ? t('settings.mcp.page.overrideDescription')
               : <>{t(`settings.mcp.page.transport.${transport}` as MessageKey)} · <span className="font-mono">{serverEndpoint(server) || '—'}</span></>}

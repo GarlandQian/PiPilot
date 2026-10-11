@@ -8,6 +8,7 @@ Each version section supplies the highlights for its GitHub Release. Download li
 
 ### 中文
 
+- **MCP 实时状态**：对话标题栏显示“已连接/总数”，可查看每个 MCP 服务器的状态、工具数、错误和输出，并直接重新连接或登录；设置中的 MCP 列表显示当前对话最近看到的连接结果。
 - **订阅账号登录**：在“模型”中为 Pi 自带的服务商（Anthropic、ChatGPT、GitHub Copilot、OpenRouter、xAI 等）使用浏览器登录订阅账号，支持浏览器回调、设备验证码和粘贴代码；登录前会提示替换已保存的 API Key，可随时退出登录。
 - **压缩与会话明细**：“压缩对话…”可填写需要保留的内容（等同 `/compact <说明>`），Pi 正在回复时会先提示将中断；对话菜单显示输入、输出、缓存 token 以及消息和工具调用数。
 - **更多导出和导入格式**：整段对话可导出为 Pi 渲染的 HTML 或 Pi 会话文件（.jsonl）；可导入 Pi 会话文件，只恢复当前分支的消息，并自动选中其记录目录对应的项目。
@@ -15,6 +16,7 @@ Each version section supplies the highlights for its GitHub Release. Download li
 
 ### English
 
+- **Live MCP status:** The conversation header shows how many MCP servers are connected. Open it to see each server's state, tool count, errors, and output, and reconnect or sign in right there. Settings › MCP shows what the open conversation last saw.
 - **Subscription sign-in:** Sign in to Pi's own providers (Anthropic, ChatGPT, GitHub Copilot, OpenRouter, xAI, and more) from Models with a browser callback, a device code, or a pasted code. PiPilot asks before replacing a saved API key, and you can sign out at any time.
 - **Compaction and session details:** Compact conversation… accepts instructions for what the summary keeps (like `/compact <instructions>`) and warns first when it would stop a reply. The conversation menu lists input, output, and cache tokens, messages, and tool calls.
 - **More export and import formats:** Export a whole conversation as Pi's HTML page or as its Pi session file (.jsonl). Import a Pi session file to restore the messages on its current branch, with the project it was recorded in preselected.

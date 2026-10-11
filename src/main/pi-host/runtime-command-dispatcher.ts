@@ -1,6 +1,7 @@
 import { mkdir } from 'node:fs/promises'
 import type { AgentSessionRuntime } from '@earendil-works/pi-coding-agent'
 import type { RuntimeDelivery } from './runtime-delivery'
+import { runtimeMcpStatus } from './runtime-native-mcp'
 import type {
   ExternalControlAcceptedMode,
   ExternalControlRequestedMode,
@@ -552,6 +553,16 @@ export async function dispatchRuntimeCommand(
             command: 'get_session_stats',
             success: true,
             data: session.getSessionStats(),
+          }),
+        }
+      case 'get_mcp_status':
+        return {
+          replaced: false,
+          response: successResponse({
+            type: 'response',
+            command: 'get_mcp_status',
+            success: true,
+            data: runtimeMcpStatus(runtime),
           }),
         }
       case 'export_html': {

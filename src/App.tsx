@@ -30,6 +30,7 @@ import { useTaskNotificationNavigation } from '@/components/frame/useTaskNotific
 import { ConversationNotices } from '@/components/chat/ConversationNotices'
 import { ProjectTrustNotice, ProjectTrustPrompt } from '@/components/projects/ProjectTrust'
 import { CompactConversationSheet } from '@/components/chat/CompactConversationSheet'
+import { McpStatusMenu } from '@/components/chat/McpStatusMenu'
 import { ConversationSearchDialog } from '@/components/chat/ConversationSearchDialog'
 import { ConversationExportDialog } from '@/components/chat/ConversationExportDialog'
 import { ConversationImportDialog } from '@/components/chat/ConversationImportDialog'
@@ -1112,6 +1113,8 @@ export default function App() {
               onToggleInspector={panel.toggleTabs}
               compacting={Boolean(compactFeedback.pending)}
               onCompact={() => { if (conversationReady) setCompactSheetOpen(true) }}
+              mcpStatus={<McpStatusMenu sessionKey={conversationReady ? conversationSessionKey : null} streaming={pi.session?.isStreaming ?? false}
+                onSend={(command) => actions.send(command, 'prompt')} onOpenSettings={() => setSettingsSection('mcp')} />}
             />
             {compactFeedback.error ? (
               <div role="alert" data-conversation-action-error="compact" className="toolbar-material shrink-0 break-words px-5 py-2 text-caption text-destructive [&_.md-body]:text-caption [&_.md-body]:text-destructive">

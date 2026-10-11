@@ -448,6 +448,22 @@ export const localPiSessionStatsSchema = z
 
 export type LocalPiSessionStats = z.infer<typeof localPiSessionStatsSchema>
 
+/** One MCP server as one conversation sees it. */
+export const localPiMcpServerStatusSchema = z.object({
+  name: z.string().min(1).max(256),
+  scope: z.enum(['global', 'project', 'extension']),
+  enabled: z.boolean(),
+  transport: z.enum(['stdio', 'http']),
+  /** `starting`: enabled, no connection attempt yet; `disconnected`: dropped, the next call reconnects. */
+  state: z.enum(['disabled', 'starting', 'connecting', 'connected', 'disconnected', 'needs-auth', 'failed']),
+  tools: z.number().int().nonnegative().optional(),
+  error: z.string().max(2_000).optional(),
+  stderr: z.string().max(4_000).optional(),
+  /** Signs in with OAuth (an HTTP server without its own Authorization header or auth provider). */
+  oauth: z.boolean(),
+}).strict()
+export type LocalPiMcpServerStatus = z.infer<typeof localPiMcpServerStatusSchema>
+
 export const localPiSessionStateSchema = z
   .object({
     model: localPiModelSchema.optional(),
@@ -589,6 +605,7 @@ export const localPiRpcCommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('bash'), command: z.string(), excludeFromContext: z.boolean().optional() }).strict(),
   z.object({ type: z.literal('abort_bash') }).strict(),
   z.object({ type: z.literal('get_session_stats') }).strict(),
+  z.object({ type: z.literal('get_mcp_status') }).strict(),
   z.object({ type: z.literal('export_html'), outputPath: z.string().optional() }).strict(),
   z.object({ type: z.literal('switch_session'), sessionPath: z.string() }).strict(),
   z.object({ type: z.literal('fork'), entryId: z.string() }).strict(),
@@ -908,6 +925,7 @@ export const localPiRpcSuccessResponseSchema = z.discriminatedUnion('command', [
   z.object({ ...localPiSuccessResponseBase, command: z.literal('bash'), data: localPiBashResultSchema }).strict(),
   localPiNoDataSuccessSchema('abort_bash'),
   z.object({ ...localPiSuccessResponseBase, command: z.literal('get_session_stats'), data: localPiSessionStatsSchema }).strict(),
+  z.object({ ...localPiSuccessResponseBase, command: z.literal('get_mcp_status'), data: z.object({ servers: z.array(localPiMcpServerStatusSchema).max(200), errors: z.array(z.string().max(2_000)).max(20) }).strict() }).strict(),
   z.object({ ...localPiSuccessResponseBase, command: z.literal('export_html'), data: z.object({ path: z.string() }).strict() }).strict(),
   z.object({ ...localPiSuccessResponseBase, command: z.literal('switch_session'), data: z.object({ cancelled: z.boolean() }).strict() }).strict(),
   z.object({ ...localPiSuccessResponseBase, command: z.literal('fork'), data: z.object({ text: z.string(), cancelled: z.boolean() }).strict() }).strict(),
