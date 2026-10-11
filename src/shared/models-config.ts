@@ -215,6 +215,10 @@ export const builtinProviderSchema = z.object({
   /** A key can be entered (a few providers only read ambient credentials). */
   keyLogin: z.boolean(),
   oauth: z.boolean(),
+  /** Pi's name for its subscription sign-in, e.g. "Anthropic (Claude Pro/Max)". */
+  oauthName: z.string().max(256).optional(),
+  /** The kind of credential stored in auth.json, when one is. */
+  credential: z.enum(['api_key', 'oauth']).optional(),
   modelCount: z.number().int().nonnegative().max(10_000),
 }).strict()
 

@@ -159,12 +159,14 @@ export function useModelsManager(document: ConfigurationDocument<ModelsConfigSna
   }
 
   const rawDefinition = (providerId: string) => rawModelsProviderDefinition(draftText, providerId)
+  /** Providers as a sign-in left them (it wrote auth.json without this page). */
+  const acceptBuiltinProviders = (providers: BuiltinProvider[]) => setBuiltin({ state: 'ready', providers })
 
   return {
     adapter, snapshot, draftText, revision, dirty, phase, documentError, savedApply, apply, parsed,
     available: Boolean(adapter), loading, saving, reloadOpen, setReloadOpen, defaultBusy, builtin,
     load, persistText, refreshBuiltin, setDefault, draftWithProvider, saveProvider, removeProvider,
-    duplicateProvider, testModel, setProviderKey, rawDefinition, updateDraft: document.updateDraft, saveDraft,
+    duplicateProvider, testModel, setProviderKey, acceptBuiltinProviders, rawDefinition, updateDraft: document.updateDraft, saveDraft,
     view: document.getSnapshot().view, setView: document.setView,
     revertDraft: () => { const current = document.getSnapshot().snapshot; if (current) document.updateDraft(current.content) },
   }

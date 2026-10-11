@@ -114,6 +114,7 @@ export interface PiPilotApi {
   readonly conversationSearch: { find(input: ConversationSearchInput): Promise<ConversationSearchResult> }
   readonly projectWorkflows: import('./project-workflows').ProjectWorkflowsApi
   readonly projectTrust: import('./project-trust').ProjectTrustApi
+  readonly providerLogin: import('./provider-login').ProviderLoginApi
   readonly sideConversations: import('./side-conversations').SideConversationsApi
   readonly scheduledTasks: {
     get(): Promise<ScheduledTasksSnapshot>

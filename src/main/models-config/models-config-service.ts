@@ -412,6 +412,13 @@ export class ModelsConfigController {
     return builtinProvidersResultSchema.parse({ providers: await this.service.builtinProviders() })
   }
 
+  /** After a sign-in wrote auth.json elsewhere: the providers now, and running sessions updated. */
+  async refreshAuth() {
+    const providers = await this.service.builtinProviders()
+    const status = await this.applyCoordinator.apply(await this.service.authRevision())
+    return { providers, apply: configApplySaveFields(status).apply }
+  }
+
   /** Store or remove a key in Pi's auth.json, then let running sessions pick it up. */
   async setProviderKey(providerId: string, key: string | null): Promise<BuiltinProviderKeyResult> {
     const providers = await this.service.builtinProviders({ providerId, key })

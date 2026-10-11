@@ -39,6 +39,8 @@ import { registerProjectWorkflowsIpc } from './ipc/register-project-workflows-ip
 import { ProjectTrustService } from './project-trust/project-trust-service'
 import { PROJECT_TRUST_SESSION_FILE_ENV } from './project-trust/project-trust-resolution'
 import { registerProjectTrustIpc } from './ipc/register-project-trust-ipc'
+import { ProviderLoginService } from './models-config/provider-login-service'
+import { registerProviderLoginIpc } from './ipc/register-provider-login-ipc'
 import { registerSideConversationsIpc } from './ipc/register-side-conversations-ipc'
 import { SideConversationService } from './conversations/side-conversation-service'
 import { registerLocalPiIpc } from './ipc/register-local-pi-ipc'
@@ -338,6 +340,8 @@ let scheduledTaskFeature: ReturnType<typeof createScheduledTaskFeature> | null =
 let scheduledTaskIpc: ReturnType<typeof registerScheduledTasksIpc> | null = null
 let projectTrustService: ProjectTrustService | null = null
 let projectTrustIpc: ReturnType<typeof registerProjectTrustIpc> | null = null
+let providerLoginService: ProviderLoginService | null = null
+let providerLoginIpc: ReturnType<typeof registerProviderLoginIpc> | null = null
 
 function activeApplicationWork() {
   const primaryPi = Boolean(
@@ -412,6 +416,10 @@ async function disposeApplicationResources() {
   projectTrustIpc = null
   projectTrustService?.dispose()
   projectTrustService = null
+  providerLoginIpc?.dispose()
+  providerLoginIpc = null
+  providerLoginService?.dispose()
+  providerLoginService = null
   await scheduledTaskFeature?.dispose()
   scheduledTaskFeature = null
   await flushApplicationState()
@@ -967,6 +975,13 @@ if (!hasSingleInstanceLock) {
         getMainWindow: () => mainWindow,
         policy,
       })
+      const modelsForLogin = modelsConfigController
+      providerLoginService = new ProviderLoginService({
+        agentDir: applicationAgentDirectory,
+        openExternal: (url) => shell.openExternal(url),
+        refreshAuth: () => modelsForLogin.refreshAuth(),
+      })
+      providerLoginIpc = registerProviderLoginIpc({ getMainWindow: () => mainWindow, policy, service: providerLoginService })
       conversationIpcUnsubscribe = registerConversationIpc({
         contextService: conversationContextService,
         getMainWindow: () => mainWindow,

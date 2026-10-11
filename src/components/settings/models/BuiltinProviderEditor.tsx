@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { TbDots, TbFlask, TbLoader2, TbSearch, TbStar } from 'react-icons/tb'
+import { TbDots, TbFlask, TbLoader2, TbSearch, TbStar, TbUserCircle } from 'react-icons/tb'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -13,12 +13,14 @@ import { ApiKeyLink, SecretInput, type TestState } from '../editor-page'
 import { FormActions, SettingsBadge, SettingsField, SettingsGroup, SettingsIdentity, SettingsListRow, SettingsPage, SettingsRow, StatusText } from '../kit'
 import { ProviderIcon } from './ProviderIcon'
 import { TestStatus } from './ProviderCardList'
+import { ProviderLoginSheet } from './ProviderLoginSheet'
 
 const PAGE = 60
 
 /** Where Pi gets the key it uses now. */
 export function builtinKeySource(provider: BuiltinProvider | undefined, t: ReturnType<typeof useT>) {
   if (!provider?.configured) return t('settings.models.builtin.noKey')
+  if (provider.source === 'stored' && provider.credential === 'oauth') return t('providerLogin.signedInSource')
   if (provider.source === 'stored') return t('settings.models.builtin.keyStored')
   if (provider.source === 'environment') return t('settings.models.builtin.keyEnvironment', { name: provider.label ?? '' })
   return provider.label ? t('settings.models.builtin.keyOther', { source: provider.label }) : t('settings.models.builtin.keyConfigured')
@@ -50,6 +52,10 @@ export function BuiltinProviderEditor({ manager, providerId, preset, isNew, onVe
   const [saving, setSaving] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [removeOpen, setRemoveOpen] = React.useState(false)
+  const [loginOpen, setLoginOpen] = React.useState(false)
+  const [replaceKeyOpen, setReplaceKeyOpen] = React.useState(false)
+  const [signOutOpen, setSignOutOpen] = React.useState(false)
+  const [loginNotice, setLoginNotice] = React.useState<string | null>(null)
 
   React.useEffect(() => {
     let cancelled = false
@@ -127,16 +133,27 @@ export function BuiltinProviderEditor({ manager, providerId, preset, isNew, onVe
       {identityTest && identityTest.state !== 'testing' ? <div className="mt-1"><TestStatus test={identityTest} /></div> : null}
     </SettingsIdentity>
 
+    {provider?.oauth ? <SettingsGroup title={t('providerLogin.group')} info={t('providerLogin.groupInfo')} data-provider-subscription={provider.credential === 'oauth' ? 'signed-in' : 'signed-out'}
+      footer={loginNotice ?? undefined}>
+      <SettingsRow label={provider.oauthName ?? name} icon={<TbUserCircle className="size-5 shrink-0 text-muted-foreground" aria-hidden />}
+        description={provider.credential === 'oauth' ? <StatusText tone="success">{t('providerLogin.signedIn')}</StatusText> : t('providerLogin.signedOut')}>
+        {provider.credential === 'oauth'
+          ? <Button variant="outline" size="sm" disabled={saving} onClick={() => setSignOutOpen(true)}>{t('providerLogin.signOut')}</Button>
+          : <Button size="sm" disabled={saving} onClick={() => { setLoginNotice(null); if (provider.credential === 'api_key') setReplaceKeyOpen(true); else setLoginOpen(true) }}>{t('providerLogin.signIn')}</Button>}
+      </SettingsRow>
+    </SettingsGroup> : null}
+
     <SettingsGroup title={t('settings.models.editor.connection')} info={t('settings.models.builtin.description')}
-      footer={<span className="flex flex-wrap items-center gap-x-3 gap-y-1"><ApiKeyLink href={preset?.version.apiKeyUrl} />{provider?.oauth ? <span>{t('settings.models.builtin.oauthHint')}</span> : null}</span>}>
+      footer={<span className="flex flex-wrap items-center gap-x-3 gap-y-1"><ApiKeyLink href={preset?.version.apiKeyUrl} /></span>}>
       <SettingsRow label={t('settings.models.editor.baseUrl')} info={t('settings.models.builtin.addressByPi')}>
         <span className="min-w-0 truncate font-mono text-caption text-muted-foreground" title={provider?.baseUrl}>{provider?.baseUrl || t('settings.models.builtin.addressByPi')}</span>
       </SettingsRow>
       {provider && !provider.keyLogin ? <SettingsRow label={t('settings.models.form.apiKey')} description={t('settings.models.builtin.noKeyLogin')} />
         : <SettingsField label={t('settings.models.form.apiKey')} htmlFor="models-builtin-key" info={t('settings.models.builtin.keyHint')}>
           <SecretInput id="models-builtin-key" value={key} onChange={setKey} placeholder={keyPlaceholder} />
+          {key.trim() && provider?.credential === 'oauth' ? <StatusText tone="warning">{t('providerLogin.keyReplacesSignIn')}</StatusText> : null}
         </SettingsField>}
-      {provider?.source === 'stored' ? <SettingsRow label={t('settings.models.builtin.storedKey')} description={t('settings.models.builtin.storedKeyDescription')}>
+      {provider?.source === 'stored' && provider.credential !== 'oauth' ? <SettingsRow label={t('settings.models.builtin.storedKey')} description={t('settings.models.builtin.storedKeyDescription')}>
         <Button variant="outline" size="sm" className="text-destructive" disabled={saving} onClick={() => setRemoveOpen(true)}>{t('settings.models.builtin.removeKey')}</Button>
       </SettingsRow> : null}
     </SettingsGroup>
@@ -180,6 +197,35 @@ export function BuiltinProviderEditor({ manager, providerId, preset, isNew, onVe
 
     <FormActions onCancel={onCancel} onSave={() => void save()} saving={saving} canSave={canSave} error={error} />
 
+    {provider?.oauth && loginOpen ? <ProviderLoginSheet provider={provider} open onOpenChange={setLoginOpen}
+      onSignedIn={(providers, apply) => {
+        manager.acceptBuiltinProviders(providers)
+        setLoginNotice(apply === 'failed' ? t('providerLogin.applyFailed') : apply === 'pending' ? t('providerLogin.applyPending') : null)
+      }} /> : null}
+    <AlertDialog open={replaceKeyOpen} onOpenChange={setReplaceKeyOpen}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{t('providerLogin.replaceTitle', { name })}</AlertDialogTitle>
+          <AlertDialogDescription>{t('providerLogin.replaceDescription')}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+          <AlertDialogAction onClick={() => setLoginOpen(true)}>{t('providerLogin.signIn')}</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    <AlertDialog open={signOutOpen} onOpenChange={setSignOutOpen}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{t('providerLogin.signOutTitle', { name: provider?.oauthName ?? name })}</AlertDialogTitle>
+          <AlertDialogDescription>{t('providerLogin.signOutDescription')}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+          <AlertDialogAction variant="destructive" onClick={() => void removeKey()}>{t('providerLogin.signOut')}</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
     <AlertDialog open={removeOpen} onOpenChange={setRemoveOpen}>
       <AlertDialogContent>
         <AlertDialogHeader>

@@ -371,9 +371,20 @@ async function builtinRuntime(agentDir: string, temporaryDirectory: string) {
   })
 }
 
-function builtinProviderList(runtime: Awaited<ReturnType<typeof BundledModelRuntime.create>>) {
+/** Which kind of credential auth.json holds per provider; never the secret itself. */
+async function storedCredentialKinds(agentDir: string) {
+  try {
+    const parsed = JSON.parse(await readFile(join(agentDir, 'auth.json'), 'utf8')) as Record<string, { type?: unknown } | null>
+    return new Map(Object.entries(parsed).flatMap(([id, entry]) => entry?.type === 'oauth' || entry?.type === 'api_key' ? [[id, entry.type]] : []))
+  } catch {
+    return new Map<string, 'oauth' | 'api_key'>()
+  }
+}
+
+function builtinProviderList(runtime: Awaited<ReturnType<typeof BundledModelRuntime.create>>, kinds: Map<string, unknown>) {
   return runtime.getProviders().flatMap((provider) => {
     const status = runtime.getProviderAuthStatus(provider.id)
+    const credential = status.source === 'stored' ? kinds.get(provider.id) : undefined
     const entry = builtinProviderSchema.safeParse({
       id: provider.id,
       name: provider.name || provider.id,
@@ -383,6 +394,8 @@ function builtinProviderList(runtime: Awaited<ReturnType<typeof BundledModelRunt
       ...(status.label ? { label: status.label.slice(0, 256) } : {}),
       keyLogin: Boolean(provider.auth.apiKey?.login),
       oauth: Boolean(provider.auth.oauth),
+      ...(provider.auth.oauth?.name ? { oauthName: provider.auth.oauth.name.slice(0, 256) } : {}),
+      ...(credential === 'oauth' || credential === 'api_key' ? { credential } : {}),
       modelCount: runtime.getModels(provider.id).length,
     })
     return entry.success ? [entry.data] : []
@@ -413,7 +426,7 @@ async function builtinProviders(
     emit({
       type: 'result',
       operationId: command.operationId,
-      result: piManagementSnapshotPayloadSchema.parse({ ...payload, models: { ...payload.models!, builtinProviders: builtinProviderList(runtime) } }),
+      result: piManagementSnapshotPayloadSchema.parse({ ...payload, models: { ...payload.models!, builtinProviders: builtinProviderList(runtime, await storedCredentialKinds(agentDir)) } }),
     })
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true })

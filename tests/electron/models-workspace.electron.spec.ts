@@ -308,3 +308,60 @@ test('custom API selection explains credentials and preserves advanced protocols
     await fixture.close()
   }
 })
+
+test('signs in to a subscription provider through Pi’s login steps', async ({}, testInfo) => {
+  test.setTimeout(60_000)
+  const { app, fixture } = await launch(testInfo)
+  try {
+    const page = await app.firstWindow()
+    await page.setViewportSize({ width: 1280, height: 860 })
+    await expect(page.locator('[data-model-thinking-trigger]')).toContainText('Fake Chat', { timeout: 20_000 })
+    // Main's real sign-in needs the provider's servers; stand in for its steps.
+    await app.evaluate(({ ipcMain, BrowserWindow }, channels) => {
+      const loginId = '2c1f6f0e-7c55-4f4e-9d0a-2f3a7d6c9b11'
+      const promptId = '9b0c1d2e-3f40-4a5b-8c6d-7e8f9a0b1c2d'
+      const probe = globalThis as typeof globalThis & { loginAnswers: string[] }
+      probe.loginAnswers = []
+      const send = (event: object) => BrowserWindow.getAllWindows()[0]!.webContents.send(channels.event, event)
+      ipcMain.removeHandler(channels.start)
+      ipcMain.handle(channels.start, async (_event, request: { context: { requestId: string } }) => {
+        setTimeout(() => {
+          send({ type: 'device_code', loginId, userCode: 'WDJB-MJHT', verificationUri: 'https://github.com/login/device' })
+          send({ type: 'prompt', loginId, promptId, prompt: { type: 'select', message: 'Choose an account', options: [{ id: 'personal', label: 'Personal' }, { id: 'work', label: 'Work' }] } })
+        }, 50)
+        return { ok: true, requestId: request.context.requestId, value: { loginId } }
+      })
+      ipcMain.removeHandler(channels.respond)
+      ipcMain.handle(channels.respond, async (_event, request: { context: { requestId: string }; value: string }) => {
+        probe.loginAnswers.push(request.value)
+        setTimeout(() => send({ type: 'finished', loginId, apply: 'applied', providers: [{
+          id: 'anthropic', name: 'Anthropic', configured: true, source: 'stored', credential: 'oauth', keyLogin: true, oauth: true,
+          oauthName: 'Anthropic (Claude Pro/Max)', modelCount: 1,
+        }] }), 50)
+        return { ok: true, requestId: request.context.requestId, value: { ok: true } }
+      })
+    }, { start: 'pipilot:provider-login:start', respond: 'pipilot:provider-login:respond', event: 'pipilot:provider-login:event' })
+
+    await page.getByRole('button', { name: 'Settings', exact: true }).click()
+    await page.locator('[data-context-panel-nav-id="models"]').click()
+    const main = page.getByRole('main', { name: 'Models', exact: true })
+    await main.getByRole('button', { name: 'Add Provider…', exact: true }).click()
+    await page.locator('[data-models-preset-picker] [data-models-preset="anthropic"]').click()
+    const editor = main.locator('[data-models-builtin-editor="anthropic"]')
+    const subscription = editor.locator('[data-provider-subscription]')
+    await expect(subscription).toHaveAttribute('data-provider-subscription', 'signed-out', { timeout: 20_000 })
+    await subscription.getByRole('button', { name: 'Sign In…', exact: true }).click()
+
+    const sheet = page.locator('[data-provider-login-sheet="anthropic"]')
+    await expect(sheet.locator('[data-provider-login-device]')).toContainText('WDJB-MJHT')
+    await sheet.locator('[data-provider-login-prompt="select"]').getByRole('button', { name: 'Choose', exact: true }).nth(1).click()
+    await expect(sheet).toHaveCount(0)
+    expect(await app.evaluate(() => (globalThis as typeof globalThis & { loginAnswers: string[] }).loginAnswers)).toEqual(['work'])
+    await expect(subscription).toHaveAttribute('data-provider-subscription', 'signed-in')
+    await expect(editor.locator('[data-models-key-source]')).toHaveText('Signed in with a subscription')
+    await expect(subscription.getByRole('button', { name: 'Sign Out', exact: true })).toBeVisible()
+  } finally {
+    await closeFixtureApplication(app)
+    await fixture.close()
+  }
+})
