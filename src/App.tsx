@@ -35,6 +35,7 @@ import { requestNextAttention } from '@/components/frame/attention-navigation'
 import { QuestionBranchesContext, type QuestionBranches } from '@/components/chat/question-branches'
 import { ConversationTreePanel } from '@/components/inspector/ConversationTreePanel'
 import { BrowserPanel } from '@/components/inspector/BrowserPanel'
+import { PullRequestsPanel } from '@/components/inspector/PullRequestsPanel'
 import { useConversationTree } from '@/store/conversation-tree'
 import { branchPoints } from '@/renderer/pi-rpc/conversation-tree'
 import { ConversationSearchDialog } from '@/components/chat/ConversationSearchDialog'
@@ -563,6 +564,17 @@ export default function App() {
       : null,
   ), [openingSession, pi.runtime?.generation])
 
+  /** Opens a conversation another part of the app just started (it may take a moment to be listed). */
+  const openConversationById = React.useCallback(async (scope: ConversationScope, sessionId: string) => {
+    const catalog = window.pipilot?.sessionCatalog
+    if (!catalog) return
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const listed = await (attempt === 0 ? catalog.list(scope) : catalog.refresh(scope)).catch(() => null)
+      const summary = listed?.rows.find((row) => row.sessionId === sessionId)
+      if (summary) { setRail('sessions'); requestSessionOpening({ summary }); return }
+      await new Promise((resolve) => setTimeout(resolve, 300))
+    }
+  }, [requestSessionOpening, setRail])
   const openConversation = React.useCallback((item: SidebarConversationItem) => {
     setPendingSearchJump(null)
     requestSessionOpening(item)
@@ -839,6 +851,7 @@ export default function App() {
   const strip = usePanelStrip({
     ...(conversationReady ? { onOpenTree: () => panel.open(panelTab('tree')) } : {}),
     onOpenBrowser: () => panel.open(panelTab('browser')),
+    onOpenPullRequests: () => panel.open(panelTab('pr')),
     terminalSlot: setTerminalTabsHost,
     state: panel.state,
     projectAvailable,
@@ -926,6 +939,8 @@ export default function App() {
     {t(workspace.activeScope.kind === 'project' ? 'inspector.project.unavailable' : 'inspector.project.required')}
   </p>, panelContainers.get(id), id)
   const tabContents = <>
+    {panel.state.tabs.pr ? (panelWorkspace ? createPortal(<PullRequestsPanel workspaceId={panelWorkspace.id} visible={conversationWorkspace && panel.isVisible('pr')}
+      onOpenConversation={(workspaceId, sessionId) => { void openConversationById({ kind: 'project', workspaceId }, sessionId) }} />, panelContainers.get('pr')) : unavailableTab('pr')) : null}
     {panel.state.tabs.browser ? createPortal(<BrowserPanel scopeKey={conversationScopeKey(workspace.activeScope)}
       visible={conversationWorkspace && panel.isVisible('browser')}
       onAttachImage={(file) => setComposerAttachmentRequest({ files: [file], scopeKey: composerScopeKey, sequence: ++composerAttachmentSequence.current })} />, panelContainers.get('browser')) : null}

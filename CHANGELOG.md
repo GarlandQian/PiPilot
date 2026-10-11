@@ -8,6 +8,7 @@ Each version section supplies the highlights for its GitHub Release. Download li
 
 ### 中文
 
+- **PR 与 CI**：右侧面板新增“PR”标签页，通过你自己的 GitHub CLI（gh）列出与你相关或所有打开的拉取请求，查看检查和审阅状态；可批准、要求修改或评论（提交前确认身份）。检查失败时“修复失败的检查”会在该分支的工作副本中带着失败日志开始一个对话，不会推送。未安装或未登录 gh 时显示指引。
 - **内置浏览器**：右侧面板新增“浏览器”标签页，同一项目下的对话共用，支持多标签页；页面运行在与 PiPilot 隔离的环境中，默认打开项目运行命令启动的开发服务器。可标注元素或区域，把截图、选择器、HTML、关键样式和说明（可选附带控制台错误）加入消息；Pi 可通过只读工具查看页面截图、地址和控制台/网络错误。
 - **对话弹窗与待处理跳转**：可在新窗口中打开对话（标题栏菜单或侧边栏菜单），弹窗显示对话内容并可发送、排队、停止，支持置顶；与主窗口共用同一对话。⌘⌥A（Windows/Linux 为 Ctrl+Alt+A）或命令面板可跳到下一个需要处理的对话（等待回答、失败或有未读结果）。
 - **会话分支**：可编辑之前的提问并重新发送，在同一对话中产生新分支；被编辑过的提问显示“‹ 1/2 ›”可切换版本。新增“分支”标签页显示全部分支，可切换（可先总结被离开的分支）、从任一提问编辑，并添加书签。所有分支都保留在 Pi 会话文件中。
@@ -19,6 +20,7 @@ Each version section supplies the highlights for its GitHub Release. Download li
 
 ### English
 
+- **Pull requests and CI:** A Pull Requests tab lists the open pull requests that involve you (or all of them) through your own GitHub CLI, with their checks and review state. Approve, request changes, or comment after confirming the account it posts as. Fix Failing Checks opens the branch in a working copy and starts a conversation with the failing output; nothing is pushed. Without gh, or signed out, the tab shows how to set it up.
 - **Built-in browser:** A Browser tab in the side panel, shared by a project's conversations and with multiple tabs. Pages run isolated from PiPilot and default to the dev server a project action started. Annotate an element or an area to add its screenshot, selector, HTML, key styles, and your note (optionally with console errors) to the message. Pi gets read-only tools to see the page's screenshot and address and its console and network errors.
 - **Pop-out windows and attention navigation:** Open a conversation in its own window from the header or sidebar menu. The window shows the transcript, sends, queues, and stops, and can stay on top; it shares the conversation with the main window. ⌘⌥A (Ctrl+Alt+A on Windows and Linux) or the command palette opens the next conversation needing attention: waiting for you, failed, or unread.
 - **Conversation branches:** Edit an earlier question and send it again to start a new branch in the same conversation; an edited question shows ‹ 1/2 › to switch versions. A Branches tab lists every branch, switches between them (optionally summarizing the one left behind), edits from any question, and bookmarks questions. Every branch stays in the Pi session file.

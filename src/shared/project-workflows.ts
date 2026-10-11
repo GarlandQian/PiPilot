@@ -33,6 +33,8 @@ export const createWorktreeInputSchema = z.object({
   projectId: z.uuid(), name: text(80).trim().min(1), baseBranch: text(256).trim().min(1),
   branch: text(256).trim().min(1), setupActionId: z.uuid().optional(),
   expectedActionRevision: z.number().int().nonnegative().optional(),
+  /** Check out `branch` itself (it must exist) instead of creating it from `baseBranch` — for a pull request's branch. */
+  checkoutExisting: z.boolean().optional(),
 }).strict()
 export type CreateWorktreeInput = z.infer<typeof createWorktreeInputSchema>
 

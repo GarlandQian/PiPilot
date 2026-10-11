@@ -91,6 +91,7 @@ export class WorktreeService {
       const commonDirectory = await this.commonDirectory(repository)
       await this.git(repository, ['check-ref-format', '--branch', input.branch])
       if (!(await this.branches(input.projectId)).includes(input.baseBranch)) throw new ProjectWorkflowError('Choose an existing local branch.')
+      if (input.checkoutExisting && input.branch !== input.baseBranch) throw new ProjectWorkflowError('An existing branch is checked out as itself.')
       await this.git(repository, ['rev-parse', '--verify', `refs/heads/${input.baseBranch}^{commit}`])
       const id = randomUUID()
       const parent = this.recordForWorkspace(input.projectId)
@@ -103,7 +104,9 @@ export class WorktreeService {
       this.records.push(record)
       try { await this.persist() } catch (error) { this.records = this.records.filter((entry) => entry !== record); throw error }
       try {
-        await this.git(repository, ['worktree', 'add', '-b', input.branch, record.path, `refs/heads/${input.baseBranch}`])
+        await this.git(repository, input.checkoutExisting
+          ? ['worktree', 'add', record.path, input.branch]
+          : ['worktree', 'add', '-b', input.branch, record.path, `refs/heads/${input.baseBranch}`])
         await this.verify(record, record.path)
         record.workspaceId = (await this.options.register(record.path, `${record.name} · ${record.branch}`)).id
         record.state = 'active'

@@ -117,6 +117,7 @@ export interface PiPilotApi {
   readonly providerLogin: import('./provider-login').ProviderLoginApi
   readonly popout: import('./popout').PopoutApi
   readonly browserPane: import('./browser-pane').BrowserPaneApi
+  readonly pullRequests: import('./pull-requests').PullRequestsApi
   readonly sideConversations: import('./side-conversations').SideConversationsApi
   readonly scheduledTasks: {
     get(): Promise<ScheduledTasksSnapshot>

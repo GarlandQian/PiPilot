@@ -46,6 +46,8 @@ import { PopoutWindows } from './windows/popout-windows'
 import { registerPopoutIpc } from './ipc/register-popout-ipc'
 import { BrowserPaneService } from './browser/browser-pane-service'
 import { registerBrowserPaneIpc } from './ipc/register-browser-pane-ipc'
+import { PullRequestService } from './pull-requests/pull-request-service'
+import { registerPullRequestIpc } from './ipc/register-pull-request-ipc'
 import { registerSideConversationsIpc } from './ipc/register-side-conversations-ipc'
 import { SideConversationService } from './conversations/side-conversation-service'
 import { registerLocalPiIpc } from './ipc/register-local-pi-ipc'
@@ -353,6 +355,7 @@ let popoutIpc: ReturnType<typeof registerPopoutIpc> | null = null
 let browserPaneService: BrowserPaneService | null = null
 let browserPaneIpc: ReturnType<typeof registerBrowserPaneIpc> | null = null
 let browserToolsSubscription: (() => unknown) | null = null
+let pullRequestIpc: ReturnType<typeof registerPullRequestIpc> | null = null
 
 function activeApplicationWork() {
   const primaryPi = Boolean(
@@ -439,6 +442,8 @@ async function disposeApplicationResources() {
   browserPaneIpc = null
   browserToolsSubscription?.()
   browserToolsSubscription = null
+  pullRequestIpc?.dispose()
+  pullRequestIpc = null
   browserPaneService?.dispose()
   browserPaneService = null
   providerLoginService?.dispose()
@@ -1012,6 +1017,18 @@ if (!hasSingleInstanceLock) {
         })()
       })
       browserToolsSubscription = stopBrowserTools
+      if (workflowsForBrowser) {
+        pullRequestIpc = registerPullRequestIpc({
+          getMainWindow: () => mainWindow, policy,
+          service: new PullRequestService({
+            workspaces: workspaceRepository, workflows: workflowsForBrowser.api, runtime: runtimeHost,
+            fixTitle: (number) => {
+              const locale = settingsRepository.get().settings.locale
+              return (locale === 'system' ? app.getLocale() : locale).startsWith('zh') ? `修复 PR #${number} 的检查` : `Fix checks of PR #${number}`
+            },
+          }),
+        })
+      }
       popoutIpc = registerPopoutIpc({ getMainWindow: () => mainWindow, policy, service: popoutService, windows: conversationWindows, showMainWindow: revealMainWindow })
       registerAppIpc({ getMainWindow: () => mainWindow, policy, settingsRepository, shutdownGuard, piDirectoryPreference, getAuxiliaryWindows: () => conversationWindows.all() })
       externalControlIpcController = registerExternalControlIpc({

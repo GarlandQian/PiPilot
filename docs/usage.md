@@ -25,6 +25,13 @@
   general conversation. Current PiPilot exports and Pi sessions restore user/assistant history;
   ordinary or unrecognized Markdown becomes background content. Importing never submits a prompt or
   replays old tools or plan approvals.
+- **Pull requests** — **+ › Pull Requests** (projects only) lists the repository's open pull requests through
+  your own GitHub CLI (`gh`, signed in with `gh auth login`): by default those you opened or were asked to
+  review, or all open ones. A pull request shows its checks, reviews, and description. **Approve**,
+  **Request Changes**, and **Comment** post a review only after confirming the GitHub account. **Fix Failing
+  Checks** checks out the pull request's branch in a managed working copy (or uses the checkout it already
+  has), then starts a conversation there with the failing GitHub Actions output; nothing is pushed or
+  commented.
 - **Browser** — **+ › Browser** opens a browser tab in the side panel. A project's conversations share its
   browser tabs. Pages run in a session isolated from PiPilot (no app cookies, permissions, downloads, or
   pop-up windows; pop-ups open as tabs), and only http and https addresses load. With a project action
