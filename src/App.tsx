@@ -36,6 +36,9 @@ import { QuestionBranchesContext, type QuestionBranches } from '@/components/cha
 import { ConversationTreePanel } from '@/components/inspector/ConversationTreePanel'
 import { BrowserPanel } from '@/components/inspector/BrowserPanel'
 import { PullRequestsPanel } from '@/components/inspector/PullRequestsPanel'
+import { ComparisonPanel, ComparisonSidebarSection } from '@/components/inspector/ComparisonPanel'
+import { CompareModelsSheet } from '@/components/chat/CompareModelsSheet'
+import { selectComparison } from '@/store/comparisons'
 import { useConversationTree } from '@/store/conversation-tree'
 import { branchPoints } from '@/renderer/pi-rpc/conversation-tree'
 import { ConversationSearchDialog } from '@/components/chat/ConversationSearchDialog'
@@ -346,6 +349,7 @@ export default function App() {
   const branchFeedback = useConversationOperationFeedback(operationOwnerKey)
   const popoutFeedback = useConversationOperationFeedback(operationOwnerKey)
   const [compactSheetOpen, setCompactSheetOpen] = React.useState(false)
+  const [comparePrompt, setComparePrompt] = React.useState<string | null>(null)
   const [composerAttachmentRequest, setComposerAttachmentRequest] = React.useState<ComposerAttachmentInsertionRequest | null>(null)
   const composerAttachmentSequence = React.useRef(0)
   // Pi's session tree: every branch of the open conversation, for ‹ 1/2 › and the Branches tab.
@@ -939,6 +943,8 @@ export default function App() {
     {t(workspace.activeScope.kind === 'project' ? 'inspector.project.unavailable' : 'inspector.project.required')}
   </p>, panelContainers.get(id), id)
   const tabContents = <>
+    {panel.state.tabs.compare ? (workspace.activeScope.kind === 'project' ? createPortal(<ComparisonPanel projectId={workspace.activeScope.workspaceId}
+      onOpenConversation={(workspaceId, sessionId) => { if (panel.full) panel.toggleFull(); void openConversationById({ kind: 'project', workspaceId }, sessionId) }} />, panelContainers.get('compare')) : unavailableTab('compare')) : null}
     {panel.state.tabs.pr ? (panelWorkspace ? createPortal(<PullRequestsPanel workspaceId={panelWorkspace.id} visible={conversationWorkspace && panel.isVisible('pr')}
       onOpenConversation={(workspaceId, sessionId) => { void openConversationById({ kind: 'project', workspaceId }, sessionId) }} />, panelContainers.get('pr')) : unavailableTab('pr')) : null}
     {panel.state.tabs.browser ? createPortal(<BrowserPanel scopeKey={conversationScopeKey(workspace.activeScope)}
@@ -1060,6 +1066,8 @@ export default function App() {
                 isOpeningSessionRow={isOpeningSessionRow}
                 onSelect={openConversation}
                 onExport={exportCatalogConversation}
+                beforeTasks={<ComparisonSidebarSection projectId={workspace.activeScope.kind === 'project' ? workspace.activeScope.workspaceId : null}
+                  onOpen={(id) => { selectComparison(id); panel.open(panelTab('compare')) }} />}
                 onPopout={(item) => {
                   const active = item.selected && conversationReady && 'sessionId' in conversation && conversation.sessionId === item.summary.sessionId
                   const target = active ? { kind: 'active' as const, scope: workspace.activeScope, sessionId: item.summary.sessionId }
@@ -1249,6 +1257,7 @@ export default function App() {
               conversationEmpty={conversationReady && pi.session?.messageCount === 0}
               onExitPlanMode={() => runPlanAction('exit')}
               onOpenIntegrations={() => setSettingsSection('packages')}
+              onCompareModels={conversationReady && projectAvailable && (pi.models.length > 1) ? setComparePrompt : undefined}
               connected={conversationReady}
               draftEditable={!switching && Boolean(workspace.activeSessionId)}
               loadingModels={conversation.status === 'loading'}
@@ -1401,6 +1410,19 @@ export default function App() {
       />
 
       <ProjectTrustPrompt />
+      {workspace.activeScope.kind === 'project' ? <CompareModelsSheet open={comparePrompt !== null} onOpenChange={(open) => { if (!open) setComparePrompt(null) }}
+        models={pi.models} current={selectedModel} initialPrompt={comparePrompt ?? ''}
+        onStart={async ({ prompt, models, judge }) => {
+          if (workspace.activeScope.kind !== 'project') return
+          const started = await window.pipilot!.comparisons.start({
+            projectId: workspace.activeScope.workspaceId, prompt,
+            models: models.map((model) => ({ provider: model.provider, modelId: model.id, name: model.name })),
+            ...(judge ? { judge: { provider: judge.provider, modelId: judge.id, name: judge.name } } : {}),
+          })
+          selectComparison(started.id)
+          panel.open(panelTab('compare'))
+          if (!panel.full) panel.toggleFull()
+        }} /> : null}
       <CompactConversationSheet open={compactSheetOpen && conversationReady} streaming={pi.session?.isStreaming ?? false}
         onOpenChange={setCompactSheetOpen}
         onCompact={(instructions) => { void compactFeedback.run('compact', () => actions.compact(instructions), t('chat.compactionFailed')) }} />

@@ -51,6 +51,8 @@ export interface SessionsPanelProps {
   onDelete(item: SidebarConversationItem): void
   onExport(item: SidebarConversationItem): void
   onPopout?(item: SidebarConversationItem): void
+  /** Shown above the tasks (the open project's model comparisons). */
+  beforeTasks?: React.ReactNode
   onImport(scope: ConversationScope): void
   onStartProjectTask(workspaceId: string): void
   onChooseWorkspace(): void
@@ -89,7 +91,7 @@ export function SessionsPanel({
   onSearchAll,
   hidden = false, conversationReady, renamingSelectionToken, deletingSelectionToken, isOpeningSessionRow,
   onSelect, onNewPrimary, onNewProjectless, onRenameStart, onRenameCommit, onDuplicate,
-  onDelete, onExport, onPopout, onImport, onStartProjectTask, onChooseWorkspace, onPinWorkspace, onRevealWorkspace, onRemoveWorkspace,
+  onDelete, onExport, onPopout, beforeTasks, onImport, onStartProjectTask, onChooseWorkspace, onPinWorkspace, onRevealWorkspace, onRemoveWorkspace,
 }: SessionsPanelProps) {
   const workspace = useWorkspaceStore()
   const pi = usePiRuntime()
@@ -409,6 +411,7 @@ export function SessionsPanel({
         </SidebarSection>
       )}
 
+      {beforeTasks}
       {organization === 'chronological' ? (
         <SidebarSection id="sidebar-tasks-heading" title={t('nav.redesign.tasks')} actions={<>{organizeMenu}{addProject}</>}>
           {catalogsLoading && timeline.items.length === 0 ? (

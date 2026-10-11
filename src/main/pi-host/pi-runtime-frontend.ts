@@ -887,11 +887,13 @@ export class PiRuntimeFrontend {
     }
   }
 
-  /** Answer a Host-side browser tool request of this exact Runtime. */
-  async answerBrowserTool(handle: PiRuntimeControlHandle, command: Extract<LocalPiRpcCommand, { type: 'browser_tool_response' }>) {
+  /** One command to this exact Runtime (a browser tool answer, a model choice). */
+  async commandControlRuntime(handle: PiRuntimeControlHandle, command: Extract<LocalPiRpcCommand, { type: 'browser_tool_response' | 'set_model' }>) {
     this.assertNotDisposed()
     const runtime = this.requireControlRuntime(handle)
-    await this.pool.command(runtime.runtimeId, command, handle.generation)
+    const result = await this.pool.command(runtime.runtimeId, command, handle.generation)
+    if (!result.response.success) throw new PiRuntimeFrontendError('PI_RUNTIME_OPERATION_FAILED', result.response.error || 'Pi rejected the command.')
+    return result.response
   }
 
   /** Read the exact background Session; never consult the selected Renderer transcript. */

@@ -8,6 +8,7 @@ Each version section supplies the highlights for its GitHub Release. Download li
 
 ### 中文
 
+- **多模型并行对比**：在输入框的 + 菜单选择“并行对比…”，把同一任务同时交给 2–4 个模型，每个模型在当前分支的独立工作副本中完成；“对比”标签页并排显示各自的回答和改动，可查看差异，并一键以三方合并应用到项目工作区。可选让一个模型评判并推荐；侧边栏列出项目的对比。
 - **PR 与 CI**：右侧面板新增“PR”标签页，通过你自己的 GitHub CLI（gh）列出与你相关或所有打开的拉取请求，查看检查和审阅状态；可批准、要求修改或评论（提交前确认身份）。检查失败时“修复失败的检查”会在该分支的工作副本中带着失败日志开始一个对话，不会推送。未安装或未登录 gh 时显示指引。
 - **内置浏览器**：右侧面板新增“浏览器”标签页，同一项目下的对话共用，支持多标签页；页面运行在与 PiPilot 隔离的环境中，默认打开项目运行命令启动的开发服务器。可标注元素或区域，把截图、选择器、HTML、关键样式和说明（可选附带控制台错误）加入消息；Pi 可通过只读工具查看页面截图、地址和控制台/网络错误。
 - **对话弹窗与待处理跳转**：可在新窗口中打开对话（标题栏菜单或侧边栏菜单），弹窗显示对话内容并可发送、排队、停止，支持置顶；与主窗口共用同一对话。⌘⌥A（Windows/Linux 为 Ctrl+Alt+A）或命令面板可跳到下一个需要处理的对话（等待回答、失败或有未读结果）。
@@ -20,6 +21,7 @@ Each version section supplies the highlights for its GitHub Release. Download li
 
 ### English
 
+- **Compare models side by side:** Choose Compare Models… in the composer's + menu to send one task to 2–4 models at once, each in its own working copy of the current branch. The Compare tab shows their answers and changes side by side, opens each diff, and applies the chosen one to the project's working tree with a three-way merge. An optional judge model recommends one; the sidebar lists the project's comparisons.
 - **Pull requests and CI:** A Pull Requests tab lists the open pull requests that involve you (or all of them) through your own GitHub CLI, with their checks and review state. Approve, request changes, or comment after confirming the account it posts as. Fix Failing Checks opens the branch in a working copy and starts a conversation with the failing output; nothing is pushed. Without gh, or signed out, the tab shows how to set it up.
 - **Built-in browser:** A Browser tab in the side panel, shared by a project's conversations and with multiple tabs. Pages run isolated from PiPilot and default to the dev server a project action started. Annotate an element or an area to add its screenshot, selector, HTML, key styles, and your note (optionally with console errors) to the message. Pi gets read-only tools to see the page's screenshot and address and its console and network errors.
 - **Pop-out windows and attention navigation:** Open a conversation in its own window from the header or sidebar menu. The window shows the transcript, sends, queues, and stops, and can stay on top; it shares the conversation with the main window. ⌘⌥A (Ctrl+Alt+A on Windows and Linux) or the command palette opens the next conversation needing attention: waiting for you, failed, or unread.

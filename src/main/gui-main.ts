@@ -48,6 +48,8 @@ import { BrowserPaneService } from './browser/browser-pane-service'
 import { registerBrowserPaneIpc } from './ipc/register-browser-pane-ipc'
 import { PullRequestService } from './pull-requests/pull-request-service'
 import { registerPullRequestIpc } from './ipc/register-pull-request-ipc'
+import { ComparisonService } from './comparisons/comparison-service'
+import { registerComparisonIpc } from './ipc/register-comparison-ipc'
 import { registerSideConversationsIpc } from './ipc/register-side-conversations-ipc'
 import { SideConversationService } from './conversations/side-conversation-service'
 import { registerLocalPiIpc } from './ipc/register-local-pi-ipc'
@@ -356,6 +358,8 @@ let browserPaneService: BrowserPaneService | null = null
 let browserPaneIpc: ReturnType<typeof registerBrowserPaneIpc> | null = null
 let browserToolsSubscription: (() => unknown) | null = null
 let pullRequestIpc: ReturnType<typeof registerPullRequestIpc> | null = null
+let comparisonService: ComparisonService | null = null
+let comparisonIpc: ReturnType<typeof registerComparisonIpc> | null = null
 
 function activeApplicationWork() {
   const primaryPi = Boolean(
@@ -444,6 +448,10 @@ async function disposeApplicationResources() {
   browserToolsSubscription = null
   pullRequestIpc?.dispose()
   pullRequestIpc = null
+  comparisonIpc?.dispose()
+  comparisonIpc = null
+  comparisonService?.dispose()
+  comparisonService = null
   browserPaneService?.dispose()
   browserPaneService = null
   providerLoginService?.dispose()
@@ -1013,7 +1021,7 @@ if (!hasSingleInstanceLock) {
           const section = (title: string, items: readonly string[]) => items.length ? `${title}:\n${items.slice(-30).map((item) => `- ${item}`).join('\n')}` : `${title}: none`
           answer = { text: [`URL: ${tab.url}`, section('Console errors', tab.console), section('Failed network requests', tab.network)].join('\n\n').slice(0, 60_000) }
         }
-        await runtimeHost.answerBrowserTool(handle, { type: 'browser_tool_response', requestId: event.requestId, ...answer }).catch(() => undefined)
+        await runtimeHost.commandControlRuntime(handle, { type: 'browser_tool_response', requestId: event.requestId, ...answer }).catch(() => undefined)
         })()
       })
       browserToolsSubscription = stopBrowserTools
@@ -1028,6 +1036,18 @@ if (!hasSingleInstanceLock) {
             },
           }),
         })
+      }
+      if (workflowsForBrowser) {
+        const zh = () => { const locale = settingsRepository.get().settings.locale; return (locale === 'system' ? app.getLocale() : locale).startsWith('zh') }
+        const brief = (prompt: string) => prompt.replace(/\s+/gu, ' ').trim().slice(0, 48)
+        comparisonService = new ComparisonService({
+          file: join(app.getPath('userData'), 'comparisons.json'),
+          workspaces: workspaceRepository, workflows: workflowsForBrowser.api, runtime: runtimeHost,
+          title: (model, prompt) => `${model.name || model.modelId} · ${brief(prompt)}`,
+          judgeTitle: (prompt) => `${zh() ? '比较' : 'Compare'} · ${brief(prompt)}`,
+        })
+        await comparisonService.initialize()
+        comparisonIpc = registerComparisonIpc({ getMainWindow: () => mainWindow, policy, service: comparisonService })
       }
       popoutIpc = registerPopoutIpc({ getMainWindow: () => mainWindow, policy, service: popoutService, windows: conversationWindows, showMainWindow: revealMainWindow })
       registerAppIpc({ getMainWindow: () => mainWindow, policy, settingsRepository, shutdownGuard, piDirectoryPreference, getAuxiliaryWindows: () => conversationWindows.all() })

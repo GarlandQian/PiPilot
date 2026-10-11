@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { TbFileSearch, TbFolder, TbGitBranch, TbGitPullRequest, TbWorld, TbGitCompare, TbMessages, TbPlayerPlay, TbRobot, TbTerminal, TbTerminal2 } from 'react-icons/tb'
+import { TbColumns3, TbFileSearch, TbFolder, TbGitBranch, TbGitPullRequest, TbWorld, TbGitCompare, TbMessages, TbPlayerPlay, TbRobot, TbTerminal, TbTerminal2 } from 'react-icons/tb'
 import { useT } from '@/i18n'
 import { APP_SHORTCUTS } from '@/lib/app-shortcuts'
 import { formatShortcut } from '@/lib/keyboard-shortcuts'
@@ -48,6 +48,7 @@ export function usePanelStrip({ state, projectAvailable, onOpenReview, onOpenFil
       tree: [t('branches.tab'), <TbGitBranch key="icon" />],
       browser: [t('browser.tab'), <TbWorld key="icon" />],
       pr: [t('pullRequests.tab'), <TbGitPullRequest key="icon" />],
+      compare: [t('compare.tab'), <TbColumns3 key="icon" />],
     } as const
     const [label, icon] = labels[tab.kind]
     return { id: tab.id, label, icon, ...(tab.kind === 'terminal' && terminalSlot ? { slot: terminalSlot } : {}) }

@@ -2,7 +2,7 @@ import * as React from 'react'
 import { sessionComposerDrafts, type SessionComposerDrafts } from '@/renderer/composer/session-drafts'
 import { usePrecisionComposer } from '@/components/precision/PrecisionReferences'
 import type { PrecisionReference } from '@/renderer/composer/precision-reference'
-import {
+import { TbColumns3,
   TbArrowBackUp,
   TbArrowUp,
   TbAt,
@@ -233,6 +233,8 @@ export interface ComposerProps {
   conversationEmpty?: boolean
   onExitPlanMode?(): Promise<void>
   onOpenIntegrations?(): void
+  /** Send the draft to several models side by side; absent outside Git projects. */
+  onCompareModels?(draft: string): void
 }
 
 type BoundComposerCommandArgumentState =
@@ -621,6 +623,7 @@ function SessionComposer({
   conversationEmpty = false,
   onExitPlanMode,
   onOpenIntegrations,
+  onCompareModels,
 }: ComposerProps & {
   drafts: SessionComposerDrafts
   draftKey: string
@@ -1928,6 +1931,11 @@ function SessionComposer({
                 <DropdownMenuLabel>{t('composer.menu.modes')}</DropdownMenuLabel>
                 {modeMenuItem('plan')}
                 {modeMenuItem('goal')}
+                {onCompareModels ? <DropdownMenuItem data-compare-models className="group/item py-1.5"
+                  onSelect={() => { const draft = editorChange.plainText; afterAddMenuClose.current = () => onCompareModels(draft) }}>
+                  <TbColumns3 aria-hidden />
+                  <span className="flex min-w-0 flex-1 flex-col"><span>{t('compare.menu')}</span><span className="text-micro text-muted-foreground">{t('compare.menuHint')}</span></span>
+                </DropdownMenuItem> : null}
               </DropdownMenuContent>
             </DropdownMenu>
             {planActive ? (

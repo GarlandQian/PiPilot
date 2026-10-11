@@ -8,6 +8,7 @@ import { createProviderLoginApi } from './provider-login'
 import { createPopoutApi } from './popout'
 import { createBrowserPaneApi } from './browser-pane'
 import { createPullRequestsApi } from './pull-requests'
+import { createComparisonsApi } from './comparisons'
 import { createSideConversationsApi } from './side-conversations'
 import { createScheduledTasksApi } from './scheduled-tasks-api'
 import type { AppError, IpcContract, RequestContext, SettingsSnapshot } from '../shared/ipc/contracts'
@@ -291,6 +292,7 @@ const api: PiPilotApi = {
   popout: createPopoutApi(invoke, createContext),
   browserPane: createBrowserPaneApi(invoke, createContext),
   pullRequests: createPullRequestsApi(invoke, createContext),
+  comparisons: createComparisonsApi(invoke, createContext),
   sideConversations: createSideConversationsApi(invoke, createContext),
   scheduledTasks: createScheduledTasksApi(invoke, createContext),
   notifications: {

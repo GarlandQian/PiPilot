@@ -25,6 +25,14 @@
   general conversation. Current PiPilot exports and Pi sessions restore user/assistant history;
   ordinary or unrecognized Markdown becomes background content. Importing never submits a prompt or
   replays old tools or plan approvals.
+- **Compare models** — in a Git project, **+ › Compare Models…** in the composer sends the task to 2–4
+  models at once. Each gets a managed working copy made from the project's current branch and its own
+  conversation. The **Compare** tab shows them side by side with their final answers and changes
+  (files, additions, deletions); **Changes** shows the diff, **Conversation** opens the model's
+  conversation, and **Apply** copies one model's changes into the project's working tree with a three-way
+  merge, without committing. Turn on **Judge the results** to have another model compare the finished
+  candidates and recommend one. Removing a comparison archives its working copies; the conversations
+  stay saved.
 - **Pull requests** — **+ › Pull Requests** (projects only) lists the repository's open pull requests through
   your own GitHub CLI (`gh`, signed in with `gh auth login`): by default those you opened or were asked to
   review, or all open ones. A pull request shows its checks, reviews, and description. **Approve**,
