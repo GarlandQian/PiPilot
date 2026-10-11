@@ -47,7 +47,7 @@ describe('provider login service', () => {
     login.respond(loginId, (prompt as Extract<ProviderLoginEvent, { type: 'prompt' }>).promptId, 'abc#123')
     await waitFor(() => events.some((event) => event.type === 'finished'))
     expect(refreshAuth).toHaveBeenCalled()
-    expect(events.at(-1)).toMatchObject({ type: 'finished', loginId, apply: 'applied' })
+    expect(events[events.length - 1]).toMatchObject({ type: 'finished', loginId, apply: 'applied' })
   })
 
   it('cancels a waiting sign-in', async () => {
@@ -60,7 +60,7 @@ describe('provider login service', () => {
     expect(events[0]).toMatchObject({ type: 'device_code', userCode: 'ABCD-1234' })
     login.cancel(loginId)
     await waitFor(() => events.some((event) => event.type === 'cancelled'))
-    expect(events.at(-1)).toEqual({ type: 'cancelled', loginId })
+    expect(events[events.length - 1]).toEqual({ type: 'cancelled', loginId })
   })
 
   it('reports a busy callback port and refuses providers without sign-in', async () => {
@@ -68,7 +68,7 @@ describe('provider login service', () => {
     const { login, events } = service()
     await login.start('anthropic')
     await waitFor(() => events.some((event) => event.type === 'failed'))
-    expect(events.at(-1)).toMatchObject({ type: 'failed', code: 'PORT_IN_USE' })
+    expect(events[events.length - 1]).toMatchObject({ type: 'failed', code: 'PORT_IN_USE' })
     await expect(login.start('deepseek')).rejects.toThrow('no subscription sign-in')
   })
 })
