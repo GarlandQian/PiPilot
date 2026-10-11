@@ -17,6 +17,8 @@ export class PopoutConversationError extends Error {
 
 interface PopoutRecord {
   snapshot: PopoutSnapshot
+  /** The conversation has a saved name; otherwise its first question titles it, as in the main window. */
+  named: boolean
   scope: ConversationScope
   sessionFile: string
   sessionId: string
@@ -135,7 +137,7 @@ export class PopoutConversationService {
     if (existing) return { popoutId: existing.snapshot.popoutId, created: false }
     if (this.records.size >= 12) throw new PopoutConversationError('Close a conversation window before opening another.')
     const record: PopoutRecord = {
-      scope: target.scope, sessionFile, sessionId, requests: new Set(), reading: false, rereadRequested: false,
+      named: Boolean(title), scope: target.scope, sessionFile, sessionId, requests: new Set(), reading: false, rereadRequested: false,
       snapshot: {
         popoutId: randomUUID(), title: (title || this.options.untitled()).slice(0, 512), scopeLabel: this.options.scopeLabel(target.scope).slice(0, 512),
         status: 'starting', pinned: false, messages: [], queued: 0, needsMainWindow: false,
@@ -236,9 +238,12 @@ export class PopoutConversationService {
     try {
       const transcript = await this.options.runtime.getControlTranscript(record.handle)
       const summary = this.options.runtime.listControlRuntimes().find((entry) => entry.runtimeId === record.handle?.runtimeId)
+      const messages = messagesOf(transcript.messages, transcript.live?.message ?? null)
+      const firstQuestion = messages.find((message) => message.role === 'user')?.text.replace(/\s+/gu, ' ').trim()
       record.snapshot = {
         ...record.snapshot,
-        messages: messagesOf(transcript.messages, transcript.live?.message ?? null),
+        ...(!record.named && firstQuestion ? { title: firstQuestion.slice(0, 80) } : {}),
+        messages,
         ...(summary ? {
           status: summary.lifecycle === 'idle' ? (summary.outcome === 'failed' ? 'failed' as const : 'idle' as const) : 'running' as const,
           queued: summary.queueCount, needsMainWindow: summary.activity === 'interaction',

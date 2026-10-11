@@ -2295,7 +2295,7 @@
   "compare.judge": "Judge the results",
   "compare.judgeInfo": "When every model is done, another model compares their answers and changes and recommends one.",
   "compare.judgeModel": "Judge model",
-  "compare.start": "Start {count} Models",
+  "compare.start": "Start Comparison",
   "compare.empty": "No comparisons yet. Choose Compare Models… in the composer’s + menu.",
   "compare.choose": "Comparison",
   "compare.remove": "Remove Comparison",

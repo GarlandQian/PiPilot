@@ -50,7 +50,7 @@ test('compares two models in their own working copies, judges them, and applies 
     await expect(sheet.getByRole('textbox', { name: 'Task' })).toHaveValue('Write the answer')
     await sheet.locator('[data-compare-model="fake-fast"]').getByRole('checkbox').click()
     await sheet.getByRole('switch', { name: 'Judge the results' }).click()
-    await sheet.getByRole('button', { name: 'Start 2 Models', exact: true }).click()
+    await sheet.getByRole('button', { name: 'Start Comparison', exact: true }).click()
 
     const compare = page.locator('[data-comparison]')
     await expect(compare.locator('[data-comparison-run]')).toHaveCount(2, { timeout: 20_000 })

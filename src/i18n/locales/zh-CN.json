@@ -2295,7 +2295,7 @@
   "compare.judge": "让模型评判结果",
   "compare.judgeInfo": "所有模型完成后，由另一个模型比较它们的回答和改动，并给出推荐。",
   "compare.judgeModel": "评判模型",
-  "compare.start": "开始（{count} 个模型）",
+  "compare.start": "开始对比",
   "compare.empty": "还没有对比。可在输入框的 + 菜单中选择“并行对比…”。",
   "compare.choose": "对比",
   "compare.remove": "移除对比",

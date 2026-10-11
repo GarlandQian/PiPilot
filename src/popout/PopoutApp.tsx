@@ -93,7 +93,7 @@ export function PopoutApp({ popoutId }: { popoutId: string }) {
       <div className="flex items-end gap-2 rounded-(--radius-composer) bg-composer p-2 shadow-[var(--glass-shadow),var(--shadow-composer)]">
         <Textarea value={draft} onChange={(event) => setDraft(event.target.value)} rows={1} data-popout-composer
           aria-label={t('composer.inputLabel')} placeholder={t(running ? 'popout.followUpPlaceholder' : 'popout.placeholder')}
-          className="max-h-40 min-h-9 flex-1 resize-none border-0 bg-transparent px-2 py-1.5 shadow-none focus-visible:ring-0"
+          className="max-h-40 min-h-9 flex-1 resize-none border-0 bg-transparent px-2 py-1.5 shadow-none focus-visible:ring-0 dark:bg-transparent"
           onKeyDown={(event) => {
             if (event.nativeEvent.isComposing) return
             if (isComposerSendShortcut(event, settings.composer.sendShortcut)) { event.preventDefault(); send() }

@@ -46,7 +46,7 @@ export function CompareModelsSheet({ open, onOpenChange, models, current, initia
   }
   return <SettingsSheet open={open} onOpenChange={(next) => { if (!busy) onOpenChange(next) }} wide data-compare-sheet
     title={t('compare.title')} description={t('compare.description')}
-    footer={<FormActions onCancel={() => onOpenChange(false)} onSave={start} saving={busy} canSave={canStart} saveLabel={t('compare.start', { count: selected.length })} error={error} />}>
+    footer={<FormActions onCancel={() => onOpenChange(false)} onSave={start} saving={busy} canSave={canStart} saveLabel={t('compare.start')} error={error} />}>
     <div className="space-y-4">
       <SettingsField label={t('compare.task')} htmlFor={promptId}>
         <Textarea id={promptId} rows={4} value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder={t('compare.taskPlaceholder')} />
