@@ -28,6 +28,7 @@ import { useSessionOpening } from '@/components/frame/useSessionOpening'
 import { useStartWriting } from '@/components/frame/useStartWriting'
 import { useTaskNotificationNavigation } from '@/components/frame/useTaskNotificationNavigation'
 import { ConversationNotices } from '@/components/chat/ConversationNotices'
+import { ProjectTrustNotice, ProjectTrustPrompt } from '@/components/projects/ProjectTrust'
 import { ConversationSearchDialog } from '@/components/chat/ConversationSearchDialog'
 import { ConversationExportDialog } from '@/components/chat/ConversationExportDialog'
 import { ConversationImportDialog } from '@/components/chat/ConversationImportDialog'
@@ -1155,7 +1156,11 @@ export default function App() {
                   onStopRetry={actions.abortRetry}
                 />
               ) : null}
-              notices={conversationReady ? <ConversationNotices /> : null}
+              notices={conversationReady ? <>
+                {workspace.activeScope.kind === 'project'
+                  ? <ProjectTrustNotice workspaceId={workspace.activeScope.workspaceId} projectName={activeProjectName ?? ''} /> : null}
+                <ConversationNotices />
+              </> : null}
               planMode={conversationReady ? extension.planMode : null}
               goalMode={conversationReady ? extension.goalMode : null}
               conversationEmpty={conversationReady && pi.session?.messageCount === 0}
@@ -1311,6 +1316,7 @@ export default function App() {
           disabled={!changeTotals.files} onCommitted={() => setCommitRevision((value) => value + 1)} /> : undefined}
       />
 
+      <ProjectTrustPrompt />
       <CommandPalette
         open={frameNav.paletteOpen}
         onOpenChange={setPaletteOpen}

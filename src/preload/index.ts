@@ -3,6 +3,7 @@ import { conversationSearchContract } from '../shared/ipc/conversation-search-co
 import { conversationExportContract } from '../shared/ipc/conversation-export-contracts'
 import { conversationImportCommitContract, conversationImportDiscardContract, conversationImportPreviewContract } from '../shared/ipc/conversation-import-contracts'
 import { createProjectWorkflowsApi } from './project-workflows'
+import { createProjectTrustApi } from './project-trust'
 import { createSideConversationsApi } from './side-conversations'
 import { createScheduledTasksApi } from './scheduled-tasks-api'
 import type { AppError, IpcContract, RequestContext, SettingsSnapshot } from '../shared/ipc/contracts'
@@ -281,6 +282,7 @@ const api: PiPilotApi = {
   },
   conversationSearch: { find: (input) => invoke(conversationSearchContract, { context: createContext(), input }) },
   projectWorkflows: createProjectWorkflowsApi(invoke, createContext),
+  projectTrust: createProjectTrustApi(invoke, createContext),
   sideConversations: createSideConversationsApi(invoke, createContext),
   scheduledTasks: createScheduledTasksApi(invoke, createContext),
   notifications: {

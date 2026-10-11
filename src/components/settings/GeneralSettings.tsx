@@ -12,6 +12,7 @@ import type { PiDirectorySnapshot } from '@/shared/pi-directory'
 import { useSettings, useUpdateSettings } from '@/store/settings'
 import { useTaskNotifications } from '@/store/task-notifications'
 import { SettingsGroup, SettingsPage, SettingsRow, StatusText } from './kit'
+import { ProjectTrustPolicyRow } from '@/components/projects/ProjectTrust'
 
 interface GeneralSettingsProps {
   restartBusy: boolean
@@ -138,6 +139,7 @@ export function GeneralSettings({ restartBusy, restartMessage, restartAvailable,
         </StatusText>
       </SettingsRow>
       <PiDirectoryRow />
+      <ProjectTrustPolicyRow />
       <SettingsRow label={t('settings.general.piRestart')} info={t('settings.general.piRestartDesc')}
         description={restartMessage ? <span role="status">{restartMessage}</span> : undefined}>
         <Button variant="outline" size="sm" disabled={restartBusy || !restartAvailable} onClick={() => setConfirmRestart(true)}>

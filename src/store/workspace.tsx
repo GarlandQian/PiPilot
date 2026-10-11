@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { requestProjectTrustPrompt } from './project-trust'
 import { sessionComposerDrafts } from '@/renderer/composer/session-drafts'
 import { CatalogInvalidationQueue } from '@/renderer/catalog-invalidation-queue'
 import {
@@ -738,6 +739,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       })
       applyActivation(activation)
       await refreshConversation(activation.scope, true)
+      requestProjectTrustPrompt(workspaceId)
       return true
     })
   }, [

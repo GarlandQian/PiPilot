@@ -41,6 +41,7 @@ import { createRuntimeNativeMcpExtensions } from './runtime-native-mcp'
 import { PIPILOT_CONVERSATION_TASK_EXTENSION } from './runtime-conversation-task'
 import { appendImportedConversationHistory, importedConversationState } from './runtime-conversation-import'
 import { removeFailedConversationImport } from '../conversations/failed-conversation-import'
+import { hostProjectTrusted } from '../project-trust/project-trust-resolution'
 import {
   PIPILOT_RUNTIME_MESSAGE_SANITIZER_EXTENSION,
   PIPILOT_RUNTIME_MESSAGE_SANITIZER_EXTENSION_PATH,
@@ -424,7 +425,8 @@ export class RuntimeManager {
       sessionManager: nextSessionManager,
       sessionStartEvent,
     }) => {
-      const settingsManager = SettingsManager.create(cwd, agentDir)
+      // Project `.pi` resources load only for a trusted project, as in the CLI.
+      const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: hostProjectTrusted(cwd, agentDir) })
       useBundledNpm(settingsManager)
       const services = await createAgentSessionServices({
         cwd,
@@ -813,6 +815,8 @@ export class RuntimeManager {
           }
         }
         entry.uiBridge.reload()
+        // A trust decision takes effect on the next reload of this conversation.
+        entry.runtime.session.settingsManager.setProjectTrusted(hostProjectTrusted(this.cwd, this.agentDir))
         const reload = { interactionRequired: false }
         if (configurationApply) entry.configurationReload = reload
         try {

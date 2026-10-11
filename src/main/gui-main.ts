@@ -36,6 +36,9 @@ import { registerTerminalIpc } from './ipc/register-terminal-ipc'
 import { registerWorkspaceIpc } from './ipc/register-workspace-ipc'
 import { createProjectWorkflowsService } from './worktrees/project-workflows-service'
 import { registerProjectWorkflowsIpc } from './ipc/register-project-workflows-ipc'
+import { ProjectTrustService } from './project-trust/project-trust-service'
+import { PROJECT_TRUST_SESSION_FILE_ENV } from './project-trust/project-trust-resolution'
+import { registerProjectTrustIpc } from './ipc/register-project-trust-ipc'
 import { registerSideConversationsIpc } from './ipc/register-side-conversations-ipc'
 import { SideConversationService } from './conversations/side-conversation-service'
 import { registerLocalPiIpc } from './ipc/register-local-pi-ipc'
@@ -180,9 +183,11 @@ const piDirectoryPreference = new PiDirectoryPreference(
   join(app.getPath('userData'), 'pi-directory.json'), defaultAgentDirectory,
 )
 const applicationAgentDirectory = piDirectoryPreference.activeDirectory
+const projectTrustSessionFile = join(app.getPath('userData'), 'project-trust-session.json')
 const piEnvironment: NodeJS.ProcessEnv = {
   ...process.env,
   PI_CODING_AGENT_DIR: applicationAgentDirectory,
+  [PROJECT_TRUST_SESSION_FILE_ENV]: projectTrustSessionFile,
   ...(testUserDataOverride
     ? { HOME: applicationHomeDirectory, USERPROFILE: applicationHomeDirectory }
     : {}),
@@ -331,6 +336,8 @@ let taskNotificationService: TaskNotificationService | null = null
 let notificationIpcController: ReturnType<typeof registerNotificationsIpc> | null = null
 let scheduledTaskFeature: ReturnType<typeof createScheduledTaskFeature> | null = null
 let scheduledTaskIpc: ReturnType<typeof registerScheduledTasksIpc> | null = null
+let projectTrustService: ProjectTrustService | null = null
+let projectTrustIpc: ReturnType<typeof registerProjectTrustIpc> | null = null
 
 function activeApplicationWork() {
   const primaryPi = Boolean(
@@ -401,6 +408,10 @@ async function disposeApplicationResources() {
   projectWorkflowsService = null
   scheduledTaskIpc?.dispose()
   scheduledTaskIpc = null
+  projectTrustIpc?.dispose()
+  projectTrustIpc = null
+  projectTrustService?.dispose()
+  projectTrustService = null
   await scheduledTaskFeature?.dispose()
   scheduledTaskFeature = null
   await flushApplicationState()
@@ -681,9 +692,20 @@ if (!hasSingleInstanceLock) {
             conversationScopeResolver,
           )
           const runtimeHost = piRuntimeFrontend
+      projectTrustService = new ProjectTrustService({
+        agentDir: applicationAgentDirectory,
+        sessionFile: projectTrustSessionFile,
+        migrationFile: join(app.getPath('userData'), 'project-trust-migration.json'),
+        workspaces: workspaceRepository,
+        runtime: runtimeHost,
+      })
+      await projectTrustService.initialize()
+      projectTrustIpc = registerProjectTrustIpc({ getMainWindow: () => mainWindow, policy, service: projectTrustService })
+      const trustForWorktrees = projectTrustService
       projectWorkflowsService = createProjectWorkflowsService({
         directory: app.getPath('userData'), workspaces: workspaceRepository,
         runtime: runtimeHost, terminals: terminalService,
+        onWorktreeCreated: (sourceId, worktreeId) => trustForWorktrees.inherit(sourceId, worktreeId),
       })
       await projectWorkflowsService.initialize()
       sideConversationService = new SideConversationService(runtimeHost)

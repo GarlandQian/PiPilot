@@ -149,6 +149,7 @@ reinstall each package there yourself.
 | `~/.pi/agent/sessions/` | Official Pi sessions |
 | `<project>/.pi/settings.json` | Project Pi settings |
 | `<project>/.pi/mcp.json` | Project MCP configuration |
+| `~/.pi/agent/trust.json` | Saved project trust decisions |
 
 MCP connections use Pi's native support and standard JSON configuration. The built-in runtime
 supports stdio and Streamable HTTP servers; no MCP adapter package is required or automatically
@@ -169,8 +170,20 @@ or a five-second timeout retain the original environment. Other runtimes such as
 native MCP programs must still be installed and accessible by PATH or an absolute executable path.
 The first npx package download needs network access; server-specific browsers and credentials still
 need configuration. Fully quit the old version, including its tray process, before upgrading.
-Project MCP configuration runs with the project resources when you open a conversation, so only
-add projects you trust.
+
+### Project trust
+
+PiPilot follows Pi's project trust. A project's own extensions, MCP servers, skills, prompts, themes,
+settings, and system prompt files (`.pi/` and `.agents/skills`) load only after you trust it;
+`AGENTS.md` and `CLAUDE.md` always load. Adding a project with such resources asks once: trust the
+folder, its parent folder, or the folder until PiPilot quits, or keep the resources unloaded. Until you
+decide, conversations run without them and the composer shows a notice. Saved decisions go to Pi's
+`~/.pi/agent/trust.json`, so the Pi CLI honors them; session-only decisions are never written there.
+Change a project's decision in **Settings → Local environment**, and the default for undecided projects
+(`defaultProjectTrust`: ask, always trust, never trust) in **Settings → General**. A change reloads the
+project's open conversations once they are idle; running work is never interrupted. Projects added
+before this version are treated as trusted, and a new working copy starts with its source project's
+decision.
 
 The MCP editor can import the old project `.mcp.json` into a draft for `.pi/mcp.json`, translating
 `disabled` to `enabled`. Import does not write files until you save and keeps the original file.

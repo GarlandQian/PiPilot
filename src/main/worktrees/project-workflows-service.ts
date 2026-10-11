@@ -7,7 +7,11 @@ import { ProjectActionService } from '../project-actions/project-action-service'
 import { ProjectWorkflowError } from '../project-actions/workflow-storage'
 import { WorktreeService } from './worktree-service'
 
-export function createProjectWorkflowsService(options: { directory: string; workspaces: WorkspaceRepository; runtime: PiRuntimeFrontend; terminals: TerminalService }) {
+export function createProjectWorkflowsService(options: {
+  directory: string; workspaces: WorkspaceRepository; runtime: PiRuntimeFrontend; terminals: TerminalService
+  /** Runs before setup, so the working copy's first conversation already has its project's trust. */
+  onWorktreeCreated?: (sourceWorkspaceId: string, worktreeWorkspaceId: string) => Promise<void>
+}) {
   const { directory, workspaces, runtime, terminals } = options
   let initialized = false
   let initializationError: Error | null = null
@@ -54,6 +58,7 @@ export function createProjectWorkflowsService(options: { directory: string; work
       if (worktree.workspaceId) {
         // A setup/configuration failure never destroys the successfully created checkout.
         try {
+          await options.onWorktreeCreated?.(input.projectId, worktree.workspaceId)
           await actions.inherit(input.projectId, worktree.workspaceId)
           if (setup) await actions.runConfirmed(worktree.workspaceId, setup)
         } catch (error) { return { ...worktree, error: (error instanceof Error ? error.message : 'Setup could not start.').slice(0, 1_000) } }

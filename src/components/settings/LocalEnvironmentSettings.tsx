@@ -12,6 +12,7 @@ import { ActionSheet, blankAction } from '@/components/projects/ActionSheet'
 import { ArchiveWorktreeDialog, NewWorktreeSheet } from '@/components/projects/WorktreeSheets'
 import { subscribeLocalEnvironmentProject, takeLocalEnvironmentProject, useProjectWorkflowActions } from '@/components/projects/project-workflow-actions'
 import { SettingsBadge, SettingsGroup, SettingsListRow, SettingsPage, SettingsRow, StatusText } from './kit'
+import { ProjectTrustSettingsRow } from '@/components/projects/ProjectTrust'
 
 const MAX_ACTIONS = 30
 
@@ -99,6 +100,7 @@ export function LocalEnvironmentSettings({ active = true }: { active?: boolean }
           {projects.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name}</option>)}
         </select>
       </SettingsRow>
+      <ProjectTrustSettingsRow workspaceId={projectId} projectName={project.name} />
       {self ? <SettingsRow label={t('localEnvironment.worktreeOf', { name: self.projectName })} icon={<RowTile tint="#5856d6"><TbGitBranch className="size-4" /></RowTile>}
         description={t('localEnvironment.worktreeNote', { name: self.projectName })}>
         <Button variant="outline" size="sm" disabled={busy} onClick={() => setCopying(true)}><TbCopy aria-hidden />{t('localEnvironment.copyFrom', { name: self.projectName })}</Button>
