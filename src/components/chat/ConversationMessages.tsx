@@ -1,12 +1,13 @@
 import * as React from 'react'
 import { QuoteSelection } from '@/components/precision/PrecisionReferences'
-import { TbAlertTriangle, TbBrain, TbChevronRight, TbCheck, TbClockPause, TbCopy, TbDots, TbDownload, TbFileDescription, TbFlag, TbGitFork, TbInfoCircle, TbLoader2, TbLogout, TbPencil, TbPlayerPlay } from 'react-icons/tb'
+import { TbAlertTriangle, TbBrain, TbChevronLeft, TbChevronRight, TbCheck, TbClockPause, TbCopy, TbDots, TbDownload, TbFileDescription, TbFlag, TbGitFork, TbInfoCircle, TbLoader2, TbLogout, TbPencil, TbPlayerPlay } from 'react-icons/tb'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { UserMessageContent } from './UserMessageContent'
+import { QuestionBranchesContext } from './question-branches'
 import { MarkdownContent } from './markdown/MarkdownContent'
 import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
@@ -35,6 +36,8 @@ export const UserMessage = React.memo(function UserMessage({ turn, onExport }: {
   const [copyFailed, setCopyFailed] = React.useState(false)
   const [expanded, setExpanded] = React.useState(false)
   const questionId = React.useId()
+  const branches = React.useContext(QuestionBranchesContext)
+  const branchPoint = turn.anchorEntryId ? branches?.points.get(turn.anchorEntryId) : undefined
   const questionText = React.useMemo(() => parsePromptSkillEnvelope(turn.text)?.userMessage ?? turn.text, [turn.text])
   const longQuestion = questionText.length > 600 || questionText.split('\n').length > 7
   const copyTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -55,7 +58,17 @@ export const UserMessage = React.memo(function UserMessage({ turn, onExport }: {
         {turn.images?.length ? <div className="mt-3"><UserMessageContent text="" images={turn.images} /></div> : null}
       </div>
       <div className="mt-1 flex items-center justify-end gap-2 text-micro text-muted-foreground">
-        <Button variant="ghost" size="icon-xs" className="ml-auto opacity-0 group-hover/question:opacity-100 focus-visible:opacity-100" aria-label={t(copied ? 'chat.messageCopied' : copyFailed ? 'chat.response.copyFailed' : 'chat.user.copy')} onClick={() => {
+        {branchPoint ? <span data-question-branch={`${branchPoint.index + 1}/${branchPoint.count}`} className="mr-auto flex items-center gap-0.5 tabular-nums">
+          <Button variant="ghost" size="icon-xs" disabled={!branchPoint.previous || branches!.busy} aria-label={t('branches.previous')}
+            onClick={() => branchPoint.previous && branches!.switchTo(branchPoint.previous)}><TbChevronLeft aria-hidden /></Button>
+          <span>{branchPoint.index + 1}/{branchPoint.count}</span>
+          <Button variant="ghost" size="icon-xs" disabled={!branchPoint.next || branches!.busy} aria-label={t('branches.next')}
+            onClick={() => branchPoint.next && branches!.switchTo(branchPoint.next)}><TbChevronRight aria-hidden /></Button>
+        </span> : null}
+        {branches && turn.anchorEntryId ? <Button variant="ghost" size="icon-xs" className={cn('opacity-0 group-hover/question:opacity-100 focus-visible:opacity-100', !branchPoint && 'ml-auto')}
+          disabled={branches.busy} aria-label={t('branches.edit')} title={t('branches.edit')} data-question-edit
+          onClick={() => branches.edit(turn.anchorEntryId!)}><TbPencil aria-hidden /></Button> : null}
+        <Button variant="ghost" size="icon-xs" className={cn('opacity-0 group-hover/question:opacity-100 focus-visible:opacity-100', !branches && !branchPoint && 'ml-auto')} aria-label={t(copied ? 'chat.messageCopied' : copyFailed ? 'chat.response.copyFailed' : 'chat.user.copy')} onClick={() => {
           void navigator.clipboard.writeText(turn.text).then(() => { setCopied(true); setCopyFailed(false) }).catch(() => setCopyFailed(true))
           if (copyTimer.current) clearTimeout(copyTimer.current)
           copyTimer.current = setTimeout(() => setCopied(false), 1400)

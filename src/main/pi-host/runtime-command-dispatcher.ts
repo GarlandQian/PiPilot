@@ -555,6 +555,26 @@ export async function dispatchRuntimeCommand(
             data: session.getSessionStats(),
           }),
         }
+      case 'navigate_tree': {
+        if (session.isStreaming || session.isCompacting) throw new Error('Wait for Pi to finish before switching branches.')
+        const result = await session.navigateTree(command.targetId, command.summarize ? { summarize: true } : {})
+        return {
+          replaced: false,
+          response: successResponse({
+            type: 'response',
+            command: 'navigate_tree',
+            success: true,
+            data: {
+              cancelled: result.cancelled || result.aborted === true,
+              ...(result.editorText !== undefined ? { editorText: result.editorText } : {}),
+              summarized: Boolean(result.summaryEntry),
+            },
+          }),
+        }
+      }
+      case 'set_label':
+        session.sessionManager.appendLabelChange(command.entryId, command.label ?? undefined)
+        return { replaced: false, response: noDataSuccess('set_label') }
       case 'get_mcp_status':
         return {
           replaced: false,

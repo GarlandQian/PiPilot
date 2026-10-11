@@ -278,6 +278,12 @@ interface PiRpcActions {
   dismissNotification(id: string): void
   markNotificationRevealed(id: string): void
   fork(entryId: string): Promise<void>
+  /**
+   * Pi's /tree in this same session: a user message comes back as the draft
+   * (its parent becomes the leaf); any other entry becomes the leaf.
+   */
+  navigateTree(targetId: string, options?: { summarize?: boolean }): Promise<{ cancelled: boolean; editorText?: string }>
+  setLabel(entryId: string, label: string | null): Promise<void>
   refresh(): Promise<void>
   request<TCommand extends LocalPiRendererRpcCommand>(
     command: TCommand,
@@ -2217,6 +2223,15 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
         notification.id === id && notification.autoReveal
           ? { ...notification, autoReveal: false }
           : notification))
+    },
+    async navigateTree(targetId, options) {
+      const result = await runCommand({ type: 'navigate_tree', targetId, ...(options?.summarize ? { summarize: true } : {}) })
+      await refreshConversation()
+      if (!result.cancelled && result.editorText !== undefined) setDraftReplacement({ revision: ++draftRevision.current, text: result.editorText })
+      return { cancelled: result.cancelled, ...(result.editorText !== undefined ? { editorText: result.editorText } : {}) }
+    },
+    async setLabel(entryId, label) {
+      await runCommand({ type: 'set_label', entryId, label })
     },
     fork(entryId) {
       if (forkInFlight.current) return forkInFlight.current

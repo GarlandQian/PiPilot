@@ -25,6 +25,12 @@
   general conversation. Current PiPilot exports and Pi sessions restore user/assistant history;
   ordinary or unrecognized Markdown becomes background content. Importing never submits a prompt or
   replays old tools or plan approvals.
+- **Branches** — hover a question and choose **Edit and resend**: Pi returns to just before it and puts
+  it back in the composer, and sending starts a new branch in the same session file (Pi's `/tree`). A
+  question asked more than once shows ‹ 1/2 › to switch versions. The **Branches** tab (**+ › Branches**)
+  lists every branch's questions; switch to one, **Summarize and Switch** to carry a summary of the branch
+  left behind, edit from any question, or bookmark it (Pi labels). Switching waits until Pi is idle and
+  never deletes a branch. "Fork from this response" still copies the conversation into a new one.
 - **Compaction** — **… > Compact conversation…** summarizes earlier messages to free context; optional
   instructions say what the summary must keep, like Pi's `/compact <instructions>`. Compacting stops a
   reply in progress, and the sheet says so first. The same menu lists the conversation's tokens

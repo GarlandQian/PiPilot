@@ -8,6 +8,7 @@ Each version section supplies the highlights for its GitHub Release. Download li
 
 ### 中文
 
+- **会话分支**：可编辑之前的提问并重新发送，在同一对话中产生新分支；被编辑过的提问显示“‹ 1/2 ›”可切换版本。新增“分支”标签页显示全部分支，可切换（可先总结被离开的分支）、从任一提问编辑，并添加书签。所有分支都保留在 Pi 会话文件中。
 - **MCP 实时状态**：对话标题栏显示“已连接/总数”，可查看每个 MCP 服务器的状态、工具数、错误和输出，并直接重新连接或登录；设置中的 MCP 列表显示当前对话最近看到的连接结果。
 - **订阅账号登录**：在“模型”中为 Pi 自带的服务商（Anthropic、ChatGPT、GitHub Copilot、OpenRouter、xAI 等）使用浏览器登录订阅账号，支持浏览器回调、设备验证码和粘贴代码；登录前会提示替换已保存的 API Key，可随时退出登录。
 - **压缩与会话明细**：“压缩对话…”可填写需要保留的内容（等同 `/compact <说明>`），Pi 正在回复时会先提示将中断；对话菜单显示输入、输出、缓存 token 以及消息和工具调用数。
@@ -16,6 +17,7 @@ Each version section supplies the highlights for its GitHub Release. Download li
 
 ### English
 
+- **Conversation branches:** Edit an earlier question and send it again to start a new branch in the same conversation; an edited question shows ‹ 1/2 › to switch versions. A Branches tab lists every branch, switches between them (optionally summarizing the one left behind), edits from any question, and bookmarks questions. Every branch stays in the Pi session file.
 - **Live MCP status:** The conversation header shows how many MCP servers are connected. Open it to see each server's state, tool count, errors, and output, and reconnect or sign in right there. Settings › MCP shows what the open conversation last saw.
 - **Subscription sign-in:** Sign in to Pi's own providers (Anthropic, ChatGPT, GitHub Copilot, OpenRouter, xAI, and more) from Models with a browser callback, a device code, or a pasted code. PiPilot asks before replacing a saved API key, and you can sign out at any time.
 - **Compaction and session details:** Compact conversation… accepts instructions for what the summary keeps (like `/compact <instructions>`) and warns first when it would stop a reply. The conversation menu lists input, output, and cache tokens, messages, and tool calls.

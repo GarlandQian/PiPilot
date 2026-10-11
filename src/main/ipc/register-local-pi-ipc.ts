@@ -183,7 +183,9 @@ export function registerLocalPiIpc(options: RegisterLocalPiIpcOptions) {
     async ({ command }) => {
       try {
         const sourceIdentity = runtimeHost.getActiveRuntimeIdentity()
-        const response = await runtimeHost.request(command)
+        // Compaction and a branch summary call the model; give them time.
+        const long = command.type === 'compact' || (command.type === 'navigate_tree' && command.summarize === true)
+        const response = await runtimeHost.request(command, long ? 10 * 60_000 : undefined)
         const resultIdentity = runtimeHost.getActiveRuntimeIdentity()
         await activationService.afterSuccessfulCommand(
           command.type,

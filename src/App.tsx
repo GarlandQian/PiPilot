@@ -31,6 +31,10 @@ import { ConversationNotices } from '@/components/chat/ConversationNotices'
 import { ProjectTrustNotice, ProjectTrustPrompt } from '@/components/projects/ProjectTrust'
 import { CompactConversationSheet } from '@/components/chat/CompactConversationSheet'
 import { McpStatusMenu } from '@/components/chat/McpStatusMenu'
+import { QuestionBranchesContext, type QuestionBranches } from '@/components/chat/question-branches'
+import { ConversationTreePanel } from '@/components/inspector/ConversationTreePanel'
+import { useConversationTree } from '@/store/conversation-tree'
+import { branchPoints } from '@/renderer/pi-rpc/conversation-tree'
 import { ConversationSearchDialog } from '@/components/chat/ConversationSearchDialog'
 import { ConversationExportDialog } from '@/components/chat/ConversationExportDialog'
 import { ConversationImportDialog } from '@/components/chat/ConversationImportDialog'
@@ -335,7 +339,24 @@ export default function App() {
     conversationReady,
   ])
   const compactFeedback = useConversationOperationFeedback(operationOwnerKey)
+  const branchFeedback = useConversationOperationFeedback(operationOwnerKey)
   const [compactSheetOpen, setCompactSheetOpen] = React.useState(false)
+  // Pi's session tree: every branch of the open conversation, for ‹ 1/2 › and the Branches tab.
+  const [treeRevision, setTreeRevision] = React.useState(0)
+  const reloadConversationTree = React.useCallback(() => setTreeRevision((value) => value + 1), [])
+  const treeRequest = React.useCallback((command: { type: 'get_tree' }) => actions.request(command), [actions])
+  const treeKey = conversationReady && 'sessionId' in conversation
+    ? `${conversation.sessionId}:${pi.session?.messageCount ?? 0}:${pi.session?.isStreaming ? 1 : 0}:${treeRevision}` : null
+  const { tree: conversationTree } = useConversationTree(conversationReady ? treeRequest : null, treeKey)
+  const runBranchOperation = React.useCallback(async (operation: () => Promise<unknown>) => {
+    await branchFeedback.run('branch', async () => { await operation(); reloadConversationTree() }, t('branches.failed'))
+  }, [branchFeedback, reloadConversationTree, t])
+  const questionBranches = React.useMemo<QuestionBranches | null>(() => conversationReady ? {
+    points: conversationTree ? branchPoints(conversationTree) : new Map(),
+    busy: (pi.session?.isStreaming ?? false) || Boolean(branchFeedback.pending),
+    edit: (entryId) => { void runBranchOperation(() => actions.navigateTree(entryId)) },
+    switchTo: (leafId) => { void runBranchOperation(() => actions.navigateTree(leafId)) },
+  } : null, [actions, branchFeedback.pending, conversationReady, conversationTree, pi.session?.isStreaming, runBranchOperation])
   const paletteStopFeedback = useConversationOperationFeedback(operationOwnerKey)
   React.useEffect(() => { setExportTarget((current) => current && 'selectionToken' in current ? current : null) }, [operationOwnerKey])
 
@@ -808,6 +829,7 @@ export default function App() {
   const terminalHostDock = panelDockOf(panel.state, 'terminal')
   // Both docks share the strip's labels and the "+" menu.
   const strip = usePanelStrip({
+    ...(conversationReady ? { onOpenTree: () => panel.open(panelTab('tree')) } : {}),
     terminalSlot: setTerminalTabsHost,
     state: panel.state,
     projectAvailable,
@@ -895,6 +917,10 @@ export default function App() {
     {t(workspace.activeScope.kind === 'project' ? 'inspector.project.unavailable' : 'inspector.project.required')}
   </p>, panelContainers.get(id), id)
   const tabContents = <>
+    {panel.state.tabs.tree ? createPortal(<ConversationTreePanel tree={conversationTree} busy={!conversationReady || (pi.session?.isStreaming ?? false)}
+      onSwitch={(leafId, summarize) => runBranchOperation(() => actions.navigateTree(leafId, { summarize }))}
+      onEdit={(entryId) => runBranchOperation(() => actions.navigateTree(entryId))}
+      onLabel={async (entryId, label) => { await actions.setLabel(entryId, label); reloadConversationTree() }} />, panelContainers.get('tree')) : null}
     {panelWorkspace && workspaceAdapter ? <WorkspacePanelContents
       key={panelWorkspace.id}
       adapter={workspaceAdapter}
@@ -947,6 +973,7 @@ export default function App() {
   const contextPanelVisible = frameNav.contextPanelOpen && !compactSettingsDetailVisible
 
   return (
+    <QuestionBranchesContext.Provider value={questionBranches}>
     <TooltipProvider delayDuration={350}>
       <TerminalActionsContext.Provider value={{ scope: workspace.activeScope, open: openTerminalHere, openExternal: openExternalHere }}>
       <ProjectWorkflowActionsProvider value={projectWorkflowActions}>
@@ -1124,6 +1151,13 @@ export default function App() {
               <p role="status" className="toolbar-material shrink-0 px-5 py-2 text-caption text-muted-foreground">
                 {t('chat.compacting')}
               </p>
+            ) : null}
+            {branchFeedback.error ? (
+              <div role="alert" data-conversation-action-error="branch" className="toolbar-material shrink-0 break-words px-5 py-2 text-caption text-destructive [&_.md-body]:text-caption [&_.md-body]:text-destructive">
+                <MarkdownContent markdown={branchFeedback.error} />
+              </div>
+            ) : branchFeedback.pending ? (
+              <p role="status" className="toolbar-material shrink-0 px-5 py-2 text-caption text-muted-foreground">{t('branches.switching')}</p>
             ) : null}
             {paletteStopFeedback.error ? (
               <div role="alert" data-conversation-action-error="stop" className="toolbar-material shrink-0 break-words px-5 py-2 text-caption text-destructive [&_.md-body]:text-caption [&_.md-body]:text-destructive">
@@ -1525,5 +1559,6 @@ export default function App() {
       </ProjectWorkflowActionsProvider>
       </TerminalActionsContext.Provider>
     </TooltipProvider>
+    </QuestionBranchesContext.Provider>
   )
 }

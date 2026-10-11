@@ -613,6 +613,10 @@ export const localPiRpcCommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('get_fork_messages') }).strict(),
   z.object({ type: z.literal('get_entries'), since: z.string().optional() }).strict(),
   z.object({ type: z.literal('get_tree') }).strict(),
+  /** Pi's /tree: move to another point of this session's history (same file). */
+  z.object({ type: z.literal('navigate_tree'), targetId: z.string().min(1).max(256), summarize: z.boolean().optional() }).strict(),
+  /** Bookmark an entry (label), or clear it with null. */
+  z.object({ type: z.literal('set_label'), entryId: z.string().min(1).max(256), label: z.string().trim().min(1).max(120).nullable() }).strict(),
   z.object({ type: z.literal('get_last_assistant_text') }).strict(),
   z.object({ type: z.literal('set_session_name'), name: z.string() }).strict(),
   z.object({ type: z.literal('get_messages') }).strict(),
@@ -933,6 +937,8 @@ export const localPiRpcSuccessResponseSchema = z.discriminatedUnion('command', [
   z.object({ ...localPiSuccessResponseBase, command: z.literal('get_fork_messages'), data: z.object({ messages: z.array(z.object({ entryId: z.string(), text: z.string() }).strict()) }).strict() }).strict(),
   z.object({ ...localPiSuccessResponseBase, command: z.literal('get_entries'), data: z.object({ entries: z.array(localPiSessionEntrySchema), leafId: z.string().nullable() }).strict() }).strict(),
   z.object({ ...localPiSuccessResponseBase, command: z.literal('get_tree'), data: z.object({ tree: localPiSessionTreeSchema, leafId: z.string().nullable() }).strict() }).strict(),
+  z.object({ ...localPiSuccessResponseBase, command: z.literal('navigate_tree'), data: z.object({ cancelled: z.boolean(), editorText: z.string().optional(), summarized: z.boolean() }).strict() }).strict(),
+  localPiNoDataSuccessSchema('set_label'),
   z.object({ ...localPiSuccessResponseBase, command: z.literal('get_last_assistant_text'), data: z.object({ text: z.string().nullable() }).strict() }).strict(),
   localPiNoDataSuccessSchema('set_session_name'),
   z.object({ ...localPiSuccessResponseBase, command: z.literal('get_messages'), data: localPiMessagesResponseDataSchema }).strict(),
