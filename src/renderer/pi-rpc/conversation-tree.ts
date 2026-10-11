@@ -1,4 +1,4 @@
-import type { LocalPiTreeRow } from '@/shared/local-pi'
+import type { LocalPiTreeOutlineRow } from '@/shared/local-pi'
 
 /**
  * Pi keeps every branch of a conversation in one session file. These helpers
@@ -6,30 +6,28 @@ import type { LocalPiTreeRow } from '@/shared/local-pi'
  * questions and for the branch tab.
  */
 export interface ConversationTree {
-  rows: readonly LocalPiTreeRow[]
+  rows: readonly LocalPiTreeOutlineRow[]
   leafId: string | null
-  byId: ReadonlyMap<string, LocalPiTreeRow>
+  byId: ReadonlyMap<string, LocalPiTreeOutlineRow>
   children: ReadonlyMap<string | null, readonly string[]>
   /** The current branch, root to leaf. */
   path: ReadonlySet<string>
 }
 
-export function isUserMessage(row: LocalPiTreeRow) {
-  return row.entry.type === 'message' && row.entry.message.role === 'user'
+export function isUserMessage(row: LocalPiTreeOutlineRow) {
+  return row.kind === 'user'
 }
 
-export function userMessageText(row: LocalPiTreeRow) {
-  if (row.entry.type !== 'message' || row.entry.message.role !== 'user') return ''
-  const content = row.entry.message.content
-  return (typeof content === 'string' ? content : content.map((part) => part.type === 'text' ? part.text : '').join(' ')).replace(/\s+/gu, ' ').trim()
+export function userMessageText(row: LocalPiTreeOutlineRow) {
+  return row.kind === 'user' ? row.text ?? '' : ''
 }
 
-export function buildConversationTree(rows: readonly LocalPiTreeRow[], leafId: string | null): ConversationTree {
-  const byId = new Map(rows.map((row) => [row.entry.id, row]))
+export function buildConversationTree(rows: readonly LocalPiTreeOutlineRow[], leafId: string | null): ConversationTree {
+  const byId = new Map(rows.map((row) => [row.id, row]))
   const children = new Map<string | null, string[]>()
   for (const row of [...rows].sort((left, right) => left.order - right.order)) {
     const list = children.get(row.parentId) ?? []
-    list.push(row.entry.id)
+    list.push(row.id)
     children.set(row.parentId, list)
   }
   const path = new Set<string>()

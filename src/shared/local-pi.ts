@@ -620,6 +620,8 @@ export const localPiRpcCommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('get_fork_messages') }).strict(),
   z.object({ type: z.literal('get_entries'), since: z.string().optional() }).strict(),
   z.object({ type: z.literal('get_tree') }).strict(),
+  /** The tree's shape only (no message bodies), for branch navigation of long sessions. */
+  z.object({ type: z.literal('get_tree_outline') }).strict(),
   /** Pi's /tree: move to another point of this session's history (same file). */
   z.object({ type: z.literal('navigate_tree'), targetId: z.string().min(1).max(256), summarize: z.boolean().optional() }).strict(),
   /** Bookmark an entry (label), or clear it with null. */
@@ -714,6 +716,18 @@ export const localPiSessionEntrySchema = z.discriminatedUnion('type', [
 ])
 
 export type LocalPiSessionEntry = z.infer<typeof localPiSessionEntrySchema>
+
+/** One entry of a session tree without its content: enough to draw and switch branches. */
+export const localPiTreeOutlineRowSchema = z.object({
+  id: z.string().min(1).max(256),
+  parentId: z.string().min(1).max(256).nullable(),
+  order: z.number().int().nonnegative(),
+  kind: z.enum(['user', 'assistant', 'other']),
+  /** The start of a question. */
+  text: z.string().max(240).optional(),
+  label: z.string().max(240).optional(),
+}).strict()
+export type LocalPiTreeOutlineRow = z.infer<typeof localPiTreeOutlineRowSchema>
 
 export interface LocalPiSessionTreeNode {
   entry: LocalPiSessionEntry
@@ -944,6 +958,9 @@ export const localPiRpcSuccessResponseSchema = z.discriminatedUnion('command', [
   z.object({ ...localPiSuccessResponseBase, command: z.literal('get_fork_messages'), data: z.object({ messages: z.array(z.object({ entryId: z.string(), text: z.string() }).strict()) }).strict() }).strict(),
   z.object({ ...localPiSuccessResponseBase, command: z.literal('get_entries'), data: z.object({ entries: z.array(localPiSessionEntrySchema), leafId: z.string().nullable() }).strict() }).strict(),
   z.object({ ...localPiSuccessResponseBase, command: z.literal('get_tree'), data: z.object({ tree: localPiSessionTreeSchema, leafId: z.string().nullable() }).strict() }).strict(),
+  z.object({ ...localPiSuccessResponseBase, command: z.literal('get_tree_outline'), data: z.object({
+    rows: z.array(localPiTreeOutlineRowSchema).max(LOCAL_PI_SESSION_TREE_MAX_NODES), leafId: z.string().nullable(),
+  }).strict() }).strict(),
   z.object({ ...localPiSuccessResponseBase, command: z.literal('navigate_tree'), data: z.object({ cancelled: z.boolean(), editorText: z.string().optional(), summarized: z.boolean() }).strict() }).strict(),
   localPiNoDataSuccessSchema('set_label'),
   localPiNoDataSuccessSchema('browser_tool_response'),

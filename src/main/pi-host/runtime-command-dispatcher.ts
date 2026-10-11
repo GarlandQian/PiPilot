@@ -699,6 +699,29 @@ export async function dispatchRuntimeCommand(
             },
           }),
         }
+      case 'get_tree_outline': {
+        const rows: Array<{ id: string; parentId: string | null; order: number; kind: 'user' | 'assistant' | 'other'; text?: string; label?: string }> = []
+        const pending = [...session.sessionManager.getTree()].reverse().map((node) => ({ node, parentId: null as string | null }))
+        while (pending.length && rows.length < 100_000) {
+          const { node, parentId } = pending.pop()!
+          const entry = node.entry
+          const role = entry.type === 'message' ? entry.message.role : undefined
+          let text: string | undefined
+          if (role === 'user' && entry.type === 'message') {
+            const content = (entry.message as { content?: unknown }).content
+            const raw = typeof content === 'string' ? content
+              : Array.isArray(content) ? content.map((part: { type?: unknown; text?: unknown }) => part.type === 'text' && typeof part.text === 'string' ? part.text : '').join(' ') : ''
+            text = raw.replace(/\s+/gu, ' ').trim().slice(0, 240)
+          }
+          rows.push({ id: entry.id, parentId, order: rows.length, kind: role === 'user' ? 'user' : role === 'assistant' ? 'assistant' : 'other',
+            ...(text ? { text } : {}), ...(node.label ? { label: node.label.slice(0, 240) } : {}) })
+          for (let index = node.children.length - 1; index >= 0; index -= 1) pending.push({ node: node.children[index]!, parentId: entry.id })
+        }
+        return {
+          replaced: false,
+          response: successResponse({ type: 'response', command: 'get_tree_outline', success: true, data: { rows, leafId: session.sessionManager.getLeafId() } }),
+        }
+      }
       case 'get_last_assistant_text':
         return {
           replaced: false,

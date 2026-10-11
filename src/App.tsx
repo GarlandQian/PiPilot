@@ -355,7 +355,7 @@ export default function App() {
   // Pi's session tree: every branch of the open conversation, for ‹ 1/2 › and the Branches tab.
   const [treeRevision, setTreeRevision] = React.useState(0)
   const reloadConversationTree = React.useCallback(() => setTreeRevision((value) => value + 1), [])
-  const treeRequest = React.useCallback((command: { type: 'get_tree' }) => actions.request(command), [actions])
+  const treeRequest = React.useCallback((command: { type: 'get_tree_outline' }) => actions.request(command), [actions])
   const treeKey = conversationReady && 'sessionId' in conversation
     ? `${conversation.sessionId}:${pi.session?.messageCount ?? 0}:${pi.session?.isStreaming ? 1 : 0}:${treeRevision}` : null
   const { tree: conversationTree } = useConversationTree(conversationReady ? treeRequest : null, treeKey)

@@ -1,8 +1,8 @@
 import * as React from 'react'
 import { buildConversationTree, type ConversationTree } from '@/renderer/pi-rpc/conversation-tree'
-import type { LocalPiTreeRow } from '@/shared/local-pi'
+import type { LocalPiTreeOutlineRow } from '@/shared/local-pi'
 
-type TreeRequest = (command: { type: 'get_tree' }) => Promise<{ rows: readonly LocalPiTreeRow[]; leafId: string | null }>
+type TreeRequest = (command: { type: 'get_tree_outline' }) => Promise<{ rows: readonly LocalPiTreeOutlineRow[]; leafId: string | null }>
 
 /**
  * The open conversation's session tree, read again whenever `key` changes
@@ -12,13 +12,21 @@ export function useConversationTree(request: TreeRequest | null, key: string | n
   const [tree, setTree] = React.useState<ConversationTree | null>(null)
   const [tick, setTick] = React.useState(0)
   const reload = React.useCallback(() => setTick((value) => value + 1), [])
+  // Read again only when the key changes, never because the caller re-rendered.
+  const requestRef = React.useRef(request)
+  requestRef.current = request
+  const enabled = request !== null
   React.useEffect(() => {
-    if (!request || !key) { setTree(null); return }
+    const read = requestRef.current
+    if (!enabled || !read || !key) { setTree(null); return }
     let cancelled = false
-    request({ type: 'get_tree' }).then((result) => {
-      if (!cancelled) setTree(buildConversationTree(result.rows, result.leafId))
-    }, () => { if (!cancelled) setTree(null) })
-    return () => { cancelled = true }
-  }, [key, request, tick])
+    // A large tree waits for the transcript to settle before it is read.
+    const timer = setTimeout(() => {
+      read({ type: 'get_tree_outline' }).then((result) => {
+        if (!cancelled) setTree(buildConversationTree(result.rows, result.leafId))
+      }, () => { if (!cancelled) setTree(null) })
+    }, 300)
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [enabled, key, tick])
   return { tree, reload }
 }

@@ -19,13 +19,13 @@ function questionNodes(tree: ConversationTree): Node[] {
     const parentLevel = levels.get(row.parentId) ?? 0
     let level = parentLevel
     if (isUserMessage(row)) {
-      const siblings = questionSiblings(tree, row.entry.id)
+      const siblings = questionSiblings(tree, row.id)
       // The first of several questions stays in line; later ones step in.
       if (siblings && siblings.index > 0) level = parentLevel + 1
-      nodes.push({ id: row.entry.id, text: userMessageText(row), level, onPath: tree.path.has(row.entry.id), current: row.entry.id === lastOnPath,
+      nodes.push({ id: row.id, text: userMessageText(row), level, onPath: tree.path.has(row.id), current: row.id === lastOnPath,
         ...(row.label ? { label: row.label } : {}) })
     }
-    levels.set(row.entry.id, level)
+    levels.set(row.id, level)
   }
   return nodes
 }
@@ -63,7 +63,7 @@ export function ConversationTreePanel({ tree, busy, onSwitch, onEdit, onLabel }:
   const [error, setError] = React.useState<string | null>(null)
   const nodes = React.useMemo(() => tree ? questionNodes(tree) : [], [tree])
   const visible = onlyBookmarks ? nodes.filter((node) => node.label) : nodes
-  const branchCount = React.useMemo(() => tree ? tree.rows.filter((row) => (tree.children.get(row.entry.id) ?? []).length === 0).length : 0, [tree])
+  const branchCount = React.useMemo(() => tree ? tree.rows.filter((row) => (tree.children.get(row.id) ?? []).length === 0).length : 0, [tree])
   const run = (id: string, operation: () => Promise<void>) => {
     setWorking(id); setError(null)
     void operation().catch((caught: unknown) => setError(caught instanceof Error && caught.message ? caught.message : t('branches.failed'))).finally(() => setWorking(null))

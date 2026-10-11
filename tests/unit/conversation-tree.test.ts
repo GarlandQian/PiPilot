@@ -1,15 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { branchLeaf, branchPoints, buildConversationTree } from '../../src/renderer/pi-rpc/conversation-tree'
-import type { LocalPiTreeRow } from '../../src/shared/local-pi'
+import type { LocalPiTreeOutlineRow } from '../../src/shared/local-pi'
 
 let order = 0
-const row = (id: string, parentId: string | null, role: 'user' | 'assistant', text: string): LocalPiTreeRow => ({
-  entry: { type: 'message', id, parentId, timestamp: '2026-10-01T00:00:00.000Z', message: role === 'user'
-    ? { role, content: text, timestamp: 1 }
-    : { role, content: [{ type: 'text', text }], api: 'x', provider: 'x', model: 'x', stopReason: 'stop', timestamp: 1,
-      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } } },
-  parentId, depth: 0, order: order++,
-}) as LocalPiTreeRow
+const row = (id: string, parentId: string | null, role: 'user' | 'assistant', text: string): LocalPiTreeOutlineRow =>
+  ({ id, parentId, order: order++, kind: role, ...(role === 'user' ? { text } : {}) })
 
 describe('conversation tree', () => {
   const rows = [
