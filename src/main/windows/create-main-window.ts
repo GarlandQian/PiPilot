@@ -17,6 +17,8 @@ const MAC_TRAFFIC_LIGHT_POSITION = { x: 18, y: 19 }
 
 interface CreateMainWindowOptions {
   developmentUrl?: string
+  /** Windows and Linux: the window and taskbar icon (installed builds take it from the package). */
+  icon?: string
   mainOutputDirectory: string
   onHiddenToTray?: () => void
   onWindowCreated?: (window: BrowserWindow) => void
@@ -33,6 +35,7 @@ export interface MainWindowHandle {
 
 export async function createMainWindow({
   developmentUrl,
+  icon,
   mainOutputDirectory,
   onHiddenToTray,
   onWindowCreated,
@@ -54,6 +57,7 @@ export async function createMainWindow({
     minHeight: Math.min(MIN_WINDOW_SIZE.height, primaryDisplay.workArea.height),
     show: false,
     title: 'PiPilot',
+    ...(icon ? { icon } : {}),
     ...(process.platform === 'darwin'
       ? {
           // Native macOS chrome: inset traffic lights over a vibrant sidebar.

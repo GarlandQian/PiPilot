@@ -19,6 +19,7 @@ import {
   nativeTheme,
   session,
   shell,
+  systemPreferences,
   Tray,
 } from 'electron'
 import {
@@ -528,7 +529,7 @@ function createApplicationTray() {
   let icon = nativeImage.createFromPath(iconPath)
   if (icon.isEmpty()) {
     const fallbackSvg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
-      '<path fill="#000" d="M 46 42 Q 43 44 39 44 Q 34 44 34 38 L 34 23 L 29 23 Q 29 32 27 38 Q 25 44 20 44 Q 16 44 16 40 Q 16 37 19 37 Q 21 37 23 40 Q 25 37 25 23 L 19 23 Q 16 23 16 28 L 13 28 Q 13 19 21 19 L 47 19 L 47 23 L 40 23 L 40 37 Q 40 40 43 40 Q 44 40 46 39 Z"/>' +
+      '<path fill="#000" d="M14.7 9.6 H58.8 Q60.9 9.6 60.9 11.8 V17.3 Q60.9 19.4 58.8 19.4 H49.1 V41.4 Q49.1 45.7 53.3 45.7 H55.6 Q58.8 45.7 58.8 48.9 V51 Q58.8 54.2 55.6 54.2 H51 Q39.3 54.2 39.3 42.7 V19.4 H26.4 C26.4 33 25.5 45.2 21.1 51.8 Q19.4 54.4 16.6 54.2 Q13.2 53.9 12.6 51.2 Q12.2 49.5 13.2 47.8 C16.2 41.4 16.8 30.8 16.8 19.4 H14.5 C12.2 19.4 10.3 19.8 9.2 20.2 Q8.6 21.7 6.9 21.5 L4.5 21.1 Q2.6 20.7 3.1 18.5 C4.5 12.6 8.6 9.6 14.7 9.6 Z"/>' +
       '</svg>'
     icon = nativeImage.createFromDataURL(
       `data:image/svg+xml;charset=utf-8,${encodeURIComponent(fallbackSvg)}`,
@@ -546,12 +547,47 @@ function createApplicationTray() {
   applicationTray.on('click', revealMainWindow)
 }
 
+/**
+ * Unpackaged runs borrow Electron's own icon; show PiPilot's instead. Installed
+ * builds keep the package's icon (on macOS the Liquid Glass `.icon`).
+ */
+const developmentWindowIcon = app.isPackaged ? undefined
+  : process.platform === 'win32' ? join(app.getAppPath(), 'build/icons/windows/icon.ico')
+    : process.platform === 'linux' ? join(app.getAppPath(), 'build/icons/linux/512.png')
+      : undefined
+
+/**
+ * The rendition macOS would draw for an installed build: the icon style from
+ * System Settings (default, clear or tinted) in light or dark. Installed builds
+ * get the live Liquid Glass icon; unpackaged ones can only show a still image.
+ */
+function developmentDockRendition() {
+  const theme = systemPreferences.getUserDefault('AppleIconAppearanceTheme', 'string') ?? ''
+  const style = theme.startsWith('Clear') ? 'Clear' : theme.startsWith('Tinted') ? 'Tinted' : 'Regular'
+  const dark = theme.endsWith('Dark')
+    || (!theme.endsWith('Light') && systemPreferences.getUserDefault('AppleInterfaceStyle', 'string') === 'Dark')
+  return style === 'Regular' ? (dark ? 'Dark' : 'Default') : `${style}${dark ? 'Dark' : 'Light'}`
+}
+
+let developmentDockShown: string | null = null
+function showDevelopmentDockIcon() {
+  if (app.isPackaged || process.platform !== 'darwin') return
+  const rendition = developmentDockRendition()
+  if (rendition === developmentDockShown) return
+  // The system's own renderings of build/PiPilot.icon; the About panel shows the same image.
+  const icon = nativeImage.createFromPath(join(app.getAppPath(), `build/icons/macos/dock-${rendition}.png`))
+  if (icon.isEmpty()) return
+  app.dock?.setIcon(icon)
+  developmentDockShown = rendition
+}
+
 async function openMainWindow() {
   const stateRepository = new WindowStateRepository(
     join(app.getPath('userData'), 'window-state.json'),
   )
   const handle = await createMainWindow({
     developmentUrl,
+    ...(developmentWindowIcon ? { icon: developmentWindowIcon } : {}),
     mainOutputDirectory,
     onHiddenToTray() {
       if (process.platform === 'darwin') app.dock?.hide()
@@ -606,6 +642,12 @@ if (!hasSingleInstanceLock) {
     .then(async () => {
       app.setName('PiPilot')
       app.setAppUserModelId('com.pipilot.desktop')
+      showDevelopmentDockIcon()
+      if (!app.isPackaged && process.platform === 'darwin') {
+        // Light and dark switch while running; a changed icon style shows when the app is next activated.
+        systemPreferences.subscribeNotification('AppleInterfaceThemeChangedNotification', showDevelopmentDockIcon)
+        app.on('did-become-active', showDevelopmentDockIcon)
+      }
 
       if (!developmentUrl) {
         registerAppProtocol(join(mainOutputDirectory, '../renderer'))
