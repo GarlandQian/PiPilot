@@ -44,12 +44,12 @@ export function ProjectTrustSheet({ workspaceId, projectName, open, onOpenChange
         {busy ? <TbLoader2 className="animate-spin motion-reduce:animate-none" aria-hidden /> : null}{t('projectTrust.trust')}
       </Button>
     </div>}>
-    <RadioGroup value={scope} onValueChange={(value) => setScope(value as TrustScope)} aria-label={t('projectTrust.scope')} className="gap-0 settings-group">
+    <RadioGroup value={scope} onValueChange={(value) => setScope(value as TrustScope)} aria-label={t('projectTrust.scope')} className="settings-group min-w-0 grid-cols-[minmax(0,1fr)] gap-0 overflow-hidden">
       {([
         ['trust', 'projectTrust.scope.folder', status?.path],
         ...(status?.parentPath ? [['trust-parent', 'projectTrust.scope.parent', status.parentPath] as const] : []),
         ['session', 'projectTrust.scope.session', undefined],
-      ] as const).map(([value, label, path]) => <label key={value} data-settings-row className="flex min-h-11 cursor-default items-start gap-3 px-3 py-2.5">
+      ] as const).map(([value, label, path]) => <label key={value} data-settings-row className="flex min-h-11 min-w-0 cursor-default items-start gap-3 px-3 py-2.5">
         <RadioGroupItem value={value} className="mt-0.5" disabled={busy} />
         <span className="min-w-0 flex-1">
           <span className="block text-app">{t(label as MessageKey)}</span>
