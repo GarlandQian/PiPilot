@@ -4,7 +4,7 @@ import { conversationScopeSchema } from './conversation-scope'
 /** Captured evidence only: the backend never re-reads a quoted file by path. */
 export const sideReferenceSchema = z.object({
   id: z.string().min(1).max(2_048), ownerKey: z.string().min(1).max(2_048),
-  kind: z.enum(['message', 'file', 'command', 'diff']), sourceId: z.string().min(1).max(2_048),
+  kind: z.enum(['message', 'file', 'command', 'diff', 'browser']), sourceId: z.string().min(1).max(2_048),
   label: z.string().min(1).max(2_048), text: z.string().min(1).max(20_000),
   path: z.string().max(2_048).optional(), startLine: z.number().int().positive().optional(),
   endLine: z.number().int().positive().optional(), side: z.enum(['additions', 'deletions']).optional(),

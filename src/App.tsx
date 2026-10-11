@@ -34,6 +34,7 @@ import { McpStatusMenu } from '@/components/chat/McpStatusMenu'
 import { requestNextAttention } from '@/components/frame/attention-navigation'
 import { QuestionBranchesContext, type QuestionBranches } from '@/components/chat/question-branches'
 import { ConversationTreePanel } from '@/components/inspector/ConversationTreePanel'
+import { BrowserPanel } from '@/components/inspector/BrowserPanel'
 import { useConversationTree } from '@/store/conversation-tree'
 import { branchPoints } from '@/renderer/pi-rpc/conversation-tree'
 import { ConversationSearchDialog } from '@/components/chat/ConversationSearchDialog'
@@ -65,6 +66,7 @@ import {
   type ComposerCommandCatalogState,
   type ComposerMentionInsertionRequest,
   type ComposerTextInsertionRequest,
+  type ComposerAttachmentInsertionRequest,
   type ComposerQueueState,
 } from '@/components/chat/Composer'
 import { ExtensionUiDialog } from '@/components/chat/ExtensionUiDialog'
@@ -343,6 +345,8 @@ export default function App() {
   const branchFeedback = useConversationOperationFeedback(operationOwnerKey)
   const popoutFeedback = useConversationOperationFeedback(operationOwnerKey)
   const [compactSheetOpen, setCompactSheetOpen] = React.useState(false)
+  const [composerAttachmentRequest, setComposerAttachmentRequest] = React.useState<ComposerAttachmentInsertionRequest | null>(null)
+  const composerAttachmentSequence = React.useRef(0)
   // Pi's session tree: every branch of the open conversation, for ‹ 1/2 › and the Branches tab.
   const [treeRevision, setTreeRevision] = React.useState(0)
   const reloadConversationTree = React.useCallback(() => setTreeRevision((value) => value + 1), [])
@@ -834,6 +838,7 @@ export default function App() {
   // Both docks share the strip's labels and the "+" menu.
   const strip = usePanelStrip({
     ...(conversationReady ? { onOpenTree: () => panel.open(panelTab('tree')) } : {}),
+    onOpenBrowser: () => panel.open(panelTab('browser')),
     terminalSlot: setTerminalTabsHost,
     state: panel.state,
     projectAvailable,
@@ -921,6 +926,9 @@ export default function App() {
     {t(workspace.activeScope.kind === 'project' ? 'inspector.project.unavailable' : 'inspector.project.required')}
   </p>, panelContainers.get(id), id)
   const tabContents = <>
+    {panel.state.tabs.browser ? createPortal(<BrowserPanel scopeKey={conversationScopeKey(workspace.activeScope)}
+      visible={conversationWorkspace && panel.isVisible('browser')}
+      onAttachImage={(file) => setComposerAttachmentRequest({ files: [file], scopeKey: composerScopeKey, sequence: ++composerAttachmentSequence.current })} />, panelContainers.get('browser')) : null}
     {panel.state.tabs.tree ? createPortal(<ConversationTreePanel tree={conversationTree} busy={!conversationReady || (pi.session?.isStreaming ?? false)}
       onSwitch={(leafId, summarize) => runBranchOperation(() => actions.navigateTree(leafId, { summarize }))}
       onEdit={(entryId) => runBranchOperation(() => actions.navigateTree(entryId))}
@@ -1245,6 +1253,7 @@ export default function App() {
               draftReplacement={conversationReady ? extension.draftReplacement : null}
               mentionInsertionRequest={composerMentionInsertionRequest}
               textInsertionRequest={composerTextInsertionRequest}
+              attachmentInsertionRequest={composerAttachmentRequest}
               focusRequest={focusRequest}
               scopeKey={composerScopeKey}
               draftKey={`${conversationScopeKey(workspace.activeScope)}:${workspace.activeSessionId ?? 'unselected'}`}

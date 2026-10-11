@@ -533,6 +533,9 @@ export function applyLocalPiProjectorEvent(
         shouldRefreshSnapshot: true,
         revision,
       }
+    case 'pipilot_browser_request':
+      // Main answers these; they never reach a transcript.
+      return state
     default:
       return assertNever(event)
   }

@@ -39,6 +39,7 @@ import { RuntimeExtensionUiBridge } from './runtime-extension-ui-bridge'
 import { RuntimeDelivery } from './runtime-delivery'
 import { createRuntimeNativeMcpExtensions } from './runtime-native-mcp'
 import { PIPILOT_CONVERSATION_TASK_EXTENSION } from './runtime-conversation-task'
+import { PIPILOT_BROWSER_TOOLS_EXTENSION, registerBrowserToolEmitter } from './runtime-browser-tools'
 import { appendImportedConversationHistory, importedConversationState } from './runtime-conversation-import'
 import { removeFailedConversationImport } from '../conversations/failed-conversation-import'
 import { hostProjectTrusted } from '../project-trust/project-trust-resolution'
@@ -236,6 +237,7 @@ export class RuntimeManager {
       extensionFactories: [
         ...createRuntimeNativeMcpExtensions(this.agentDir),
         PIPILOT_CONVERSATION_TASK_EXTENSION,
+        PIPILOT_BROWSER_TOOLS_EXTENSION,
         ...(resourceLoaderOptions?.extensionFactories ?? []),
         PIPILOT_RUNTIME_MESSAGE_SANITIZER_EXTENSION,
       ],
@@ -685,7 +687,8 @@ export class RuntimeManager {
     // Abort must be able to preempt an accepted prompt or a tool/extension that
     // never returns. Keeping it behind operationTail makes the only recovery
     // command wait on the operation it is supposed to cancel.
-    const operation = command.type === 'abort' || command.type === 'get_delivery_state'
+    // A browser tool answer resolves a tool call that runs inside queued work.
+    const operation = command.type === 'abort' || command.type === 'get_delivery_state' || command.type === 'browser_tool_response'
       ? execute()
       : this.enqueue(entry, execute)
     return withTimeout(
@@ -1019,9 +1022,11 @@ export class RuntimeManager {
 
   private bindSessionEvents(runtimeId: string, entry: RuntimeEntry): void {
     entry.unsubscribeSession?.()
+    // Browser tool calls of this session ask Main through this Runtime's events.
+    const releaseBrowserTools = registerBrowserToolEmitter(entry.runtime.session.sessionId, (event) => this.emitRuntimeEvent(runtimeId, entry, event))
     entry.liveMessage = createRuntimeLiveMessageState()
     entry.streamingHistory = null
-    entry.unsubscribeSession = entry.runtime.session.subscribe(
+    const unsubscribe = entry.runtime.session.subscribe(
       (event: AgentSessionEvent) => {
         try {
           entry.delivery.observe(event)
@@ -1040,6 +1045,7 @@ export class RuntimeManager {
         }
       },
     )
+    entry.unsubscribeSession = () => { unsubscribe(); releaseBrowserTools() }
   }
 
   private emitRuntimeEvent(

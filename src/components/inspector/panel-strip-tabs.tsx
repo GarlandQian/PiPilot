@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { TbFileSearch, TbFolder, TbGitBranch, TbGitCompare, TbMessages, TbPlayerPlay, TbRobot, TbTerminal, TbTerminal2 } from 'react-icons/tb'
+import { TbFileSearch, TbFolder, TbGitBranch, TbWorld, TbGitCompare, TbMessages, TbPlayerPlay, TbRobot, TbTerminal, TbTerminal2 } from 'react-icons/tb'
 import { useT } from '@/i18n'
 import { APP_SHORTCUTS } from '@/lib/app-shortcuts'
 import { formatShortcut } from '@/lib/keyboard-shortcuts'
@@ -12,7 +12,7 @@ function baseName(path: string) {
 }
 
 /** The strip's labels and icons, and what "+" (and an empty dock) can open. */
-export function usePanelStrip({ state, projectAvailable, onOpenReview, onOpenFiles, onSearchFiles, onOpenTerminal, onOpenTree, terminalSlot }: {
+export function usePanelStrip({ state, projectAvailable, onOpenReview, onOpenFiles, onSearchFiles, onOpenTerminal, onOpenTree, onOpenBrowser, terminalSlot }: {
   state: PanelTabsState
   projectAvailable: boolean
   /** Where the terminal draws one tab per session. */
@@ -23,6 +23,8 @@ export function usePanelStrip({ state, projectAvailable, onOpenReview, onOpenFil
   onOpenTerminal(): void
   /** The conversation's branches; absent without an open conversation. */
   onOpenTree?(): void
+  /** The project's built-in browser. */
+  onOpenBrowser?(): void
 }) {
   const t = useT()
   const describe = React.useCallback((tab: PanelTab, duplicateNames: ReadonlySet<string>): PanelStripTab => {
@@ -42,6 +44,7 @@ export function usePanelStrip({ state, projectAvailable, onOpenReview, onOpenFil
       command: [t('inspector.tab.command'), <TbTerminal key="icon" />],
       action: [t('projectActions.output'), <TbPlayerPlay key="icon" />],
       tree: [t('branches.tab'), <TbGitBranch key="icon" />],
+      browser: [t('browser.tab'), <TbWorld key="icon" />],
     } as const
     const [label, icon] = labels[tab.kind]
     return { id: tab.id, label, icon, ...(tab.kind === 'terminal' && terminalSlot ? { slot: terminalSlot } : {}) }
@@ -60,8 +63,9 @@ export function usePanelStrip({ state, projectAvailable, onOpenReview, onOpenFil
       { id: 'search', label: t('panel.tab.searchFiles'), icon: <TbFileSearch aria-hidden />, shortcut: formatShortcut(APP_SHORTCUTS.searchFiles), onSelect: onSearchFiles },
     ] : []),
     { id: 'terminal', label: t('inspector.tab.terminal'), icon: <TbTerminal2 aria-hidden />, shortcut: formatShortcut(APP_SHORTCUTS.toggleTerminal), onSelect: onOpenTerminal },
+    ...(onOpenBrowser ? [{ id: 'browser', label: t('browser.tab'), icon: <TbWorld aria-hidden />, onSelect: onOpenBrowser }] : []),
     ...(onOpenTree ? [{ id: 'tree', label: t('branches.tab'), icon: <TbGitBranch aria-hidden />, onSelect: onOpenTree }] : []),
-  ], [onOpenFiles, onOpenReview, onOpenTerminal, onOpenTree, onSearchFiles, projectAvailable, t])
+  ], [onOpenBrowser, onOpenFiles, onOpenReview, onOpenTerminal, onOpenTree, onSearchFiles, projectAvailable, t])
 
   return { tabs, newTabItems }
 }

@@ -165,6 +165,13 @@ export interface ComposerTextInsertionRequest {
   sequence: number
 }
 
+/** Images another surface adds to the draft (a browser annotation's screenshot). */
+export interface ComposerAttachmentInsertionRequest {
+  files: readonly File[]
+  scopeKey: string
+  sequence: number
+}
+
 export interface ComposerProps {
   connected: boolean
   /** False while navigation has not yet bound input to a definite conversation. */
@@ -183,6 +190,7 @@ export interface ComposerProps {
   draftReplacement?: { revision: number; text: string } | null
   mentionInsertionRequest?: ComposerMentionInsertionRequest | null
   textInsertionRequest?: ComposerTextInsertionRequest | null
+  attachmentInsertionRequest?: ComposerAttachmentInsertionRequest | null
   focusRequest?: ComposerFocusRequest | null
   scopeKey: string
   /** Stable conversation identity, independent of a restarted Runtime. */
@@ -581,6 +589,7 @@ function SessionComposer({
   draftReplacement,
   mentionInsertionRequest,
   textInsertionRequest,
+  attachmentInsertionRequest,
   focusRequest,
   scopeKey,
   draftKey,
@@ -1255,6 +1264,14 @@ function SessionComposer({
     drafts.updateAttachments(draftKey, updated)
     setAttachments(updated)
   }, [draftKey, drafts, supportsImages, t])
+  const consumedAttachmentSequence = React.useRef(0)
+  React.useEffect(() => {
+    const request = attachmentInsertionRequest
+    if (!request || request.sequence <= consumedAttachmentSequence.current) return
+    consumedAttachmentSequence.current = request.sequence
+    if (request.scopeKey !== scopeKey || !draftEditable) return
+    addFiles(request.files)
+  }, [addFiles, attachmentInsertionRequest, draftEditable, scopeKey])
 
   const removeAttachment = React.useCallback((id: string) => {
     if (drafts.isLocked()) return

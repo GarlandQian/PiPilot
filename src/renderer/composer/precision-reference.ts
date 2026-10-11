@@ -6,7 +6,8 @@ export const MAX_REVIEW_COMMENT = 4_000
 export interface PrecisionReference {
   id: string
   ownerKey: string
-  kind: 'message' | 'file' | 'command' | 'diff'
+  /** `browser`: an annotation of the project browser's page (sourceId is its address). */
+  kind: 'message' | 'file' | 'command' | 'diff' | 'browser'
   sourceId: string
   label: string
   text: string
@@ -28,7 +29,7 @@ export function isPrecisionReference(value: unknown): value is PrecisionReferenc
   for (const key of ['id', 'ownerKey', 'sourceId', 'label']) {
     if (typeof item[key] !== 'string' || !item[key] || (item[key] as string).length > 2_048) return false
   }
-  if (!['message', 'file', 'command', 'diff'].includes(String(item.kind)) ||
+  if (!['message', 'file', 'command', 'diff', 'browser'].includes(String(item.kind)) ||
     typeof item.text !== 'string' || !item.text.trim() || item.text.length > MAX_REFERENCE_TEXT) return false
   if (item.path !== undefined && (typeof item.path !== 'string' || item.path.length > 2_048)) return false
   if (item.revision !== undefined && (typeof item.revision !== 'string' || item.revision.length > 256)) return false
@@ -56,7 +57,7 @@ export function serializePrecisionReference(reference: PrecisionReference) {
     reference.side === 'deletions' ? 'old side' : reference.side === 'additions' ? 'new side' : '',
     reference.stage ?? '', reference.revision ? `snapshot ${reference.revision}` : ''].filter(Boolean).join(' · ')
   const fence = '`'.repeat(Math.max(3, ...[...reference.text.matchAll(/`+/gu)].map((match) => match[0].length + 1)))
-  return `\n\n${reference.kind === 'diff' ? 'Review of project changes' : 'Quoted reference'}: ${clean(reference.label)}\nSource: ${clean(location)}\n${reference.stale ? 'Warning: this snapshot is outdated; re-check the current file before applying the comment.\n' : ''}${fence}text\n${reference.text}\n${fence}${reference.comment ? `\nComment: ${reference.comment}` : ''}\n\n`
+  return `\n\n${reference.kind === 'diff' ? 'Review of project changes' : reference.kind === 'browser' ? 'Annotation of a page in the project browser' : 'Quoted reference'}: ${clean(reference.label)}\nSource: ${clean(location)}\n${reference.stale ? 'Warning: this snapshot is outdated; re-check the current file before applying the comment.\n' : ''}${fence}text\n${reference.text}\n${fence}${reference.comment ? `\nComment: ${reference.comment}` : ''}\n\n`
 }
 
 /** Exact source offsets, only for a literal source view. Rendered Markdown has no line claim. */

@@ -25,6 +25,14 @@
   general conversation. Current PiPilot exports and Pi sessions restore user/assistant history;
   ordinary or unrecognized Markdown becomes background content. Importing never submits a prompt or
   replays old tools or plan approvals.
+- **Browser** — **+ › Browser** opens a browser tab in the side panel. A project's conversations share its
+  browser tabs. Pages run in a session isolated from PiPilot (no app cookies, permissions, downloads, or
+  pop-up windows; pop-ups open as tabs), and only http and https addresses load. With a project action
+  running, the empty tab offers the local address it printed (its dev server). **Annotate an element**
+  or **an area** to add a reference with the screenshot, selector, HTML, key styles, your note, and
+  optionally the page's console errors to the message. Pi can call read-only `browser_screenshot` (address,
+  title, screenshot) and `browser_logs` (console errors and failed requests) on the project's active tab.
+  Menus and dialogs hide the page while they are open.
 - **Conversation windows** — **… › Open in New Window** (in the conversation header or a sidebar row)
   shows that conversation in a small window that can stay on top. It sends (queued while Pi is
   replying), stops, and follows the reply live; it shares the running conversation with the main

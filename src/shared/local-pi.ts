@@ -606,6 +606,13 @@ export const localPiRpcCommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('abort_bash') }).strict(),
   z.object({ type: z.literal('get_session_stats') }).strict(),
   z.object({ type: z.literal('get_mcp_status') }).strict(),
+  /** Main → Host: the answer to a pipilot_browser_request. */
+  z.object({
+    type: z.literal('browser_tool_response'), requestId: z.uuid(),
+    text: z.string().max(64_000),
+    image: z.object({ data: z.string().max(12 * 1024 * 1024), mimeType: z.literal('image/png') }).strict().optional(),
+    isError: z.boolean().optional(),
+  }).strict(),
   z.object({ type: z.literal('export_html'), outputPath: z.string().optional() }).strict(),
   z.object({ type: z.literal('switch_session'), sessionPath: z.string() }).strict(),
   z.object({ type: z.literal('fork'), entryId: z.string() }).strict(),
@@ -939,6 +946,7 @@ export const localPiRpcSuccessResponseSchema = z.discriminatedUnion('command', [
   z.object({ ...localPiSuccessResponseBase, command: z.literal('get_tree'), data: z.object({ tree: localPiSessionTreeSchema, leafId: z.string().nullable() }).strict() }).strict(),
   z.object({ ...localPiSuccessResponseBase, command: z.literal('navigate_tree'), data: z.object({ cancelled: z.boolean(), editorText: z.string().optional(), summarized: z.boolean() }).strict() }).strict(),
   localPiNoDataSuccessSchema('set_label'),
+  localPiNoDataSuccessSchema('browser_tool_response'),
   z.object({ ...localPiSuccessResponseBase, command: z.literal('get_last_assistant_text'), data: z.object({ text: z.string().nullable() }).strict() }).strict(),
   localPiNoDataSuccessSchema('set_session_name'),
   z.object({ ...localPiSuccessResponseBase, command: z.literal('get_messages'), data: localPiMessagesResponseDataSchema }).strict(),
@@ -1117,6 +1125,8 @@ export const localPiRpcEventSchema = z.union([
     type: z.literal('runtime_diagnostic'),
     code: z.literal(LOCAL_PI_RUNTIME_EVENT_PROJECTION_FAILED_CODE),
   }).strict(),
+  /** Host → Main only: one of Pi's browser tools asks about the project's open browser tab. */
+  z.object({ type: z.literal('pipilot_browser_request'), requestId: z.uuid(), op: z.enum(['view', 'logs']) }).strict(),
 ])
 
 export type LocalPiRpcEvent = z.infer<typeof localPiRpcEventSchema>

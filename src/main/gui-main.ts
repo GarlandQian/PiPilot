@@ -44,6 +44,8 @@ import { registerProviderLoginIpc } from './ipc/register-provider-login-ipc'
 import { PopoutConversationService } from './conversations/popout-conversation-service'
 import { PopoutWindows } from './windows/popout-windows'
 import { registerPopoutIpc } from './ipc/register-popout-ipc'
+import { BrowserPaneService } from './browser/browser-pane-service'
+import { registerBrowserPaneIpc } from './ipc/register-browser-pane-ipc'
 import { registerSideConversationsIpc } from './ipc/register-side-conversations-ipc'
 import { SideConversationService } from './conversations/side-conversation-service'
 import { registerLocalPiIpc } from './ipc/register-local-pi-ipc'
@@ -348,6 +350,9 @@ let providerLoginIpc: ReturnType<typeof registerProviderLoginIpc> | null = null
 let popoutService: PopoutConversationService | null = null
 let popoutWindows: PopoutWindows | null = null
 let popoutIpc: ReturnType<typeof registerPopoutIpc> | null = null
+let browserPaneService: BrowserPaneService | null = null
+let browserPaneIpc: ReturnType<typeof registerBrowserPaneIpc> | null = null
+let browserToolsSubscription: (() => unknown) | null = null
 
 function activeApplicationWork() {
   const primaryPi = Boolean(
@@ -430,6 +435,12 @@ async function disposeApplicationResources() {
   popoutWindows = null
   popoutService?.dispose()
   popoutService = null
+  browserPaneIpc?.dispose()
+  browserPaneIpc = null
+  browserToolsSubscription?.()
+  browserToolsSubscription = null
+  browserPaneService?.dispose()
+  browserPaneService = null
   providerLoginService?.dispose()
   providerLoginService = null
   await scheduledTaskFeature?.dispose()
@@ -959,6 +970,48 @@ if (!hasSingleInstanceLock) {
           return (locale === 'system' ? app.getLocale() : locale).startsWith('zh') ? '未命名对话' : 'Untitled conversation'
         },
       })
+      const workflowsForBrowser = projectWorkflowsService
+      browserPaneService = new BrowserPaneService({
+        getMainWindow: () => mainWindow,
+        // The dev server a running project action announced (Vite, Next, …).
+        suggestedUrl: async (scopeKey) => {
+          if (!scopeKey.startsWith('project:') || !workflowsForBrowser) return undefined
+          const snapshot = await workflowsForBrowser.api.get(scopeKey.slice('project:'.length))
+          for (const run of snapshot.runs.filter((candidate) => candidate.status === 'running').reverse()) {
+            // eslint-disable-next-line no-control-regex
+            const output = run.output.replace(/\u001b\[[0-9;]*m/gu, '')
+            const match = /https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]):\d{2,5}[^\s'"<>)]*/u.exec(output)
+            if (match) return match[0].replace('0.0.0.0', 'localhost')
+          }
+          return undefined
+        },
+      })
+      browserPaneIpc = registerBrowserPaneIpc({ getMainWindow: () => mainWindow, policy, service: browserPaneService })
+      // Pi's read-only browser tools see the active tab of their own project.
+      const browserForTools = browserPaneService
+      const stopBrowserTools = runtimeHost.subscribeAllEvents((event, handle) => {
+        if (event.type !== 'pipilot_browser_request') return
+        // Answered on its own time: the Host's event stream does not wait for a screenshot.
+        void (async () => {
+        const scopeKey = handle.scope.kind === 'project' ? `project:${handle.scope.workspaceId}` : 'projectless'
+        const tab = browserForTools.activeTab(scopeKey)
+        let answer: { text: string; image?: { data: string; mimeType: 'image/png' }; isError?: boolean }
+        if (!tab) {
+          answer = { text: "No page is open in PiPilot's browser for this project. Ask the user to open it from the Browser tab (+ › Browser).", isError: true }
+        } else if (event.op === 'view') {
+          const lines = [`URL: ${tab.url}`, `Title: ${tab.title || '(none)'}`]
+          if (tab.failure) lines.push(`The last load failed: ${tab.failure.description} (${tab.failure.code})`)
+          if (tab.console.length || tab.network.length) lines.push(`${tab.console.length} console errors and ${tab.network.length} failed requests; use browser_logs to read them.`)
+          const image = await tab.screenshot().catch(() => null)
+          answer = { text: lines.join('\n'), ...(image ? { image: { data: image, mimeType: 'image/png' as const } } : {}) }
+        } else {
+          const section = (title: string, items: readonly string[]) => items.length ? `${title}:\n${items.slice(-30).map((item) => `- ${item}`).join('\n')}` : `${title}: none`
+          answer = { text: [`URL: ${tab.url}`, section('Console errors', tab.console), section('Failed network requests', tab.network)].join('\n\n').slice(0, 60_000) }
+        }
+        await runtimeHost.answerBrowserTool(handle, { type: 'browser_tool_response', requestId: event.requestId, ...answer }).catch(() => undefined)
+        })()
+      })
+      browserToolsSubscription = stopBrowserTools
       popoutIpc = registerPopoutIpc({ getMainWindow: () => mainWindow, policy, service: popoutService, windows: conversationWindows, showMainWindow: revealMainWindow })
       registerAppIpc({ getMainWindow: () => mainWindow, policy, settingsRepository, shutdownGuard, piDirectoryPreference, getAuxiliaryWindows: () => conversationWindows.all() })
       externalControlIpcController = registerExternalControlIpc({

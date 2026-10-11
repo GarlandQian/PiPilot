@@ -6,6 +6,7 @@ import { createProjectWorkflowsApi } from './project-workflows'
 import { createProjectTrustApi } from './project-trust'
 import { createProviderLoginApi } from './provider-login'
 import { createPopoutApi } from './popout'
+import { createBrowserPaneApi } from './browser-pane'
 import { createSideConversationsApi } from './side-conversations'
 import { createScheduledTasksApi } from './scheduled-tasks-api'
 import type { AppError, IpcContract, RequestContext, SettingsSnapshot } from '../shared/ipc/contracts'
@@ -287,6 +288,7 @@ const api: PiPilotApi = {
   projectTrust: createProjectTrustApi(invoke, createContext),
   providerLogin: createProviderLoginApi(invoke, createContext),
   popout: createPopoutApi(invoke, createContext),
+  browserPane: createBrowserPaneApi(invoke, createContext),
   sideConversations: createSideConversationsApi(invoke, createContext),
   scheduledTasks: createScheduledTasksApi(invoke, createContext),
   notifications: {

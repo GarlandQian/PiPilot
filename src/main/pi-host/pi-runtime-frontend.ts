@@ -14,6 +14,7 @@ import {
   type LocalPiDeliverySnapshot,
   type LocalPiExtensionUiResponse,
   type LocalPiRendererRpcCommand,
+  type LocalPiRpcCommand,
   type LocalPiRpcEvent,
   type LocalPiRpcResponse,
   type LocalPiRuntimeSnapshot,
@@ -884,6 +885,13 @@ export class PiRuntimeFrontend {
     } finally {
       this.markCommandEnd(runtime, token)
     }
+  }
+
+  /** Answer a Host-side browser tool request of this exact Runtime. */
+  async answerBrowserTool(handle: PiRuntimeControlHandle, command: Extract<LocalPiRpcCommand, { type: 'browser_tool_response' }>) {
+    this.assertNotDisposed()
+    const runtime = this.requireControlRuntime(handle)
+    await this.pool.command(runtime.runtimeId, command, handle.generation)
   }
 
   /** Read the exact background Session; never consult the selected Renderer transcript. */
@@ -1918,7 +1926,8 @@ export class PiRuntimeFrontend {
           }
         }
       }
-      if (activeAccepted && trackedHandle) {
+      // Browser tool requests are Main's to answer, never the transcript's.
+      if (activeAccepted && trackedHandle && event.type !== 'pipilot_browser_request') {
         for (const listener of this.eventListeners) {
           try {
             pending.push(Promise.resolve(listener(

@@ -2,6 +2,7 @@ import { mkdir } from 'node:fs/promises'
 import type { AgentSessionRuntime } from '@earendil-works/pi-coding-agent'
 import type { RuntimeDelivery } from './runtime-delivery'
 import { runtimeMcpStatus } from './runtime-native-mcp'
+import { answerBrowserTool } from './runtime-browser-tools'
 import type {
   ExternalControlAcceptedMode,
   ExternalControlRequestedMode,
@@ -575,6 +576,13 @@ export async function dispatchRuntimeCommand(
       case 'set_label':
         session.sessionManager.appendLabelChange(command.entryId, command.label ?? undefined)
         return { replaced: false, response: noDataSuccess('set_label') }
+      case 'browser_tool_response':
+        answerBrowserTool(command.requestId, {
+          text: command.text,
+          ...(command.image ? { image: command.image } : {}),
+          ...(command.isError ? { isError: true } : {}),
+        })
+        return { replaced: false, response: noDataSuccess('browser_tool_response') }
       case 'get_mcp_status':
         return {
           replaced: false,
