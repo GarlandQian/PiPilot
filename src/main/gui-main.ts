@@ -1,5 +1,5 @@
 import { mkdirSync } from 'node:fs'
-import { unlink } from 'node:fs/promises'
+import { realpath, unlink } from 'node:fs/promises'
 import {
   basename,
   dirname,
@@ -980,7 +980,14 @@ if (!hasSingleInstanceLock) {
       })
       registerConversationSearchIpc({ catalog: officialPiSessionCatalog, getMainWindow: () => mainWindow, policy })
       registerConversationExportIpc({ runtimeHost, sessionCatalog: officialPiSessionCatalog, getMainWindow: () => mainWindow, policy })
-      registerConversationImportIpc({ contextService: conversationContextService, getMainWindow: () => mainWindow, policy })
+      registerConversationImportIpc({
+        contextService: conversationContextService, getMainWindow: () => mainWindow, policy,
+        matchScope: async (cwd) => {
+          const target = await realpath(cwd).catch(() => null)
+          const match = target ? workspaceRepository.get().recent.find(({ id }) => workspaceRepository.getLocation(id)?.path === target) : undefined
+          return match ? { kind: 'project', workspaceId: match.id } : undefined
+        },
+      })
       registerTerminalIpc({
         getMainWindow: () => mainWindow,
         policy,

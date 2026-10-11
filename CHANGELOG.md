@@ -8,10 +8,14 @@ Each version section supplies the highlights for its GitHub Release. Download li
 
 ### 中文
 
+- **压缩与会话明细**：“压缩对话…”可填写需要保留的内容（等同 `/compact <说明>`），Pi 正在回复时会先提示将中断；对话菜单显示输入、输出、缓存 token 以及消息和工具调用数。
+- **更多导出和导入格式**：整段对话可导出为 Pi 渲染的 HTML 或 Pi 会话文件（.jsonl）；可导入 Pi 会话文件，只恢复当前分支的消息，并自动选中其记录目录对应的项目。
 - **项目信任**：接入 Pi 的项目信任机制。添加带有 `.pi` 扩展、MCP、技能等资源的项目时会询问一次，可信任此文件夹、上级文件夹或仅本次运行；未决定前对话照常可用但不加载这些资源。决定保存在 Pi 的 `trust.json`，与命令行共用；可在“本地环境”修改单个项目，在“常规”设置新项目的默认方式。已添加的项目视为已信任，新工作副本沿用来源项目的决定。
 
 ### English
 
+- **Compaction and session details:** Compact conversation… accepts instructions for what the summary keeps (like `/compact <instructions>`) and warns first when it would stop a reply. The conversation menu lists input, output, and cache tokens, messages, and tool calls.
+- **More export and import formats:** Export a whole conversation as Pi's HTML page or as its Pi session file (.jsonl). Import a Pi session file to restore the messages on its current branch, with the project it was recorded in preselected.
 - **Project trust:** Follow Pi's project trust. Adding a project with `.pi` extensions, MCP servers, skills, or other resources asks once: trust the folder, its parent, or this run only. Until you decide, conversations work without those resources. Decisions are saved in Pi's `trust.json` and shared with the CLI; change a project in Local environment and the default for new projects in General. Existing projects stay trusted, and new working copies inherit their source project's decision.
 
 ## 0.8.0

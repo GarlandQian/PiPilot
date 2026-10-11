@@ -13,13 +13,15 @@ export function registerConversationExportIpc({ runtimeHost, sessionCatalog, get
   const service = new ConversationExportService({
     runtime: runtimeHost,
     catalog: sessionCatalog,
-    chooseDestination: async (defaultName, locale) => {
+    chooseDestination: async (defaultName, locale, format = 'markdown') => {
       const window = getMainWindow()
       if (!window || window.isDestroyed()) throw new ConversationExportError('EXPORT_WINDOW_UNAVAILABLE', 'The application window is unavailable.')
       const selection = await dialog.showSaveDialog(window, {
-        title: locale === 'zh-CN' ? '导出 Markdown' : 'Export Markdown',
+        title: locale === 'zh-CN' ? '导出对话' : 'Export conversation',
         defaultPath: defaultName,
-        filters: [{ name: 'Markdown', extensions: ['md'] }],
+        filters: [format === 'html' ? { name: 'HTML', extensions: ['html'] }
+          : format === 'jsonl' ? { name: locale === 'zh-CN' ? 'Pi 会话' : 'Pi session', extensions: ['jsonl'] }
+            : { name: 'Markdown', extensions: ['md'] }],
         properties: ['createDirectory', 'showOverwriteConfirmation'],
       })
       return selection.canceled ? null : selection.filePath ?? null

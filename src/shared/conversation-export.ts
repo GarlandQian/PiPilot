@@ -23,9 +23,13 @@ export const conversationExportTargetSchema = z.union([
 ])
 
 /** No renderer-supplied paths, transcript bodies, image bytes, or file contents. */
+export const conversationExportFormatSchema = z.enum(['markdown', 'html', 'jsonl'])
+export type ConversationExportFormat = z.infer<typeof conversationExportFormatSchema>
 const exportOptions = {
   includeTools: z.boolean(),
   locale: z.enum(['en-US', 'zh-CN']),
+  /** HTML (Pi's own renderer) and JSONL (the Pi session file) cover a whole conversation only. */
+  format: conversationExportFormatSchema.optional(),
 }
 export const conversationExportRequestSchema = z.union([
   activeConversationExportTargetSchema.extend(exportOptions).strict(),

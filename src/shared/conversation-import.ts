@@ -8,15 +8,17 @@ export const CONVERSATION_IMPORT_MAX_MESSAGES = 10_000
 export const CONVERSATION_IMPORT_MAX_PREVIEW_CHARACTERS = 24_000
 
 export const conversationImportTokenSchema = z.string().regex(/^imp_[A-Za-z0-9_-]{32}$/u)
-export const conversationImportWarningSchema = z.enum(['unrecognizedFormat', 'missingImages', 'unsupportedImages', 'previewTruncated'])
+export const conversationImportWarningSchema = z.enum(['unrecognizedFormat', 'missingImages', 'unsupportedImages', 'previewTruncated', 'toolsOmitted'])
 export const conversationImportPreviewRequestSchema = z.object({ locale: z.enum(['en-US', 'zh-CN']) }).strict()
 export const conversationImportPreviewResultSchema = z.discriminatedUnion('status', [
   z.object({ status: z.literal('cancelled') }).strict(),
   z.object({
     status: z.literal('ready'), token: conversationImportTokenSchema,
     title: z.string().min(1).max(256), fileName: z.string().min(1).max(512),
-    format: z.enum(['pipilot', 'document']), messageCount: z.number().int().min(1).max(CONVERSATION_IMPORT_MAX_MESSAGES),
-    imageCount: z.number().int().min(0).max(100), warnings: z.array(conversationImportWarningSchema).max(4),
+    format: z.enum(['pipilot', 'document', 'pi-session']), messageCount: z.number().int().min(1).max(CONVERSATION_IMPORT_MAX_MESSAGES),
+    imageCount: z.number().int().min(0).max(100), warnings: z.array(conversationImportWarningSchema).max(5),
+    /** A Pi session recorded in an added project's folder goes there by default. */
+    suggestedScope: conversationScopeSchema.optional(),
     previewMarkdown: z.string().max(CONVERSATION_IMPORT_MAX_PREVIEW_CHARACTERS),
   }).strict(),
 ])

@@ -1,4 +1,4 @@
-import type * as React from 'react'
+import * as React from 'react'
 import {
   TbArrowsMinimize,
   TbDots,
@@ -169,6 +169,22 @@ export function ChatHeader({
                       </div>
                     ) : null}
                   </div>
+                  {/* Pi's /session: where the tokens went, cache included. */}
+                  {stats && stats.tokens.total > 0 ? <dl data-session-tokens className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-1 border-t border-border/60 px-2 pt-1.5 pb-1.5 text-caption">
+                    {([
+                      ['header.tokens.input', stats.tokens.input],
+                      ['header.tokens.output', stats.tokens.output],
+                      ['header.tokens.cacheRead', stats.tokens.cacheRead],
+                      ['header.tokens.cacheWrite', stats.tokens.cacheWrite],
+                    ] as const).filter(([, value], index) => index < 2 || value > 0).map(([label, value]) => <React.Fragment key={label}>
+                      <dt className="text-muted-foreground">{t(label)}</dt>
+                      <dd className="font-mono tabular-nums">{formatTokenKilounits(value, locale)}</dd>
+                    </React.Fragment>)}
+                    <dt className="text-muted-foreground">{t('header.messages')}</dt>
+                    <dd className="font-mono tabular-nums">{(stats.userMessages + stats.assistantMessages).toLocaleString(locale)}</dd>
+                    {stats.toolCalls > 0 ? <><dt className="text-muted-foreground">{t('header.toolCalls')}</dt>
+                      <dd className="font-mono tabular-nums">{stats.toolCalls.toLocaleString(locale)}</dd></> : null}
+                  </dl> : null}
                   <DropdownMenuSeparator />
                 </>
               ) : null}

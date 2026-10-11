@@ -29,6 +29,7 @@ import { useStartWriting } from '@/components/frame/useStartWriting'
 import { useTaskNotificationNavigation } from '@/components/frame/useTaskNotificationNavigation'
 import { ConversationNotices } from '@/components/chat/ConversationNotices'
 import { ProjectTrustNotice, ProjectTrustPrompt } from '@/components/projects/ProjectTrust'
+import { CompactConversationSheet } from '@/components/chat/CompactConversationSheet'
 import { ConversationSearchDialog } from '@/components/chat/ConversationSearchDialog'
 import { ConversationExportDialog } from '@/components/chat/ConversationExportDialog'
 import { ConversationImportDialog } from '@/components/chat/ConversationImportDialog'
@@ -333,6 +334,7 @@ export default function App() {
     conversationReady,
   ])
   const compactFeedback = useConversationOperationFeedback(operationOwnerKey)
+  const [compactSheetOpen, setCompactSheetOpen] = React.useState(false)
   const paletteStopFeedback = useConversationOperationFeedback(operationOwnerKey)
   React.useEffect(() => { setExportTarget((current) => current && 'selectionToken' in current ? current : null) }, [operationOwnerKey])
 
@@ -342,9 +344,14 @@ export default function App() {
     setExportTarget({ scope: workspace.activeScope, generation: pi.runtime.generation, sessionId: conversation.sessionId, selection })
   }, [conversationReady, conversation, pi.runtime, pi.session?.sessionName, workspace.activeScope])
   const exportCatalogConversation = React.useCallback((item: SidebarConversationItem) => {
+    // The open conversation exports from its runtime, so Pi can also render it as HTML.
+    if (item.selected && conversationReady && pi.runtime && 'sessionId' in conversation && conversation.sessionId === item.summary.sessionId) {
+      exportConversation()
+      return
+    }
     setExportName(sidebarConversationTitle(item.summary, t('sidebar.session.untitled')))
     setExportTarget({ scope: item.summary.scope, selectionToken: item.summary.selectionToken, selection: { kind: 'conversation' } })
-  }, [t])
+  }, [conversation, conversationReady, exportConversation, pi.runtime, t])
   const commitImportedConversation = React.useCallback((input: ConversationImportCommitRequest) => new Promise<void>((resolve, reject) => {
     setRail('sessions')
     requestSwitch(async () => {
@@ -1104,10 +1111,7 @@ export default function App() {
               stats={conversationReady ? pi.stats : null}
               onToggleInspector={panel.toggleTabs}
               compacting={Boolean(compactFeedback.pending)}
-              onCompact={() => {
-                if (!conversationReady) return
-                void compactFeedback.run('compact', () => actions.compact(), t('chat.compactionFailed'))
-              }}
+              onCompact={() => { if (conversationReady) setCompactSheetOpen(true) }}
             />
             {compactFeedback.error ? (
               <div role="alert" data-conversation-action-error="compact" className="toolbar-material shrink-0 break-words px-5 py-2 text-caption text-destructive [&_.md-body]:text-caption [&_.md-body]:text-destructive">
@@ -1317,6 +1321,9 @@ export default function App() {
       />
 
       <ProjectTrustPrompt />
+      <CompactConversationSheet open={compactSheetOpen && conversationReady} streaming={pi.session?.isStreaming ?? false}
+        onOpenChange={setCompactSheetOpen}
+        onCompact={(instructions) => { void compactFeedback.run('compact', () => actions.compact(instructions), t('chat.compactionFailed')) }} />
       <CommandPalette
         open={frameNav.paletteOpen}
         onOpenChange={setPaletteOpen}

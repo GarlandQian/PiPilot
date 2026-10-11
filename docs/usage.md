@@ -17,12 +17,18 @@
 - **Conversation overview** — the inspector's Overview tab keeps a short summary, status, and
   up to three next-step drafts. Plan and Goal each get one status row; Plan links to its card in
   the conversation. Only relevant outputs, sources, used Skills/MCP, and web links appear.
-- **Markdown export** — export the current conversation branch, a response round, or a single
-  message. Tool logs are optional; images are saved beside the Markdown file. System messages
-  and hidden thinking are excluded.
-- **Markdown import** — preview a document and create a separate project or general conversation.
-  Current PiPilot exports restore user/assistant history; ordinary or unrecognized Markdown becomes
-  background content. Importing never submits a prompt or replays old tools or plan approvals.
+- **Export** — export the current conversation branch, a response round, or a single message as
+  Markdown. Tool logs are optional; images are saved beside the Markdown file. System messages
+  and hidden thinking are excluded. A whole conversation can also be saved as Pi's own HTML page
+  (open conversations) or as a copy of its Pi session file (`.jsonl`, every branch included).
+- **Import** — preview a Markdown document or a Pi session file and create a separate project or
+  general conversation. Current PiPilot exports and Pi sessions restore user/assistant history;
+  ordinary or unrecognized Markdown becomes background content. Importing never submits a prompt or
+  replays old tools or plan approvals.
+- **Compaction** — **… > Compact conversation…** summarizes earlier messages to free context; optional
+  instructions say what the summary must keep, like Pi's `/compact <instructions>`. Compacting stops a
+  reply in progress, and the sheet says so first. The same menu lists the conversation's tokens
+  (input, output, cache reads and writes), messages, and tool calls.
 - **Project tools** — inspect files and diffs, search command output, review subagent activity, and
   use per-project terminal tabs. The **+** button opens the global default shell immediately;
   its dropdown opens another detected or custom shell once without changing that default.
@@ -103,13 +109,17 @@ until the assistant updates it. A suggested next step appends to the existing dr
 references and images; it never sends automatically. File entries link to their conversation
 records, and a mentioned web URL is not a claim that the page was visited.
 
-Use a conversation's sidebar **… > Export Markdown…** menu, beside its pin/archive actions.
+Use a conversation's sidebar **… > Export conversation…** menu, beside its pin/archive actions, and
+choose Markdown, HTML, or Pi session. HTML comes from Pi's renderer and needs the conversation to be
+open; a Pi session export copies the session file as it is.
 Exporting an unopened or background conversation does not switch the current conversation or start
 its agent. Message actions still export individual messages or response rounds. Keep the generated
 image folder beside the Markdown file; workspace output links are retained without copying their files.
 
-To import, use a project's **… > Import conversation from Markdown…**, or the menu beside the sidebar's
+To import, use a project's **… > Import conversation…**, or the menu beside the sidebar's
 new-conversation button. Preview the file, edit its name, choose a project or general chat, then confirm.
+A Pi session file (`.jsonl`) imports the messages on its current branch; tool calls and results stay
+in the original session. If it was recorded in an added project's folder, that project is preselected.
 Current PiPilot exports include versioned role metadata; edited, old, or unrecognized files fall back
 to background documents rather than guessing roles from headings. Missing/unsupported images are
 reported. Only supported images in the adjacent export attachment folder are read, never remote or

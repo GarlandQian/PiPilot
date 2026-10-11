@@ -84,8 +84,8 @@ async function startFixture(testInfo: TestInfo) {
 async function openProjectImport(app: ElectronApplication, page: Page, project: string, filePath: string) {
   await chooseFile(app, filePath)
   await page.getByRole('button', { name: `Project actions for ${basename(project)}`, exact: true }).click()
-  await page.getByRole('menuitem', { name: 'Import conversation from Markdown…', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: 'Import conversation from Markdown', exact: true })
+  await page.getByRole('menuitem', { name: 'Import conversation…', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Import conversation', exact: true })
   await expect(dialog.getByRole('button', { name: 'Create conversation', exact: true })).toBeEnabled()
   return dialog
 }
@@ -112,8 +112,8 @@ test('imports exported history and images into a separate project conversation w
       configurable: true, value: async () => ({ canceled: false, filePath: path }),
     }) }, exportedPath)
     await projectRow(page, originalName).getByRole('button', { name: 'More actions', exact: true }).click()
-    await page.getByRole('menuitem', { name: 'Export Markdown…', exact: true }).click()
-    const exportDialog = page.getByRole('dialog', { name: 'Export Markdown', exact: true })
+    await page.getByRole('menuitem', { name: 'Export conversation…', exact: true }).click()
+    const exportDialog = page.getByRole('dialog', { name: 'Export conversation', exact: true })
     await exportDialog.getByRole('switch', { name: 'Include tool logs', exact: true }).click()
     await exportDialog.getByRole('button', { name: 'Choose save location', exact: true }).click()
     await expect(exportDialog).toContainText('Saved original-report.md')
@@ -184,7 +184,7 @@ test('imports an ordinary Markdown file as inert background through the global m
     await app.evaluate(({ Menu }) => Menu.getApplicationMenu()?.items
       .find((item) => item.label === 'File')?.submenu?.items
       .find((item) => item.label === 'Import Conversation…')?.click())
-    const importDialog = page.getByRole('dialog', { name: 'Import conversation from Markdown', exact: true })
+    const importDialog = page.getByRole('dialog', { name: 'Import conversation', exact: true })
     await expect(importDialog.getByRole('alert')).toContainText('This document exceeds the import limits.')
     await expect(importDialog.getByRole('button', { name: 'Create conversation', exact: true })).toBeDisabled()
     expect(await readdir(sessionDirectory)).toEqual(originalFiles)
@@ -223,5 +223,61 @@ test('imports an ordinary Markdown file as inert background through the global m
     await page.screenshot({ path: testInfo.outputPath('import-document-failure.png') }).catch(() => undefined)
     await testInfo.attach('import-document-diagnostics', { contentType: 'application/json', body: JSON.stringify({ errors, prompts: fixture.prompts, runtime: await page.evaluate(() => window.pipilot!.localPi.runtime.status()).catch(() => null) }) })
     throw error
+  } finally { await closeFixtureApplication(app); await fixture.close() }
+})
+
+test('exports the Pi session file and imports it back into the project it was recorded in', async ({}, testInfo) => {
+  test.setTimeout(95_000)
+  const { app, page, fixture, errors, project, cwd, sessionPath } = await startFixture(testInfo)
+  const transcript = page.getByRole('log', { name: 'Conversation', exact: true })
+  try {
+    const exportedPath = testInfo.outputPath('original-report.jsonl')
+    await app.evaluate(({ dialog }, path) => { Object.defineProperty(dialog, 'showSaveDialog', {
+      configurable: true, value: async () => ({ canceled: false, filePath: path }),
+    }) }, exportedPath)
+    await projectRow(page, originalName).getByRole('button', { name: 'More actions', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Export conversation…', exact: true }).click()
+    const exportDialog = page.getByRole('dialog', { name: 'Export conversation', exact: true })
+    await exportDialog.getByLabel('Format').selectOption('jsonl')
+    await expect(exportDialog.getByRole('switch', { name: 'Include tool logs', exact: true })).toHaveCount(0)
+    await exportDialog.getByRole('button', { name: 'Choose save location', exact: true }).click()
+    await expect(exportDialog).toContainText('Saved original-report.jsonl')
+    await exportDialog.getByRole('button', { name: 'Close', exact: true }).first().click()
+    expect(await readFile(exportedPath, 'utf8')).toBe(await readFile(sessionPath, 'utf8'))
+
+    // The open conversation can also be rendered by Pi as a standalone page.
+    const htmlPath = testInfo.outputPath('original-report.html')
+    await app.evaluate(({ dialog }, path) => { Object.defineProperty(dialog, 'showSaveDialog', {
+      configurable: true, value: async () => ({ canceled: false, filePath: path }),
+    }) }, htmlPath)
+    await projectRow(page, originalName).getByRole('button', { name: 'More actions', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Export conversation…', exact: true }).click()
+    await exportDialog.getByLabel('Format').selectOption('html')
+    await exportDialog.getByRole('button', { name: 'Choose save location', exact: true }).click()
+    await expect(exportDialog).toContainText('Saved original-report.html')
+    await exportDialog.getByRole('button', { name: 'Close', exact: true }).first().click()
+    const html = await readFile(htmlPath, 'utf8')
+    // Pi embeds the transcript as data for its own page script.
+    expect(html).toMatch(/^<!DOCTYPE html>/u)
+    expect(html.length).toBeGreaterThan(10_000)
+
+    // Imported from the global menu, it still lands in the project it was recorded in.
+    await chooseFile(app, exportedPath)
+    await page.getByRole('button', { name: 'New chat', exact: true }).click()
+    await expect(page.locator('[data-model-thinking-trigger]')).toContainText('Fake Chat', { timeout: 20_000 })
+    const importDialog = await openProjectImport(app, page, project, exportedPath)
+    await expect(importDialog).toContainText('Conversation history')
+    await expect(importDialog).toContainText('Tool calls and their results stay in the original session')
+    await expect(importDialog.getByRole('combobox', { name: 'Add to', exact: true })).toContainText('Import project')
+    await importDialog.getByRole('textbox', { name: 'Conversation name', exact: true }).fill('Session copy')
+    await importDialog.getByRole('button', { name: 'Create conversation', exact: true }).click()
+    await expect(importDialog).toHaveCount(0, { timeout: 20_000 })
+    await expect(transcript).toContainText('The review is complete.')
+    const imported = await storedConversation(page)
+    expect(imported.runtime.cwd).toBe(cwd)
+    expect(imported.runtime.sessionState?.sessionName).toBe('Session copy')
+    expect(imported.entries.some((entry) => entry.message?.role === 'toolResult')).toBe(false)
+    expect(fixture.prompts).toHaveLength(0)
+    expect(errors).toEqual([])
   } finally { await closeFixtureApplication(app); await fixture.close() }
 })

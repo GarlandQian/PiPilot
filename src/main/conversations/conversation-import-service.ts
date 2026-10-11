@@ -9,6 +9,7 @@ import {
 import type { ConversationActivationResult, ConversationScope } from '../../shared/conversation-scope'
 import { decodeConversationMarkdown } from './conversation-markdown-format'
 import { inspectPiHostDto } from '../../shared/pi-host-protocol'
+import { parsePiSessionImport, PiSessionImportError } from './pi-session-import'
 
 const PREVIEW_TTL_MS = 15 * 60 * 1000
 const MAX_PREVIEWS = 4
@@ -165,8 +166,26 @@ export async function parseConversationImport(file: string, locale: Conversation
   }
 }
 
+async function parsePiSessionFile(file: string, locale: ConversationImportPreviewRequest['locale']) {
+  let bytes: Buffer
+  try { bytes = await readRegularFile(file, CONVERSATION_IMPORT_MAX_TOTAL_BYTES) } catch (error) {
+    if (error instanceof ConversationImportError) throw error
+    throw new ConversationImportError('IMPORT_READ_FAILED', 'The selected session file could not be read safely.')
+  }
+  try {
+    const parsed = parsePiSessionImport(file, bytes, locale)
+    if (!inspectPiHostDto(parsed.history, { maxBytes: 6 * 1024 * 1024 }).ok) throw new ConversationImportError('IMPORT_TOO_LARGE', 'The conversation content is too large to transfer to Pi in one import.')
+    return parsed
+  } catch (error) {
+    if (error instanceof PiSessionImportError) throw new ConversationImportError(error.code, error.message)
+    throw error
+  }
+}
+
 interface ConversationImportServiceOptions {
   chooseDocument(locale: ConversationImportPreviewRequest['locale']): Promise<string | null>
+  /** The added project whose folder a Pi session was recorded in, if any. */
+  matchScope?(cwd: string): Promise<ConversationScope | undefined>
   activate(scope: ConversationScope, history: ImportedConversationHistory): Promise<ConversationActivationResult>
   now?(): number
 }
@@ -179,7 +198,9 @@ export class ConversationImportService {
     const input = conversationImportPreviewRequestSchema.parse(raw)
     const path = await this.options.chooseDocument(input.locale)
     if (path === null) return { status: 'cancelled' }
-    const parsed = await parseConversationImport(path, input.locale)
+    const session = extname(path).toLowerCase() === '.jsonl' ? await parsePiSessionFile(path, input.locale) : null
+    const parsed = session ?? await parseConversationImport(path, input.locale)
+    const suggestedScope = session ? await this.options.matchScope?.(session.sourceCwd).catch(() => undefined) : undefined
     this.prune()
     while (this.previews.size >= MAX_PREVIEWS) {
       const oldest = [...this.previews].find(([, value]) => !value.committing)
@@ -189,7 +210,8 @@ export class ConversationImportService {
     const token = `imp_${randomBytes(24).toString('base64url')}`
     this.previews.set(token, { history: { ...parsed.history, importId: randomUUID() }, expiresAt: this.now() + PREVIEW_TTL_MS, committing: false })
     const { history: _history, ...preview } = parsed
-    return { status: 'ready', token, ...preview }
+    const { sourceCwd: _sourceCwd, ...summary } = preview as typeof preview & { sourceCwd?: string }
+    return { status: 'ready', token, ...summary, ...(suggestedScope ? { suggestedScope } : {}) }
   }
   async commit(raw: ConversationImportCommitRequest) {
     const input = conversationImportCommitRequestSchema.parse(raw)

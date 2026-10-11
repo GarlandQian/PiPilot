@@ -46,6 +46,7 @@ export function ConversationImportDialog({ initialScope, projects, onCommit, onC
       if (result.status === 'ready') {
         token.current = result.token
         setPreview(result); setTitle(result.title)
+        if (result.suggestedScope) setScopeValue(result.suggestedScope.kind === 'project' ? `project:${result.suggestedScope.workspaceId}` : 'projectless')
       }
     } catch (caught) {
       if (epoch === requestEpoch.current) setError(caught && typeof caught === 'object' && 'code' in caught && caught.code === 'IMPORT_TOO_LARGE' ? 'tooLarge' : 'read')
@@ -90,13 +91,13 @@ export function ConversationImportDialog({ initialScope, projects, onCommit, onC
       {phase === 'reading' ? <div role="status" className="settings-group flex min-h-36 items-center justify-center gap-2 text-caption text-muted-foreground"><TbLoader2 className="size-4 animate-spin motion-reduce:animate-none" aria-hidden />{t('import.reading')}</div> : null}
       {preview ? <>
         <SettingsGroup footer={<>
-          <span className="block">{t(preview.format === 'pipilot' ? 'import.historyHint' : 'import.documentHint')}</span>
+          <span className="block">{t(preview.format !== 'document' ? 'import.historyHint' : 'import.documentHint')}</span>
           <span className="mt-0.5 block">{t('import.counts', { messages: preview.messageCount, images: preview.imageCount })}</span>
         </>}>
           <SettingsField label={t('import.title')} htmlFor={titleId} error={!title.trim() ? <span id={titleErrorId}>{t('import.titleRequired')}</span> : undefined}>
             <Input id={titleId} value={title} maxLength={256} disabled={busy} onChange={(event) => setTitle(event.target.value)} aria-invalid={!title.trim()} aria-describedby={!title.trim() ? titleErrorId : undefined} />
           </SettingsField>
-          <SettingsRow label={t('import.destination')} htmlFor={scopeId} description={t(preview.format === 'pipilot' ? 'import.history' : 'import.document')}>
+          <SettingsRow label={t('import.destination')} htmlFor={scopeId} description={t(preview.format !== 'document' ? 'import.history' : 'import.document')}>
             <Select value={scopeValue} onValueChange={setScopeValue} disabled={busy}>
               <SelectTrigger id={scopeId} className="w-56 max-w-full" aria-describedby={hintId}><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -104,7 +105,7 @@ export function ConversationImportDialog({ initialScope, projects, onCommit, onC
                 {projects.map((project) => <SelectItem key={project.id} value={`project:${project.id}`} disabled={!project.available}>{project.name}</SelectItem>)}
               </SelectContent>
             </Select>
-            <span id={hintId} className="sr-only">{t(preview.format === 'pipilot' ? 'import.historyHint' : 'import.documentHint')}</span>
+            <span id={hintId} className="sr-only">{t(preview.format !== 'document' ? 'import.historyHint' : 'import.documentHint')}</span>
           </SettingsRow>
           <SettingsDisclosure label={t('import.preview')} open={previewOpen} onOpenChange={setPreviewOpen}>
             <div data-settings-row className="scroll-slim max-h-56 overflow-auto px-3 py-2.5 [&_.md-body]:text-caption" data-import-preview><MarkdownContent markdown={preview.previewMarkdown} /></div>
