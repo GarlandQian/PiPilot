@@ -15,6 +15,7 @@ export const APP_SHORTCUTS = {
   toggleFileTree: { key: 'E', code: 'KeyE', primary: true, shift: true },
   openSideChat: { key: 'S', code: 'KeyS', primary: true, alt: true },
   searchConversations: { key: 'F', code: 'KeyF', primary: true, alt: true },
+  nextAttention: { key: 'A', code: 'KeyA', primary: true, alt: true },
 } satisfies Record<string, ShortcutSpec>
 
 /**

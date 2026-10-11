@@ -115,6 +115,7 @@ export interface PiPilotApi {
   readonly projectWorkflows: import('./project-workflows').ProjectWorkflowsApi
   readonly projectTrust: import('./project-trust').ProjectTrustApi
   readonly providerLogin: import('./provider-login').ProviderLoginApi
+  readonly popout: import('./popout').PopoutApi
   readonly sideConversations: import('./side-conversations').SideConversationsApi
   readonly scheduledTasks: {
     get(): Promise<ScheduledTasksSnapshot>

@@ -2187,5 +2187,22 @@
   "branches.bookmarkSave": "保存",
   "branches.busy": "Pi 回复结束后才能切换分支。",
   "branches.switching": "正在切换分支…",
-  "branches.failed": "无法切换分支。"
+  "branches.failed": "无法切换分支。",
+  "popout.open": "在新窗口中打开",
+  "popout.openFailed": "无法在新窗口中打开此对话。",
+  "popout.opening": "正在打开对话…",
+  "popout.empty": "还没有消息。",
+  "popout.running": "进行中",
+  "popout.pin": "置顶",
+  "popout.unpin": "取消置顶",
+  "popout.showMain": "显示主窗口",
+  "popout.needsMain": "Pi 正在等待你的回答，请在主窗口中回复。",
+  "popout.tools": "使用了 {count} 个工具",
+  "popout.placeholder": "给 Pi 发消息…",
+  "popout.followUpPlaceholder": "排队一条后续消息…",
+  "popout.send": "发送",
+  "popout.queue": "排队",
+  "popout.stop": "停止",
+  "attention.next": "下一个需要处理的对话",
+  "attention.none": "没有需要处理的对话。"
 }

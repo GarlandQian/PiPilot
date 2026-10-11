@@ -16,7 +16,8 @@ import { usePiExtensionUi, usePiRuntime } from '@/store/pi-rpc'
 import { conversationScopeKey, useWorkspaceStore } from '@/store/workspace'
 import { useTaskNotifications } from '@/store/task-notifications'
 import { createOfficialSessionLookup, deriveSessionActivityState } from '@/store/workspace-state'
-import { ConversationList, ProjectNavigationGroup, SidebarIconButton, SidebarSection, type ConversationListActions, type SidebarConversationItem, type SidebarProjectNavigation } from '@/components/layout/SessionList'
+import { ConversationList, ProjectNavigationGroup, resolveSidebarSessionIndicatorState, SidebarIconButton, SidebarSection, type ConversationListActions, type SidebarConversationItem, type SidebarProjectNavigation } from '@/components/layout/SessionList'
+import { subscribeNextAttention } from './attention-navigation'
 import { presentPinnedSessions, presentSidebarSessions, sidebarProjectIndicator, sortSidebarProjects, type SidebarOrganization, type SidebarSessionSort } from '@/components/layout/session-navigation'
 import { projectlessCatalogNeedsDiscovery, sessionCatalogLoadTargets } from './session-catalog-search'
 
@@ -49,6 +50,7 @@ export interface SessionsPanelProps {
   onDuplicate(item: SidebarConversationItem): void
   onDelete(item: SidebarConversationItem): void
   onExport(item: SidebarConversationItem): void
+  onPopout?(item: SidebarConversationItem): void
   onImport(scope: ConversationScope): void
   onStartProjectTask(workspaceId: string): void
   onChooseWorkspace(): void
@@ -87,7 +89,7 @@ export function SessionsPanel({
   onSearchAll,
   hidden = false, conversationReady, renamingSelectionToken, deletingSelectionToken, isOpeningSessionRow,
   onSelect, onNewPrimary, onNewProjectless, onRenameStart, onRenameCommit, onDuplicate,
-  onDelete, onExport, onImport, onStartProjectTask, onChooseWorkspace, onPinWorkspace, onRevealWorkspace, onRemoveWorkspace,
+  onDelete, onExport, onPopout, onImport, onStartProjectTask, onChooseWorkspace, onPinWorkspace, onRevealWorkspace, onRemoveWorkspace,
 }: SessionsPanelProps) {
   const workspace = useWorkspaceStore()
   const pi = usePiRuntime()
@@ -239,6 +241,21 @@ export function SessionsPanel({
     return { items, unreadNotices }
   }, [deletingSelectionToken, extensionUi.dialog, isOpeningSessionRow, notifications.items, pi.runtime?.generation, pi.session?.pendingMessageCount, pi.status, preferences.tasks, runtimeSessionStatuses, t, workspace.activeScope, workspace.activeSessionId, workspace.recentProjects, workspace.sessionCatalogs])
 
+  // ⌘⌥A: the next row (after the open one, wrapping) that needs attention.
+  const attentionRows = React.useRef<{ items: SidebarConversationItem[]; onSelect(item: SidebarConversationItem): void }>({ items: [], onSelect })
+  attentionRows.current = { items: allItems, onSelect }
+  React.useEffect(() => subscribeNextAttention(() => {
+    const { items, onSelect: select } = attentionRows.current
+    const needs = (item: SidebarConversationItem) => !item.archived && !item.loading && !item.disabled &&
+      ['attention', 'failed', 'unread'].includes(resolveSidebarSessionIndicatorState(item))
+    const current = items.findIndex((item) => item.selected)
+    const ordered = current < 0 ? items : [...items.slice(current + 1), ...items.slice(0, current)]
+    const next = ordered.find((item) => !item.selected && needs(item))
+    if (!next) return false
+    select(next)
+    return true
+  }), [])
+
   // Opening a task reads it.
   React.useEffect(() => {
     if (hidden || !conversationReady) return
@@ -255,7 +272,7 @@ export function SessionsPanel({
   const organize = (item: SidebarConversationItem, patch: Parameters<typeof updateTaskOrganization>[2]) =>
     setPreferences((previous) => updateTaskOrganization(previous, item.summary, patch))
   const actions: ConversationListActions = {
-    renamingSelectionToken, onSelect, onRenameStart, onRenameCommit, onDuplicate, onDelete, onExport,
+    renamingSelectionToken, onSelect, onRenameStart, onRenameCommit, onDuplicate, onDelete, onExport, onPopout,
     onPin: (item, pinned) => organize(item, { pinned }),
     onArchive: (item, archived) => organize(item, { archived, ...(archived ? { pinned: false } : {}) }),
     onMarkUnread: (item, unread) => {

@@ -9,11 +9,20 @@ import { ExternalControlProvider } from '@/store/external-control'
 import { ConfigurationDocumentsProvider } from '@/store/configuration-documents'
 import { RendererErrorBoundary } from '@/components/frame/RendererErrorBoundary'
 import App from './App'
+import { PopoutApp } from './popout/PopoutApp'
 import '@/styles/globals.css'
 
 const root = createRoot(document.getElementById('root')!)
+// A conversation pop-out loads the same page with ?popout=<id>.
+const popoutId = new URLSearchParams(window.location.search).get('popout')
 
-root.render(window.pipilot ? (
+root.render(window.pipilot && popoutId ? (
+  <SettingsProvider>
+    <RendererErrorBoundary>
+      <PopoutApp popoutId={popoutId} />
+    </RendererErrorBoundary>
+  </SettingsProvider>
+) : window.pipilot ? (
   <SettingsProvider>
     <RendererErrorBoundary>
       <WorkspaceProvider>

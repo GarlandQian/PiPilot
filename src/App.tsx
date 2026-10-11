@@ -31,6 +31,7 @@ import { ConversationNotices } from '@/components/chat/ConversationNotices'
 import { ProjectTrustNotice, ProjectTrustPrompt } from '@/components/projects/ProjectTrust'
 import { CompactConversationSheet } from '@/components/chat/CompactConversationSheet'
 import { McpStatusMenu } from '@/components/chat/McpStatusMenu'
+import { requestNextAttention } from '@/components/frame/attention-navigation'
 import { QuestionBranchesContext, type QuestionBranches } from '@/components/chat/question-branches'
 import { ConversationTreePanel } from '@/components/inspector/ConversationTreePanel'
 import { useConversationTree } from '@/store/conversation-tree'
@@ -340,6 +341,7 @@ export default function App() {
   ])
   const compactFeedback = useConversationOperationFeedback(operationOwnerKey)
   const branchFeedback = useConversationOperationFeedback(operationOwnerKey)
+  const popoutFeedback = useConversationOperationFeedback(operationOwnerKey)
   const [compactSheetOpen, setCompactSheetOpen] = React.useState(false)
   // Pi's session tree: every branch of the open conversation, for ‹ 1/2 › and the Branches tab.
   const [treeRevision, setTreeRevision] = React.useState(0)
@@ -661,6 +663,7 @@ export default function App() {
     [APP_SHORTCUTS.searchFiles, searchFiles],
     [APP_SHORTCUTS.toggleFileTree, toggleFileTree],
     [APP_SHORTCUTS.openSideChat, openSideChat],
+    [APP_SHORTCUTS.nextAttention, () => { requestNextAttention() }],
   ]
   React.useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -713,6 +716,7 @@ export default function App() {
     cycleLayout: panel.cycleLayout,
     toggleFullView: panel.toggleFull,
     toggleSummary: () => setSummaryOpen((open) => !open),
+    nextAttention: () => { requestNextAttention() },
   }), [
     openReview,
     panel.cycleLayout,
@@ -1033,6 +1037,12 @@ export default function App() {
                 isOpeningSessionRow={isOpeningSessionRow}
                 onSelect={openConversation}
                 onExport={exportCatalogConversation}
+                onPopout={(item) => {
+                  const active = item.selected && conversationReady && 'sessionId' in conversation && conversation.sessionId === item.summary.sessionId
+                  const target = active ? { kind: 'active' as const, scope: workspace.activeScope, sessionId: item.summary.sessionId }
+                    : { kind: 'catalog' as const, scope: item.summary.scope, selectionToken: item.summary.selectionToken }
+                  void popoutFeedback.run('popout', async () => { await window.pipilot!.popout.open(target) }, t('popout.openFailed'))
+                }}
                 onImport={setImportScope}
                 onNewPrimary={newPrimarySession}
                 onNewProjectless={newProjectlessSession}
@@ -1140,6 +1150,10 @@ export default function App() {
               onToggleInspector={panel.toggleTabs}
               compacting={Boolean(compactFeedback.pending)}
               onCompact={() => { if (conversationReady) setCompactSheetOpen(true) }}
+              onPopout={conversationReady && 'sessionId' in conversation ? () => {
+                const sessionId = conversation.sessionId
+                void popoutFeedback.run('popout', async () => { await window.pipilot!.popout.open({ kind: 'active', scope: workspace.activeScope, sessionId }) }, t('popout.openFailed'))
+              } : undefined}
               mcpStatus={<McpStatusMenu sessionKey={conversationReady ? conversationSessionKey : null} streaming={pi.session?.isStreaming ?? false}
                 onSend={(command) => actions.send(command, 'prompt')} onOpenSettings={() => setSettingsSection('mcp')} />}
             />
@@ -1151,6 +1165,11 @@ export default function App() {
               <p role="status" className="toolbar-material shrink-0 px-5 py-2 text-caption text-muted-foreground">
                 {t('chat.compacting')}
               </p>
+            ) : null}
+            {popoutFeedback.error ? (
+              <div role="alert" data-conversation-action-error="popout" className="toolbar-material shrink-0 break-words px-5 py-2 text-caption text-destructive [&_.md-body]:text-caption [&_.md-body]:text-destructive">
+                <MarkdownContent markdown={popoutFeedback.error} />
+              </div>
             ) : null}
             {branchFeedback.error ? (
               <div role="alert" data-conversation-action-error="branch" className="toolbar-material shrink-0 break-words px-5 py-2 text-caption text-destructive [&_.md-body]:text-caption [&_.md-body]:text-destructive">

@@ -41,6 +41,9 @@ import { PROJECT_TRUST_SESSION_FILE_ENV } from './project-trust/project-trust-re
 import { registerProjectTrustIpc } from './ipc/register-project-trust-ipc'
 import { ProviderLoginService } from './models-config/provider-login-service'
 import { registerProviderLoginIpc } from './ipc/register-provider-login-ipc'
+import { PopoutConversationService } from './conversations/popout-conversation-service'
+import { PopoutWindows } from './windows/popout-windows'
+import { registerPopoutIpc } from './ipc/register-popout-ipc'
 import { registerSideConversationsIpc } from './ipc/register-side-conversations-ipc'
 import { SideConversationService } from './conversations/side-conversation-service'
 import { registerLocalPiIpc } from './ipc/register-local-pi-ipc'
@@ -342,6 +345,9 @@ let projectTrustService: ProjectTrustService | null = null
 let projectTrustIpc: ReturnType<typeof registerProjectTrustIpc> | null = null
 let providerLoginService: ProviderLoginService | null = null
 let providerLoginIpc: ReturnType<typeof registerProviderLoginIpc> | null = null
+let popoutService: PopoutConversationService | null = null
+let popoutWindows: PopoutWindows | null = null
+let popoutIpc: ReturnType<typeof registerPopoutIpc> | null = null
 
 function activeApplicationWork() {
   const primaryPi = Boolean(
@@ -418,6 +424,12 @@ async function disposeApplicationResources() {
   projectTrustService = null
   providerLoginIpc?.dispose()
   providerLoginIpc = null
+  popoutIpc?.dispose()
+  popoutIpc = null
+  popoutWindows?.closeAll()
+  popoutWindows = null
+  popoutService?.dispose()
+  popoutService = null
   providerLoginService?.dispose()
   providerLoginService = null
   await scheduledTaskFeature?.dispose()
@@ -931,7 +943,24 @@ if (!hasSingleInstanceLock) {
         dispose: disposeApplicationResources,
         quit: () => app.quit(),
       })
-      registerAppIpc({ getMainWindow: () => mainWindow, policy, settingsRepository, shutdownGuard, piDirectoryPreference })
+      const conversationWindows = new PopoutWindows({
+        policy, mainOutputDirectory,
+        ...(developmentUrl ? { developmentUrl } : {}),
+        ...(developmentWindowIcon ? { icon: developmentWindowIcon } : {}),
+        onClosed: (popoutId) => popoutService?.close(popoutId),
+      })
+      popoutWindows = conversationWindows
+      popoutService = new PopoutConversationService({
+        runtime: runtimeHost,
+        catalog: officialPiSessionCatalog,
+        scopeLabel: (scope) => scope.kind === 'project' ? workspaceRepository.getLocation(scope.workspaceId)?.name ?? '' : '',
+        untitled: () => {
+          const locale = settingsRepository.get().settings.locale
+          return (locale === 'system' ? app.getLocale() : locale).startsWith('zh') ? '未命名对话' : 'Untitled conversation'
+        },
+      })
+      popoutIpc = registerPopoutIpc({ getMainWindow: () => mainWindow, policy, service: popoutService, windows: conversationWindows, showMainWindow: revealMainWindow })
+      registerAppIpc({ getMainWindow: () => mainWindow, policy, settingsRepository, shutdownGuard, piDirectoryPreference, getAuxiliaryWindows: () => conversationWindows.all() })
       externalControlIpcController = registerExternalControlIpc({
         getMainWindow: () => mainWindow,
         launcherService: externalControlLauncher,

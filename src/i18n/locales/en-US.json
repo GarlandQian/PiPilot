@@ -2187,5 +2187,22 @@
   "branches.bookmarkSave": "Save",
   "branches.busy": "Branches can be switched once Pi finishes replying.",
   "branches.switching": "Switching branch…",
-  "branches.failed": "The branch could not be switched."
+  "branches.failed": "The branch could not be switched.",
+  "popout.open": "Open in New Window",
+  "popout.openFailed": "The conversation could not open in its own window.",
+  "popout.opening": "Opening the conversation…",
+  "popout.empty": "No messages yet.",
+  "popout.running": "Working",
+  "popout.pin": "Keep on top",
+  "popout.unpin": "Stop keeping on top",
+  "popout.showMain": "Show main window",
+  "popout.needsMain": "Pi is waiting for your answer. Reply in the main window.",
+  "popout.tools": "Used {count} tools",
+  "popout.placeholder": "Message Pi…",
+  "popout.followUpPlaceholder": "Queue a follow-up…",
+  "popout.send": "Send",
+  "popout.queue": "Queue",
+  "popout.stop": "Stop",
+  "attention.next": "Next Conversation Needing Attention",
+  "attention.none": "No conversation needs your attention."
 }

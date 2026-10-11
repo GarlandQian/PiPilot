@@ -1,5 +1,5 @@
 import * as React from 'react'
-import {
+import { TbAppWindow,
   TbAlertCircle,
   TbArchive,
   TbArchiveOff,
@@ -111,6 +111,8 @@ export interface ConversationListActions {
   onArchive?(item: SidebarConversationItem, archived: boolean): void
   onMarkUnread?(item: SidebarConversationItem, unread: boolean): void
   onExport?(item: SidebarConversationItem): void
+  /** Open the conversation in its own window. */
+  onPopout?(item: SidebarConversationItem): void
 }
 
 /**
@@ -236,6 +238,7 @@ function TaskMenuItems({ item, variant, kind, onRename, actions }: {
       {t(item.unread ? 'sidebar.session.markRead' : 'sidebar.session.markUnread')}
     </Item>}
     <Separator />
+    {actions.onPopout && <Item onSelect={() => actions.onPopout?.(item)}><TbAppWindow aria-hidden />{t('popout.open')}</Item>}
     <Item onSelect={() => actions.onDuplicate(item)}><TbCopy aria-hidden />{t('sidebar.session.duplicate')}</Item>
     {actions.onExport && <Item onSelect={() => actions.onExport?.(item)}><TbDownload aria-hidden />{t('export.conversation')}</Item>}
     {actions.onArchive && <>

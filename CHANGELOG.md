@@ -8,6 +8,7 @@ Each version section supplies the highlights for its GitHub Release. Download li
 
 ### 中文
 
+- **对话弹窗与待处理跳转**：可在新窗口中打开对话（标题栏菜单或侧边栏菜单），弹窗显示对话内容并可发送、排队、停止，支持置顶；与主窗口共用同一对话。⌘⌥A（Windows/Linux 为 Ctrl+Alt+A）或命令面板可跳到下一个需要处理的对话（等待回答、失败或有未读结果）。
 - **会话分支**：可编辑之前的提问并重新发送，在同一对话中产生新分支；被编辑过的提问显示“‹ 1/2 ›”可切换版本。新增“分支”标签页显示全部分支，可切换（可先总结被离开的分支）、从任一提问编辑，并添加书签。所有分支都保留在 Pi 会话文件中。
 - **MCP 实时状态**：对话标题栏显示“已连接/总数”，可查看每个 MCP 服务器的状态、工具数、错误和输出，并直接重新连接或登录；设置中的 MCP 列表显示当前对话最近看到的连接结果。
 - **订阅账号登录**：在“模型”中为 Pi 自带的服务商（Anthropic、ChatGPT、GitHub Copilot、OpenRouter、xAI 等）使用浏览器登录订阅账号，支持浏览器回调、设备验证码和粘贴代码；登录前会提示替换已保存的 API Key，可随时退出登录。
@@ -17,6 +18,7 @@ Each version section supplies the highlights for its GitHub Release. Download li
 
 ### English
 
+- **Pop-out windows and attention navigation:** Open a conversation in its own window from the header or sidebar menu. The window shows the transcript, sends, queues, and stops, and can stay on top; it shares the conversation with the main window. ⌘⌥A (Ctrl+Alt+A on Windows and Linux) or the command palette opens the next conversation needing attention: waiting for you, failed, or unread.
 - **Conversation branches:** Edit an earlier question and send it again to start a new branch in the same conversation; an edited question shows ‹ 1/2 › to switch versions. A Branches tab lists every branch, switches between them (optionally summarizing the one left behind), edits from any question, and bookmarks questions. Every branch stays in the Pi session file.
 - **Live MCP status:** The conversation header shows how many MCP servers are connected. Open it to see each server's state, tool count, errors, and output, and reconnect or sign in right there. Settings › MCP shows what the open conversation last saw.
 - **Subscription sign-in:** Sign in to Pi's own providers (Anthropic, ChatGPT, GitHub Copilot, OpenRouter, xAI, and more) from Models with a browser callback, a device code, or a pasted code. PiPilot asks before replacing a saved API key, and you can sign out at any time.

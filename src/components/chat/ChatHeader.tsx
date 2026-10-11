@@ -1,5 +1,5 @@
 import * as React from 'react'
-import {
+import { TbAppWindow,
   TbArrowsMinimize,
   TbDots,
   TbGitBranch,
@@ -58,6 +58,8 @@ export interface ChatHeaderProps {
   gitControls?: React.ReactNode
   /** This conversation's MCP connections, when it has servers. */
   mcpStatus?: React.ReactNode
+  /** Open this conversation in its own window. */
+  onPopout?: () => void
   terminalOpen?: boolean
   onToggleTerminal?: () => void
 }
@@ -100,6 +102,7 @@ export function ChatHeader({
   onToggleSummary,
   gitControls,
   mcpStatus,
+  onPopout,
   terminalOpen,
   onToggleTerminal,
 }: ChatHeaderProps) {
@@ -147,6 +150,7 @@ export function ChatHeader({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-64">
               {onNewConversation ? <DropdownMenuItem onSelect={onNewConversation}><TbMessagePlus aria-hidden />{t('header.newConversation')}</DropdownMenuItem> : null}
+              {onPopout ? <DropdownMenuItem onSelect={onPopout} data-popout-open><TbAppWindow aria-hidden />{t('popout.open')}</DropdownMenuItem> : null}
               {hasDetails ? (
                 <>
                   {onNewConversation ? <DropdownMenuSeparator /> : null}

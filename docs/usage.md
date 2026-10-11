@@ -25,6 +25,11 @@
   general conversation. Current PiPilot exports and Pi sessions restore user/assistant history;
   ordinary or unrecognized Markdown becomes background content. Importing never submits a prompt or
   replays old tools or plan approvals.
+- **Conversation windows** — **… › Open in New Window** (in the conversation header or a sidebar row)
+  shows that conversation in a small window that can stay on top. It sends (queued while Pi is
+  replying), stops, and follows the reply live; it shares the running conversation with the main
+  window, which still answers Pi's questions and dialogs. **⌘⌥A** (Ctrl+Alt+A) opens the next
+  conversation needing attention — waiting for you, failed, or with an unread result.
 - **Branches** — hover a question and choose **Edit and resend**: Pi returns to just before it and puts
   it back in the composer, and sending starts a new branch in the same session file (Pi's `/tree`). A
   question asked more than once shows ‹ 1/2 › to switch versions. The **Branches** tab (**+ › Branches**)

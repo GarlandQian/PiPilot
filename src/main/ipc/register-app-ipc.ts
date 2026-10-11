@@ -33,6 +33,8 @@ interface RegisterAppIpcOptions {
   settingsRepository: SettingsRepository
   shutdownGuard: ConfigurationShutdownGuard
   piDirectoryPreference?: PiDirectoryPreference
+  /** Conversation pop-outs: they read settings and open links, nothing else here. */
+  getAuxiliaryWindows?(): BrowserWindow[]
 }
 
 export function registerAppIpc({
@@ -41,8 +43,12 @@ export function registerAppIpc({
   settingsRepository,
   shutdownGuard,
   piDirectoryPreference,
+  getAuxiliaryWindows,
 }: RegisterAppIpcOptions) {
   const isTrustedSender = createTrustedSenderValidator(policy, getMainWindow)
+  const isAnyAppWindow: typeof isTrustedSender = (event) => isTrustedSender(event) ||
+    Boolean(getAuxiliaryWindows?.().some((window) => window.webContents === event.sender) &&
+      event.senderFrame !== null && event.senderFrame === event.sender.mainFrame && policy.isTrustedRendererUrl(event.senderFrame.url))
   if (piDirectoryPreference) {
     let choosing = false
     registerValidatedHandler(piDirectoryGetContract, isTrustedSender, () => piDirectoryPreference.snapshot())
@@ -115,7 +121,7 @@ export function registerAppIpc({
 
   registerValidatedHandler(
     settingsGetContract,
-    isTrustedSender,
+    isAnyAppWindow,
     () => settingsRepository.initialize(),
   )
 
@@ -138,17 +144,16 @@ export function registerAppIpc({
   })
 
   settingsRepository.subscribe((snapshot) => {
-    const window = getMainWindow()
-    if (!window || window.isDestroyed()) return
-
     const event = settingsChangedEventSchema.parse({
       eventId: randomUUID(),
       snapshot,
     })
-    window.webContents.send(ipcChannels.settingsChanged, event)
+    for (const window of [getMainWindow(), ...(getAuxiliaryWindows?.() ?? [])]) {
+      if (window && !window.isDestroyed()) window.webContents.send(ipcChannels.settingsChanged, event)
+    }
   })
 
-  registerValidatedHandler(shellOpenExternalContract, isTrustedSender, async ({ url }) => {
+  registerValidatedHandler(shellOpenExternalContract, isAnyAppWindow, async ({ url }) => {
     if (!policy.isSafeExternalUrl(url)) {
       throw new MainProcessError(
         'INVALID_EXTERNAL_URL',

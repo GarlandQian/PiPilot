@@ -5,6 +5,7 @@ import { conversationImportCommitContract, conversationImportDiscardContract, co
 import { createProjectWorkflowsApi } from './project-workflows'
 import { createProjectTrustApi } from './project-trust'
 import { createProviderLoginApi } from './provider-login'
+import { createPopoutApi } from './popout'
 import { createSideConversationsApi } from './side-conversations'
 import { createScheduledTasksApi } from './scheduled-tasks-api'
 import type { AppError, IpcContract, RequestContext, SettingsSnapshot } from '../shared/ipc/contracts'
@@ -285,6 +286,7 @@ const api: PiPilotApi = {
   projectWorkflows: createProjectWorkflowsApi(invoke, createContext),
   projectTrust: createProjectTrustApi(invoke, createContext),
   providerLogin: createProviderLoginApi(invoke, createContext),
+  popout: createPopoutApi(invoke, createContext),
   sideConversations: createSideConversationsApi(invoke, createContext),
   scheduledTasks: createScheduledTasksApi(invoke, createContext),
   notifications: {

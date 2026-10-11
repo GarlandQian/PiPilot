@@ -33,6 +33,7 @@ export interface CommandContext {
   cycleLayout(): void
   toggleFullView(): void
   toggleSummary(): void
+  nextAttention(): void
 }
 
 export interface AppCommand {
@@ -67,6 +68,13 @@ export const ACTION_COMMANDS: readonly AppCommand[] = [
     hintKey: 'palette.changeModel.hint',
     keywords: 'model provider switch',
     run: () => undefined,
+  },
+  {
+    id: 'action:next-attention',
+    titleKey: 'attention.next',
+    shortcut: APP_SHORTCUTS.nextAttention,
+    keywords: 'attention unread failed waiting next conversation task 下一个 需要处理 未读',
+    run: (ctx) => ctx.nextAttention(),
   },
   {
     id: 'action:toggle-context-panel',
