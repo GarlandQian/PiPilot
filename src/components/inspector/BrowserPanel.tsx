@@ -123,20 +123,9 @@ export function BrowserPanel({ scopeKey, visible, onAttachImage }: {
   const annotate = (mode: 'element' | 'area') => {
     if (!active) return
     setError(null); setAnnotating(mode)
-    void (async () => {
-      try {
-        const rect = viewport.current?.getBoundingClientRect()
-        if (rect && rect.width >= 2 && rect.height >= 2) {
-          await api.setViewport(scopeKey, { x: rect.x, y: rect.y, width: rect.width, height: rect.height })
-        }
-        const result = await api.annotate(scopeKey, active.id, mode)
-        if (result) { setAnnotation(result); setComment(''); setIncludeConsole(false) }
-      } catch (caught) {
-        setError(errorText(caught))
-      } finally {
-        setAnnotating(null)
-      }
-    })()
+    void api.annotate(scopeKey, active.id, mode).then((result) => {
+      if (result) { setAnnotation(result); setComment(''); setIncludeConsole(false) }
+    }, (caught: unknown) => setError(errorText(caught))).finally(() => setAnnotating(null))
   }
   const addToMessage = () => {
     if (!annotation) return
