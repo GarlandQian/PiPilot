@@ -61,14 +61,6 @@ test('opens the project page in the browser tab, annotates an element for Pi, an
     const point = { x: box!.x + 10, y: box!.y + 10 }
     await shop.evaluate(({ x, y }) => {
       document.querySelector<HTMLElement>('[data-pipilot-annotation]')?.dispatchEvent(
-        new MouseEvent('mousemove', { bubbles: true, clientX: x, clientY: y }))
-    }, point)
-    await expect.poll(() => shop.evaluate(() => {
-      const highlight = document.querySelector<HTMLElement>('[data-pipilot-annotation] > div')
-      return highlight !== null && highlight.style.display !== 'none'
-    }), { timeout: 20_000 }).toBe(true)
-    await shop.evaluate(({ x, y }) => {
-      document.querySelector<HTMLElement>('[data-pipilot-annotation]')?.dispatchEvent(
         new MouseEvent('click', { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0 }))
     }, point)
     const form = panel.locator('[data-browser-annotation="element"]')

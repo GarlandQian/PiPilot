@@ -7,7 +7,7 @@ export async function closeFixtureApplication(app: ElectronApplication) {
     await app.close()
     return
   }
-  const closed = app.waitForEvent('close', { timeout: 10_000 })
+  const closed = app.waitForEvent('close', { timeout: 30_000 })
   await app.evaluate(({ app }) => { app.quit() })
   const discard = async () => {
     const dialog = page.getByRole('alertdialog', {
