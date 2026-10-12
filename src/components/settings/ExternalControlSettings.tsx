@@ -1,6 +1,7 @@
 import * as React from 'react'
-import { TbCheck, TbCopy, TbDownload, TbLoader2, TbPlugConnected, TbRefresh, TbSearch, TbTerminal2, TbTrash } from 'react-icons/tb'
+import { TbCheck, TbCopy, TbDownload, TbLoader2, TbRefresh, TbSearch, TbTerminal2, TbTrash } from 'react-icons/tb'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
+import { PiLogo } from '@/components/PiLogo'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
@@ -134,7 +135,7 @@ export function ExternalControlSettings({ active = true }: { active?: boolean })
 
     <SettingsGroup footer={t('settings.externalControl.localOnly')} data-external-control-status>
       <SettingsRow label={t('settings.externalControl.enableLabel')} htmlFor="external-control-enabled"
-        icon={<RowIcon tint="#34c759"><TbPlugConnected className="size-4" /></RowIcon>}
+        icon={<RowIcon tint="#007aff"><PiLogo className="size-4" /></RowIcon>}
         info={t('settings.externalControl.description')}
         description={<span aria-live="polite">{t(`settings.externalControl.state.${snapshot.state}.desc`, { count: snapshot.connectedClients })}</span>}>
         <StatusText tone={stateTone}>{t(`settings.externalControl.state.${snapshot.state}`)}</StatusText>

@@ -1,5 +1,6 @@
 import { McpServer, type CallToolResult } from '@modelcontextprotocol/server'
 import { PIPILOT_VERSION } from '../../shared/build-info'
+import { PIPILOT_MCP_ICON } from './pipilot-icon'
 import {
   abortConversationInputSchema,
   externalControlReceiptSchema,
@@ -54,7 +55,10 @@ export function createConversationMcpServer(
 ) {
   const server = new McpServer({
     name: 'pipilot-conversations',
+    // Clients that show servers by title and icon show PiPilot's own.
+    title: 'PiPilot',
     version: serverVersion,
+    icons: [{ ...PIPILOT_MCP_ICON, sizes: [...PIPILOT_MCP_ICON.sizes] }],
   }, {
     capabilities: { tools: {} },
   })

@@ -132,6 +132,8 @@ describe('official conversation MCP server', () => {
     })
     expect(initialized).toHaveProperty('result.serverInfo.name', 'pipilot-conversations')
     expect(initialized).toHaveProperty('result.serverInfo.version', PIPILOT_VERSION)
+    expect(initialized).toHaveProperty('result.serverInfo.title', 'PiPilot')
+    expect(initialized).toHaveProperty('result.serverInfo.icons.0.mimeType', 'image/png')
     await client.notify('notifications/initialized')
     const listed = await client.request(2, 'tools/list')
     const tools = 'result' in listed && listed.result &&
