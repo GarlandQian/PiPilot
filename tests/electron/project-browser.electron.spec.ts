@@ -57,6 +57,18 @@ test('opens the project page in the browser tab, annotates an element for Pi, an
     await panel.locator('[data-browser-annotate="element"]').click()
     const shop = await expect.poll(() => app.windows().find((candidate) => candidate.url() === url) ?? null).not.toBeNull().then(() => app.windows().find((candidate) => candidate.url() === url)!)
     await expect.poll(() => shop.evaluate(() => Boolean(document.querySelector('[data-pipilot-annotation]')))).toBe(true)
+    const probePick = () => shop.evaluate(() => {
+      const target = document.querySelector<HTMLElement>('#buy')!
+      const overlay = document.querySelector<HTMLElement>('[data-pipilot-annotation]')!
+      const rect = target.getBoundingClientRect()
+      const x = rect.left + Math.min(10, rect.width / 2)
+      const y = rect.top + Math.min(10, rect.height / 2)
+      overlay.style.pointerEvents = 'none'
+      const hit = document.elementFromPoint(x, y)
+      overlay.style.pointerEvents = 'auto'
+      return { hit: hit ? (hit.id || hit.tagName) : null, viewport: { width: innerWidth, height: innerHeight }, target: { x: rect.x, y: rect.y, width: rect.width, height: rect.height } }
+    })
+    await expect.poll(probePick, { timeout: 20_000 }).toMatchObject({ hit: 'buy' })
     const pickedTarget = await shop.evaluate(() => {
       const target = document.querySelector<HTMLElement>('#buy')!
       const overlay = document.querySelector<HTMLElement>('[data-pipilot-annotation]')!
