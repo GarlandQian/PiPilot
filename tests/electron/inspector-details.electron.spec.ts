@@ -50,9 +50,11 @@ test('returns from execution details to the same Markdown reader and keeps compa
     const transcript = page.getByRole('log', { name: 'Conversation', exact: true })
     const inspector = page.getByRole('complementary', { name: 'Inspector', exact: true })
     const resourceTabs = inspector.locator('[data-panel-strip="right"]').getByRole('tab', { includeHidden: true })
-    // Nothing is fixed in the side panel (Codex): ⇧⌘E opens the file tree as a tab.
+    // Open the file tree from the panel; its keyboard shortcut is covered by the resources contract.
     await expect(inspector).toHaveCount(0)
-    await page.keyboard.press('ControlOrMeta+Shift+E')
+    await page.getByRole('button', { name: 'Expand panel', exact: true }).click()
+    await inspector.locator('[data-panel-strip="right"]').getByRole('button', { name: 'New tab', exact: true }).click()
+    await page.getByRole('menuitem', { name: /^Files/ }).click()
     await expect(resourceTabs).toHaveText(['Files'])
     await inspector.locator('[data-workspace-tree-row="README.md"]').click()
     const reader = inspector.locator('[data-workspace-file-viewer]:visible')
