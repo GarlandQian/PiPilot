@@ -29,8 +29,11 @@ async function waitFor(path: string) {
   throw new Error(`${path} never appeared`)
 }
 
+// These use real files laid out as on macOS or Linux; Windows hosts cover Windows layouts with the injected checks below.
+const posixHost = it.skipIf(process.platform === 'win32')
+
 describe('external editors', () => {
-  it('finds editors on PATH without a shell, and always offers the default app and file manager', async () => {
+  posixHost('finds editors on PATH without a shell, and always offers the default app and file manager', async () => {
     const bin = await mkdtemp(join(tmpdir(), 'pipilot-editors-'))
     try {
       await writeFile(join(bin, 'code'), `require('node:fs').writeFileSync(require('node:path').join(__dirname, 'opened'), process.argv.slice(2).join(' '))`, 'utf8')
@@ -51,7 +54,7 @@ describe('external editors', () => {
     }
   })
 
-  it('finds macOS app bundles in either Applications folder', async () => {
+  posixHost('finds macOS app bundles in either Applications folder', async () => {
     const home = await mkdtemp(join(tmpdir(), 'pipilot-home-'))
     try {
       await mkdir(join(home, 'Applications', 'Zed.app'), { recursive: true })
@@ -128,7 +131,7 @@ describe('external editors', () => {
     expect((await editors.list()).filter((editor) => editor.kind === 'editor').map(({ id, path }) => [id, path])).toEqual([['intellij', '/Users/me/Applications/IntelliJ IDEA Ultimate.app']])
   })
 
-  it('lists an added editor, marks it missing, and opens it with its argument template', async () => {
+  posixHost('lists an added editor, marks it missing, and opens it with its argument template', async () => {
     const bin = await mkdtemp(join(tmpdir(), 'pipilot-editors-'))
     try {
       const script = join(bin, 'my-editor')
@@ -149,7 +152,7 @@ describe('external editors', () => {
     }
   })
 
-  it('reads Linux .desktop launchers and keeps their arguments without field codes', async () => {
+  posixHost('reads Linux .desktop launchers and keeps their arguments without field codes', async () => {
     const data = await mkdtemp(join(tmpdir(), 'pipilot-desktop-'))
     try {
       const program = join(data, 'code-app')
