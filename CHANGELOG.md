@@ -6,6 +6,8 @@ Each version section supplies the highlights for its GitHub Release. Download li
 
 ## Unreleased
 
+## 0.9.0
+
 ### 中文
 
 - **多模型并行对比**：在输入框的 + 菜单选择“并行对比…”，把同一任务同时交给 2–4 个模型，每个模型在当前分支的独立工作副本中完成；“对比”标签页并排显示各自的回答和改动，可查看差异，并一键以三方合并应用到项目工作区。可选让一个模型评判并推荐；侧边栏列出项目的对比。
