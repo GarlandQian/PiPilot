@@ -212,6 +212,7 @@ export const ipcChannels = {
   workspaceGitSuggestMessage: 'pipilot:workspace-git:suggest-message',
   editorsList: 'pipilot:editors:list',
   editorsOpen: 'pipilot:editors:open',
+  editorsChooseApplication: 'pipilot:editors:choose-application',
   workspaceFilesList: 'pipilot:workspace-files:list',
   workspaceFilesSearch: 'pipilot:workspace-files:search',
   workspaceGet: 'pipilot:workspace:get',
@@ -657,7 +658,14 @@ export const workspaceDiffSidesContract = defineIpcContract(ipcChannels.workspac
   commit: workspaceCommitShaSchema.optional(),
 }).strict(), workspaceDiffSidesSchema)
 export const workspaceGitStatusContract = defineIpcContract(ipcChannels.workspaceGitStatus, z.object(workspaceContentRequestFields).strict(), workspaceGitStatusSchema)
-export const editorsListContract = defineIpcContract(ipcChannels.editorsList, z.object(requestFields).strict(), externalEditorListSchema)
+/** `refresh` rescans now, as opening the "Open in" menu does. */
+export const editorsListContract = defineIpcContract(ipcChannels.editorsList, z.object({ ...requestFields, refresh: z.boolean().optional() }).strict(), externalEditorListSchema)
+/** The system's file picker for an app to add to "Open in" (an .app bundle, a Windows .exe, any Linux file). */
+export const editorsChooseApplicationContract = defineIpcContract(ipcChannels.editorsChooseApplication, z.object(requestFields).strict(),
+  z.discriminatedUnion('cancelled', [
+    z.object({ cancelled: z.literal(true) }).strict(),
+    z.object({ cancelled: z.literal(false), path: z.string().min(1).max(4_096), name: z.string().max(128) }).strict(),
+  ]))
 /** Open the project (no path) or one of its files, at a line, in an external app. */
 export const editorsOpenContract = defineIpcContract(ipcChannels.editorsOpen, z.object({
   ...workspaceContentRequestFields,

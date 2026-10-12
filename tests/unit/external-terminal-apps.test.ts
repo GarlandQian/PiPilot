@@ -75,6 +75,112 @@ describe('ExternalTerminalApps discovery', () => {
   })
 })
 
+describe('ExternalTerminalApps Windows and added apps', () => {
+  it('finds Windows terminals on PATH, in install roots, App Paths, Start menu and scoop, and offers WSL only with a distribution', async () => {
+    const env = { LOCALAPPDATA: 'C:\\Users\\me\\AppData\\Local', APPDATA: 'C:\\Users\\me\\AppData\\Roaming', ProgramFiles: 'C:\\Program Files', USERPROFILE: 'C:\\Users\\me', SystemRoot: 'C:\\Windows', PATH: 'C:\\bin' }
+    const installed = new Set([
+      'C:\\Program Files\\PowerShell\\7\\pwsh.exe', 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', 'C:\\Windows\\System32\\cmd.exe',
+      'C:\\Program Files\\Git\\git-bash.exe', 'C:\\Windows\\System32\\wsl.exe', 'D:\\WezTerm\\wezterm-gui.exe', 'C:\\Users\\me\\scoop\\apps\\alacritty\\current\\alacritty.exe',
+      'E:\\Tabby\\Tabby.exe',
+    ])
+    const options = (wsl: boolean): ExternalTerminalAppsOptions => ({
+      platform: 'win32', environment: env,
+      resolveExecutable: async (candidate) => installed.has(candidate) ? candidate : undefined,
+      readAppPaths: async () => new Map([['wezterm-gui.exe', 'D:\\WezTerm\\wezterm-gui.exe']]),
+      readShortcutLink: (path) => path.endsWith('Tabby.lnk') ? 'E:\\Tabby\\Tabby.exe' : undefined,
+      wslAvailable: async () => wsl,
+    })
+    // The Start menu is read from the real disk; without the folder, only the other sources apply.
+    expect((await new ExternalTerminalApps(options(true)).list()).map(({ adapter }) => adapter))
+      .toEqual(['pwsh', 'windows-powershell', 'windows-cmd', 'git-bash', 'wsl', 'wezterm', 'alacritty'])
+    expect((await new ExternalTerminalApps(options(false)).list()).map(({ adapter }) => adapter)).not.toContain('wsl')
+  })
+
+  it.each([
+    ['git-bash', 'C:\\Git\\git-bash.exe', ['--cd=C:\\work dir']],
+    ['cmder', 'C:\\tools\\cmder\\Cmder.exe', ['/START', 'C:\\work dir']],
+    ['wezterm', 'C:\\WezTerm\\wezterm-gui.exe', ['start', '--cwd', 'C:\\work dir']],
+    ['alacritty', 'C:\\Alacritty\\alacritty.exe', ['--working-directory', 'C:\\work dir']],
+    ['tabby', 'C:\\Tabby\\Tabby.exe', ['open', 'C:\\work dir']],
+  ] as [TerminalExternalAdapter, string, string[]][])('starts %s on Windows with the folder as literal arguments', async (adapter, executable, args) => {
+    const launchExternal = vi.fn(async () => {})
+    const apps = new ExternalTerminalApps({ platform: 'win32', environment: {}, resolveExecutable: async (candidate) => candidate === executable ? candidate : undefined, launchExternal })
+    await apps.open('external:custom:work', 'C:\\work dir', [custom(adapter, executable)])
+    expect(launchExternal).toHaveBeenCalledWith(executable, args, { cwd: 'C:\\work dir' })
+  })
+
+  it.each([
+    ['pwsh', " -ArgumentList @('-NoLogo', '-NoExit')"],
+    ['wsl', ''],
+  ] as [TerminalExternalAdapter, string][])('opens %s in a new console window through the helper', async (adapter, argumentList) => {
+    const launchExternal = vi.fn<NonNullable<ExternalTerminalAppsOptions['launchExternal']>>(async () => {})
+    const executable = `C:\\Tools\\${adapter}.exe`
+    const apps = new ExternalTerminalApps({ platform: 'win32', environment: {}, resolveExecutable: async (candidate) => [executable, windowsHelper].includes(candidate) ? candidate : undefined, launchExternal })
+    await apps.open('external:custom:work', 'C:\\projects', [custom(adapter, executable)])
+    const [file, args] = launchExternal.mock.calls[0]
+    expect(file).toBe(windowsHelper)
+    expect(Buffer.from(args[4], 'base64').toString('utf16le')).toContain(`-WorkingDirectory $terminalDirectory${argumentList} -WindowStyle Normal`)
+  })
+
+  it('opens Warp on Windows through its documented link after the scope check', async () => {
+    const calls: string[] = []
+    const apps = new ExternalTerminalApps({
+      platform: 'win32', environment: {}, resolveExecutable: async (candidate) => candidate,
+      launchExternal: async () => { calls.push('launch') }, openUri: async (uri) => { calls.push(uri) },
+    })
+    await apps.open('external:custom:work', 'C:\\a b&c', [custom('warp', 'C:\\Warp\\warp.exe')], async () => { calls.push('scope-check') })
+    expect(calls).toEqual(['scope-check', `warp://action/new_window?path=${encodeURIComponent('C:\\a b&c')}`])
+  })
+
+  it.each([
+    ['wezterm', ['-n', '-a', '/Applications/X.app', '--args', 'start', '--cwd', '/work']],
+    ['alacritty', ['-n', '-a', '/Applications/X.app', '--args', '--working-directory', '/work']],
+    ['tabby', ['-n', '-a', '/Applications/X.app', '--args', 'open', '/work']],
+    ['warp', ['-a', '/Applications/X.app', '/work']],
+    ['kitty', ['-a', '/Applications/X.app', '/work']],
+  ] as [TerminalExternalAdapter, string[]][])('opens %s on macOS through Launch Services', async (adapter, args) => {
+    const launchExternal = vi.fn(async () => {})
+    const apps = new ExternalTerminalApps({ platform: 'darwin', environment: {}, resolveExecutable: async (candidate) => candidate === '/Applications/X.app' ? candidate : undefined, launchExternal })
+    await apps.open('external:custom:work', '/work', [custom(adapter, '/Applications/X.app')])
+    expect(launchExternal).toHaveBeenCalledWith('/usr/bin/open', args, { cwd: '/work' })
+  })
+
+  it.each([
+    ['kgx', [`--working-directory=/work`]],
+    ['tilix', [`--working-directory=/work`]],
+    ['mate-terminal', ['--window', `--working-directory=/work`]],
+    ['wezterm', ['start', '--cwd', '/work']],
+  ] as [TerminalExternalAdapter, string[]][])('passes the folder to %s on Linux', async (adapter, args) => {
+    const launchExternal = vi.fn(async () => {})
+    const apps = new ExternalTerminalApps({ platform: 'linux', environment: {}, resolveExecutable: async (candidate) => candidate, launchExternal })
+    await apps.open('external:custom:work', '/work', [custom(adapter, '/usr/bin/term')])
+    expect(launchExternal).toHaveBeenCalledWith('/usr/bin/term', args, { cwd: '/work' })
+  })
+
+  it('opens an added app with its argument template, as the terminal its name matches, and never lists added editors', async () => {
+    const launchExternal = vi.fn<NonNullable<ExternalTerminalAppsOptions['launchExternal']>>(async () => {})
+    const resolveExecutable = vi.fn(async (candidate: string) => candidate)
+    const apps = new ExternalTerminalApps({ platform: 'darwin', environment: {}, resolveExecutable, launchExternal })
+    const added: TerminalCustomExternalApp[] = [
+      { id: 'external:custom:args', name: 'Mine', executable: '/Applications/Mine.app', adapter: 'generic', args: ['--dir', '{dir}'] },
+      { id: 'external:custom:wez', name: 'Wez', executable: '/Applications/WezTerm.app', adapter: 'generic' },
+      { id: 'external:custom:plain', name: 'Plain', executable: '/Applications/Plain.app', adapter: 'generic' },
+      { id: 'external:custom:editor', name: 'Editor', executable: '/Applications/Editor.app', adapter: 'generic', kind: 'editor' },
+    ]
+    expect((await apps.list(added)).filter(({ source }) => source === 'custom').map(({ id, adapter }) => [id, adapter]))
+      .toEqual([['external:custom:args', 'generic'], ['external:custom:wez', 'wezterm'], ['external:custom:plain', 'generic']])
+    await apps.open('external:custom:args', '/work', added)
+    await apps.open('external:custom:wez', '/work', added)
+    await apps.open('external:custom:plain', '/work', added)
+    expect(launchExternal.mock.calls.map(([, args]) => args)).toEqual([
+      ['-n', '-a', '/Applications/Mine.app', '--args', '--dir', '/work'],
+      ['-n', '-a', '/Applications/WezTerm.app', '--args', 'start', '--cwd', '/work'],
+      ['-a', '/Applications/Plain.app', '/work'],
+    ])
+    await expect(apps.open('external:custom:editor', '/work', added)).rejects.toMatchObject({ code: 'TERMINAL_EXTERNAL_APP_UNAVAILABLE' })
+  })
+})
+
 describe('ExternalTerminalApps opening', () => {
   const cwd = '/projects/中文 space \' " ; $(touch nope) `whoami`\nfolder'
 

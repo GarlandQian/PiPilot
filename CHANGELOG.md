@@ -6,6 +6,18 @@ Each version section supplies the highlights for its GitHub Release. Download li
 
 ## Unreleased
 
+### 中文
+
+- **打开方式合并编辑器和终端**：工具栏和文件查看器的“打开方式”菜单与 Codex 一致，按编辑器、终端、默认应用和访达分组；主按钮使用上次用过的应用，选终端时在文件所在文件夹打开。每次打开菜单都会重新查找，新装的应用无需重启即可出现。
+- **找到更多应用**：内置名单与 Codex 对齐，新增 Antigravity、Devin、Rider、RustRover、PhpStorm、GitHub Desktop、Visual Studio、Warp、kitty、WezTerm、Alacritty、Tabby 等；Windows 新增 PowerShell 7、Git Bash、Cmder、WSL，并从开始菜单快捷方式、App Paths 和 scoop 查找；Linux 读取 .desktop 启动项；macOS 识别带版本号的应用名。
+- **手动添加任意应用**：“设置 › 常规 › 打开方式”可添加名单里没有的编辑器或终端，可选择应用并填写参数（支持 {path}、{dir}、{line}）。原“终端 › 外部终端应用”的设置合并到这里，已添加的应用和默认终端保持不变。
+
+### English
+
+- **Open In covers editors and terminals:** The Open In menu in the toolbar and file viewer matches Codex, grouped as editors, terminals, the default app, and Finder. The main button uses the app you used last; a terminal opens the file's folder. Each opening rescans, so an app installed meanwhile shows up without a restart.
+- **More apps found:** The built-in list matches Codex's, adding Antigravity, Devin, Rider, RustRover, PhpStorm, GitHub Desktop, Visual Studio, Warp, kitty, WezTerm, Alacritty, Tabby and more. On Windows it adds PowerShell 7, Git Bash, Cmder and WSL, and looks in Start menu shortcuts, App Paths and scoop; on Linux it reads .desktop launchers; on macOS it recognizes versioned app names.
+- **Add any app:** Settings › General › Open In adds an editor or terminal the list doesn't know: choose the app and, optionally, its arguments ({path}, {dir}, {line}). Terminal › External terminal applications moved here; added apps and the default terminal are kept.
+
 ## 0.9.0
 
 ### 中文

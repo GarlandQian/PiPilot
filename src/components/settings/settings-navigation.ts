@@ -21,9 +21,9 @@ export interface SettingsGroupMeta {
 }
 export const SETTINGS_GROUPS: readonly SettingsGroupMeta[] = [
   { id: 'preferences', labelKey: 'settings.group.preferences', sections: [
-    { id: 'general', labelKey: 'settings.nav.general', descriptionKey: 'settings.redesign.general', icon: TbSettings, tint: '#8e8e93', searchTerms: 'send enter queue steer runtime Pi directory folder config locale language translation English Chinese notifications editor 发送 排队 引导 运行 目录 文件夹 配置 语言 简体中文 英文 通知 编辑器' },
+    { id: 'general', labelKey: 'settings.nav.general', descriptionKey: 'settings.redesign.general', icon: TbSettings, tint: '#8e8e93', searchTerms: 'send enter queue steer runtime Pi directory folder config locale language translation English Chinese notifications editor open in open with external terminal app VS Code Cursor iTerm Ghostty Warp WezTerm Windows Terminal 发送 排队 引导 运行 目录 文件夹 配置 语言 简体中文 英文 通知 编辑器 打开方式 外部终端 应用' },
     { id: 'appearance', labelKey: 'settings.nav.appearance', descriptionKey: 'settings.redesign.appearance', icon: TbPalette, tint: '#5e5ce6', searchTerms: 'theme font color size density wrap motion liquid glass transparency tint 字体 主题 颜色 密度 换行 动画 玻璃 透明 着色' },
-    { id: 'terminal', labelKey: 'settings.nav.terminal', descriptionKey: 'settings.redesign.terminal', icon: TbTerminal2, tint: '#3a3a3c', searchTerms: 'shell profile zsh bash powershell wsl font size location panel external iTerm Ghostty 终端 外壳 配置 字体 位置 外部' },
+    { id: 'terminal', labelKey: 'settings.nav.terminal', descriptionKey: 'settings.redesign.terminal', icon: TbTerminal2, tint: '#3a3a3c', searchTerms: 'shell profile zsh bash powershell wsl font size location panel 终端 外壳 配置 字体 位置' },
   ] },
   { id: 'agent', labelKey: 'settings.redesign.agentGroup', sections: [
     { id: 'models', labelKey: 'settings.nav.models', descriptionKey: 'settings.redesign.models', icon: TbCpu, tint: '#ff9500', searchTerms: 'provider API endpoint key token model default thinking compaction retry 供应商 服务商 模型 接口 密钥 默认 思考 压缩 重试' },

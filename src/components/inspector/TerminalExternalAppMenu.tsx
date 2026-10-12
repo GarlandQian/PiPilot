@@ -5,6 +5,7 @@ import { useT } from '@/i18n'
 import type { PiPilotApi } from '@/shared/pipilot-api'
 import type { TerminalExternalApp } from '@/shared/terminal-profiles'
 import { useSettings } from '@/store/settings'
+import { useTerminalAppName } from './OpenInEditorButton'
 
 /** External applications have a separate default from the integrated shell. */
 export function TerminalExternalAppMenu({ terminalApi, disabled, initiallyOpen = false, standalone = false, onOpen }: {
@@ -16,6 +17,7 @@ export function TerminalExternalAppMenu({ terminalApi, disabled, initiallyOpen =
   onOpen(appId?: string, appName?: string): void
 }) {
   const t = useT()
+  const nameOf = useTerminalAppName()
   const { terminal } = useSettings()
   const [open, setOpen] = React.useState(initiallyOpen)
   const [apps, setApps] = React.useState<TerminalExternalApp[]>([])
@@ -50,8 +52,9 @@ export function TerminalExternalAppMenu({ terminalApi, disabled, initiallyOpen =
       {loading ? <div role="status" className="flex items-center gap-2 px-2 py-2 text-caption text-muted-foreground"><TbLoader2 aria-hidden className="size-3.5 animate-spin" />{t('settings.terminal.external.loading')}</div> : null}
       {failed ? <p role="alert" className="max-w-64 px-2 py-2 text-caption text-destructive">{t('settings.terminal.external.loadFailed')}</p> : null}
       {!loading && !failed && !apps.length ? <p className="max-w-64 px-2 py-2 text-caption text-muted-foreground">{t('settings.terminal.external.empty')}</p> : null}
-      {apps.map((app) => <DropdownMenuItem key={app.id} disabled={disabled || loading || !app.available} title={app.executable || undefined} onSelect={() => onOpen(app.id, app.label)}>
-        <span className="min-w-0 flex-1 break-words">{app.label}</span>
+      {apps.map((app) => <DropdownMenuItem key={app.id} disabled={disabled || loading || !app.available} title={app.executable || undefined} onSelect={() => onOpen(app.id, nameOf(app))}>
+        {app.icon ? <img src={app.icon} alt="" aria-hidden className="size-4 shrink-0" draggable={false} /> : null}
+        <span className="min-w-0 flex-1 break-words">{nameOf(app)}</span>
         {app.id === terminal.defaultExternalAppId ? <span className="shrink-0 text-micro opacity-70">{t('terminal.drawer.defaultShell')}</span> : null}
         {!app.available ? <span className="shrink-0 text-micro opacity-70">{t('settings.terminal.profiles.unavailable')}</span> : null}
       </DropdownMenuItem>)}

@@ -25,6 +25,7 @@ import {
   MainProcessError,
   registerValidatedHandler,
 } from './validated-handler'
+import { appIconFor } from '../editors/app-icon-for'
 
 interface RegisterTerminalIpcOptions {
   getMainWindow(): BrowserWindow | null
@@ -54,8 +55,14 @@ export function registerTerminalIpc({
     isTrustedSender,
     ({ refresh }) => terminalService.listShellProfiles(refresh).catch(mapTerminalError),
   )
-  registerValidatedHandler(terminalListExternalAppsContract, isTrustedSender,
-    ({ refresh }) => terminalService.listExternalApps(refresh).catch(mapTerminalError))
+  registerValidatedHandler(terminalListExternalAppsContract, isTrustedSender, async ({ refresh }) => {
+    const apps = await terminalService.listExternalApps(refresh).catch(mapTerminalError)
+    // "Open in" shows each terminal with its own icon, like the editors beside it.
+    return Promise.all(apps.map(async (entry) => {
+      const icon = entry.available && entry.executable ? await appIconFor(entry.executable) : undefined
+      return icon && icon.length <= 96_000 ? { ...entry, icon } : entry
+    }))
+  })
   registerValidatedHandler(terminalOpenExternalContract, isTrustedSender,
     ({ scope, appId, relativeDirectory }) => terminalService.openExternal(scope, appId, relativeDirectory).catch(mapTerminalError))
   registerValidatedHandler(

@@ -1,6 +1,4 @@
 import * as React from 'react'
-import { useEditorName } from '@/components/inspector/OpenInEditorButton'
-import { useExternalEditors } from '@/renderer/external-editors'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
@@ -12,6 +10,7 @@ import type { PiDirectorySnapshot } from '@/shared/pi-directory'
 import { useSettings, useUpdateSettings } from '@/store/settings'
 import { useTaskNotifications } from '@/store/task-notifications'
 import { SettingsGroup, SettingsPage, SettingsRow, StatusText } from './kit'
+import { OpenWithSettings } from './OpenWithSettings'
 import { ProjectTrustPolicyRow } from '@/components/projects/ProjectTrust'
 
 interface GeneralSettingsProps {
@@ -20,18 +19,6 @@ interface GeneralSettingsProps {
   restartAvailable: boolean
   runtimeState: LocalPiRuntimeSnapshot['state']
   onRestart(): void
-}
-
-/** The app "Open in" uses first; it also changes to whichever one opened a file last. */
-function DefaultEditorSelect({ id }: { id: string }) {
-  const t = useT()
-  const { editors, preferred, setPreferred } = useExternalEditors()
-  const nameOf = useEditorName()
-  const choices = editors.filter((editor) => editor.kind !== 'file-manager')
-  return <select id={id} className="mac-select" value={preferred?.id ?? ''} aria-label={t('settings.general.defaultEditor')} disabled={!choices.length}
-    onChange={(event) => { if (event.target.value) setPreferred(event.target.value) }}>
-    {choices.map((editor) => <option key={editor.id} value={editor.id}>{nameOf(editor)}</option>)}
-  </select>
 }
 
 /** Where Pi keeps models, keys, MCP servers and sessions; a change applies after reopening PiPilot. */
@@ -114,11 +101,7 @@ export function GeneralSettings({ restartBusy, restartMessage, restartAvailable,
       </SettingsRow>
     </SettingsGroup>
 
-    <SettingsGroup title={t('settings.general.editor')}>
-      <SettingsRow label={t('settings.general.defaultEditor')} info={t('settings.general.defaultEditorDesc')} htmlFor="general-default-editor">
-        <DefaultEditorSelect id="general-default-editor" />
-      </SettingsRow>
-    </SettingsGroup>
+    <OpenWithSettings />
 
     <SettingsGroup title={t('settings.general.notifications')}>
       <SettingsRow label={t('settings.general.desktopNotifications')} info={t('settings.general.desktopNotificationsHint')}

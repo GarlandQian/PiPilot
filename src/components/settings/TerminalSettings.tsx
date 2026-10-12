@@ -9,7 +9,6 @@ import { TERMINAL_FONT_FAMILY_LIMIT, TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_
 import { useSettings, useUpdateSettings } from '@/store/settings'
 import { SettingsGroup, SettingsPage, SettingsRow } from './kit'
 import { TerminalProfilesSettings } from './TerminalProfilesSettings'
-import { ExternalTerminalSettings } from './ExternalTerminalSettings'
 
 const RECOMMENDED_FONT = '__recommended__'
 const CUSTOM_FONT = '__custom__'
@@ -79,7 +78,6 @@ export function TerminalSettings() {
     </SettingsGroup>
 
     <TerminalProfilesSettings />
-    <ExternalTerminalSettings />
 
     <AlertDialog open={confirmReset} onOpenChange={setConfirmReset}>
       <AlertDialogContent>

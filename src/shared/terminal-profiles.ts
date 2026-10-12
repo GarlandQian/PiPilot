@@ -40,14 +40,26 @@ export type TerminalDefaultProfileSnapshot = z.infer<typeof terminalDefaultProfi
 export const terminalExternalAdapterSchema = z.enum([
   'mac-terminal', 'mac-iterm', 'ghostty', 'windows-terminal', 'windows-powershell', 'windows-cmd',
   'gnome-terminal', 'konsole', 'xfce4-terminal', 'kitty', 'alacritty',
+  'warp', 'wezterm', 'tabby', 'pwsh', 'git-bash', 'cmder', 'wsl', 'kgx', 'mate-terminal', 'tilix',
+  /** Any other app: opened with the folder, or with the arguments the user wrote. */
+  'generic',
 ])
 export type TerminalExternalAdapter = z.infer<typeof terminalExternalAdapterSchema>
 export const terminalExternalAppIdSchema = z.string().min(1).max(160).regex(/^external:[a-zA-Z0-9:._-]+$/)
+/** `{path}` (the file or folder), `{dir}` (its folder) and `{line}` are filled in when the app opens. */
+export const openTargetArgumentsSchema = z.array(terminalArgumentSchema.refine((value) => value.trim().length > 0)).max(32)
+/**
+ * An app the user added to "Open in". Terminals open the folder; with
+ * `kind: 'editor'` the app opens files. Entries saved before editors could be
+ * added have no kind and are terminals.
+ */
 export const terminalCustomExternalAppSchema = z.object({
   id: terminalExternalAppIdSchema.regex(/^external:custom:[a-zA-Z0-9_-]+$/),
   name: z.string().trim().min(1).max(128),
   executable: z.string().trim().min(1).max(4_096).refine((value) => !/[\0\r\n]/.test(value)),
   adapter: terminalExternalAdapterSchema,
+  kind: z.enum(['editor', 'terminal']).optional(),
+  args: openTargetArgumentsSchema.optional(),
 }).strict()
 export type TerminalCustomExternalApp = z.infer<typeof terminalCustomExternalAppSchema>
 export const terminalCustomExternalAppsSchema = z.array(terminalCustomExternalAppSchema).max(64)
@@ -60,6 +72,8 @@ export const terminalExternalAppSchema = z.object({
   executable: z.string().max(4_096),
   available: z.boolean(),
   unavailableReason: z.enum(['executable-not-found', 'unsupported-platform']).optional(),
+  /** The app's own icon, as a small PNG data URL. */
+  icon: z.string().startsWith('data:image/png;base64,').max(96_000).optional(),
 }).strict()
 export type TerminalExternalApp = z.infer<typeof terminalExternalAppSchema>
 export const terminalDefaultExternalAppSnapshotSchema = terminalExternalAppSchema.pick({ id: true, label: true, executable: true, adapter: true })

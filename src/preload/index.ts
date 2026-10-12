@@ -107,6 +107,7 @@ import {
   workspaceGitStatusContract,
   workspaceGitCommitContract,
   workspaceGitSuggestMessageContract,
+  editorsChooseApplicationContract,
   editorsListContract,
   editorsOpenContract,
   workspaceFilesListContract,
@@ -414,7 +415,11 @@ const api: PiPilotApi = {
     applyHunk: (workspaceId, action, change, hunk) => invoke(workspaceDiffApplyHunkContract, { context: createContext(), workspaceId, action, change, hunk }),
   },
   editors: {
-    list: async () => (await invoke(editorsListContract, { context: createContext() })).editors,
+    list: async (refresh) => (await invoke(editorsListContract, { context: createContext(), ...(refresh ? { refresh: true } : {}) })).editors,
+    chooseApplication: async () => {
+      const result = await invoke(editorsChooseApplicationContract, { context: createContext() })
+      return result.cancelled ? null : { path: result.path, name: result.name }
+    },
     open: async (workspaceId, editorId, target = {}) => {
       await invoke(editorsOpenContract, { context: createContext(), workspaceId, editorId, ...(target.path ? { path: target.path } : {}), ...(target.line ? { line: target.line } : {}) })
     },

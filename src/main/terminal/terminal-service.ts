@@ -111,6 +111,9 @@ interface TerminalRecord {
 
 export interface TerminalServiceOptions extends TerminalDiscoveryOptions {
   launchExternal?: ExternalTerminalAppsOptions['launchExternal']
+  /** Start menu shortcut targets, for finding external terminals on Windows. */
+  readShortcutLink?: ExternalTerminalAppsOptions['readShortcutLink']
+  openUri?: ExternalTerminalAppsOptions['openUri']
   /** The system's language (such as zh-CN), for a terminal that inherited no locale. */
   systemLocale?: () => string
   localeExists?: (name: string) => boolean
@@ -178,7 +181,8 @@ export class TerminalService {
     this.platform = options.platform ?? process.platform
     this.spawnPty = options.spawnPty
     this.discovery = new TerminalProfileDiscovery(options)
-    this.externalApps = new ExternalTerminalApps(options)
+    // WSL is offered as an external terminal only when it has a distribution to open.
+    this.externalApps = new ExternalTerminalApps({ ...options, wslAvailable: () => this.discovery.hasWslDistribution() })
   }
 
   subscribe(listener: TerminalListener) {

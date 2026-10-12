@@ -256,8 +256,11 @@ export interface PiPilotApi {
   }
   /** Apps that open project files: detected editors, the default app, the file manager. */
   readonly editors: {
-    list(): Promise<ExternalEditor[]>
+    /** `refresh` rescans now (opening the "Open in" menu). */
+    list(refresh?: boolean): Promise<ExternalEditor[]>
     open(workspaceId: string, editorId: string, target?: { path?: string; line?: number }): Promise<void>
+    /** Pick an app to add to "Open in"; null when cancelled. */
+    chooseApplication(): Promise<{ path: string; name: string } | null>
   }
   readonly terminal: {
     listShellProfiles(refresh?: boolean): Promise<TerminalShellProfile[]>

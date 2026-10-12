@@ -260,6 +260,11 @@ export class TerminalProfileDiscovery {
   private nativeProfiles() { return this.nativeInventory ??= this.scanNative() }
   private distributionProfiles() { return this.wslInventory ??= this.wslProfiles() }
 
+  /** Whether WSL has a distribution to open (Windows). */
+  async hasWslDistribution() {
+    return this.platform === 'win32' && (await this.distributionProfiles()).length > 0
+  }
+
   async discover(custom: TerminalCustomProfile[] = [], keep: { files?: readonly string[]; ids?: readonly string[] } = {}, refresh = false): Promise<ResolvedShellProfile[]> {
     if (refresh) this.invalidate()
     const [native, wsl, configured] = await Promise.all([

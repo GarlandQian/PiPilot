@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { stat } from 'node:fs/promises'
-import { app, dialog, shell, type BrowserWindow } from 'electron'
+import { basename } from 'node:path'
+import { dialog, shell, type BrowserWindow } from 'electron'
 import {
   ipcChannels,
   workspaceChangedEventSchema,
@@ -20,6 +21,7 @@ import {
   workspaceGitStatusContract,
   workspaceGitCommitContract,
   workspaceGitSuggestMessageContract,
+  editorsChooseApplicationContract,
   editorsListContract,
   editorsOpenContract,
   workspaceFilesListContract,
@@ -40,8 +42,9 @@ import {
 } from '../repositories/workspace-repository'
 import type { ApplicationUrlPolicy } from '../security/url-policy'
 import type { TerminalService } from '../terminal/terminal-service'
+import type { TerminalCustomExternalApp } from '../../shared/terminal-profiles'
 import { ExternalEditors } from '../editors/external-editors'
-import { macAppIcon } from '../editors/app-icons'
+import { appIconFor } from '../editors/app-icon-for'
 import { ProjectWorkflowError } from '../project-actions/workflow-storage'
 import {
   WorkspaceContentError,
@@ -63,6 +66,8 @@ interface RegisterWorkspaceIpcOptions {
   withRemovableProject?<T>(workspaceId: string, operation: () => Promise<T>): Promise<T>
   /** One completion from a configured model (the Pi management helper). */
   completeText?(input: { providerId: string; modelId: string; systemPrompt: string; prompt: string; maxTokens: number }): Promise<string>
+  /** Apps added to "Open in" in Settings. */
+  customOpenTargets?(): readonly TerminalCustomExternalApp[]
 }
 
 const COMMIT_MESSAGE_PROMPT = [
@@ -120,17 +125,17 @@ export function registerWorkspaceIpc({
   terminalService,
   withRemovableProject,
   completeText,
+  customOpenTargets,
 }: RegisterWorkspaceIpcOptions) {
   const isTrustedSender = createTrustedSenderValidator(policy, getMainWindow)
   const editors = new ExternalEditors({
     openPath: (path) => shell.openPath(path),
     showItemInFolder: (path) => shell.showItemInFolder(path),
-    iconFor: async (path) => {
-      if (process.platform === 'darwin') return macAppIcon(path)
-      const image = await app.getFileIcon(path, { size: 'normal' })
-      return image.isEmpty() ? undefined : image.toDataURL()
-    },
+    iconFor: appIconFor,
+    customApps: () => customOpenTargets?.() ?? [],
+    ...(process.platform === 'win32' ? { readShortcutLink: (path: string) => shell.readShortcutLink(path).target } : {}),
   })
+  let choosingApplication = false
 
   registerValidatedHandler(workspaceGetContract, isTrustedSender, () => repository.get())
 
@@ -331,7 +336,23 @@ export function registerWorkspaceIpc({
     if (!message) throw new MainProcessError('COMMIT_MESSAGE_FAILED', 'The model returned an empty message.')
     return { workspaceId, message: message.slice(0, 20_000) }
   })
-  registerValidatedHandler(editorsListContract, isTrustedSender, async () => ({ editors: await editors.list() }))
+  registerValidatedHandler(editorsListContract, isTrustedSender, async ({ refresh }) => ({ editors: await editors.list(refresh) }))
+  registerValidatedHandler(editorsChooseApplicationContract, isTrustedSender, async () => {
+    const window = getMainWindow()
+    if (!window || window.isDestroyed()) throw new MainProcessError('WINDOW_UNAVAILABLE', 'The main window is unavailable.')
+    if (choosingApplication) throw new MainProcessError('DIALOG_BUSY', 'An application picker is already open.')
+    choosingApplication = true
+    try {
+      const selection = await dialog.showOpenDialog(window, {
+        ...(process.platform === 'darwin' ? { defaultPath: '/Applications', filters: [{ name: 'Applications', extensions: ['app'] }] }
+          : process.platform === 'win32' ? { filters: [{ name: 'Applications', extensions: ['exe'] }] } : {}),
+        properties: ['openFile'],
+      })
+      const path = selection.filePaths[0]
+      if (selection.canceled || !path) return { cancelled: true as const }
+      return { cancelled: false as const, path: path.slice(0, 4_096), name: basename(path).replace(/\.(app|exe)$/i, '').slice(0, 128) }
+    } finally { choosingApplication = false }
+  })
   registerValidatedHandler(editorsOpenContract, isTrustedSender, async ({ workspaceId, editorId, path, line }) => {
     // The renderer names a project file; main resolves it inside the project before launching anything.
     const target = await contentService.locateFile(workspaceId, path ?? '.').catch(mapWorkspaceContentError)

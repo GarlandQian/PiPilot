@@ -311,6 +311,7 @@ const terminalService = new TerminalService(
     // Only available once the app is ready; terminals start after that.
     systemLocale: () => app.getSystemLocale(),
     getTerminalSettings: () => settingsRepository.get().settings.terminal,
+    ...(process.platform === 'win32' ? { readShortcutLink: (path: string) => shell.readShortcutLink(path).target } : {}),
     ...(e2eTerminalShell ? {
         resolveShell: () => ({
           file: resolve(e2eTerminalShell),
@@ -1139,6 +1140,7 @@ if (!hasSingleInstanceLock) {
           if (!piIntegrationService) throw new Error('Pi integrations are unavailable.')
           return piIntegrationService.completeText(input)
         },
+        customOpenTargets: () => settingsRepository.get().settings.terminal.externalApps,
       })
       const updateProvider = await createProductionApplicationUpdateProvider({
         portable: portableDistribution,
