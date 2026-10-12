@@ -75,6 +75,8 @@ test('stages, unstages and discards from the review, file by file and hunk by hu
     await section('unstaged:b.txt').getByRole('button', { name: 'Discard changes', exact: true }).click()
     const confirm = page.getByRole('alertdialog', { name: 'Discard changes to “b.txt”?', exact: true })
     await confirm.getByRole('button', { name: 'Discard', exact: true }).click()
+    // The page stays hidden from assistive technology until the dialog has finished closing.
+    await expect(page.getByRole('alertdialog')).toHaveCount(0)
     await expect(section('unstaged:b.txt')).toHaveCount(0)
     expect(await readFile(join(project, 'b.txt'), 'utf8')).toBe('bravo\n')
 

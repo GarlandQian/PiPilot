@@ -16,6 +16,7 @@ import { nextTypewriterText, shouldStartTypewriterFromEmpty, thinkingDisclosureA
 import { parsePromptSkillEnvelope } from '@/renderer/pi-rpc/prompt-presentation'
 import { useSettings } from '@/store/settings'
 import type { Turn } from '@/types/chat'
+import { Collapse } from '@/components/ui/motion'
 import {
   menuPlanActions,
   PLAN_LIFECYCLE_KEYS,
@@ -386,11 +387,13 @@ function EarlierPlan({ turn }: { turn: Extract<Turn, { kind: 'plan' }> }) {
         </span>
         <TbChevronRight className={cn('size-3.5 shrink-0 text-muted-foreground transition-transform duration-(--duration-fast)', open && 'rotate-90')} aria-hidden />
       </button>
-      {open ? (
-        <div className="mt-1.5 rounded-[12px] bg-surface-raised px-4 py-3 shadow-[inset_0_0_0_0.5px_var(--color-border)] dark:bg-white/[0.03]">
-          <MarkdownContent markdown={turn.markdown} />
+      <Collapse open={open}>
+        <div className="pt-1.5">
+          <div className="rounded-[12px] bg-surface-raised px-4 py-3 shadow-[inset_0_0_0_0.5px_var(--color-border)] dark:bg-white/[0.03]">
+            <MarkdownContent markdown={turn.markdown} />
+          </div>
         </div>
-      ) : null}
+      </Collapse>
     </section>
   )
 }

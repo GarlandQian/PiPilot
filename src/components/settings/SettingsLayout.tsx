@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils'
 import { usePiRpcActions, usePiRuntime } from '@/store/pi-rpc'
 import { useSettingsSaveStatus } from '@/store/settings'
 import { SETTINGS_ROUTE_IDS } from '@/renderer/layout-preferences'
+import { playEntrance } from '@/lib/motion'
 
 const GeneralSettings = React.lazy(() => import('./GeneralSettings').then((module) => ({ default: module.GeneralSettings })))
 const AppearanceSettings = React.lazy(() => import('./AppearanceSettings').then((module) => ({ default: module.AppearanceSettings })))
@@ -65,6 +66,19 @@ export function SettingsLayout({
     })
   }, [])
   const subpage = subpages[section]
+  const sectionElements = React.useRef(new Map<SettingsSectionId, HTMLDivElement>())
+  const shown = React.useRef<{ section: SettingsSectionId; subpage: string | null } | null>(null)
+  // Another pane fades in; a detail page slides in from the trailing edge, and Back from the leading one.
+  React.useLayoutEffect(() => {
+    const before = shown.current
+    const current = { section, subpage: subpage?.title ?? null }
+    shown.current = current
+    if (!before || hidden) return
+    const page = sectionElements.current.get(section)?.firstElementChild ?? null
+    if (before.section !== section) playEntrance(page, 'fade')
+    else if (before.subpage === null && current.subpage !== null) playEntrance(page, 'push')
+    else if (before.subpage !== null && current.subpage === null) playEntrance(page, 'pop')
+  }, [section, subpage?.title, hidden])
 
   React.useEffect(() => {
     setVisitedSections((current) => current.has(section) ? current : new Set([...current, section]))
@@ -165,6 +179,7 @@ export function SettingsLayout({
       {SETTINGS_ROUTE_IDS.map((id) => visitedSections.has(id) || id === section ? (
         <div
           key={id}
+          ref={(element) => { if (element) sectionElements.current.set(id, element); else sectionElements.current.delete(id) }}
           hidden={id !== section}
           data-settings-section={id}
           className="scroll-slim min-h-0 min-w-0 flex-1 scroll-pt-[calc(var(--frame-header-h)+12px)] overflow-x-hidden overflow-y-auto"

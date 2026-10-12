@@ -108,8 +108,13 @@
   /* motion: macOS uses short, gently decelerating curves */
   --duration-fast: 120ms;
   --duration-base: 200ms;
+  /* Panels and sidebars; leaving uses --duration-fast. */
+  --duration-panel: 340ms;
   --ease-standard: cubic-bezier(0.25, 0.1, 0.25, 1);
   --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
+  /* A spring without bounce, as CSS: quick start, long settle (src/lib/motion.ts). */
+  --ease-smooth: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
 
   /* Dynamic, set by AppSettingsApplier (settings store) */
   --app-font-size: 13px;
@@ -264,6 +269,7 @@
 
   --ease-standard: var(--ease-standard);
   --ease-spring: var(--ease-spring);
+  --ease-smooth: var(--ease-smooth);
 
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
@@ -487,10 +493,10 @@
     overflow: hidden;
   }
   [data-slot='collapsible-content'][data-state='open'] {
-    animation: collapsible-down var(--duration-base) var(--ease-standard);
+    animation: collapsible-down var(--duration-panel) var(--ease-smooth);
   }
   [data-slot='collapsible-content'][data-state='closed'] {
-    animation: collapsible-up var(--duration-fast) var(--ease-standard);
+    animation: collapsible-up var(--duration-fast) var(--ease-exit);
   }
 
   /* ============ popover / sheet entrance (macOS-like) ============ */
@@ -526,6 +532,79 @@
     animation: mac-sheet-in 240ms var(--ease-spring);
   }
 
+  /* Leaving mirrors arriving, quicker (Radix keeps the element until it ends). */
+  @keyframes mac-pop-out {
+    from { opacity: 1; transform: scale(1); }
+    to { opacity: 0; transform: scale(0.97); }
+  }
+  @keyframes mac-fade-out {
+    from { opacity: 1; }
+    to { opacity: 0; }
+  }
+  @keyframes mac-sheet-out {
+    from { opacity: 1; transform: scale(1); }
+    to { opacity: 0; transform: scale(0.97); }
+  }
+  /* The compact inspector slides in from the trailing edge like a macOS inspector. */
+  @keyframes mac-drawer-in {
+    from { opacity: 0.6; transform: translateX(24px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes mac-drawer-out {
+    from { opacity: 1; transform: none; }
+    to { opacity: 0; transform: translateX(24px); }
+  }
+  [data-slot='dropdown-menu-content'][data-state='closed'],
+  [data-slot='dropdown-menu-sub-content'][data-state='closed'],
+  [data-slot='context-menu-content'][data-state='closed'],
+  [data-slot='popover-content'][data-state='closed'],
+  [data-slot='select-content'][data-state='closed'] {
+    animation: mac-pop-out 110ms var(--ease-exit);
+  }
+  [data-slot='tooltip-content'][data-state='closed'] {
+    animation: mac-fade-out 90ms var(--ease-exit);
+  }
+  [data-slot='dialog-overlay'][data-state='closed'],
+  [data-slot='alert-dialog-overlay'][data-state='closed'] {
+    animation: mac-fade-out var(--duration-fast) var(--ease-exit);
+  }
+  [data-slot='dialog-content'][data-state='closed'].mac-centered:not(.translate-x-0),
+  [data-slot='alert-dialog-content'][data-state='closed'] {
+    animation: mac-sheet-out 140ms var(--ease-exit);
+  }
+  [data-slot='dialog-content'][data-state='open'].translate-x-0 {
+    animation: mac-drawer-in var(--duration-panel) var(--ease-smooth);
+  }
+  [data-slot='dialog-content'][data-state='closed'].translate-x-0 {
+    animation: mac-drawer-out var(--duration-fast) var(--ease-exit);
+  }
+
+  /* ============ sidebar show / hide (Finder, Codex) ============ */
+  /* Only while toggling, so dragging its edge stays immediate. */
+  [data-app-sidebar][data-toggling] {
+    transition-property: width, opacity, display;
+    transition-duration: var(--duration-panel);
+    transition-timing-function: var(--ease-smooth);
+    transition-behavior: allow-discrete;
+  }
+  [data-app-sidebar][hidden] {
+    width: 0 !important;
+    opacity: 0;
+  }
+  @starting-style {
+    [data-app-sidebar][data-toggling]:not([hidden]) {
+      width: 0 !important;
+      opacity: 0;
+    }
+  }
+  /* The title-bar buttons that stand in for a hidden sidebar fade in. */
+  [data-rail-cluster] {
+    transition: opacity var(--duration-base) var(--ease-smooth);
+  }
+  @starting-style {
+    [data-rail-cluster] { opacity: 0; }
+  }
+
   /* ============ thinking shimmer ============ */
   @keyframes shimmer-text {
     from { background-position: 200% 0; }
@@ -554,6 +633,7 @@
     :root {
       --duration-fast: 0.01ms;
       --duration-base: 0.01ms;
+      --duration-panel: 0.01ms;
     }
     *,
     ::before,
@@ -575,6 +655,18 @@
   [data-reduced-motion='true'] {
     --duration-fast: 0.01ms;
     --duration-base: 0.01ms;
+    --duration-panel: 0.01ms;
+  }
+  /* Without motion, closing removes at once rather than after an exit animation. */
+  [data-reduced-motion='true'] [data-state='closed'][data-slot$='-content'],
+  [data-reduced-motion='true'] [data-state='closed'][data-slot$='-overlay'] {
+    animation: none !important;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    [data-state='closed'][data-slot$='-content'],
+    [data-state='closed'][data-slot$='-overlay'] {
+      animation: none !important;
+    }
   }
 
   /* ============ ligatures ============ */

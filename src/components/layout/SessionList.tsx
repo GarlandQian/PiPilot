@@ -65,6 +65,7 @@ import { useProjectWorkflowActions } from '@/components/projects/project-workflo
 import { useWorktreeIndex } from '@/store/project-workflows'
 import type { ManagedWorktree } from '@/shared/project-workflows'
 import { useTerminalActions } from '@/components/inspector/TerminalActions'
+import { AnimatePresence, Collapse, PresenceRow } from '@/components/ui/motion'
 
 export interface SidebarConversationItem {
   summary: OfficialPiSessionSummary
@@ -386,7 +387,7 @@ function ConversationRow({
   )
 
   return (
-    <li className="relative" data-session-activity={item.activityState}>
+    <PresenceRow className="relative" data-session-activity={item.activityState}>
       {renamingHere || unavailable ? row : (
         <ContextMenu>
           <ContextMenuTrigger asChild>{row}</ContextMenuTrigger>
@@ -395,7 +396,7 @@ function ConversationRow({
           </ContextMenuContent>
         </ContextMenu>
       )}
-    </li>
+    </PresenceRow>
   )
 }
 
@@ -436,17 +437,20 @@ export function ConversationList({
 
   return (
     <ul className="flex flex-col gap-px" data-session-list={variant}>
-      {items.map((item) => (
-        <ConversationRow
-          key={item.summary.selectionToken}
-          item={item}
-          active={item.selected ?? item.summary.sessionId === activeSessionId}
-          renaming={item.summary.selectionToken === renamingSelectionToken}
-          now={now}
-          variant={variant}
-          {...actions}
-        />
-      ))}
+      {/* Added and removed conversations grow in and fold away; the first list shows as is. */}
+      <AnimatePresence initial={false}>
+        {items.map((item) => (
+          <ConversationRow
+            key={item.summary.selectionToken}
+            item={item}
+            active={item.selected ?? item.summary.sessionId === activeSessionId}
+            renaming={item.summary.selectionToken === renamingSelectionToken}
+            now={now}
+            variant={variant}
+            {...actions}
+          />
+        ))}
+      </AnimatePresence>
     </ul>
   )
 }
@@ -765,8 +769,8 @@ export function ProjectNavigationGroup({
                   </ContextMenuContent>
                 </ContextMenu>
 
-                {navigation.expanded && (
-                  <div className="mt-px mb-1 pl-[18px]">
+                <Collapse open={navigation.expanded}>
+                  <div className="pt-px pb-1 pl-[18px]">
                     <ProjectChildren
                       navigation={navigation}
                       activeSessionId={activeSessionId}
@@ -778,7 +782,7 @@ export function ProjectNavigationGroup({
                       onRetryProject={(projectId) => onToggleProject(projectId, true)}
                     />
                   </div>
-                )}
+                </Collapse>
               </li>
             )
           })}

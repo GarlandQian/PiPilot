@@ -7,6 +7,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
 import type { PanelDock } from './panel-tabs'
+import { playEntrance } from '@/lib/motion'
 
 /** One tab as its strip shows it. */
 export interface PanelStripTab {
@@ -240,6 +241,7 @@ export function PanelDockSlot({ containers, tabIds, activeId, empty }: {
   empty?: React.ReactNode
 }) {
   const slot = React.useRef<HTMLDivElement>(null)
+  const shownId = React.useRef(activeId)
   const key = tabIds.join('\u0000')
   React.useLayoutEffect(() => {
     const host = slot.current
@@ -249,6 +251,9 @@ export function PanelDockSlot({ containers, tabIds, activeId, empty }: {
       if (container.parentNode !== host) host.appendChild(container)
       container.hidden = id !== activeId
     }
+    // Switching tabs fades the new one in; the first tab a dock shows does not animate.
+    if (activeId && shownId.current && shownId.current !== activeId && tabIds.includes(activeId)) playEntrance(containers.get(activeId), 'fade')
+    shownId.current = activeId
     for (const child of [...host.children]) {
       if (child instanceof HTMLElement && child.dataset.panelView && !tabIds.includes(child.dataset.panelView)) child.remove()
     }

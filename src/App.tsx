@@ -147,6 +147,9 @@ import {
   sameConversationScope,
 } from '@/store/workspace-state'
 import { sidebarConversationTitle } from '@/components/layout/session-navigation'
+import { AnimatePresence, PresenceBox, useReducedMotion } from '@/components/ui/motion'
+import { EXIT, SPRING_PANEL } from '@/lib/motion'
+import { cn } from '@/lib/utils'
 
 const SettingsLayout = React.lazy(() => import('@/components/settings/SettingsLayout').then((module) => ({ default: module.SettingsLayout })))
 
@@ -178,6 +181,7 @@ export default function App() {
   const settings = useApplySettings()
   const { update: updateSettings } = useUpdateSettings()
   const t = useT()
+  const reducedMotion = useReducedMotion()
   const workspace = useWorkspaceStore()
   const pi = usePiRuntime()
   const transcriptLoading = usePiTranscriptLoading()
@@ -1334,8 +1338,13 @@ export default function App() {
             </React.Suspense>
           )}
 
+          {/* The inspector grows open from the trailing edge and folds away (macOS inspector). */}
+          <AnimatePresence initial={false}>
           {conversationWorkspace && panel.rightVisible && !compactConversation && (
-            <>
+            <PresenceBox key="inspector" data-inspector-dock className={cn('flex h-full min-h-0 min-w-0', panel.full ? 'flex-1' : 'shrink-0')}
+              initial={reducedMotion ? false : { width: 0, opacity: 0, overflow: 'hidden' }}
+              animate={{ width: 'auto', opacity: 1, transition: SPRING_PANEL, transitionEnd: { overflow: 'visible' } }}
+              exit={reducedMotion ? undefined : { width: 0, opacity: 0, overflow: 'hidden', transition: EXIT }}>
               {!panel.full && <PanelResizeHandle
                 width={panelLayout.inspectorWidth}
                 min={INSPECTOR_MIN_WIDTH}
@@ -1348,8 +1357,9 @@ export default function App() {
                 side="right"
               />}
               <InspectorPortalHost container={rightDockContainer} expanded={panel.full} />
-            </>
+            </PresenceBox>
           )}
+          </AnimatePresence>
         </div>
       </div>
 

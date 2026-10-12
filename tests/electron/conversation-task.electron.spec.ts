@@ -148,8 +148,13 @@ test('keeps overview scoped, preserves drafts and routes plugin actions through 
   // The summary is a card over the trailing edge (Codex); it closes when you work elsewhere.
   const summary = page.locator('[data-conversation-summary]')
   const showSummary = async () => {
-    if (!await summary.isVisible().catch(() => false)) await page.locator('[data-summary-trigger]').click()
-    await expect(summary).toBeVisible()
+    // A closing card stays visible while it fades out; only an open one counts.
+    const state = await summary.getAttribute('data-state', { timeout: 250 }).catch(() => null)
+    if (state !== 'open') {
+      await expect(summary).toHaveCount(0)
+      await page.locator('[data-summary-trigger]').click()
+    }
+    await expect(summary).toHaveAttribute('data-state', 'open')
   }
   // The plan is shown and decided only in the transcript; the summary and the
   // composer capsule just point to it.

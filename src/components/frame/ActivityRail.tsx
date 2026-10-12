@@ -95,6 +95,18 @@ export function ActivityRail({
   const t = useT()
   const expanded = contextPanelOpen && children !== undefined
   const clusterRef = React.useRef<HTMLDivElement>(null)
+  // Showing or hiding animates the width; dragging the edge never does.
+  const [shownAs, setShownAs] = React.useState(expanded)
+  const [toggling, setToggling] = React.useState(false)
+  if (shownAs !== expanded) {
+    setShownAs(expanded)
+    setToggling(true)
+  }
+  React.useEffect(() => {
+    if (!toggling) return
+    const timer = setTimeout(() => setToggling(false), 450)
+    return () => clearTimeout(timer)
+  }, [toggling, expanded])
 
   React.useLayoutEffect(() => {
     const root = document.documentElement
@@ -132,7 +144,7 @@ export function ActivityRail({
   return (
     <>
       {!expanded && (
-        <div ref={clusterRef} data-navigation-layout="rail"
+        <div ref={clusterRef} data-navigation-layout="rail" data-rail-cluster
           className="app-no-drag absolute top-0 left-0 z-40 flex h-(--frame-header-h) items-center gap-1.5 pl-3 mac:pl-(--traffic-light-gutter)">
           {exitFullScreen}
           <div className="glass toolbar-group">
@@ -148,10 +160,17 @@ export function ActivityRail({
       )}
       <aside
         hidden={!expanded}
+        // While it slides away it is already gone for focus, clicks and assistive technology.
+        inert={!expanded}
+        aria-hidden={!expanded || undefined}
         data-navigation-layout={expanded ? 'sidebar' : undefined}
+        data-app-sidebar
+        data-toggling={toggling || undefined}
         style={width !== undefined ? { width } : undefined}
-        className="flex h-full w-60 shrink-0 flex-col border-r border-border bg-source-list mac:border-black/10 dark:mac:border-black/50"
+        className="flex h-full w-60 shrink-0 justify-end overflow-hidden border-r border-border bg-source-list mac:border-black/10 dark:mac:border-black/50"
       >
+        {/* Fixed-width content anchored to the trailing edge, so the sidebar slides rather than squeezes. */}
+        <div className="flex h-full w-60 shrink-0 flex-col" style={width !== undefined ? { width } : undefined}>
         {/* Title bar: traffic lights, then the sidebar toggle (Codex, Notes). */}
         <header className="app-drag flex h-(--frame-header-h) w-full shrink-0 items-center gap-1.5 pr-2.5 pl-3.5 mac:pl-(--traffic-light-gutter)">
           <span className="flex min-w-0 flex-1 items-center gap-2 mac:hidden">
@@ -190,6 +209,7 @@ export function ActivityRail({
           </Tooltip>
           <GlobalNotifications onOpenAbout={onOpenAbout} onOpenNotification={onOpenNotification} />
         </nav>
+        </div>
       </aside>
     </>
   )

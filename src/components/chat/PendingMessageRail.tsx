@@ -24,6 +24,7 @@ import { useConversationOperationFeedback } from '@/renderer/composer/use-operat
 import { MarkdownContent } from './markdown/MarkdownContent'
 import { PromptInlineMarkdown, PromptMarkdown } from './PromptMarkdown'
 import { promptDisplaySummary } from '@/renderer/pi-rpc/prompt-presentation'
+import { AnimatePresence, Collapse, Present, PresenceRow } from '@/components/ui/motion'
 
 /** Rows shown before "N more"; the queue should not push the conversation away. */
 const VISIBLE_ROWS = 3
@@ -172,6 +173,8 @@ export function PendingMessageRail({
       ) : null}
       {presentation.items.length > 0 ? (
         <ol className={cn('min-w-0 divide-y divide-border', paused && 'border-t border-border', showAll && 'scroll-slim max-h-[min(280px,36vh)] overflow-y-auto')}>
+          {/* Queued messages grow in and fold away as they are added, sent or removed. */}
+          <AnimatePresence initial={false}>
           {visible.map((item) => {
             const status = statusOf(item, paused)
             const open = openId === item.id
@@ -180,11 +183,12 @@ export function PendingMessageRail({
             const summary = item.text.trim() || t('composer.pendingImagesOnly')
             const dropHere = drag && drag.overId === item.id && drag.id !== item.id
             return (
-              <ContextMenu key={item.id}>
+              <PresenceRow key={item.id} className="min-w-0">
+              <Present>{(present) => <ContextMenu>
                 <ContextMenuTrigger asChild>
-                  <li
-                    data-pending-message-id={item.id}
-                    data-pending-message-status={item.status ?? 'queued'}
+                  <div
+                    data-pending-message-id={present ? item.id : undefined}
+                    data-pending-message-status={present ? item.status ?? 'queued' : undefined}
                     draggable={canMove}
                     onDragStart={(event) => {
                       event.dataTransfer.setData(QUEUE_ITEM_MIME, item.id)
@@ -292,13 +296,13 @@ export function PendingMessageRail({
                         ) : null}
                       </div>
                     </div>
-                    {open ? (
+                    <Collapse open={open}>
                       <div className="pb-2.5 pr-4 pl-[52px]">
                         {item.status === 'unknown' ? <p className="mb-1.5 text-caption text-muted-foreground">{t('composer.queueUnconfirmedHint')}</p> : null}
                         <PendingItemContent item={item} />
                       </div>
-                    ) : null}
-                  </li>
+                    </Collapse>
+                  </div>
                 </ContextMenuTrigger>
                 <ContextMenuContent>
                   <ContextMenuItem disabled={!canMove || position <= 0} onSelect={() => move(item, -1)}>{t('composer.queueMoveUp')}</ContextMenuItem>
@@ -307,9 +311,11 @@ export function PendingMessageRail({
                   {item.canEdit ? <ContextMenuItem disabled={busy} onSelect={() => run(`retract:${item.id}`, () => onRetract(item))}>{t('composer.editPending')}</ContextMenuItem> : null}
                   {item.canRemove ? <ContextMenuItem disabled={busy} onSelect={() => run(`remove:${item.id}`, () => onRemoveQueuedMessage(item.id))}>{t('composer.removePending')}</ContextMenuItem> : null}
                 </ContextMenuContent>
-              </ContextMenu>
+              </ContextMenu>}</Present>
+              </PresenceRow>
             )
           })}
+          </AnimatePresence>
         </ol>
       ) : null}
       {presentation.count > presentation.items.length ? (

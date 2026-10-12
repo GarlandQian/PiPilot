@@ -23,6 +23,7 @@ import {
   type FileTreeSearchState,
 } from './file-tree-search'
 import { MaterialFileIcon } from './MaterialFileIcon'
+import { Collapse } from '@/components/ui/motion'
 import { InspectorSectionToolbar } from './InspectorSectionToolbar'
 import { WorkspacePathContextMenu } from './WorkspacePathContextMenu'
 import { adjacentFileRowIndex } from './file-tree-state'
@@ -218,9 +219,9 @@ function TreeNode({
           {t('inspector.files.directoryLoadError')}
         </p>
       ) : null}
-      {isDir && open && node.children && (
+      <Collapse open={Boolean(isDir && open && node.children)}>
         <ul>
-          {node.children.map((c) => (
+          {(node.children ?? []).map((c) => (
             <TreeNode
               key={c.path}
               node={c}
@@ -239,7 +240,7 @@ function TreeNode({
             </li>
           )}
         </ul>
-      )}
+      </Collapse>
     </li>
   )
 }

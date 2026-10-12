@@ -12,6 +12,7 @@ Each version section supplies the highlights for its GitHub Release. Download li
 - **找到更多应用**：内置名单与 Codex 对齐，新增 Antigravity、Devin、Rider、RustRover、PhpStorm、GitHub Desktop、Visual Studio、Warp、kitty、WezTerm、Alacritty、Tabby 等；Windows 新增 PowerShell 7、Git Bash、Cmder、WSL，并从开始菜单快捷方式、App Paths 和 scoop 查找；Linux 读取 .desktop 启动项；macOS 识别带版本号的应用名。
 - **手动添加任意应用**：“设置 › 常规 › 打开方式”可添加名单里没有的编辑器或终端，可选择应用并填写参数（支持 {path}、{dir}、{line}）。原“终端 › 外部终端应用”的设置合并到这里，已添加的应用和默认终端保持不变。
 - **外部控制图标**：MCP 客户端连接 PiPilot 时显示标题“PiPilot”和应用图标；设置中的“外部控制”改用 π 图标。
+- **全局动画**：侧边栏和右侧面板的显示与隐藏、侧边栏项目、文件夹、工具卡片和计划的展开收起、对话与排队消息的增删、设置页的进入与返回、标签页切换，以及菜单和对话框的退场都改为 macOS 式的平滑动画。开启“减少动画”或系统的减少动态效果时全部关闭。
 
 ### English
 
@@ -19,6 +20,7 @@ Each version section supplies the highlights for its GitHub Release. Download li
 - **More apps found:** The built-in list matches Codex's, adding Antigravity, Devin, Rider, RustRover, PhpStorm, GitHub Desktop, Visual Studio, Warp, kitty, WezTerm, Alacritty, Tabby and more. On Windows it adds PowerShell 7, Git Bash, Cmder and WSL, and looks in Start menu shortcuts, App Paths and scoop; on Linux it reads .desktop launchers; on macOS it recognizes versioned app names.
 - **Add any app:** Settings › General › Open In adds an editor or terminal the list doesn't know: choose the app and, optionally, its arguments ({path}, {dir}, {line}). Terminal › External terminal applications moved here; added apps and the default terminal are kept.
 - **External Control icon:** MCP clients that connect to PiPilot show its title and app icon; External Control in Settings uses the π mark.
+- **Motion throughout:** Showing and hiding the sidebar and inspector, expanding projects, folders, tool cards and plans, adding and removing conversations and queued messages, entering and leaving Settings pages, switching tabs, and closing menus and dialogs now move smoothly, the macOS way. Reduce Motion in PiPilot or the system turns it all off.
 
 ## 0.9.0
 
