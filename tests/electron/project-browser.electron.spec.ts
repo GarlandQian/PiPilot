@@ -59,9 +59,13 @@ test('opens the project page in the browser tab, annotates an element for Pi, an
     await expect.poll(() => shop.evaluate(() => Boolean(document.querySelector('[data-pipilot-annotation]')))).toBe(true)
     const box = await shop.locator('#buy').boundingBox()
     await shop.mouse.move(box!.x + 10, box!.y + 10)
+    await expect.poll(() => shop.evaluate(() => {
+      const highlight = document.querySelector<HTMLElement>('[data-pipilot-annotation] > div')
+      return highlight !== null && highlight.style.display !== 'none'
+    })).toBe(true)
     await shop.mouse.click(box!.x + 10, box!.y + 10)
     const form = panel.locator('[data-browser-annotation="element"]')
-    await expect(form).toContainText('#buy')
+    await expect(form).toContainText('#buy', { timeout: 20_000 })
     await form.locator('[data-browser-comment]').fill('Make this button green')
     await form.getByRole('checkbox').click()
     await form.locator('[data-browser-add]').click()

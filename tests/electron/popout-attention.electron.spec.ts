@@ -50,20 +50,26 @@ test('pops a conversation out into its own window and jumps to the next one need
     await page.getByRole('button', { name: 'Conversation actions', exact: true }).click()
     await page.getByRole('menuitem', { name: 'Open in New Window', exact: true }).click()
     await expect.poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(2)
-    await popout.close()
-    await expect.poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1)
 
-    // ⌘⌥A / Ctrl+Alt+A opens the next conversation needing attention.
+    // Move the main window away before replying again so the background result is unread.
     await page.getByRole('button', { name: 'New chat', exact: true }).click()
     await expect(page.locator('[data-model-thinking-trigger]')).toContainText('Fake Chat', { timeout: 20_000 })
     await seed(page, 'Second chat')
     const chats = page.getByRole('region', { name: 'Chats', exact: true })
     const first = chats.getByRole('button', { name: 'First chat', exact: true })
-    // Its reply from the pop-out finished in the background, so it is unread.
+
+    await popout.locator('[data-popout-composer]').fill('From the window after switching')
+    await popout.getByRole('button', { name: 'Send', exact: true }).click()
+    await expect(popout.locator('[data-popout-transcript]')).toContainText('Fixture response: From the window after switching', { timeout: 20_000 })
+
+    // ⌘⌥A / Ctrl+Alt+A opens the next conversation needing attention.
     await expect(first.locator('..').locator('[data-session-indicator="unread"]')).toHaveCount(1)
     await page.locator('body').press(process.platform === 'darwin' ? 'Meta+Alt+KeyA' : 'Control+Alt+KeyA')
     await expect(chats.getByRole('button', { name: 'First chat', exact: true })).toHaveAttribute('aria-current', 'page', { timeout: 20_000 })
-    await expect(page.getByRole('log', { name: 'Conversation' })).toContainText('Fixture response: First chat')
+    await expect(page.getByRole('log', { name: 'Conversation' })).toContainText('Fixture response: From the window after switching')
+
+    await popout.close()
+    await expect.poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1)
   } finally {
     await closeFixtureApplication(app)
     await fixture.close()
