@@ -57,12 +57,20 @@ test('opens the project page in the browser tab, annotates an element for Pi, an
     await panel.locator('[data-browser-annotate="element"]').click()
     const shop = await expect.poll(() => app.windows().find((candidate) => candidate.url() === url) ?? null).not.toBeNull().then(() => app.windows().find((candidate) => candidate.url() === url)!)
     await expect.poll(() => shop.evaluate(() => Boolean(document.querySelector('[data-pipilot-annotation]')))).toBe(true)
-    const box = await shop.locator('#buy').boundingBox()
-    const point = { x: box!.x + 10, y: box!.y + 10 }
-    await shop.evaluate(({ x, y }) => {
-      document.querySelector<HTMLElement>('[data-pipilot-annotation]')?.dispatchEvent(
-        new MouseEvent('click', { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0 }))
-    }, point)
+    const pickedTarget = await shop.evaluate(() => {
+      const target = document.querySelector<HTMLElement>('#buy')!
+      const overlay = document.querySelector<HTMLElement>('[data-pipilot-annotation]')!
+      const rect = target.getBoundingClientRect()
+      const x = rect.left + Math.min(10, rect.width / 2)
+      const y = rect.top + Math.min(10, rect.height / 2)
+      overlay.style.pointerEvents = 'none'
+      const hit = document.elementFromPoint(x, y)?.id
+      overlay.style.pointerEvents = 'auto'
+      overlay.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: x, clientY: y }))
+      overlay.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0 }))
+      return hit
+    })
+    expect(pickedTarget).toBe('buy')
     const form = panel.locator('[data-browser-annotation="element"]')
     await expect(form).toContainText('#buy', { timeout: 20_000 })
     await form.locator('[data-browser-comment]').fill('Make this button green')
