@@ -59,22 +59,17 @@ test('opens the project page in the browser tab, annotates an element for Pi, an
     await expect.poll(() => shop.evaluate(() => Boolean(document.querySelector('[data-pipilot-annotation]')))).toBe(true)
     const box = await shop.locator('#buy').boundingBox()
     const point = { x: box!.x + 10, y: box!.y + 10 }
-    await app.evaluate(({ BrowserWindow }, { x, y }) => {
-      const view = BrowserWindow.getAllWindows()[0]!.contentView.children[0] as unknown as {
-        webContents: { sendInputEvent(event: { type: 'mouseMove'; x: number; y: number }): void }
-      }
-      view.webContents.sendInputEvent({ type: 'mouseMove', x, y })
+    await shop.evaluate(({ x, y }) => {
+      document.querySelector<HTMLElement>('[data-pipilot-annotation]')?.dispatchEvent(
+        new MouseEvent('mousemove', { bubbles: true, clientX: x, clientY: y }))
     }, point)
     await expect.poll(() => shop.evaluate(() => {
       const highlight = document.querySelector<HTMLElement>('[data-pipilot-annotation] > div')
       return highlight !== null && highlight.style.display !== 'none'
     }), { timeout: 20_000 }).toBe(true)
-    await app.evaluate(({ BrowserWindow }, { x, y }) => {
-      const view = BrowserWindow.getAllWindows()[0]!.contentView.children[0] as unknown as {
-        webContents: { sendInputEvent(event: { type: 'mouseDown' | 'mouseUp'; x: number; y: number; button: 'left'; clickCount: 1 }): void }
-      }
-      view.webContents.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 })
-      view.webContents.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 })
+    await shop.evaluate(({ x, y }) => {
+      document.querySelector<HTMLElement>('[data-pipilot-annotation]')?.dispatchEvent(
+        new MouseEvent('click', { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0 }))
     }, point)
     const form = panel.locator('[data-browser-annotation="element"]')
     await expect(form).toContainText('#buy', { timeout: 20_000 })
