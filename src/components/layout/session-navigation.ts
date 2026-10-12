@@ -91,7 +91,9 @@ export function presentSidebarSessions<T extends SessionPresentationItem>(
   const projectMatches = projectName.toLowerCase().includes(normalizedQuery)
   const matchingItems = items.filter((item) =>
     (filter === 'archived' ? item.archived === true
-      : !item.pinned && (normalizedQuery.length > 0 || !item.archived || item.selected || isSidebarSessionRunning(item) || sidebarSessionNeedsAttention(item))) &&
+      // Archived tasks leave the list (Codex); search and the open one still show them. Running or unread
+      // archived work stays reachable from Archived and the notifications.
+      : !item.pinned && (normalizedQuery.length > 0 || !item.archived || item.selected)) &&
     (!normalizedQuery || projectMatches ||
       sidebarConversationTitle(item.summary).toLowerCase().includes(normalizedQuery) ||
       item.summary.preview.toLowerCase().includes(normalizedQuery)),

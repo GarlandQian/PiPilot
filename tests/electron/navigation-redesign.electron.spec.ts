@@ -280,8 +280,19 @@ test('deletes the named background task while preserving the active task, then c
     await expect.poll(async () => (await page.evaluate((scope) => window.pipilot!.sessionCatalog.list(scope), scope)).rows.map(({ name }) => name))
       .toEqual(['Active task B'])
 
-    // Delete the active row separately: only this action may clear its transcript.
-    await archiveAndDelete(page, 'Active task B')
+    // Archiving the open task moves on to a new task in its project (Codex), and it leaves the list.
+    const activeRow = taskRow(page, 'Active task B')
+    await activeRow.hover()
+    await activeRow.locator('..').getByRole('button', { name: 'Archive', exact: true }).click()
+    await expect(taskRow(page, 'Active task B')).toHaveCount(0)
+    await expect(page.locator('[data-conversation-welcome]')).toBeVisible()
+    await expect.poll(async () => (await page.evaluate(() => window.pipilot!.localPi.runtime.status())).sessionFile).not.toBe(second.sessionFile)
+    // An archived task still opens; deleting it while open is the one action that clears its transcript.
+    await openArchived(page)
+    await archivedRow(page, 'Active task B').click()
+    await expect(conversation.getByText('Fixture response: The active B transcript must survive', { exact: true })).toBeVisible()
+    await archivedRow(page, 'Active task B').hover()
+    await archivedRow(page, 'Active task B').locator('..').getByRole('button', { name: 'Delete', exact: true }).click()
     await expect(dialog).toContainText('Delete "Active task B"?')
     await expect(dialog).toContainText('This is the open conversation')
     await dialog.getByRole('button', { name: 'Delete', exact: true }).click()

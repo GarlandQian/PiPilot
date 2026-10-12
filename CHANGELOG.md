@@ -6,6 +6,14 @@ Each version section supplies the highlights for its GitHub Release. Download li
 
 ## Unreleased
 
+### 中文
+
+- **归档后立即离开列表**：归档正在打开的任务会转到所在项目的新任务（与 Codex 一致），已归档的任务不再因为仍在运行或有未读结果而留在侧边栏；它们仍可在“已归档”、搜索和通知中找到。
+
+### English
+
+- **Archiving takes a task out of the list:** Archiving the open task moves on to a new task in its project, as in Codex, and archived tasks no longer linger in the sidebar while running or unread; they remain in Archived, search and notifications.
+
 ## 0.10.0
 
 ### 中文

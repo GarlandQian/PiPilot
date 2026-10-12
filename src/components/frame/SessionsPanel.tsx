@@ -273,19 +273,30 @@ export function SessionsPanel({
 
   const organize = (item: SidebarConversationItem, patch: Parameters<typeof updateTaskOrganization>[2]) =>
     setPreferences((previous) => updateTaskOrganization(previous, item.summary, patch))
+  const leaveArchived = (item: SidebarConversationItem) => {
+    if (item.summary.scope.kind === 'project') onStartProjectTask(item.summary.scope.workspaceId)
+    else onNewProjectless()
+  }
   const actions: ConversationListActions = {
     renamingSelectionToken, onSelect, onRenameStart, onRenameCommit, onDuplicate, onDelete, onExport, onPopout,
     onPin: (item, pinned) => organize(item, { pinned }),
-    onArchive: (item, archived) => organize(item, { archived, ...(archived ? { pinned: false } : {}) }),
+    onArchive: (item, archived) => {
+      organize(item, { archived, ...(archived ? { pinned: false } : {}) })
+      // Codex: archiving the open task goes on to a new task where it was, so the archived one leaves the list.
+      if (archived && item.selected) leaveArchived(item)
+    },
     onMarkUnread: (item, unread) => {
       organize(item, { unread })
       if (!unread) for (const id of unreadNotices.get(taskOrganizationKey(item.summary)) ?? []) markRead(id)
     },
   }
 
-  const archiveProjectTasks = (projectId: string) => setPreferences((previous) => allItems
-    .filter((item) => item.summary.scope.kind === 'project' && item.summary.scope.workspaceId === projectId && !item.archived)
-    .reduce((next, item) => updateTaskOrganization(next, item.summary, { archived: true, pinned: false }), previous))
+  const archiveProjectTasks = (projectId: string) => {
+    const tasks = allItems.filter((item) => item.summary.scope.kind === 'project' && item.summary.scope.workspaceId === projectId && !item.archived)
+    setPreferences((previous) => tasks.reduce((next, item) => updateTaskOrganization(next, item.summary, { archived: true, pinned: false }), previous))
+    const open = tasks.find((item) => item.selected)
+    if (open) leaveArchived(open)
+  }
 
   const projects = sortSidebarProjects(workspace.recentProjects, sessionSort).map((project): SidebarProjectNavigation => {
     const catalog = workspace.sessionCatalogs[`project:${project.id}`]

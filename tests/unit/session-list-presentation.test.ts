@@ -106,14 +106,16 @@ describe('sidebar navigation views', () => {
     expect(sidebarProjectIndicator([{ ...running, archived: true }, { ...unread, selected: true }])).toBe('none')
   })
 
-  it('keeps archived tasks retrievable without hiding active or unread work', () => {
+  it('takes archived tasks out of the list, keeping them in Archived, search and while open', () => {
     const archived = { ...conversation('Archived title', 'completed'), archived: true }
     const unread = { ...conversation('Finished elsewhere', 'completed'), archived: true, unread: true }
     const running = { ...conversation('Still working', 'running'), archived: true }
     const preview = { ...conversation('Renamed', 'completed'), archived: true }
     preview.summary.preview = 'Original request with a needle'
     const items = [archived, unread, running, preview]
-    expect(presentSidebarSessions(items, { query: '', filter: 'all', sort: 'name' }).items).toEqual([unread, running])
+    expect(presentSidebarSessions(items, { query: '', filter: 'all', sort: 'name' }).items).toEqual([])
+    const open = { ...archived, selected: true }
+    expect(presentSidebarSessions([open, unread], { query: '', filter: 'all', sort: 'name' }).items).toEqual([open])
     expect(presentSidebarSessions(items, { query: '', filter: 'archived', sort: 'name' }).items).toHaveLength(4)
     expect(presentSidebarSessions(items, { query: 'needle', filter: 'all', sort: 'name' }).items).toEqual([preview])
   })
