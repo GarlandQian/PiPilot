@@ -2,6 +2,8 @@ name: CI
 
 on:
   push:
+    # Tag pushes are verified by the release workflow itself.
+    branches: ['**']
   pull_request:
 
 permissions:
