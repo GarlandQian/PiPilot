@@ -1341,7 +1341,9 @@ test('runs the installed stable MCP command headlessly through the private bridg
     const initialized = await waitForMessage(1)
     expect(initialized).toHaveProperty('result.serverInfo', {
       name: 'pipilot-conversations',
+      title: 'PiPilot',
       version: PIPILOT_VERSION,
+      icons: [expect.objectContaining({ mimeType: 'image/png', sizes: ['128x128'], src: expect.stringMatching(/^data:image\/png;base64,/) })],
     })
     stdioProcess.stdin?.write(`${JSON.stringify({
       jsonrpc: '2.0',
