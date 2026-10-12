@@ -68,7 +68,14 @@ test('opens the project page in the browser tab, annotates an element for Pi, an
       overlay.style.pointerEvents = 'auto'
       return { hit: hit ? (hit.id || hit.tagName) : null, viewport: { width: innerWidth, height: innerHeight }, target: { x: rect.x, y: rect.y, width: rect.width, height: rect.height } }
     })
-    await expect.poll(probePick, { timeout: 20_000 }).toMatchObject({ hit: 'buy' })
+    await expect.poll(async () => {
+      const dom = await probePick()
+      const native = await app.evaluate(({ BrowserWindow }) => {
+        const window = BrowserWindow.getAllWindows()[0]!
+        return { window: window.getContentBounds(), view: window.contentView.children[0]?.getBounds() }
+      })
+      return JSON.stringify({ ...dom, native })
+    }, { timeout: 20_000 }).toContain('"hit":"buy"')
     const pickedTarget = await shop.evaluate(() => {
       const target = document.querySelector<HTMLElement>('#buy')!
       const overlay = document.querySelector<HTMLElement>('[data-pipilot-annotation]')!
