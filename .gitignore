@@ -5,6 +5,8 @@ node_modules/
 /release/
 *.local
 .DS_Store
+/.agents/
+/.codex/
 
 # Test artifacts (approved visual baselines live under tests/visual)
 /test-results/
