@@ -6,6 +6,8 @@ Each version section supplies the highlights for its GitHub Release. Download li
 
 ## Unreleased
 
+## 0.10.0
+
 ### 中文
 
 - **打开方式合并编辑器和终端**：工具栏和文件查看器的“打开方式”菜单与 Codex 一致，按编辑器、终端、默认应用和访达分组；主按钮使用上次用过的应用，选终端时在文件所在文件夹打开。每次打开菜单都会重新查找，新装的应用无需重启即可出现。
