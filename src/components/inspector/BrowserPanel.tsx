@@ -13,10 +13,13 @@ import { usePrecisionReferences } from '@/components/precision/PrecisionReferenc
 /** Any open menu, popover or dialog: the page (a native layer) would cover it. */
 const OVERLAY = '[data-radix-popper-content-wrapper], [role="dialog"], [role="alertdialog"]'
 
-function useOverlayOpen() {
+function useOverlayOpen(viewport: React.RefObject<HTMLDivElement | null>) {
   const [open, setOpen] = React.useState(false)
   React.useEffect(() => {
-    const check = () => setOpen(Boolean(document.querySelector(OVERLAY)))
+    const check = () => {
+      const hostDialog = viewport.current?.closest('[role="dialog"]')
+      setOpen([...document.querySelectorAll(OVERLAY)].some((overlay) => overlay !== hostDialog))
+    }
     check()
     const observer = new MutationObserver(check)
     observer.observe(document.body, { childList: true, subtree: false })
@@ -76,7 +79,7 @@ export function BrowserPanel({ scopeKey, visible, onAttachImage }: {
   const [comment, setComment] = React.useState('')
   const [includeConsole, setIncludeConsole] = React.useState(false)
   const viewport = React.useRef<HTMLDivElement>(null)
-  const overlay = useOverlayOpen()
+  const overlay = useOverlayOpen(viewport)
   const active = snapshot?.tabs.find((tab) => tab.id === snapshot.activeId) ?? null
 
   React.useEffect(() => {

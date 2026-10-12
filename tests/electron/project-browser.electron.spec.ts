@@ -36,12 +36,12 @@ test('opens the project page in the browser tab, annotates an element for Pi, an
   const app = await electron.launch({ args: [resolve(process.cwd())], env: { ...process.env, ...fixture.env, PIPILOT_E2E_USER_DATA: userData, PIPILOT_E2E_DISABLE_AUTO_RESTART: '1' } })
   try {
     const page = await app.firstWindow()
-    // Keep the emulated DOM viewport inside the actual native content area so child WebContentsViews are not clipped off-window.
-    const viewport = await app.evaluate(({ BrowserWindow }) => {
+    // Exercise compact inspector mode while keeping the DOM viewport inside the actual native content area.
+    const nativeViewport = await app.evaluate(({ BrowserWindow }) => {
       const { width, height } = BrowserWindow.getAllWindows()[0]!.getContentBounds()
       return { width, height }
     })
-    await page.setViewportSize(viewport)
+    await page.setViewportSize({ width: Math.min(nativeViewport.width, 1_024), height: Math.min(nativeViewport.height, 684) })
     await expect(page.locator('[data-model-thinking-trigger]')).toContainText('Fake Chat', { timeout: 20_000 })
     await app.evaluate(({ dialog }, directory) => { Object.defineProperty(dialog, 'showOpenDialog', { configurable: true, value: async () => ({ canceled: false, filePaths: [directory] }) }) }, project)
     await page.getByRole('button', { name: 'Add project folder', exact: true }).first().click()
@@ -103,6 +103,7 @@ test('opens the project page in the browser tab, annotates an element for Pi, an
     const composer = page.locator('[data-composer-root]')
     await expect(composer.locator('[data-precision-reference="browser"]')).toContainText('Element on Fixture shop')
     await expect(composer.locator('img').first()).toBeVisible()
+    await page.getByRole('dialog', { name: 'Inspector', exact: true }).getByRole('button', { name: 'Close panel', exact: true }).click()
 
     // Pi's read-only tool sees the same page.
     await page.getByRole('textbox', { name: 'Message input', exact: true }).fill('Check the page')
