@@ -36,12 +36,12 @@ test('opens the project page in the browser tab, annotates an element for Pi, an
   const app = await electron.launch({ args: [resolve(process.cwd())], env: { ...process.env, ...fixture.env, PIPILOT_E2E_USER_DATA: userData, PIPILOT_E2E_DISABLE_AUTO_RESTART: '1' } })
   try {
     const page = await app.firstWindow()
-    // setViewportSize emulates DOM dimensions only; the native child view also needs room inside its real BrowserWindow.
-    await app.evaluate(({ BrowserWindow }) => {
-      const window = BrowserWindow.getAllWindows()[0]!
-      window.setBounds({ ...window.getBounds(), width: 1_800, height: 1_200 })
+    // Keep the emulated DOM viewport inside the actual native content area so child WebContentsViews are not clipped off-window.
+    const viewport = await app.evaluate(({ BrowserWindow }) => {
+      const { width, height } = BrowserWindow.getAllWindows()[0]!.getContentBounds()
+      return { width, height }
     })
-    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.setViewportSize(viewport)
     await expect(page.locator('[data-model-thinking-trigger]')).toContainText('Fake Chat', { timeout: 20_000 })
     await app.evaluate(({ dialog }, directory) => { Object.defineProperty(dialog, 'showOpenDialog', { configurable: true, value: async () => ({ canceled: false, filePaths: [directory] }) }) }, project)
     await page.getByRole('button', { name: 'Add project folder', exact: true }).first().click()
