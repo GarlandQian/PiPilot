@@ -29,6 +29,7 @@ import {
 import { conversationScopeKey } from '../conversations/conversation-scope-resolver'
 import { PIPILOT_VERSION } from '../../shared/build-info'
 import type { TerminalSettings } from '../../shared/settings'
+import { matchesAppId } from '../../shared/app-identity'
 import {
   mergeTerminalEnvironment,
   terminalLocaleEnvironment,
@@ -214,7 +215,7 @@ export class TerminalService {
     const settings = this.options.getTerminalSettings?.()
     const apps = await this.externalApps.list(settings?.externalApps ?? [], refresh)
     const selectedId = settings?.defaultExternalAppId
-    if (selectedId && !apps.some((app) => app.id === selectedId)) {
+    if (selectedId && !apps.some((app) => matchesAppId(app, selectedId))) {
       const snapshot = settings?.defaultExternalAppSnapshot
       apps.unshift({ id: selectedId, label: snapshot?.id === selectedId ? snapshot.label : 'Unavailable terminal app',
         executable: snapshot?.id === selectedId ? snapshot.executable : '', adapter: snapshot?.id === selectedId ? snapshot.adapter : 'mac-terminal',
@@ -557,7 +558,7 @@ export class TerminalService {
       ids: settings?.defaultProfileId ? [settings.defaultProfileId] : [],
     })
     if (settings?.defaultProfileId) {
-      const selected = profiles.find((profile) => profile.id === settings.defaultProfileId)
+      const selected = profiles.find((profile) => matchesAppId(profile, settings.defaultProfileId))
       if (selected) selected.isDefault = true
       else profiles.unshift({
         id: settings.defaultProfileId, label: settings.defaultProfileSnapshot?.id === settings.defaultProfileId ? settings.defaultProfileSnapshot.label : 'Unavailable shell', isDefault: true,
@@ -566,10 +567,17 @@ export class TerminalService {
         unavailableReason: settings.defaultProfileId.startsWith('wsl:') ? 'distribution-unavailable' : 'executable-not-found',
       })
     } else {
-      const selected = automatic && profiles.find((profile) => profile.source === 'detected' && (this.platform === 'win32'
-        ? profile.launch?.file.toLowerCase() === automatic.file.toLowerCase()
-        : profile.launch?.file === automatic.file))
-      if (selected) selected.isDefault = true
+      if (automatic) {
+        for (const profile of profiles) {
+          // Auto identifies the detected shell, including its merged custom
+          // representative. The launch provider can supply its own arguments.
+          const detected = profile.source === 'detected' || profile.aliases?.some((id) => id.startsWith('detected:'))
+          if (detected && profile.launch && await this.discovery.sameExecutable(profile.launch.file, automatic.file)) {
+            profile.isDefault = true
+            break
+          }
+        }
+      }
     }
     return profiles.sort((left, right) => Number(right.isDefault) - Number(left.isDefault))
   }

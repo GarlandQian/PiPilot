@@ -2,6 +2,7 @@ import * as React from 'react'
 import { TbExternalLink, TbLoader2, TbRefresh } from 'react-icons/tb'
 import { DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger } from '@/components/ui/dropdown-menu'
 import { useT } from '@/i18n'
+import { matchesAppId } from '@/shared/app-identity'
 import type { PiPilotApi } from '@/shared/pipilot-api'
 import type { TerminalExternalApp } from '@/shared/terminal-profiles'
 import { useSettings } from '@/store/settings'
@@ -55,7 +56,7 @@ export function TerminalExternalAppMenu({ terminalApi, disabled, initiallyOpen =
       {apps.map((app) => <DropdownMenuItem key={app.id} disabled={disabled || loading || !app.available} title={app.executable || undefined} onSelect={() => onOpen(app.id, nameOf(app))}>
         {app.icon ? <img src={app.icon} alt="" aria-hidden className="size-4 shrink-0" draggable={false} /> : null}
         <span className="min-w-0 flex-1 break-words">{nameOf(app)}</span>
-        {app.id === terminal.defaultExternalAppId ? <span className="shrink-0 text-micro opacity-70">{t('terminal.drawer.defaultShell')}</span> : null}
+        {matchesAppId(app, terminal.defaultExternalAppId) ? <span className="shrink-0 text-micro opacity-70">{t('terminal.drawer.defaultShell')}</span> : null}
         {!app.available ? <span className="shrink-0 text-micro opacity-70">{t('settings.terminal.profiles.unavailable')}</span> : null}
       </DropdownMenuItem>)}
       <DropdownMenuSeparator />

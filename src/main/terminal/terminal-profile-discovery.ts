@@ -4,6 +4,7 @@ import { constants } from 'node:fs'
 import { access, readFile, readdir, realpath, stat } from 'node:fs/promises'
 import { posix, win32 } from 'node:path'
 import type { TerminalCustomProfile, TerminalShellProfile } from '../../shared/terminal-profiles'
+import { ExecutableIdentityResolver } from '../editors/executable-identity'
 import { resolveWindowsAppExecutionAlias } from './windows-app-execution-alias'
 
 export interface ShellLaunch {
@@ -22,6 +23,7 @@ export interface TerminalDiscoveryOptions {
   environment?: NodeJS.ProcessEnv
   platform?: NodeJS.Platform
   resolveExecutable?: (candidate: string) => Promise<string | undefined>
+  resolveIdentity?: (file: string) => Promise<string>
   readShellsFile?: () => Promise<string>
   readDirectory?: (directory: string) => Promise<string[]>
   probeProcess?: (file: string, args: string[]) => Promise<string | Buffer>
@@ -126,15 +128,47 @@ export class TerminalProfileDiscovery {
   readonly environment: NodeJS.ProcessEnv
   private nativeInventory?: Promise<Array<ResolvedShellProfile & { legacy?: boolean }>>
   private wslInventory?: Promise<ResolvedShellProfile[]>
+  private readonly identityResolver: ExecutableIdentityResolver
 
   constructor(private readonly options: TerminalDiscoveryOptions = {}) {
     this.platform = options.platform ?? process.platform
     this.environment = options.environment ?? process.env
+    this.identityResolver = new ExecutableIdentityResolver({ platform: this.platform })
   }
 
   private get path() { return this.platform === 'win32' ? win32 : posix }
   private env(name: string) { return environmentValue(this.environment, name, this.platform) }
   private identity(file: string) { return this.platform === 'win32' ? file.toLowerCase() : file }
+  private executableIdentity(file: string) { return this.options.resolveIdentity?.(file) ?? this.identityResolver.identity(file) }
+
+  private profileIds(profile: ResolvedShellProfile) { return [profile.id, ...(profile.aliases ?? [])] }
+
+  private mergeAliases(target: ResolvedShellProfile, other: ResolvedShellProfile) {
+    const aliases = [...new Set([...this.profileIds(target), ...this.profileIds(other)])].filter((id) => id !== target.id)
+    if (aliases.length) target.aliases = aliases
+  }
+
+  private async launchIdentity(launch: ShellLaunch) {
+    // Match the override semantics used when spawning. Windows keys are case-insensitive;
+    // Unix keys, argument order, and removal (null) remain meaningful.
+    const environment = new Map<string, string | null>()
+    for (const [key, value] of Object.entries(launch.env ?? {})) {
+      environment.set(this.platform === 'win32' ? key.toLowerCase() : key, value)
+    }
+    // Detected WSL profiles map the project directory into their distribution.
+    // A custom wsl.exe launch with the same arguments does not promise that mapping.
+    const distribution = this.platform === 'win32' ? launch.distribution?.toLowerCase() : launch.distribution
+    return JSON.stringify([await this.executableIdentity(launch.file), launch.args,
+      [...environment].sort(([left], [right]) => left.localeCompare(right)), distribution ?? null])
+  }
+
+  async sameLaunch(left: ShellLaunch, right: ShellLaunch) {
+    return await this.launchIdentity(left) === await this.launchIdentity(right)
+  }
+
+  async sameExecutable(left: string, right: string) {
+    return await this.executableIdentity(left) === await this.executableIdentity(right)
+  }
 
   async executable(candidate: string): Promise<string | undefined> {
     if (!candidate || candidate.length > 4_096 || /[\0\r\n]/.test(candidate) || !this.path.isAbsolute(candidate)) return undefined
@@ -231,15 +265,28 @@ export class TerminalProfileDiscovery {
     const definitions: { label: string; candidates: string[]; args: string[]; legacy?: boolean }[] =
       await (this.platform === 'win32' ? this.windowsDefinitions() : this.unixDefinitions())
     const profiles: Array<ResolvedShellProfile & { legacy?: boolean }> = []
-    const seen = new Set<string>()
+    const seen = new Map<string, typeof profiles[number]>()
     for (const definition of definitions) {
       for (const candidate of definition.candidates) {
         const file = await this.executable(candidate)
-        if (!file || seen.has(this.identity(file))) continue
+        if (!file) continue
         const id = stableId('detected', this.identity(file))
-        seen.add(this.identity(file))
         const label = definition.label.slice(0, 128) || this.path.basename(file)
-        profiles.push({ id, label, isDefault: false, source: 'detected', executable: file, args: definition.args, available: true, legacy: definition.legacy, launch: { file, args: definition.args, label } })
+        const profile = { id, label, isDefault: false, source: 'detected' as const, executable: file, args: definition.args, available: true, legacy: definition.legacy, launch: { file, args: definition.args, label } }
+        const key = await this.launchIdentity(profile.launch)
+        const existing = seen.get(key)
+        // A shell reached through differently named symlinks may need different
+        // arguments. Retain the historical path ID for its first launch profile.
+        if (profiles.some((entry) => entry !== existing && this.profileIds(entry).includes(profile.id))) {
+          profile.id = stableId('detected', JSON.stringify([this.identity(file), definition.args]))
+        }
+        if (existing) {
+          this.mergeAliases(existing, profile)
+          existing.legacy = Boolean(existing.legacy && profile.legacy)
+        } else {
+          seen.set(key, profile)
+          profiles.push(profile)
+        }
       }
     }
     // The same shell installed twice (system bash and Homebrew bash, PowerShell 7
@@ -255,6 +302,7 @@ export class TerminalProfileDiscovery {
   invalidate() {
     this.nativeInventory = undefined
     this.wslInventory = undefined
+    this.identityResolver.clear()
   }
 
   private nativeProfiles() { return this.nativeInventory ??= this.scanNative() }
@@ -270,16 +318,34 @@ export class TerminalProfileDiscovery {
     const [native, wsl, configured] = await Promise.all([
       this.nativeProfiles(), this.distributionProfiles(), Promise.all(custom.map((profile) => this.resolveCustom(profile))),
     ])
-    const keptFiles = new Set(keep.files?.map((file) => this.identity(file)))
+    const keptFiles = new Set(await Promise.all((keep.files ?? []).map((file) => this.executableIdentity(file))))
     const keptIds = new Set(keep.ids)
-    return [...native.filter((profile) => !profile.legacy || keptIds.has(profile.id) || keptFiles.has(this.identity(profile.executable)))
-      .map(({ legacy: _legacy, ...profile }) => structuredClone(profile)), ...structuredClone(wsl), ...configured]
+    const visible = await Promise.all(native.map(async ({ legacy, ...profile }) =>
+      !legacy || this.profileIds(profile).some((id) => keptIds.has(id)) || keptFiles.has(await this.executableIdentity(profile.executable))
+        ? structuredClone(profile) : undefined))
+    const profiles: ResolvedShellProfile[] = []
+    const seen = new Map<string, number>()
+    for (const profile of [...visible, ...structuredClone(wsl), ...configured]) {
+      if (!profile) continue
+      if (!profile.launch) { profiles.push(profile); continue }
+      const key = await this.launchIdentity(profile.launch)
+      const index = seen.get(key)
+      if (index === undefined) { seen.set(key, profiles.length); profiles.push(profile); continue }
+      const existing = profiles[index]
+      // Keep a user-configured row editable, preferring their selected configuration
+      // when several equivalent custom profiles exist. Saved configurations stay intact.
+      const prefer = profile.source === 'custom' && (existing.source !== 'custom' ||
+        (keptIds.has(profile.id) && !keptIds.has(existing.id)))
+      if (prefer) { this.mergeAliases(profile, existing); profiles[index] = profile }
+      else this.mergeAliases(existing, profile)
+    }
+    return profiles
   }
 
   /** A native selection never waits for the unrelated WSL inventory. Recheck only its executable. */
   async selected(id: string): Promise<ResolvedShellProfile | undefined> {
     const profiles = id.startsWith('wsl:') ? await this.distributionProfiles() : await this.nativeProfiles()
-    const profile = profiles.find((entry) => entry.id === id)
+    const profile = profiles.find((entry) => this.profileIds(entry).includes(id))
     if (!profile || !profile.launch || !await this.executable(profile.executable)) return undefined
     return structuredClone(profile)
   }

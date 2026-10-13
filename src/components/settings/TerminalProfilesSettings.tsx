@@ -2,10 +2,11 @@ import * as React from 'react'
 import { TbAlertTriangle, TbCheck, TbDots, TbPencil, TbPlus, TbRefresh, TbTerminal2, TbTrash } from 'react-icons/tb'
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
+import { matchesAppId } from '@/shared/app-identity'
 import type { TerminalCustomProfile, TerminalShellProfile } from '@/shared/terminal-profiles'
 import { useSettings, useSettingsSaveStatus, useUpdateSettings } from '@/store/settings'
 import { SettingsBadge, SettingsGroup, SettingsListRow, SettingsRow, StatusText } from './kit'
@@ -81,15 +82,16 @@ export function TerminalProfilesSettings() {
   }, [profilesRevision, terminal.defaultProfileId, saveStatus, refresh])
 
   const mergedProfiles = [
-    ...profiles.filter(({ source }) => source !== 'custom').map((profile) => ({
+    ...profiles.map((profile) => ({
       ...profile,
       label: !profile.available && !profile.executable
-        ? terminal.defaultProfileSnapshot?.id === profile.id ? terminal.defaultProfileSnapshot.label : t('settings.terminal.profiles.savedDefault')
+        ? terminal.defaultProfileSnapshot && matchesAppId(profile, terminal.defaultProfileSnapshot.id) ? terminal.defaultProfileSnapshot.label : t('settings.terminal.profiles.savedDefault')
         : profile.label,
-      executable: profile.executable || (terminal.defaultProfileSnapshot?.id === profile.id ? terminal.defaultProfileSnapshot.executable : ''),
+      executable: profile.executable || (terminal.defaultProfileSnapshot && matchesAppId(profile, terminal.defaultProfileSnapshot.id) ? terminal.defaultProfileSnapshot.executable : ''),
     })),
-    ...terminal.profiles.map((profile): TerminalShellProfile => {
-      const found = profiles.find(({ id }) => id === profile.id)
+    // Keep saved configurations manageable while loading, without bringing
+    // merged launch aliases back into the picker as separate applications.
+    ...terminal.profiles.filter((profile) => !profiles.some((found) => matchesAppId(found, profile.id))).map((profile): TerminalShellProfile => {
       return {
         id: profile.id,
         label: profile.name,
@@ -97,15 +99,14 @@ export function TerminalProfilesSettings() {
         executable: profile.executable,
         args: profile.args,
         isDefault: terminal.defaultProfileId === profile.id,
-        available: found?.available ?? true,
-        unavailableReason: found?.unavailableReason,
+        available: true,
       }
     }),
   ]
-  const defaultProfile = mergedProfiles.find(({ id }) => id === terminal.defaultProfileId)
+  const defaultProfile = mergedProfiles.find((profile) => matchesAppId(profile, terminal.defaultProfileId))
   const missingDefault = terminal.defaultProfileId !== null && !defaultProfile
   const defaultUnavailable = terminal.defaultProfileId !== null && loaded && !loading && !loadFailed && (!defaultProfile || !defaultProfile.available)
-  const automaticProfile = profiles.find(({ isDefault, source, available }) => isDefault && available && source !== 'custom')
+  const automaticProfile = profiles.find(({ isDefault, available }) => isDefault && available)
 
   const setDefault = (value: string) => {
     const profile = mergedProfiles.find(({ id }) => id === value)
@@ -146,7 +147,7 @@ export function TerminalProfilesSettings() {
     <SettingsGroup title={t('settings.terminal.profiles.title')} info={t('settings.terminal.profiles.description')} data-terminal-profiles-default>
       <SettingsRow label={t('settings.terminal.profiles.default')} info={t('settings.terminal.profiles.defaultDescription')}
         description={terminal.defaultProfileId === null && automaticProfile && !loading && !busy && !loadFailed ? t('settings.terminal.profiles.automaticResolved', { name: automaticProfile.label }) : undefined}>
-        <Select value={terminal.defaultProfileId ?? AUTOMATIC_PROFILE} disabled={busy} onValueChange={setDefault}>
+        <Select value={defaultProfile?.id ?? terminal.defaultProfileId ?? AUTOMATIC_PROFILE} disabled={busy} onValueChange={setDefault}>
           <SelectTrigger id={selectionId} className="w-56 max-w-full" aria-label={t('settings.terminal.profiles.default')} aria-describedby={defaultUnavailable ? `${selectionId}-warning` : undefined}>
             <SelectValue />
           </SelectTrigger>
@@ -171,13 +172,14 @@ export function TerminalProfilesSettings() {
       footer={loadFailed ? <span className="text-destructive" role="alert">{t('settings.terminal.profiles.loadFailed')}</span>
         : terminal.profiles.length >= 64 ? t('settings.terminal.profiles.limit') : undefined}>
       {mergedProfiles.map((profile) => {
-        const custom = terminal.profiles.find(({ id }) => id === profile.id)
-        const isDefault = terminal.defaultProfileId === profile.id
+        const customs = terminal.profiles.filter((item) => matchesAppId(profile, item.id))
+        const custom = customs.length === 1 ? customs[0] : undefined
+        const isDefault = matchesAppId(profile, terminal.defaultProfileId)
         return <SettingsListRow key={profile.id} data-terminal-profile-id={profile.id} disabled={busy}
           icon={<TerminalRowIcon available={profile.available} />}
           title={profile.label}
           badges={<>
-            <SettingsBadge>{t(profile.source === 'custom' ? 'settings.terminal.profiles.sourceCustom' : profile.source === 'wsl' ? 'settings.terminal.profiles.sourceWsl' : 'settings.terminal.profiles.sourceDetected')}</SettingsBadge>
+            <SettingsBadge>{t(customs.length ? 'settings.terminal.profiles.sourceCustom' : profile.source === 'wsl' ? 'settings.terminal.profiles.sourceWsl' : 'settings.terminal.profiles.sourceDetected')}</SettingsBadge>
             {isDefault ? <SettingsBadge tone="accent">{t('settings.terminal.profiles.selected')}</SettingsBadge> : null}
           </>}
           subtitle={<span className="font-mono">{profile.executable}</span>}
@@ -190,11 +192,12 @@ export function TerminalProfilesSettings() {
             <DropdownMenuTrigger asChild><Button variant="ghost" size="icon-xs" className="text-muted-foreground" disabled={busy} aria-label={t('settings.terminal.profiles.actions', { name: profile.label })}><TbDots aria-hidden /></Button></DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem disabled={isDefault || !profile.available} onSelect={() => setDefault(profile.id)}><TbCheck aria-hidden />{t('settings.terminal.profiles.makeDefault')}</DropdownMenuItem>
-              {custom ? <>
-                <DropdownMenuItem onSelect={() => setEditing({ mode: 'edit', profile: custom })}><TbPencil aria-hidden />{t('settings.terminal.profiles.edit')}</DropdownMenuItem>
+              {customs.map((item) => <React.Fragment key={item.id}>
+                {customs.length > 1 ? <DropdownMenuLabel>{item.name}</DropdownMenuLabel> : null}
+                <DropdownMenuItem onSelect={() => setEditing({ mode: 'edit', profile: item })}><TbPencil aria-hidden />{t('settings.terminal.profiles.edit')}</DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem variant="destructive" onSelect={() => { setRemoveFailed(false); setRemoving(custom) }}><TbTrash aria-hidden />{t('settings.terminal.profiles.remove')}</DropdownMenuItem>
-              </> : null}
+                <DropdownMenuItem variant="destructive" onSelect={() => { setRemoveFailed(false); setRemoving(item) }}><TbTrash aria-hidden />{t('settings.terminal.profiles.remove')}</DropdownMenuItem>
+              </React.Fragment>)}
             </DropdownMenuContent>
           </DropdownMenu>} />
       })}

@@ -3,6 +3,7 @@ import { TbCheck, TbChevronDown, TbLoader2, TbRefresh, TbSettings, TbTerminal2 }
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { useT } from '@/i18n'
+import { matchesAppId } from '@/shared/app-identity'
 import type { PiPilotApi } from '@/shared/pipilot-api'
 import type { TerminalShellProfile } from '@/shared/terminal-profiles'
 import { useSettings, useSettingsSaveStatus, useUpdateSettings } from '@/store/settings'
@@ -88,7 +89,7 @@ export function TerminalShellMenu({ terminalApi, open, onOpenChange, disabled, f
             <span className="size-4">{terminal.defaultProfileId === null ? <TbCheck aria-hidden /> : null}</span>{t('settings.terminal.profiles.automatic')}
           </DropdownMenuItem>
           {profiles.map((profile) => <DropdownMenuItem key={profile.id} disabled={saving || loading || !profile.available} onSelect={(event) => { event.preventDefault(); void saveDefault(profile) }}>
-            <span className="size-4 shrink-0">{terminal.defaultProfileId === profile.id ? <TbCheck aria-hidden /> : null}</span><span className="min-w-0 break-words">{profile.label}</span>
+            <span className="size-4 shrink-0">{matchesAppId(profile, terminal.defaultProfileId) ? <TbCheck aria-hidden /> : null}</span><span className="min-w-0 break-words">{profile.label}</span>
           </DropdownMenuItem>)}
           {saveFailed ? <p role="alert" className="max-w-64 px-2 py-2 text-caption text-destructive">{t('settings.terminal.profiles.form.saveFailed')}</p> : null}
         </DropdownMenuSubContent>

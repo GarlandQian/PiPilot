@@ -6,6 +6,7 @@ import type { ExternalEditor } from '../../shared/external-editors'
 import type { TerminalCustomExternalApp } from '../../shared/terminal-profiles'
 import { AppLocator, type AppLocatorOptions } from './app-locator'
 import { expandOpenArguments } from './open-arguments'
+import { ExecutableIdentityResolver } from './executable-identity'
 
 /** How an editor takes a line: `-g path:line`, `path:line`, `--line N path`, Xcode's xed, `+line path`, or not at all. */
 type GotoStyle = 'vscode' | 'colon' | 'jetbrains' | 'xcode' | 'plus' | 'none'
@@ -147,6 +148,7 @@ export class ExternalEditors {
     /** Whether a path exists, and whether it is a runnable file; injectable so other platforms' layouts can be checked anywhere. */
     pathExists?(path: string): Promise<boolean>
     isExecutableFile?(path: string): Promise<boolean>
+    resolveIdentity?(path: string): Promise<string>
   }) {
     this.locator = new AppLocator({
       platform: this.platform, environment: this.env, home: options.home ?? homedir(),
@@ -257,6 +259,11 @@ export class ExternalEditors {
     return (this.options.customApps?.() ?? []).filter((app) => app.kind === 'editor')
   }
 
+  private identities() {
+    const resolver = new ExecutableIdentityResolver({ platform: this.platform })
+    return this.options.resolveIdentity ?? ((path: string) => resolver.identity(path))
+  }
+
   /** An added editor's app: a macOS bundle, or an executable (a bare name is looked up on PATH). */
   private async resolveCustom(app: TerminalCustomExternalApp) {
     const path = this.platform === 'win32' ? win32 : posix
@@ -280,7 +287,7 @@ export class ExternalEditors {
       const resolved = await this.resolveCustom(app)
       return withIcon({ id: app.id, name: app.name.slice(0, 128), kind: 'editor' as const, source: 'custom' as const, path: app.executable.slice(0, 4_096), available: Boolean(resolved) }, resolved)
     }))
-    return Promise.all([
+    const entries: ExternalEditor[] = await Promise.all([
       ...located.map(({ candidate, app, executable }) => withIcon({
         id: candidate.id, name: candidate.name, kind: 'editor' as const, source: 'detected' as const, ...(app ?? executable ? { path: (app ?? executable)!.slice(0, 4_096) } : {}),
       }, app ?? executable)),
@@ -288,6 +295,24 @@ export class ExternalEditors {
       Promise.resolve({ id: 'system', name: '', kind: 'system' as const }),
       withIcon({ id: 'file-manager', name: '', kind: 'file-manager' as const }, this.fileManagerPath()),
     ])
+    const identity = this.identities()
+    const groups = new Map<string, ExternalEditor>()
+    const result: ExternalEditor[] = []
+    for (const entry of entries) {
+      const added = this.customEditors().find((app) => app.id === entry.id)
+      const detected = located.find((app) => app.candidate.id === entry.id)
+      // A plain manually added editor inherits the detected editor's file/line
+      // integration. Explicit argument templates are separate launch recipes.
+      const launch = detected?.baseArgs?.length ? ['detected', detected.candidate.id]
+        : added?.args?.length ? ['custom', ...added.args] : []
+      const path = added ? await this.resolveCustom(added) : entry.path
+      const key = entry.kind === 'editor' && path && entry.available !== false
+        ? JSON.stringify([await identity(path), launch]) : entry.id
+      const existing = groups.get(key)
+      if (existing) existing.aliases = [...new Set([...existing.aliases ?? [], entry.id])]
+      else { groups.set(key, entry); result.push(entry) }
+    }
+    return result
   }
 
   /** Open a file (at a line) or a folder in one editor. Paths are already checked by the caller. */
@@ -303,7 +328,20 @@ export class ExternalEditors {
     }
     const path = this.platform === 'win32' ? win32 : posix
     const at = !directory && line && line > 0 ? Math.floor(line) : undefined
-    const custom = this.customEditors().find((app) => app.id === editorId)
+    let custom = this.customEditors().find((app) => app.id === editorId)
+    if (custom && !custom.args?.length) {
+      const executable = await this.resolveCustom(custom)
+      const identity = this.identities()
+      const key = executable && await identity(executable)
+      for (const detected of await this.locate()) {
+        const path = detected.app ?? detected.executable
+        if (key && path && !detected.baseArgs?.length && await identity(path) === key) {
+          editorId = detected.candidate.id
+          custom = undefined
+          break
+        }
+      }
+    }
     if (custom) {
       const executable = await this.resolveCustom(custom)
       if (!executable) throw new Error('This editor is no longer installed.')

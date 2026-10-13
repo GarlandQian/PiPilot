@@ -5,6 +5,7 @@ import { access, readdir, realpath, stat } from 'node:fs/promises'
 import { posix, win32 } from 'node:path'
 import type { TerminalCustomExternalApp, TerminalExternalAdapter, TerminalExternalApp } from '../../shared/terminal-profiles'
 import { AppLocator, type AppLocatorOptions } from '../editors/app-locator'
+import { ExecutableIdentityResolver } from '../editors/executable-identity'
 import { expandOpenArguments } from '../editors/open-arguments'
 import { resolveWindowsAppExecutionAlias } from './windows-app-execution-alias'
 
@@ -22,6 +23,8 @@ export interface ExternalTerminalAppsOptions {
   platform?: NodeJS.Platform
   /** Resolves an executable file, or a macOS application bundle, to its canonical path. */
   resolveExecutable?: (candidate: string) => Promise<string | undefined>
+  /** Application identity can differ from its launchable Windows execution alias. */
+  resolveIdentity?: (executable: string) => Promise<string>
   launchExternal?: (file: string, args: string[], options?: { cwd?: string; helper?: boolean }) => Promise<void>
   /** Opens a URL with its registered app (Warp's `warp://` links on Windows and Linux). */
   openUri?: (uri: string) => Promise<void>
@@ -252,9 +255,7 @@ export class ExternalTerminalApps {
         apps.push({ id, label: definition.label, source: 'detected', adapter: definition.adapter, executable, available: true })
       }
     }
-    const labels = new Map<string, number>()
-    for (const app of apps) labels.set(app.label, (labels.get(app.label) ?? 0) + 1)
-    return apps.map((app) => (labels.get(app.label) ?? 0) > 1 ? { ...app, label: `${app.label} · ${this.path.dirname(app.executable)}`.slice(0, 128) } : app)
+    return apps
   }
 
   private inventory(refresh = false) {
@@ -268,7 +269,31 @@ export class ExternalTerminalApps {
 
   async list(custom: TerminalCustomExternalApp[] = [], refresh = false): Promise<TerminalExternalApp[]> {
     const [detected, configured] = await Promise.all([this.inventory(refresh), Promise.all(this.terminalsOf(custom).map((app) => this.resolveCustom(app)))])
-    return [...detected.map((app) => ({ ...app })), ...configured]
+    const identities = new ExecutableIdentityResolver({ platform: this.platform })
+    const resolveIdentity = this.options.resolveIdentity ?? ((file: string) => identities.identity(file))
+    const groups = new Map<string, TerminalExternalApp>()
+    const result: TerminalExternalApp[] = []
+    for (const app of [...detected, ...configured]) {
+      const settings = custom.find((entry) => entry.id === app.id)
+      // Different launch recipes remain separate even when they use one binary.
+      const key = app.available ? JSON.stringify([await resolveIdentity(app.executable), app.adapter, settings?.args ?? []]) : app.id
+      const existing = groups.get(key)
+      if (!existing) {
+        const copy = { ...app }
+        groups.set(key, copy)
+        result.push(copy)
+        continue
+      }
+      const aliases = [...new Set([existing.id, ...existing.aliases ?? [], app.id])]
+      // Retain a user-named entry as the visible representative; all saved IDs
+      // still launch through the original inventory/configuration in open().
+      if (existing.source === 'detected' && app.source === 'custom') Object.assign(existing, app)
+      existing.aliases = aliases.filter((id) => id !== existing.id)
+    }
+    const labels = new Map<string, number>()
+    for (const app of result) labels.set(app.label, (labels.get(app.label) ?? 0) + 1)
+    return result.map((app) => app.source === 'detected' && (labels.get(app.label) ?? 0) > 1
+      ? { ...app, label: `${app.label} · ${this.path.dirname(app.executable)}`.slice(0, 128) } : app)
   }
 
   /** cwd is resolved and checked against the active project by the caller. */

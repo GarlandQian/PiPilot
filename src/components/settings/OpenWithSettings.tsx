@@ -3,13 +3,14 @@ import { TbCheck, TbDots, TbPencil, TbPlus, TbRefresh, TbTrash } from 'react-ico
 import { OpenTargetIcon, useOpenTargetName, useTerminalAppName } from '@/components/inspector/OpenInEditorButton'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { useT } from '@/i18n'
 import { isMacPlatform } from '@/lib/keyboard-shortcuts'
 import { isAvailable, useOpenTargets, type OpenTarget } from '@/renderer/open-targets'
+import { matchesAppId } from '@/shared/app-identity'
 import { terminalCustomExternalAppSchema, type TerminalCustomExternalApp } from '@/shared/terminal-profiles'
 import { useSettings, useSettingsSaveStatus, useUpdateSettings } from '@/store/settings'
 import { FormActions, SettingsBadge, SettingsField, SettingsGroup, SettingsListRow, SettingsRow, SettingsSheet, StatusText } from './kit'
@@ -154,9 +155,9 @@ export function OpenWithSettings() {
 
   const apps = targets.filter((target) => target.group !== 'other')
   const terminals = apps.filter((target): target is Extract<OpenTarget, { group: 'terminal' }> => target.group === 'terminal')
-  const selectedTerminal = terminals.find(({ id }) => id === terminal.defaultExternalAppId)
+  const selectedTerminal = terminals.find(({ app }) => matchesAppId(app, terminal.defaultExternalAppId))
   const unavailable = terminal.defaultExternalAppId !== null && !loading && !loadFailed && !selectedTerminal?.app.available
-  const automatic = terminals.find((target) => target.app.available && target.app.source === 'detected')
+  const automatic = terminals.find(({ app }) => app.available && (app.source === 'detected' || app.aliases?.some((id) => id.startsWith('external:detected:'))))
   const choices = targets.filter((target) => isAvailable(target) && !(target.group === 'other' && target.editor.kind === 'file-manager'))
 
   const saveDefaultTerminal = async (value: string) => {
@@ -199,7 +200,7 @@ export function OpenWithSettings() {
       </SettingsRow>
       <SettingsRow label={t('settings.openWith.defaultTerminal')} info={t('settings.openWith.defaultTerminalDesc')}
         description={!terminal.defaultExternalAppId && automatic && !loading && !loadFailed ? t('settings.terminal.profiles.automaticResolved', { name: terminalName(automatic.app) }) : undefined}>
-        <Select value={terminal.defaultExternalAppId ?? AUTOMATIC} disabled={busy} onValueChange={(value) => void saveDefaultTerminal(value)}>
+        <Select value={selectedTerminal?.id ?? terminal.defaultExternalAppId ?? AUTOMATIC} disabled={busy} onValueChange={(value) => void saveDefaultTerminal(value)}>
           <SelectTrigger className="w-56 max-w-full" aria-label={t('settings.openWith.defaultTerminal')}><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value={AUTOMATIC}>{t('settings.terminal.profiles.automatic')}</SelectItem>
@@ -223,35 +224,37 @@ export function OpenWithSettings() {
       footer={loadFailed ? <span className="text-destructive" role="alert">{t('settings.openWith.loadFailed')}</span>
         : custom.length >= 64 ? t('settings.terminal.external.limit') : undefined}>
       {apps.map((target) => {
-        const added = custom.find(({ id }) => id === target.id)
+        const added = custom.filter((item) => matchesAppId(target.group === 'terminal' ? target.app : target.editor, item.id))
+        const editable = added.length === 1 ? added[0] : undefined
         const available = isAvailable(target)
         const isDefault = preferred?.id === target.id
-        const isDefaultTerminal = target.group === 'terminal' && terminal.defaultExternalAppId === target.id
+        const isDefaultTerminal = target.group === 'terminal' && matchesAppId(target.app, terminal.defaultExternalAppId)
         const path = target.group === 'terminal' ? target.app.executable : target.editor.path
         return <SettingsListRow key={target.id} data-open-target-row={target.id} disabled={busy}
           icon={<span className="flex size-7 items-center justify-center"><OpenTargetIcon target={target} className={available ? 'size-5' : 'size-5 opacity-50'} /></span>}
           title={nameOf(target)}
           badges={<>
             <SettingsBadge>{t(target.group === 'terminal' ? 'settings.openWith.kindTerminal' : 'settings.openWith.kindEditor')}</SettingsBadge>
-            {added ? <SettingsBadge>{t('settings.terminal.profiles.sourceCustom')}</SettingsBadge> : null}
+            {added.length ? <SettingsBadge>{t('settings.terminal.profiles.sourceCustom')}</SettingsBadge> : null}
             {isDefault || isDefaultTerminal ? <SettingsBadge tone="accent">{t('settings.terminal.profiles.selected')}</SettingsBadge> : null}
           </>}
           subtitle={path ? <span className="font-mono">{path}</span> : undefined}
           status={!available ? <StatusText tone="danger" title={t(target.group === 'terminal' && target.app.unavailableReason === 'unsupported-platform' ? 'settings.terminal.external.unsupportedPlatform' : 'settings.terminal.profiles.executableUnavailable')}>
             {t('settings.terminal.profiles.unavailable')}
           </StatusText> : undefined}
-          onOpen={added ? () => setEditing({ existing: true, draft: draftOf(added) }) : undefined}
-          openLabel={added ? t('settings.terminal.external.editNamed', { name: target.name }) : undefined}
+          onOpen={editable ? () => setEditing({ existing: true, draft: draftOf(editable) }) : undefined}
+          openLabel={editable ? t('settings.terminal.external.editNamed', { name: target.name }) : undefined}
           menu={<DropdownMenu>
             <DropdownMenuTrigger asChild><Button variant="ghost" size="icon-xs" className="text-muted-foreground" disabled={busy} aria-label={t('settings.terminal.profiles.actions', { name: target.name })}><TbDots aria-hidden /></Button></DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem disabled={isDefault || !available} onSelect={() => setPreferred(target.id)}><TbCheck aria-hidden />{t('settings.openWith.makeDefault')}</DropdownMenuItem>
               {target.group === 'terminal' ? <DropdownMenuItem disabled={isDefaultTerminal || !available} onSelect={() => void saveDefaultTerminal(target.id)}><TbCheck aria-hidden />{t('settings.openWith.makeDefaultTerminal')}</DropdownMenuItem> : null}
-              {added ? <>
-                <DropdownMenuItem onSelect={() => setEditing({ existing: true, draft: draftOf(added) })}><TbPencil aria-hidden />{t('settings.terminal.profiles.edit')}</DropdownMenuItem>
+              {added.map((item) => <React.Fragment key={item.id}>
+                {added.length > 1 ? <DropdownMenuLabel>{item.name}</DropdownMenuLabel> : null}
+                <DropdownMenuItem onSelect={() => setEditing({ existing: true, draft: draftOf(item) })}><TbPencil aria-hidden />{t('settings.terminal.profiles.edit')}</DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem variant="destructive" onSelect={() => { setSaveFailed(false); setRemoving(added) }}><TbTrash aria-hidden />{t('settings.terminal.external.remove')}</DropdownMenuItem>
-              </> : null}
+                <DropdownMenuItem variant="destructive" onSelect={() => { setSaveFailed(false); setRemoving(item) }}><TbTrash aria-hidden />{t('settings.terminal.external.remove')}</DropdownMenuItem>
+              </React.Fragment>)}
             </DropdownMenuContent>
           </DropdownMenu>} />
       })}

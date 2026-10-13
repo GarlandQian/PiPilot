@@ -20,6 +20,7 @@ export const terminalCustomProfilesSchema = z.array(terminalCustomProfileSchema)
 
 export const terminalShellProfileSchema = z.object({
   id: terminalShellProfileIdSchema,
+  aliases: z.array(terminalShellProfileIdSchema).max(512).optional(),
   label: z.string().min(1).max(128),
   isDefault: z.boolean(),
   source: z.enum(['detected', 'custom', 'wsl']),
@@ -66,6 +67,7 @@ export const terminalCustomExternalAppsSchema = z.array(terminalCustomExternalAp
   .refine((apps) => new Set(apps.map(({ id }) => id)).size === apps.length)
 export const terminalExternalAppSchema = z.object({
   id: terminalExternalAppIdSchema,
+  aliases: z.array(terminalExternalAppIdSchema).max(512).optional(),
   label: z.string().min(1).max(128),
   source: z.enum(['detected', 'custom']),
   adapter: terminalExternalAdapterSchema,

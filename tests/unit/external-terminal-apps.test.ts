@@ -167,8 +167,8 @@ describe('ExternalTerminalApps Windows and added apps', () => {
       { id: 'external:custom:plain', name: 'Plain', executable: '/Applications/Plain.app', adapter: 'generic' },
       { id: 'external:custom:editor', name: 'Editor', executable: '/Applications/Editor.app', adapter: 'generic', kind: 'editor' },
     ]
-    expect((await apps.list(added)).filter(({ source }) => source === 'custom').map(({ id, adapter }) => [id, adapter]))
-      .toEqual([['external:custom:args', 'generic'], ['external:custom:wez', 'wezterm'], ['external:custom:plain', 'generic']])
+    expect((await apps.list(added)).filter(({ source }) => source === 'custom').map(({ id, adapter }) => [id, adapter]).sort())
+      .toEqual([['external:custom:args', 'generic'], ['external:custom:wez', 'wezterm'], ['external:custom:plain', 'generic']].sort())
     await apps.open('external:custom:args', '/work', added)
     await apps.open('external:custom:wez', '/work', added)
     await apps.open('external:custom:plain', '/work', added)

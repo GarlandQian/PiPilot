@@ -8,6 +8,7 @@ export const externalEditorSchema = z
   .object({
     /** A built-in editor's name, or the id of an editor the user added. */
     id: z.string().regex(/^(?:[a-z][a-z0-9-]{0,63}|external:custom:[a-zA-Z0-9_-]{1,64})$/u),
+    aliases: z.array(z.string().regex(/^(?:[a-z][a-z0-9-]{0,63}|external:custom:[a-zA-Z0-9_-]{1,64})$/u)).max(128).optional(),
     name: z.string().max(128),
     kind: z.enum(['editor', 'system', 'file-manager']),
     source: z.enum(['detected', 'custom']).optional(),

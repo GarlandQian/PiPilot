@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { matchesAppId } from '@/shared/app-identity'
 import type { ExternalEditor } from '@/shared/external-editors'
 import type { TerminalExternalApp } from '@/shared/terminal-profiles'
 import { useSettings, useUpdateSettings } from '@/store/settings'
@@ -66,7 +67,7 @@ export function isAvailable(target: OpenTarget) {
 /** The default among those installed: the remembered one, else the first editor, else the default app. */
 export function preferredTarget(targets: readonly OpenTarget[], id: string | null = preferredId) {
   const usable = targets.filter((target) => isAvailable(target) && !(target.group === 'other' && target.editor.kind === 'file-manager'))
-  return usable.find((target) => target.id === id)
+  return usable.find((target) => matchesAppId(target.group === 'terminal' ? target.app : target.editor, id))
     ?? usable.find((target) => target.group === 'editor')
     ?? usable.find((target) => target.group === 'other')
     ?? null
@@ -104,7 +105,7 @@ export function useOpenTargets() {
     if (target.group === 'terminal') {
       await window.pipilot!.terminal.openExternal({ kind: 'project', workspaceId }, target.id, folderOf(file?.path))
       // "Open in external terminal" elsewhere follows the terminal used last.
-      if (defaultTerminalId !== target.id) {
+      if (!matchesAppId(target.app, defaultTerminalId)) {
         const { id, label, executable, adapter } = target.app
         void updateTerminal({ defaultExternalAppId: id, defaultExternalAppSnapshot: { id, label, executable, adapter } }).catch(() => false)
       }

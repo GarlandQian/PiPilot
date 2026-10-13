@@ -6,6 +6,16 @@ Each version section supplies the highlights for its GitHub Release. Download li
 
 ## Unreleased
 
+## 0.12.0
+
+### 中文
+
+- **应用扫描去重**：Windows 启动别名与实际安装文件确认属于同一安装时合并展示，原默认选择仍可使用。相同启动配置的手动条目合并展示且仍可分别编辑或移除；独立安装、不同参数、环境变量及 WSL 工作目录行为保持区分。
+
+### English
+
+- **Deduplicate discovered apps:** Group Windows execution aliases with their verified installation targets while retaining saved selections. Equivalent manual launch entries share one row and remain individually editable or removable; separate installations, arguments, environment overrides, and WSL working-directory behavior stay distinct.
+
 ## 0.11.0
 
 ### 中文

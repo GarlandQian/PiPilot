@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
+import { createHash } from 'node:crypto'
+import type { TerminalCustomProfile } from '../../src/shared/terminal-profiles'
 import { mergeTerminalEnvironment, parseWslDistributions, shellArguments, TerminalProfileDiscovery, terminalLocaleEnvironment, wslWorkingDirectory } from '../../src/main/terminal/terminal-profile-discovery'
 
 describe('TerminalProfileDiscovery', () => {
@@ -38,6 +40,19 @@ describe('TerminalProfileDiscovery', () => {
     expect(await discovery.discover()).toEqual([expect.objectContaining({ executable: '/usr/bin/dash', label: 'sh' })])
   })
 
+  it('keeps detected aliases with distinct shell arguments independently selectable', async () => {
+    const discovery = new TerminalProfileDiscovery({
+      platform: 'linux', environment: { SHELL: '/custom/shell' }, readShellsFile: async () => '/bin/bash',
+      resolveExecutable: async (candidate) => ['/custom/shell', '/bin/bash', '/usr/bin/bash', '/installed/shell'].includes(candidate) ? '/installed/shell' : undefined,
+      resolveIdentity: async (file) => file,
+    })
+    const profiles = await discovery.discover()
+    expect(profiles.map(({ args }) => args)).toEqual([[], ['-l']])
+    expect(new Set(profiles.map(({ id }) => id)).size).toBe(2)
+    expect(profiles.every((profile) => !profile.aliases?.length)).toBe(true)
+    expect((await discovery.selected(profiles[1].id))?.launch?.args).toEqual(['-l'])
+  })
+
   it('discovers multiple PowerShell installations, Git Bash and installed WSL distributions', async () => {
     const cmd = 'C:\\Windows\\System32\\cmd.exe'
     const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
@@ -67,6 +82,98 @@ describe('TerminalProfileDiscovery', () => {
     expect(distros[0].id).not.toBe(distros[1].id)
     expect((await discovery.discover()).filter(({ source }) => source === 'wsl').map(({ id }) => id)).toEqual(distros.map(({ id }) => id))
     expect(await discovery.automatic()).toMatchObject({ file: pwsh7 })
+  })
+
+  it('merges Windows app aliases with their installation while preserving selection IDs and distinct installs', async () => {
+    const physical = 'C:\\Program Files\\PowerShell\\7\\pwsh.exe'
+    const alias = 'C:\\Users\\Example\\AppData\\Local\\Microsoft\\WindowsApps\\pwsh.exe'
+    const preview = 'C:\\Program Files\\PowerShell\\7-preview\\pwsh.exe'
+    const portable = 'D:\\Portable\\pwsh.exe'
+    const installed = new Set([physical, alias, preview, portable])
+    let aliasTarget = physical
+    const discovery = new TerminalProfileDiscovery({
+      platform: 'win32', environment: { LOCALAPPDATA: 'C:\\Users\\Example\\AppData\\Local', PATH: 'D:\\Portable' },
+      readDirectory: async () => ['7', '7-preview'],
+      resolveExecutable: async (candidate) => installed.has(candidate) ? candidate : undefined,
+      resolveIdentity: async (file) => (file === alias ? aliasTarget : file).toLowerCase(),
+    })
+    const profiles = await discovery.discover()
+    expect(profiles).toHaveLength(3)
+    const legacyAliasId = `detected:${createHash('sha256').update(alias.toLowerCase()).digest('hex').slice(0, 32)}`
+    const stable = profiles.find(({ executable }) => executable === physical)!
+    expect(stable.aliases).toContain(legacyAliasId)
+    expect(await discovery.selected(legacyAliasId)).toMatchObject({ id: stable.id, executable: physical })
+    expect(profiles.map(({ executable }) => executable)).toEqual([physical, preview, portable])
+    aliasTarget = preview
+    const refreshed = await discovery.discover([], {}, true)
+    expect(refreshed.find(({ executable }) => executable === preview)?.aliases).toContain(legacyAliasId)
+    expect(refreshed.find(({ executable }) => executable === physical)?.aliases).toBeUndefined()
+  })
+
+  it('merges equivalent custom shell profiles without deleting configurations or losing argument and environment distinctions', async () => {
+    const physical = 'C:\\Program Files\\PowerShell\\7\\pwsh.exe'
+    const alias = 'C:\\Users\\Example\\AppData\\Local\\Microsoft\\WindowsApps\\pwsh.exe'
+    const installed = new Set([physical, alias])
+    const discovery = new TerminalProfileDiscovery({
+      platform: 'win32', environment: {}, readDirectory: async () => ['7'],
+      resolveExecutable: async (candidate) => installed.has(candidate) ? candidate : undefined,
+      resolveIdentity: async (file) => (file === alias ? physical : file).toLowerCase(),
+    })
+    const detectedId = (await discovery.discover())[0].id
+    const custom: TerminalCustomProfile[] = [
+      { id: 'custom:alias', name: 'Alias', executable: alias, args: [], env: {} },
+      { id: 'custom:preferred', name: 'Preferred', executable: physical, args: [], env: {} },
+      { id: 'custom:arguments', name: 'Arguments', executable: physical, args: ['-NoLogo'], env: {} },
+      { id: 'custom:environment', name: 'Environment', executable: physical, args: [], env: { FOO: 'one' } },
+      { id: 'custom:duplicate_env', name: 'Duplicate environment', executable: alias, args: [], env: { foo: 'one' } },
+      { id: 'custom:different_env', name: 'Different environment', executable: physical, args: [], env: { FOO: 'two' } },
+      { id: 'custom:remove_env', name: 'Remove variable', executable: physical, args: [], env: { FOO: null } },
+    ]
+    const unchanged = structuredClone(custom)
+    const profiles = await discovery.discover(custom, { ids: ['custom:preferred'] })
+    expect(profiles).toHaveLength(5)
+    expect(profiles[0]).toMatchObject({ id: 'custom:preferred', source: 'custom', aliases: expect.arrayContaining([detectedId, 'custom:alias']) })
+    expect(profiles.find(({ id }) => id === 'custom:environment')?.aliases).toContain('custom:duplicate_env')
+    expect(profiles.map(({ id }) => id)).toEqual(['custom:preferred', 'custom:arguments', 'custom:environment', 'custom:different_env', 'custom:remove_env'])
+    expect(custom).toEqual(unchanged)
+    expect(await discovery.resolveCustom(custom[0])).toMatchObject({ id: 'custom:alias', available: true, launch: { file: alias } })
+    expect(await discovery.selected(detectedId)).toMatchObject({ available: true, executable: physical })
+    const automatic = (await discovery.automatic())!
+    expect(await discovery.sameLaunch(profiles[0].launch!, automatic)).toBe(true)
+    expect(await discovery.sameLaunch(profiles[1].launch!, automatic)).toBe(false)
+    expect(await discovery.sameLaunch(profiles[2].launch!, automatic)).toBe(false)
+  })
+
+  it('does not merge case-distinct Unix environment overrides or different argument ordering', async () => {
+    const file = '/custom/shell'
+    const discovery = new TerminalProfileDiscovery({ platform: 'linux', environment: {}, readShellsFile: async () => '',
+      resolveExecutable: async (candidate) => candidate === file ? candidate : undefined,
+      resolveIdentity: async (candidate) => candidate })
+    const profiles = await discovery.discover([
+      { id: 'custom:upper', name: 'Upper', executable: file, args: ['one', 'two'], env: { FOO: 'same' } },
+      { id: 'custom:lower', name: 'Lower', executable: file, args: ['one', 'two'], env: { foo: 'same' } },
+      { id: 'custom:reverse', name: 'Reverse', executable: file, args: ['two', 'one'], env: { FOO: 'same' } },
+    ])
+    expect(profiles).toHaveLength(3)
+  })
+
+  it('keeps detected WSL directory mapping distinct from a custom launch with identical executable and arguments', async () => {
+    const file = 'C:\\Windows\\System32\\wsl.exe'
+    const discovery = new TerminalProfileDiscovery({
+      platform: 'win32', environment: {}, readDirectory: async () => [],
+      resolveExecutable: async (candidate) => candidate === file ? candidate : undefined,
+      resolveIdentity: async (candidate) => candidate.toLowerCase(),
+      probeProcess: async () => 'Ubuntu\n',
+    })
+    const profiles = await discovery.discover([
+      { id: 'custom:wsl', name: 'Manual WSL', executable: file, args: ['--distribution', 'Ubuntu'], env: {} },
+    ])
+    expect(profiles).toHaveLength(2)
+    const detected = profiles.find(({ source }) => source === 'wsl')!.launch!
+    const custom = profiles.find(({ source }) => source === 'custom')!.launch!
+    expect(await discovery.sameLaunch(detected, custom)).toBe(false)
+    expect(await discovery.sameLaunch(detected, { ...detected, distribution: 'ubuntu' })).toBe(true)
+    expect(await discovery.sameLaunch(detected, { ...detected, distribution: 'Debian' })).toBe(false)
   })
 
   it('keeps native selections independent from a slow WSL scan and refreshes inventory only on request', async () => {

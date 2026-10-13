@@ -679,6 +679,91 @@ test('uses the global profile for new terminals across projects and preserves an
   }
 })
 
+test('groups equivalent shell profiles while retaining saved defaults and individual configuration actions', async ({}, testInfo) => {
+  test.skip(process.platform === 'win32', 'The native identity fixture uses /bin/sh; Windows aliases have resolver coverage.')
+  test.setTimeout(90_000)
+  const fixture = await launchTerminalFixture(testInfo)
+  const { app, page, projectA, errors } = fixture
+  const first = { id: 'custom:alias-first', name: 'Grouped shell first', executable: '/bin/sh', args: ['-i'], env: { PIPILOT_TERMINAL_PROFILE_MARKER: 'grouped-shell' } }
+  const second = { ...first, id: 'custom:alias-second', name: 'Grouped shell second' }
+  const persisted = async () => (await page.evaluate(() => window.pipilot!.settings.get())).settings.terminal
+  try {
+    await addProject(app, page, projectA)
+    await page.evaluate(({ first, second }) => window.pipilot!.settings.update({ terminal: {
+      profiles: [first, second], defaultProfileId: second.id,
+      defaultProfileSnapshot: { id: second.id, label: second.name, executable: second.executable },
+    } }), { first, second })
+    const grouped = (await page.evaluate(() => window.pipilot!.terminal.listShellProfiles(true)))
+      .filter((profile) => profile.id.startsWith('custom:alias-'))
+    expect(grouped).toHaveLength(1)
+    expect(grouped[0]).toMatchObject({ id: second.id, aliases: expect.arrayContaining([first.id]), available: true, isDefault: true })
+
+    let settings = await openTerminalSettings(page)
+    const rows = () => settings.locator('[data-terminal-profile-id^="custom:alias-"]')
+    const defaultPicker = () => settings.getByRole('combobox', { name: 'Default profile', exact: true })
+    await expect(rows()).toHaveCount(1)
+    await expect(defaultPicker()).toHaveText(second.name)
+    await expect(settings.getByRole('alert')).toHaveCount(0)
+    await defaultPicker().click()
+    await expect(page.getByRole('option', { name: second.name, exact: true })).toHaveCount(1)
+    await expect(page.getByRole('option', { name: first.name, exact: true })).toHaveCount(0)
+    await page.keyboard.press('Escape')
+    expect(await persisted()).toMatchObject({ profiles: [first, second], defaultProfileId: second.id })
+
+    // The runtime uses the saved profile; the creation picker offers one launch
+    // choice, while both original settings records remain intact.
+    await returnToTerminals(page)
+    const running = await activeTerminal(page)
+    expect(running.shell).toBe(second.name)
+    await terminalWorkspace(page).getByRole('button', { name: 'New terminal with shell', exact: true }).click()
+    await expect(page.locator('[data-create-shell-profile-id^="custom:alias-"]')).toHaveCount(1)
+    await expect(page.locator(`[data-create-shell-profile-id="${second.id}"]`)).toBeVisible()
+    await page.keyboard.press('Escape')
+    settings = await openTerminalSettings(page)
+    await expect(rows()).toHaveCount(1)
+    await rows().getByRole('button', { name: `Actions for ${second.name}`, exact: true }).click()
+    await expect(page.getByRole('menuitem', { name: 'Edit…', exact: true })).toHaveCount(2)
+    await expect(page.getByRole('menuitem', { name: 'Remove profile', exact: true })).toHaveCount(2)
+    await page.screenshot({ path: testInfo.outputPath('grouped-shell-configurations.png'), animations: 'disabled' })
+
+    // Editing the non-default alias changes only that record, without moving
+    // the saved default or silently deleting the equivalent configuration.
+    await page.getByRole('menuitem', { name: 'Edit…', exact: true }).nth(0).click()
+    const form = page.getByRole('dialog', { name: 'Edit terminal profile', exact: true })
+    await expect(form.getByRole('textbox', { name: 'Profile name', exact: true })).toHaveValue(first.name)
+    const renamedFirst = { ...first, name: 'Grouped shell first renamed' }
+    await form.getByRole('textbox', { name: 'Profile name', exact: true }).fill(renamedFirst.name)
+    await form.getByRole('button', { name: 'Save', exact: true }).click()
+    await expect(form).toBeHidden()
+    await expect.poll(persisted).toMatchObject({ profiles: [renamedFirst, second], defaultProfileId: second.id })
+    await expect(rows()).toHaveCount(1)
+    await expect(defaultPicker()).toHaveText(second.name)
+
+    await rows().getByRole('button', { name: `Actions for ${second.name}`, exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Edit…', exact: true }).nth(1).click()
+    await expect(form.getByRole('textbox', { name: 'Profile name', exact: true })).toHaveValue(second.name)
+    await form.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await expect(form).toBeHidden()
+    await rows().getByRole('button', { name: `Actions for ${second.name}`, exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Remove profile', exact: true }).nth(1).click()
+    const secondRemoval = page.getByRole('alertdialog', { name: `Remove ${second.name}?`, exact: true })
+    await expect(secondRemoval).toContainText('changes the default to Auto')
+    await secondRemoval.getByRole('button', { name: 'Cancel', exact: true }).click()
+
+    await rows().getByRole('button', { name: `Actions for ${second.name}`, exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Remove profile', exact: true }).nth(0).click()
+    const firstRemoval = page.getByRole('alertdialog', { name: `Remove ${renamedFirst.name}?`, exact: true })
+    await firstRemoval.getByRole('button', { name: 'Remove profile', exact: true }).click()
+    await expect(firstRemoval).toBeHidden()
+    await expect.poll(persisted).toMatchObject({ profiles: [second], defaultProfileId: second.id })
+    await expect(rows()).toHaveCount(1)
+    await expect(defaultPicker()).toHaveText(second.name)
+    await expect(settings.getByRole('alert')).toHaveCount(0)
+    expect((await terminalSnapshot(page, running.terminalId)).status).toBe('running')
+    expect(errors).toEqual([])
+  } finally { await fixture.close() }
+})
+
 test('recovers an unavailable global default without replacing existing terminals', async ({}, testInfo) => {
   test.skip(process.platform === 'win32', 'This real PTY fixture uses a deterministic POSIX shell.')
   test.setTimeout(90_000)

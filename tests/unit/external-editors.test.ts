@@ -40,9 +40,13 @@ describe('external editors', () => {
       await chmod(join(bin, 'code'), 0o755)
       const openPath = vi.fn(async () => '')
       const showItemInFolder = vi.fn()
-      const editors = new ExternalEditors({ platform: 'linux', env: { PATH: bin, XDG_DATA_DIRS: bin, XDG_DATA_HOME: bin }, openPath, showItemInFolder })
+      const editors = new ExternalEditors({ platform: 'linux', env: { PATH: bin, XDG_DATA_DIRS: bin, XDG_DATA_HOME: bin }, openPath, showItemInFolder,
+        customApps: () => [{ id: 'external:custom:code', name: 'My Code', kind: 'editor', adapter: 'generic', executable: join(bin, 'code') }],
+      })
       expect((await editors.list()).map((editor) => `${editor.kind}:${editor.id}`)).toEqual(['editor:vscode', 'system:system', 'file-manager:file-manager'])
-      await editors.open('vscode', '/project/src/app.ts', 12)
+      expect((await editors.list())[0].aliases).toEqual(['external:custom:code'])
+      // A saved manual ID for the same app retains the detected line-opening integration.
+      await editors.open('external:custom:code', '/project/src/app.ts', 12)
       expect((await waitFor(join(bin, 'opened'))).trim()).toBe('-g /project/src/app.ts:12')
       await editors.open('file-manager', '/project/src/app.ts')
       expect(showItemInFolder).toHaveBeenCalledWith('/project/src/app.ts')
