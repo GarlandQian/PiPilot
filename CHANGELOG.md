@@ -6,12 +6,18 @@ Each version section supplies the highlights for its GitHub Release. Download li
 
 ## Unreleased
 
+## 0.11.0
+
 ### 中文
 
+- **失败回复与重试**：回复失败时显示错误类别、服务商和模型、脱敏后的详情及“重试回复”按钮；自动重试显示次数和等待倒计时，可停止等待。在“设置 › 模型”中配置自动重试开关和次数，保存在 Pi 的全局配置，可信项目的覆盖设置继续生效。认证或配置错误不再因错误文本中的端口或数字而被误判为临时故障；停止重试后保留失败回复和手动重试入口。
+- **精简打包与加快发布**：移除安装包内重复的前端依赖和其他平台的终端预编译文件；源码验证与打包并行，Electron 测试分片运行，macOS Intel 检查不再等待 Windows/Linux。保留全部平台安装包和发布前检查。
 - **归档后立即离开列表**：归档正在打开的任务会转到所在项目的新任务（与 Codex 一致），已归档的任务不再因为仍在运行或有未读结果而留在侧边栏；它们仍可在“已归档”、搜索和通知中找到。
 
 ### English
 
+- **Failed replies and retries:** Show the error category, provider and model, redacted details, and a Retry Reply action. Automatic retries show the attempt count and countdown and can be stopped. Configure automatic retry and its count in Settings › Models, saved in Pi's global configuration while respecting trusted project overrides. Authentication and configuration failures no longer retry because a port or number in their text resembles a transient error; stopping retries keeps the failed reply and manual retry action visible.
+- **Smaller packages and faster release builds:** Omit duplicate renderer dependencies and terminal prebuilds for other platforms. Run verification alongside packaging, shard Electron tests across machines, and start Intel macOS checks without waiting for Windows/Linux. Keep every platform's installers and all publication checks.
 - **Archiving takes a task out of the list:** Archiving the open task moves on to a new task in its project, as in Codex, and archived tasks no longer linger in the sidebar while running or unread; they remain in Archived, search and notifications.
 
 ## 0.10.0

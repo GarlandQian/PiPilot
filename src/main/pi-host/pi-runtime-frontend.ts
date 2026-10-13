@@ -1065,6 +1065,47 @@ export class PiRuntimeFrontend {
     })
   }
 
+  /** Apply retry policy without restarting or interrupting background work. */
+  async synchronizeRetrySettings(): Promise<void> {
+    this.assertNotDisposed()
+    // Target every retained runtime by identity. Switching the selected chat
+    // must neither skip background work nor apply settings to a replacement.
+    const failures = await Promise.all(this.listControlRuntimes().map(async (handle) => {
+      try {
+        const runtime = this.requireControlRuntime(handle)
+        const token = this.markCommandStart(runtime, handle.generation)
+        try {
+          const result = await this.pool.command(runtime.runtimeId, {
+            type: 'set_auto_retry', reloadSettings: true,
+          }, handle.generation)
+          if (!result.response.success) return result.response.error || 'Pi rejected the retry settings.'
+          const stateResult = await this.pool.command(runtime.runtimeId, { type: 'get_state' }, handle.generation)
+          this.requireControlRuntime(handle)
+          if (this.runtimes.get(runtime.runtimeId) !== runtime ||
+              result.runtime.generation !== handle.generation ||
+              stateResult.runtime.generation !== handle.generation) {
+            throw new PiRuntimeFrontendError('PI_RUNTIME_STALE_GENERATION', 'The Pi runtime changed while synchronizing retry settings.')
+          }
+          const state = this.parseStateResponse(stateResult.response)
+          // Only project the policy. A stream may have progressed during the
+          // read, so replacing the whole session state would rewind activity.
+          if (state.retry && runtime.snapshot.sessionState) {
+            runtime.snapshot = {
+              ...runtime.snapshot,
+              sessionState: { ...runtime.snapshot.sessionState, retry: state.retry },
+            }
+            if (runtime.runtimeId === this.active?.runtimeId) this.publish(runtime.snapshot)
+          }
+          return null
+        } finally { this.markCommandEnd(runtime, token) }
+      } catch (error) {
+        return error instanceof Error ? error.message : 'A Pi runtime could not synchronize retry settings.'
+      }
+    }))
+    const failure = failures.find((message) => message !== null)
+    if (failure) throw new PiRuntimeFrontendError('PI_RUNTIME_OPERATION_FAILED', failure)
+  }
+
   /** Package synchronization has the same no-interruption policy as config save. */
   async reloadRuntimes(cwd?: string): Promise<void> {
     const result = await this.applyConfiguration({

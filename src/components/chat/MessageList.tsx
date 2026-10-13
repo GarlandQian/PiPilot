@@ -8,8 +8,10 @@ import { UserMessage, AgentMessage, ThinkingMessage, NoticeMessage, PlanModeMess
 import { REVEAL_PLAN_EVENT } from './plan-presentation'
 import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
-import { createConversationResponseProjector, type ResponsePresentation, type ResponsePresentationSegment } from '@/renderer/pi-rpc/response-presentation'
+import { createConversationResponseProjector, latestResponseFailureId, type ResponsePresentation, type ResponsePresentationSegment } from '@/renderer/pi-rpc/response-presentation'
 import { ConversationResponse } from './ConversationResponse'
+import { ResponseErrorCard, type ResponseRetryPolicy } from './ResponseErrorCard'
+import type { RetryActivityProjection } from '@/renderer/pi-rpc/adapters/retry'
 import { MarkdownContent } from './markdown/MarkdownContent'
 import { useConversationOperationFeedback } from '@/renderer/composer/use-operation-feedback'
 import { createTranscriptActivityProjector } from '@/renderer/pi-rpc/transcript-activity'
@@ -29,6 +31,12 @@ interface MessageListProps {
   jumpRequest: ConversationJumpRequest | null
   status: AgentStatus
   onFork?: (entryId: string) => Promise<void>
+  onRetryResponse?: (expectedTimestamp: number) => Promise<void>
+  onConfigureModel?: () => void
+  onStopRetry?: () => Promise<void>
+  retryResponseDisabled?: boolean
+  retryPolicy?: ResponseRetryPolicy
+  retryActivity?: RetryActivityProjection
   onExportResponse?: (anchorEntryId: string) => void
   onExportMessage?: (entryId: string) => void
   onPlanAction?: (
@@ -54,10 +62,12 @@ const NO_TURN_KEYS: ReadonlySet<string> = new Set()
 /** Completed rows receive stable data and flags while the live row advances. */
 const ConversationRow = React.memo(function ConversationRow({ response, latest, anchorNodes, highlighted,
   sessionKey, selectedSubagentId, subagentFocusRequest, onOpenSubagent, onOpenCommand, onPlanAction, onExportResponse, onExportMessage,
+  onRetryResponse, onConfigureModel, onStopRetry, retryResponseDisabled, retryPolicy, retryActivity, currentFailureId,
   animateAgentKeys, streamingAgentKeys, hiddenResponseActionIds, motionEnabled,
   onTypingChange, thinkingDurations, forkBusy, forkingId, onFork, canFork, searchRequest,
-}: Pick<MessageListProps, 'sessionKey' | 'selectedSubagentId' | 'subagentFocusRequest' | 'onOpenSubagent' | 'onOpenCommand' | 'onPlanAction' | 'onExportResponse' | 'onExportMessage'> & {
+}: Pick<MessageListProps, 'sessionKey' | 'selectedSubagentId' | 'subagentFocusRequest' | 'onOpenSubagent' | 'onOpenCommand' | 'onPlanAction' | 'onExportResponse' | 'onExportMessage' | 'onRetryResponse' | 'onConfigureModel' | 'onStopRetry' | 'retryResponseDisabled' | 'retryPolicy' | 'retryActivity'> & {
   response: ResponsePresentation
+  currentFailureId: string | null
   /** The newest reply keeps its actions in view; earlier ones show them on hover. */
   latest: boolean
   anchorNodes: Map<string, HTMLDivElement>
@@ -96,6 +106,9 @@ const ConversationRow = React.memo(function ConversationRow({ response, latest, 
       }
       case 'thinking': return <ThinkingMessage turn={turn} thinkingDurations={thinkingDurations} />
       case 'notice': return <NoticeMessage turn={turn} />
+      case 'response-error': return <ResponseErrorCard turn={turn} sessionKey={sessionKey} current={turn.id === currentFailureId}
+        disabled={Boolean(retryResponseDisabled)} retryPolicy={retryPolicy} retryActivity={retryActivity}
+        onRetry={onRetryResponse} onConfigureModel={onConfigureModel} onStopRetry={onStopRetry} />
       case 'plan': return <PlanModeMessage turn={turn} onAction={onPlanAction} />
       case 'activity': return <ResponseActivityRow activity={turn.activity} />
       case 'response-actions': return hiddenResponseActionIds.has(turn.id) ? null : <ResponseActions
@@ -122,6 +135,12 @@ export function MessageList({
   jumpRequest,
   status,
   onFork,
+  onRetryResponse,
+  onConfigureModel,
+  onStopRetry,
+  retryResponseDisabled,
+  retryPolicy,
+  retryActivity,
   onExportResponse,
   onExportMessage,
   onPlanAction,
@@ -295,6 +314,7 @@ export function MessageList({
 
   const responseProjector = React.useMemo(() => createConversationResponseProjector(), [sessionKey])
   const projectedResponseGroups = React.useMemo(() => responseProjector.project(turns, status), [responseProjector, turns, status])
+  const currentFailureId = React.useMemo(() => latestResponseFailureId(turns), [turns])
   const transcriptTyping = animateAgentKeys.size > 0 ||
     streamingAgentKeys.size > 0 ||
     typingAgentKeys.size > 0
@@ -351,6 +371,13 @@ export function MessageList({
               onPlanAction={onPlanAction}
               onExportResponse={onExportResponse}
               onExportMessage={onExportMessage}
+              onRetryResponse={onRetryResponse}
+              onConfigureModel={onConfigureModel}
+              onStopRetry={onStopRetry}
+              retryResponseDisabled={retryResponseDisabled || status === 'running' || status === 'planning'}
+              retryPolicy={retryPolicy}
+              retryActivity={retryActivity}
+              currentFailureId={currentFailureId}
               animateAgentKeys={response.segments.some((item) => item.kind === 'turn' && item.turn.kind === 'agent' && animateAgentKeys.has(agentAnimationKey(item.turn))) ? animateAgentKeys : NO_TURN_KEYS}
               streamingAgentKeys={response.segments.some((item) => item.kind === 'turn' && item.turn.kind === 'agent' && streamingAgentKeys.has(agentAnimationKey(item.turn))) ? streamingAgentKeys : NO_TURN_KEYS}
               hiddenResponseActionIds={response.segments.some((item) => item.kind === 'turn' && hiddenResponseActionIds.has(item.turn.id)) ? hiddenResponseActionIds : NO_TURN_KEYS}

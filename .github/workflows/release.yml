@@ -113,7 +113,9 @@ jobs:
 
   package:
     name: Package ${{ matrix.inventory }}
-    needs: [preflight, verify]
+    # Build candidates while source verification runs. Publication below still
+    # requires every verification and native package job to succeed.
+    needs: preflight
     permissions:
       contents: read
     runs-on: ${{ matrix.runner }}
@@ -122,19 +124,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: macos
-            inventory: macos
-            arch: arm64
-            # Keep the dual-architecture package build on macOS 26. The x64
-            # smoke runs natively on macos-15-intel in the job below.
-            runner: macos-26
-            command: pnpm package:mac
-            smoke: pnpm test:packaged
-            artifact_paths: |
-              release/*.dmg
-              release/*.zip
-              release/macos-manifest.json
-              release/macos-SHA256SUMS.txt
           - platform: windows
             inventory: windows
             arch: x64
@@ -178,6 +167,9 @@ jobs:
               release/*.blockmap
               release/linux-arm64-manifest.json
               release/linux-arm64-SHA256SUMS.txt
+    env:
+      electron_config_cache: ${{ github.workspace }}/.cache/electron
+      ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -193,13 +185,25 @@ jobs:
           node-version: 24.18.0
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
+      - name: Cache Electron downloads
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: .cache/electron
+          key: electron-downloads-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: electron-downloads-${{ runner.os }}-${{ runner.arch }}-
+      - name: Cache packaging tool downloads
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: .cache/electron-builder
+          key: builder-downloads-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: builder-downloads-${{ runner.os }}-${{ runner.arch }}-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Install Linux package tools
         if: ${{ matrix.platform == 'linux' }}
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends rpm xdg-utils
+          sudo apt-get install --yes --no-install-recommends rpm xdg-utils libfuse2t64 libnotify4 libsecret-1-0
       - name: Build package
         run: ${{ matrix.command }}
         env:
@@ -232,7 +236,6 @@ jobs:
           sudo chmod 4755 "$sandbox"
           test "$(stat -c '%u:%g:%a' "$sandbox")" = '0:0:4755'
       - name: Smoke-test package
-        if: ${{ matrix.platform != 'macos' }}
         run: ${{ matrix.smoke }}
         env:
           PIPILOT_PACKAGED_ARCH: ${{ matrix.arch }}
@@ -242,11 +245,6 @@ jobs:
       - name: Verify unsigned Windows installation and native A-to-B update
         if: ${{ matrix.platform == 'windows' }}
         run: node node_modules/@playwright/test/cli.js test --config=playwright.packaged.config.ts tests/packaged/windows-update-canary.spec.ts --output=test-results/windows-update-canary
-      - name: Install Linux AppImage runtime prerequisite
-        if: ${{ matrix.platform == 'linux' }}
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends libfuse2t64 libnotify4 libsecret-1-0
       - name: Prepare older Linux AppImage for package lifecycle canary
         if: ${{ matrix.platform == 'linux' }}
         run: node build/prepare-linux-package-canary.cjs
@@ -263,11 +261,6 @@ jobs:
           path: test-results/linux-package-canary/
           if-no-files-found: ignore
           retention-days: 14
-      - name: Smoke-test macOS ARM64 package
-        if: ${{ matrix.platform == 'macos' }}
-        run: pnpm test:packaged --output=test-results/packaged-arm64
-        env:
-          PIPILOT_PACKAGED_ARCH: arm64
       - name: Upload package test failure artifacts
         if: ${{ failure() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -283,19 +276,22 @@ jobs:
           path: ${{ matrix.artifact_paths }}
           if-no-files-found: error
           retention-days: 14
+          # Installers and archives are already compressed.
+          compression-level: 0
 
-  package-macos-intel-smoke:
-    name: Smoke-test macOS Intel package
-    # Test the exact x64 archive emitted by the macOS package job. The
-    # native Intel runner validates the published artifact without rebuilding
-    # Electron or node-pty a second time.
-    needs: [preflight, verify, package]
-    if: ${{ needs.preflight.result == 'success' && needs.verify.result == 'success' && needs.package.result == 'success' }}
+  package-macos:
+    name: Package macos
+    needs: preflight
     permissions:
       contents: read
-      actions: read
-    runs-on: macos-15-intel
+    # Keep both package architectures on macOS 26 for the modern app icon.
+    # Intel validation starts immediately after this job, independently of the
+    # Windows/Linux installers and source verification.
+    runs-on: macos-26
     timeout-minutes: 100
+    env:
+      electron_config_cache: ${{ github.workspace }}/.cache/electron
+      ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -311,6 +307,89 @@ jobs:
           node-version: 24.18.0
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
+      - name: Cache Electron downloads
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: .cache/electron
+          # Verification saves only the runner architecture. Use a separate
+          # immutable key so both package architectures can be cached together.
+          key: electron-downloads-${{ runner.os }}-${{ runner.arch }}-dual-arch-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            electron-downloads-${{ runner.os }}-${{ runner.arch }}-dual-arch-
+            electron-downloads-${{ runner.os }}-${{ runner.arch }}-
+      - name: Cache packaging tool downloads
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: .cache/electron-builder
+          key: builder-downloads-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: builder-downloads-${{ runner.os }}-${{ runner.arch }}-
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build package
+        run: pnpm package:mac
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Create manifest and checksums
+        run: node build/release-manifest.cjs macos release
+      - name: Smoke-test macOS ARM64 package
+        run: pnpm test:packaged --output=test-results/packaged-arm64
+        env:
+          PIPILOT_PACKAGED_ARCH: arm64
+      - name: Upload package test failure artifacts
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: packaged-failures-macos-${{ needs.preflight.outputs.version }}
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Upload release candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pipilot-macos-${{ needs.preflight.outputs.version }}
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/macos-manifest.json
+            release/macos-SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  package-macos-intel-smoke:
+    name: Smoke-test macOS Intel package
+    # Test the exact x64 archive emitted by the macOS package job. The
+    # native Intel runner validates the published artifact without rebuilding
+    # Electron or node-pty a second time.
+    needs: [preflight, package-macos]
+    permissions:
+      contents: read
+      actions: read
+    runs-on: macos-15-intel
+    timeout-minutes: 100
+    env:
+      electron_config_cache: ${{ github.workspace }}/.cache/electron
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 12.10.1
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.18.0
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Cache Electron downloads
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: .cache/electron
+          key: electron-downloads-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: electron-downloads-${{ runner.os }}-${{ runner.arch }}-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Download macOS release candidate
@@ -353,8 +432,8 @@ jobs:
 
   assemble:
     name: Assemble and publish public Release
-    needs: [preflight, verify, package, package-macos-intel-smoke]
-    if: ${{ needs.preflight.result == 'success' && needs.verify.result == 'success' && needs.package.result == 'success' && needs['package-macos-intel-smoke'].result == 'success' }}
+    needs: [preflight, verify, package, package-macos, package-macos-intel-smoke]
+    if: ${{ needs.preflight.result == 'success' && needs.verify.result == 'success' && needs.package.result == 'success' && needs['package-macos'].result == 'success' && needs['package-macos-intel-smoke'].result == 'success' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write

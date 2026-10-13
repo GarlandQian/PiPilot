@@ -9,6 +9,7 @@ import {
   type PiIntegrationOperationResult,
   type PiIntegrationScope,
   type PiIntegrationSnapshot,
+  type PiRetrySettingsUpdate,
 } from '@/shared/pi-integrations'
 import { useWorkspaceStore } from '@/store/workspace'
 
@@ -43,6 +44,7 @@ export interface PiIntegrationsActions {
   remove(source: string, target?: PiPackageTarget): Promise<void>
   restart(): Promise<void>
   setRetryEnabled(enabled: boolean): Promise<PiIntegrationOperationResult | null>
+  setRetrySettings(settings: PiRetrySettingsUpdate): Promise<PiIntegrationOperationResult | null>
   setScope(scope: PiIntegrationScope): void
   update(source: string, target?: PiPackageTarget): Promise<void>
 }
@@ -361,6 +363,8 @@ export function PiIntegrationsProvider({ children }: { children: React.ReactNode
     },
     setRetryEnabled: (enabled) => runOperation((nextAdapter, scope) =>
       nextAdapter.setRetryEnabled(scope, enabled)),
+    setRetrySettings: (settings) => runOperation((nextAdapter, scope) =>
+      nextAdapter.setRetrySettings(scope, settings)),
     setScope,
     update: async (source, target) => {
       if (target === 'global' && stateRef.current.scope.kind === 'project') await runGlobal((nextAdapter, scope) => nextAdapter.update(scope, source))

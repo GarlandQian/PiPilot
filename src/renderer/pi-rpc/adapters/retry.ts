@@ -1,4 +1,5 @@
 import type { LocalPiProjectorState } from '../projector'
+import { sanitizeConversationErrorDetails } from '@/shared/conversation-errors'
 
 export type RetryActivityProjection =
   | { kind: 'idle' }
@@ -28,7 +29,7 @@ export type RetryActivityProjection =
     }
 
 function boundedReason(value: string | undefined) {
-  const reason = (value ?? '').trim()
+  const reason = sanitizeConversationErrorDetails(value ?? '').trim()
   if (!reason) return 'Provider request failed.'
   return reason.length <= 1_000 ? reason : `${reason.slice(0, 1_000)}\n...`
 }
@@ -72,7 +73,7 @@ export function projectRetryActivity(
       return {
         kind: 'summarization',
         phase: 'attempting',
-        reason: retry.source === 'compaction' ? retry.reason ?? undefined : retry.source,
+        reason: retry.source === 'compaction' ? retry.reason ? boundedReason(retry.reason) : undefined : retry.source,
       }
     }
     return { kind: 'summarization', phase: 'finished' }

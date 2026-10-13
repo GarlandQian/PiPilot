@@ -9,6 +9,7 @@ import {
   piIntegrationScopeKey,
   piIntegrationScopeSchema,
   piIntegrationSnapshotSchema,
+  piRetrySettingsUpdateSchema,
   type PiIntegrationOperation,
   type PiIntegrationOperationKind,
   type PiIntegrationOperationResult,
@@ -18,6 +19,7 @@ import {
   type PiManagementModelsPayload,
   type PiManagementProgress,
   type PiManagementSnapshotPayload,
+  type PiRetrySettingsUpdate,
 } from '../../shared/pi-integrations'
 import type { ConversationScope } from '../../shared/conversation-scope'
 import type { ModelCatalogEntry } from '../../shared/model-catalog'
@@ -66,6 +68,7 @@ interface LocalPiIntegrationServiceOptions {
   runtimeHost: Pick<PiRuntimeFrontend, 'getSnapshot' | 'request' | 'restart'>
   reloadHosts(scope: PiIntegrationScope, cwd: string): Promise<void>
   restartHosts(scope: PiIntegrationScope, cwd: string): Promise<void>
+  synchronizeRetrySettings?(): Promise<void>
   scopeResolver: Pick<ConversationScopeResolver, 'prepare' | 'resolve'>
   createId?: () => string
   now?: () => number
@@ -332,14 +335,31 @@ export class LocalPiIntegrationService {
   }
 
   setRetryEnabled(scope: PiIntegrationScope, enabled: boolean) {
+    return this.setRetrySettings(scope, { enabled })
+  }
+
+  setRetrySettings(scope: PiIntegrationScope, update: PiRetrySettingsUpdate) {
+    const settings = piRetrySettingsUpdateSchema.parse(update)
     return this.enqueueOperation('set-retry', scope, undefined, async (operation) => {
       const target = await this.requireTarget(operation.scope)
       const payload = await this.runHelper(target, {
         action: 'set-retry',
         operationId: operation.operationId,
-        enabled,
+        ...settings,
       }, (progress) => this.progress(operation, progress))
       this.assertCurrent(target)
+
+      if (this.options.synchronizeRetrySettings) {
+        let runtimeError: string | undefined
+        try { await this.options.synchronizeRetrySettings() }
+        catch (error) { runtimeError = errorMessage(error) }
+        return this.operationResult(
+          operation.operationId,
+          await this.composeSnapshot(target, payload),
+          runtimeError ? 'persisted-only' : 'synchronized',
+          runtimeError,
+        )
+      }
 
       // Persistence is authoritative. Runtime synchronization is a separate,
       // best-effort step and must never make a successful global write appear
@@ -357,7 +377,7 @@ export class LocalPiIntegrationService {
           // effective value (including any project override) before sync.
           const activeScope = integrationScopeForConversation(this.options.getActiveScope())
           let runtimeTarget = target
-          let runtimeEnabled = payload.retry.effective.enabled
+          let runtimeSettings = payload.retry.effective
           if (piIntegrationScopeKey(activeScope) !== piIntegrationScopeKey(target.scope)) {
             runtimeTarget = await this.requireTarget(activeScope)
             if (runtimeTarget.cwd !== runtime.cwd) {
@@ -371,7 +391,7 @@ export class LocalPiIntegrationService {
               operationId: this.createId(),
             })
             this.assertCurrent(runtimeTarget)
-            runtimeEnabled = runtimePayload.retry.effective.enabled
+            runtimeSettings = runtimePayload.retry.effective
           } else if (target.cwd !== runtime.cwd) {
             throw new LocalPiIntegrationError(
               'PI_INTEGRATIONS_RUNTIME_SYNC_FAILED',
@@ -392,7 +412,8 @@ export class LocalPiIntegrationService {
           }
           const response = await this.options.runtimeHost.request({
             type: 'set_auto_retry',
-            enabled: runtimeEnabled,
+            enabled: runtimeSettings.enabled,
+            maxRetries: runtimeSettings.maxRetries,
           })
           if (!response.success) {
             throw new LocalPiIntegrationError(

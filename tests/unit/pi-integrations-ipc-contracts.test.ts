@@ -26,9 +26,10 @@ describe('Pi integrations IPC contracts', () => {
       const settings = SettingsManager.create(cwd, agentDir, { projectTrusted: true })
       const snapshot = piRetrySettingsSchema.parse({
         globalEnabled: settings.getGlobalSettings().retry?.enabled ?? true,
+        globalMaxRetries: settings.getGlobalSettings().retry?.maxRetries ?? 3,
         effective: settings.getRetrySettings(),
       })
-      expect(snapshot).toEqual({ globalEnabled: false, effective: {
+      expect(snapshot).toEqual({ globalEnabled: false, globalMaxRetries: 3, effective: {
         enabled: true, maxRetries: 3, baseDelayMs: 2000, maxAgentDelayMs: 17_000,
       } })
       expect(piRetrySettingsSchema.safeParse({
@@ -63,6 +64,16 @@ describe('Pi integrations IPC contracts', () => {
       enabled: true,
       privateSetting: true,
     }).success).toBe(false)
+  })
+
+  it('accepts bounded retry counts including zero and rejects invalid counts', () => {
+    const request = { context: { requestId }, scope: { kind: 'global' }, enabled: true }
+    for (const maxRetries of [0, 3, 100]) {
+      expect(piIntegrationsSetRetryContract.requestSchema.safeParse({ ...request, maxRetries }).success).toBe(true)
+    }
+    for (const maxRetries of [-1, 101, 1.5, '3', Number.NaN]) {
+      expect(piIntegrationsSetRetryContract.requestSchema.safeParse({ ...request, maxRetries }).success).toBe(false)
+    }
   })
 
   it('rejects uncorrelated or recursively shaped operation events', () => {

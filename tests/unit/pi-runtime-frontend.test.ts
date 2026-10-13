@@ -79,6 +79,7 @@ function sessionState(
 class FakeFrontendPool {
   taskEntries: { entries: LocalPiSessionEntry[]; leafId: string | null } = { entries: [], leafId: null }
   readonly deliveryStates = new Map<string, LocalPiDeliverySnapshot>()
+  readonly retrySettings = new Map<string, { enabled: boolean; maxRetries: number }>()
   readonly maintenanceGate = new RuntimeMaintenanceGate()
   assertAdmission(cwd: string) {
     this.maintenanceGate.assertAdmission(cwd)
@@ -430,6 +431,10 @@ class FakeFrontendPool {
           success: true,
         }
         break
+      case 'set_auto_retry':
+        runtimeState.state.retry = this.retrySettings.get(runtimeId) ?? { enabled: true, maxRetries: 3 }
+        response = { type: 'response', command: 'set_auto_retry', success: true }
+        break
       case 'abort':
         if (this.abortDelay) await this.abortDelay
         if (this.abortError) throw this.abortError
@@ -668,6 +673,55 @@ function createHarness(options: PiRuntimeFrontendOptions = {}) {
 }
 
 describe('Runtime preparation and global retention', () => {
+  it('synchronizes retry policy on selected and busy background runtimes without reload or interruption', async () => {
+    const { frontend, pool } = createHarness({ isPersistedSessionFile: () => true })
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/selected-retry.jsonl' })
+    const selected = frontend.getActiveRuntimeIdentity()
+    if (!selected) throw new Error('Expected a selected runtime')
+    const lease = await frontend.acquireControlRuntime({ scope: projectScope, sessionFile: '/sessions/background-retry.jsonl' })
+    pool.retrySettings.set(selected.runtimeId, { enabled: true, maxRetries: 5 })
+    pool.retrySettings.set(lease.runtimeId, { enabled: false, maxRetries: 0 })
+    const published: LocalPiRuntimeSnapshot[] = []
+    frontend.subscribe((snapshot) => published.push(snapshot))
+    pool.emitEvent(runtimeEvent(lease.runtimeId, lease.generation, { type: 'agent_start' }))
+    const before = pool.commandCalls.length
+    await frontend.synchronizeRetrySettings()
+    expect(pool.commandCalls.slice(before)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ runtimeId: selected?.runtimeId, expectedGeneration: selected?.generation, command: { type: 'set_auto_retry', reloadSettings: true } }),
+      expect.objectContaining({ runtimeId: lease.runtimeId, expectedGeneration: lease.generation, command: { type: 'set_auto_retry', reloadSettings: true } }),
+    ]))
+    expect(pool.commandCalls.slice(before)).toHaveLength(4)
+    expect(frontend.getActiveRuntimeIdentity()).toEqual(selected)
+    expect(frontend.getSnapshot().sessionState?.retry).toEqual({ enabled: true, maxRetries: 5 })
+    expect(published[published.length - 1]?.sessionState?.retry).toEqual({ enabled: true, maxRetries: 5 })
+    expect(frontend.listControlRuntimes().find((runtime) => runtime.runtimeId === lease.runtimeId)?.lifecycle).toBe('running')
+    expect(pool.reloadCalls).toEqual([])
+    expect(pool.restartCalls).toEqual([])
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/background-retry.jsonl' })
+    expect(frontend.getSnapshot().sessionState?.retry).toEqual({ enabled: false, maxRetries: 0 })
+    frontend.releaseControlRuntime(lease)
+    await frontend.dispose()
+  })
+
+  it('does not rewind running state when retry settings are confirmed after streaming starts', async () => {
+    const { frontend, pool } = createHarness({ isPersistedSessionFile: () => true })
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/retry-streaming.jsonl' })
+    const selected = frontend.getActiveRuntimeIdentity()
+    if (!selected) throw new Error('Expected a selected runtime')
+    pool.retrySettings.set(selected.runtimeId, { enabled: true, maxRetries: 7 })
+    const sampled = deferred()
+    const release = deferred()
+    pool.nextStateReadGate = { sampled: sampled.resolve, release: release.promise }
+    const pending = frontend.synchronizeRetrySettings()
+    await sampled.promise
+    pool.emitEvent(runtimeEvent(selected.runtimeId, selected.generation, { type: 'agent_start' }))
+    release.resolve()
+    await pending
+    expect(frontend.getSnapshot().sessionState?.retry).toEqual({ enabled: true, maxRetries: 7 })
+    expect(frontend.listControlRuntimes().find((runtime) => runtime.runtimeId === selected.runtimeId)?.lifecycle).toBe('running')
+    await frontend.dispose()
+  })
+
   it('reads exact background entries without changing the selected conversation', async () => {
     const { frontend, pool } = createHarness({ isPersistedSessionFile: () => true })
     await frontend.start({ scope: projectScope, sessionFile: '/sessions/selected.jsonl' })

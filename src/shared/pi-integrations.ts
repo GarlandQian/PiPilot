@@ -14,6 +14,14 @@ export const PI_INTEGRATION_RESOURCE_LIMIT = 5_000
 export const PI_INTEGRATION_UPDATE_LIMIT = 500
 export const PI_INTEGRATION_DIAGNOSTIC_LIMIT = 500
 export const PI_MANAGEMENT_PROTOCOL_VERSION = 1 as const
+export const PI_RETRY_DEFAULT_MAX_RETRIES = 3
+export const PI_RETRY_MAX_RETRIES_LIMIT = 100
+
+export const piRetrySettingsUpdateSchema = z.object({
+  enabled: z.boolean(),
+  maxRetries: z.number().int().min(0).max(PI_RETRY_MAX_RETRIES_LIMIT).optional(),
+}).strict()
+export type PiRetrySettingsUpdate = z.infer<typeof piRetrySettingsUpdateSchema>
 
 const boundedIdSchema = z.string().min(1).max(1_024)
 const boundedPathSchema = z.string().min(1).max(PI_INTEGRATION_PATH_LIMIT)
@@ -131,7 +139,7 @@ export type PiPackageUpdate = z.infer<typeof piPackageUpdateSchema>
 export const piRetryEffectiveSettingsSchema = z
   .object({
     enabled: z.boolean(),
-    maxRetries: z.number().int().nonnegative().max(100),
+    maxRetries: z.number().int().nonnegative().max(PI_RETRY_MAX_RETRIES_LIMIT),
     baseDelayMs: z.number().int().nonnegative().max(86_400_000),
     maxAgentDelayMs: z.number().int().nonnegative().max(86_400_000),
   })
@@ -140,13 +148,14 @@ export const piRetryEffectiveSettingsSchema = z
 export type PiRetryEffectiveSettings = z.infer<typeof piRetryEffectiveSettingsSchema>
 
 /**
- * Retry has two intentionally different sources of truth. Pi's public setter
- * always writes the global file, while getRetrySettings() is merged for the
+ * Retry has two intentionally different sources of truth. The settings UI
+ * writes the global file, while getRetrySettings() is merged for the
  * current cwd and may include a project override.
  */
 export const piRetrySettingsSchema = z
   .object({
     globalEnabled: z.boolean(),
+    globalMaxRetries: z.number().int().nonnegative().max(PI_RETRY_MAX_RETRIES_LIMIT),
     effective: piRetryEffectiveSettingsSchema,
   })
   .strict()
@@ -351,7 +360,7 @@ export const piManagementHelperCommandSchema = z.discriminatedUnion('action', [
   z.object({
     ...piManagementHelperCommandBase,
     action: z.literal('set-retry'),
-    enabled: z.boolean(),
+    ...piRetrySettingsUpdateSchema.shape,
   }).strict(),
   z.object({
     ...piManagementHelperCommandBase,

@@ -10,6 +10,7 @@ import {
   PI_INTEGRATION_RESOURCE_LIMIT,
   PI_INTEGRATION_SOURCE_LIMIT,
   PI_INTEGRATION_UPDATE_LIMIT,
+  PI_RETRY_DEFAULT_MAX_RETRIES,
   piManagementHelperCommandSchema,
   piManagementHelperEventSchema,
   piManagementSnapshotPayloadSchema,
@@ -45,6 +46,7 @@ import {
 import { createPiManagementOutput } from './pi-management-output'
 import { safePiManagementMessage } from './pi-management-diagnostics'
 import { createBuiltinProviderKeyInteraction } from './builtin-provider-key-interaction'
+import { persistPiRetrySettings } from './pi-retry-settings'
 
 const HELPER_INPUT_LIMIT = 4 * 1_024 * 1_024
 const PACKAGE_MANIFEST_LIMIT = 256 * 1_024
@@ -109,6 +111,7 @@ interface ExternalSettingsManager {
     npmCommand?: string[]
     retry?: {
       enabled?: boolean
+      maxRetries?: number
     }
   }
   getRetrySettings(): {
@@ -181,6 +184,7 @@ function retrySettingsSnapshot(settingsManager: ExternalSettingsManager) {
   const global = settingsManager.getGlobalSettings()
   return piRetrySettingsSchema.parse({
     globalEnabled: global.retry?.enabled ?? true,
+    globalMaxRetries: global.retry?.maxRetries ?? PI_RETRY_DEFAULT_MAX_RETRIES,
     effective: settingsManager.getRetrySettings(),
   })
 }
@@ -883,10 +887,11 @@ async function runCommand(command: PiManagementHelperCommand) {
     // A load error means Pi may expose defaults in memory but cannot safely
     // persist a new global value. Surface it before touching runtime state.
     throwSettingsErrors(settingsManager)
-    settingsManager.setRetryEnabled(command.enabled)
     await settingsManager.flush()
-    // SettingsManager writes are queued and records failures instead of
-    // rejecting flush(). Do not let a failed global write reach RPC sync.
+    throwSettingsErrors(settingsManager)
+    await persistPiRetrySettings(command.cwd, agentDir, { enabled: command.enabled, maxRetries: command.maxRetries })
+    await settingsManager.reload()
+    // Do not let a failed write or reload reach runtime synchronization.
     throwSettingsErrors(settingsManager)
   }
 

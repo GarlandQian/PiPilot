@@ -338,6 +338,7 @@ const api: PiPilotApi = {
     remove: (scope, source) => invoke(piIntegrationsRemoveContract, { context: createContext(), scope, source }),
     restart: (scope) => invoke(piIntegrationsRestartContract, { context: createContext(), scope }),
     setRetryEnabled: (scope, enabled) => invoke(piIntegrationsSetRetryContract, { context: createContext(), scope, enabled }),
+    setRetrySettings: (scope, settings) => invoke(piIntegrationsSetRetryContract, { context: createContext(), scope, ...settings }),
     subscribe: piIntegrationsSubscription.subscribe,
     update: (scope, source) => invoke(piIntegrationsUpdateContract, { context: createContext(), scope, source }),
   },

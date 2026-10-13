@@ -205,10 +205,10 @@ export const AgentMessage = React.memo(function AgentMessage({
       <QuoteSelection source={{ kind: 'message', sourceId: `${turn.anchorEntryId ?? ''}/${turn.id}`, label: t('precision.assistantMessage') }}>
         <MarkdownContent markdown={markdown} streaming={!settled} />
       </QuoteSelection>
-      {settled && (turn.state === 'aborted' || turn.state === 'error') ? (
+      {settled && turn.state === 'aborted' ? (
         <div className="mt-1 flex items-center gap-1.5 text-caption text-muted-foreground" role="status">
           <TbAlertTriangle className="size-3.5" aria-hidden />
-          {t(turn.state === 'aborted' ? 'chat.responseAborted' : 'chat.responseError')}
+          {t('chat.responseAborted')}
         </div>
       ) : null}
     </div>

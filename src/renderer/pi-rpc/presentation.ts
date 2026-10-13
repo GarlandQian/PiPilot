@@ -19,6 +19,7 @@ import { alignLocalPiMessageOrigins } from './response-provenance'
 import { mergeSubagentPresentation, presentToolCall } from './tool-presenters'
 import { truncateUtf8 } from './structured-value'
 import { adjacentTurnChanges, recordTurnChanges, type TurnChange } from './turn-changes'
+import { classifyConversationError, isEmptyAssistantPlaceholder } from '@/shared/conversation-errors'
 import type {
   ConversationOutlineItem,
   ConversationOutlineStatus,
@@ -258,7 +259,7 @@ function captureAssistantResponse(
 ) {
   if (!group) return
   for (const part of message.content) {
-    if (part.type === 'text' && part.text.trim()) group.markdown.push(part.text)
+    if (part.type === 'text' && part.text.trim() && !isEmptyAssistantPlaceholder(part.text)) group.markdown.push(part.text)
   }
   group.lastAssistantStopReason = message.stopReason
   group.streaming ||= streaming || message.stopReason === 'pending'
@@ -372,7 +373,8 @@ function appendMessage(
     let hasVisibleText = false
     message.content.forEach((part, index) => {
       if (part.type === 'text') {
-        hasVisibleText ||= Boolean(part.text)
+        if (isEmptyAssistantPlaceholder(part.text) || !part.text.trim()) return
+        hasVisibleText = true
         projection.turns.push({
           kind: 'agent',
           id: `${key}:text:${index}`,
@@ -404,24 +406,25 @@ function appendMessage(
         )
       }
     })
-    if (!streaming && !hasVisibleText) {
-      if (message.errorMessage) {
+    if (!streaming && message.stopReason !== 'pending') {
+      if (message.errorMessage || message.stopReason === 'error') {
         projection.turns.push({
-          kind: 'agent',
+          kind: 'response-error',
           id: `${key}:error`,
-          markdown: message.errorMessage,
-          // errorMessage can accompany an explicit SDK abort. Keep its exact
-          // diagnostic text without overriding the authoritative stop reason.
-          state,
+          timestamp: message.timestamp,
+          provider: message.provider,
+          model: message.model,
+          // The provider's diagnostic prose must never override Pi's terminal
+          // outcome. Keep errors separate even when partial content exists.
+          state: message.stopReason === 'aborted' ? 'aborted' : 'error',
+          error: classifyConversationError(message.errorMessage),
           ...(anchorEntryId ? { anchorEntryId } : {}),
         })
-      } else if (message.stopReason === 'error' || message.stopReason === 'aborted') {
+      } else if (!hasVisibleText && message.stopReason === 'aborted') {
         projection.turns.push({
           kind: 'notice',
           id: `${key}:${message.stopReason}`,
-          notice: message.stopReason === 'error'
-            ? 'response-error'
-            : 'response-aborted',
+          notice: 'response-aborted',
           ...(anchorEntryId ? { anchorEntryId } : {}),
         })
       }
@@ -888,6 +891,7 @@ function outlineStatusForTurn(
   current: ConversationOutlineStatus,
   turn: Turn,
 ): ConversationOutlineStatus {
+  if (turn.kind === 'response-error') return turn.state
   if (turn.kind === 'agent' || turn.kind === 'thinking') {
     if (turn.state === 'streaming') return 'running'
     if (turn.state === 'error') return 'error'

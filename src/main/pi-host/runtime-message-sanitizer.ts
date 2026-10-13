@@ -3,6 +3,11 @@ import type {
   InlineExtension,
   MessageEndEvent,
 } from '@earendil-works/pi-coding-agent'
+import {
+  classifyConversationError,
+  isEmptyAssistantPlaceholder,
+} from '../../shared/conversation-errors'
+export { EMPTY_ASSISTANT_CONTENT_FALLBACK } from '../../shared/conversation-errors'
 
 export const PIPILOT_RUNTIME_MESSAGE_SANITIZER_EXTENSION_NAME =
   'pipilot-message-sanitizer'
@@ -11,10 +16,8 @@ export const PIPILOT_RUNTIME_MESSAGE_SANITIZER_EXTENSION_PATH =
 
 type RuntimeMessage = ContextEvent['messages'][number]
 
-export const EMPTY_ASSISTANT_CONTENT_FALLBACK = '[Empty assistant message]'
 const EMPTY_CONTENT_FALLBACKS = {
   user: '[Empty user message]',
-  assistant: EMPTY_ASSISTANT_CONTENT_FALLBACK,
   toolResult: '[Tool returned no content.]',
 } as const
 
@@ -30,8 +33,6 @@ function fallbackFor(message: RuntimeMessage): string | null {
   switch (message.role) {
     case 'user':
       return EMPTY_CONTENT_FALLBACKS.user
-    case 'assistant':
-      return EMPTY_CONTENT_FALLBACKS.assistant
     case 'toolResult':
       return EMPTY_CONTENT_FALLBACKS.toolResult
     default:
@@ -81,7 +82,33 @@ export function sanitizeRuntimeFinalizedMessage<T extends RuntimeMessage>(
   // Custom messages are extension-owned UI/session records. Provider context
   // is sanitized from a copy below; message_end must not rewrite persistence.
   if (message.role === 'custom') return message
-  return sanitizeRuntimeMessageContent(message)
+  const sanitized = sanitizeRuntimeMessageContent(message)
+  if (sanitized.role !== 'assistant') return sanitized
+  // Empty assistant content is an outcome, never a fabricated reply. Preserve
+  // failed/aborted records and their original errors for the transcript.
+  if (sanitized.stopReason === 'aborted') return sanitized
+  const error = classifyConversationError(sanitized.errorMessage)
+  if (sanitized.stopReason === 'error') {
+    if (error.category === 'empty-response' && !/ended without/iu.test(sanitized.errorMessage ?? '')) {
+      return { ...sanitized, errorMessage: `${sanitized.errorMessage}\nUpstream response ended without content.` } as T
+    }
+    if (error.category === 'network' && !/^Network error:/iu.test(sanitized.errorMessage ?? '')) {
+      return { ...sanitized, errorMessage: `Network error: ${sanitized.errorMessage}` } as T
+    }
+    return sanitized
+  }
+  const hasOutput = sanitized.content.some((block) => block.type === 'toolCall' ||
+    (block.type === 'text' && block.text.trim().length > 0 && !isEmptyAssistantPlaceholder(block.text)))
+  if (sanitized.stopReason === 'stop' && !hasOutput) {
+    // Pi's native retry policy recognizes "ended without" and owns the budget,
+    // backoff, cancellation, history omission, and extension settlement.
+    return {
+      ...sanitized,
+      stopReason: 'error',
+      errorMessage: sanitized.errorMessage || 'Upstream response ended without any text or tool output.',
+    } as T
+  }
+  return sanitized
 }
 
 function isEmptyCustomMessage(message: RuntimeMessage): boolean {
@@ -106,6 +133,11 @@ export function sanitizeRuntimeProviderContext(
     const next = sanitizeRuntimeMessageContent(message)
     if (next !== message) changed = true
     if (isEmptyCustomMessage(next)) {
+      changed = true
+      continue
+    }
+    if (next.role === 'assistant' && (next.content.length === 0 ||
+      next.content.every((block) => block.type === 'text' && isEmptyAssistantPlaceholder(block.text)))) {
       changed = true
       continue
     }

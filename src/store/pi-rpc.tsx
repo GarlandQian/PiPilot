@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { sanitizeConversationErrorDetails } from '@/shared/conversation-errors'
 import type {
   LocalPiCommandArgumentCompletion,
   LocalPiDeliverySnapshot,
@@ -270,6 +271,7 @@ interface PiExtensionView {
 
 interface PiRpcActions {
   abort(): Promise<void>
+  retryResponse(expectedTimestamp: number): Promise<void>
   compact(instructions?: string): Promise<void>
   completeCommandArguments(
     commandName: string,
@@ -1223,7 +1225,7 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
       // Sending is acknowledged by the Runtime that received the command.
       // Navigating away cannot turn that successful acceptance into a failure.
       // The send caller separately gates all projection effects by visit.
-      if (command.type === 'submit_message' || command.type === 'prompt' || command.type === 'steer' || command.type === 'follow_up') {
+      if (command.type === 'submit_message' || command.type === 'prompt' || command.type === 'steer' || command.type === 'follow_up' || command.type === 'retry_response') {
         return responseData<TCommand['type']>(response, command.type)
       }
       if (projectionScopeKey.current !== expectedScopeKey) {
@@ -1796,7 +1798,7 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
         }
         setCompacting(false)
         if (!event.aborted && !event.result && event.errorMessage) {
-          setError(event.errorMessage)
+          setError(sanitizeConversationErrorDetails(event.errorMessage))
         }
         break
       case 'auto_retry_start':
@@ -1808,7 +1810,7 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
           attempt: event.attempt,
           maxAttempts: event.maxAttempts,
           delayMs: event.delayMs,
-          message: responseActivityText(event.errorMessage),
+          message: responseActivityText(sanitizeConversationErrorDetails(event.errorMessage)),
           state: 'active',
         })
         break
@@ -1820,11 +1822,11 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
           phase: event.success ? 'success' : 'error',
           attempt: event.attempt,
           ...(event.finalError
-            ? { message: responseActivityText(event.finalError) }
+            ? { message: responseActivityText(sanitizeConversationErrorDetails(event.finalError)) }
             : {}),
           state: 'settled',
         })
-        if (!attached && event.success === false && event.finalError) setError(event.finalError)
+        if (!attached && event.success === false && event.finalError) setError(sanitizeConversationErrorDetails(event.finalError))
         break
       }
       case 'summarization_retry_scheduled':
@@ -1836,7 +1838,7 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
           attempt: event.attempt,
           maxAttempts: event.maxAttempts,
           delayMs: event.delayMs,
-          message: responseActivityText(event.errorMessage),
+          message: responseActivityText(sanitizeConversationErrorDetails(event.errorMessage)),
           state: 'active',
         })
         break
@@ -1846,7 +1848,7 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
           id: 'retry:summarization',
           retryKind: 'summarization',
           phase: 'attempting',
-          ...(event.source === 'compaction' ? { message: event.reason } : {}),
+          ...(event.source === 'compaction' && event.reason ? { message: responseActivityText(sanitizeConversationErrorDetails(event.reason)) } : {}),
           state: 'active',
         })
         break
@@ -2187,6 +2189,16 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
     activeScopeKey, workspace.activeSessionId, runtime?.generation, session?.sessionId, hydration, currentDeliveryOwner,
   ])
   const actions = React.useMemo<PiRpcActions>(() => ({
+    async retryResponse(expectedTimestamp) {
+      if (!samePiDeliveryOwner(deliveryOwner, currentDeliveryOwner()) || !deliveryOwner.sessionId) {
+        throw new Error('The source conversation changed before this response could be retried.')
+      }
+      if (!api || runtimeRef.current?.state !== 'ready' || sessionRef.current?.sessionId !== deliveryOwner.sessionId) {
+        throw new Error('The source conversation is not connected. This response has not been retried.')
+      }
+      restoreActiveResponseProvenance(projectionRef.current, projectionScopeKey.current, true)
+      await runCommand({ type: 'retry_response', expectedSessionId: deliveryOwner.sessionId, expectedTimestamp })
+    },
     async abort() {
       const acceptance = promptAcceptanceRef.current
       const pending = pendingPromptRef.current
@@ -2460,6 +2472,7 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
       await runCommand({ type: 'set_auto_retry', enabled })
     },
     async abortRetry() {
+      if (!samePiDeliveryOwner(deliveryOwner, currentDeliveryOwner())) return
       const current = projectionRef.current
       if (
         current.retry.kind !== 'auto' ||
@@ -2472,7 +2485,9 @@ export function PiRpcProvider({ children }: { children: React.ReactNode }) {
       try {
         await runCommand({ type: 'abort_retry' })
       } catch (caught) {
-        commitProjection(setLocalPiRetryCancelling(projectionRef.current, false))
+        if (samePiDeliveryOwner(deliveryOwner, currentDeliveryOwner())) {
+          commitProjection(setLocalPiRetryCancelling(projectionRef.current, false))
+        }
         throw caught
       }
     },

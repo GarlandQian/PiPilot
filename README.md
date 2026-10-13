@@ -87,6 +87,8 @@ Pi defaults to `~/.pi/agent`. Select another folder in **Settings → General �
 
 Directory precedence is: saved selection → `PI_CODING_AGENT_DIR` → portable `data/agent/` → `~/.pi/agent`. Models, authentication, packages, global MCP configuration, and sessions share that directory. Project `.pi/` files stay with the project; PiPilot interface settings remain separate.
 
+Configure automatic retry and its maximum attempts in **Settings → Models**. Failed replies show an explanation, redacted details, and **Retry Reply**; an active retry shows its countdown and a stop action. Trusted project retry settings take precedence over the global defaults.
+
 See [configuration and data](docs/usage.md#pi-configuration-and-data) for file locations and package behavior, and [External Control](docs/usage.md#external-control) for the optional local MCP interface.
 
 ## Troubleshooting
@@ -120,6 +122,10 @@ pnpm dev
 | `pnpm package:linux` | Build Linux x64 AppImage/DEB/RPM |
 
 Run native package builds on the corresponding operating system. The release workflow additionally builds Linux ARM64, exercises installation/update paths on disposable runners, and assembles validated assets.
+
+Release candidates build in parallel with source verification. The Electron suite runs in two shards on separate machines, and Intel macOS checks start as soon as the macOS packages are ready. Publication still requires all source, runtime, installation, update, and inventory checks to pass. Electron and packaging-tool downloads are cached per operating system and architecture; already-compressed installers are uploaded without another compression pass.
+
+Renderer-only dependencies belong in `devDependencies`: Vite includes the required code and assets in `out/renderer`. Keep dependencies needed by the Pi SDK and Main at runtime in `dependencies`. Packages retain the target platform's terminal binaries and the complete bundled npm distribution.
 
 The app uses Electron Main, a sandboxed preload, and React. The renderer accesses Pi and the filesystem through shared Zod contracts and allowlisted IPC. Start in `src/main/`, `src/preload/`, `src/shared/`, `src/components/`, and `tests/`.
 

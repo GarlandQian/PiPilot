@@ -210,11 +210,15 @@ function inspectPackagedApplication(executable: string) {
     : []
   const unpacked = join(resourcesDirectory, 'app.asar.unpacked', 'node_modules')
   const rootOnlyExclusions = [
+    '.agents',
+    '.cache',
+    '.claude',
     '.codex',
     '.env',
     '.mcp.json',
     '.pi',
     '.playwright-mcp',
+    '.pnpm-store',
     'src',
     'tests',
     'test-results',
@@ -235,6 +239,12 @@ function inspectPackagedApplication(executable: string) {
     hasTestArtifact: entries.some((entry) =>
       /(^|\/)(__tests__|tests?|coverage)(\/|$)|\.test\./i.test(entry)),
     hasNativePty: unpackedEntries.some((entry) => entry.endsWith('.node')),
+    hasForeignPtyPrebuild: entries.some((entry) => {
+      const target = /^node_modules\/node-pty\/prebuilds\/([^/]+)/u.exec(entry)?.[1]
+      return target !== undefined && target !== `${process.platform}-${process.env.PIPILOT_PACKAGED_ARCH ?? process.arch}`
+    }),
+    hasDuplicateRendererDependency: entries.some((entry) =>
+      /^node_modules\/(?:@lobehub\/icons-static-svg|motion|framer-motion|motion-dom|motion-utils)(?:\/|$)/u.test(entry)),
     hasCodemodeWorker: existsSync(join(unpacked, '@earendil-works', 'pi-codemode', 'dist', 'runtime', 'worker.js')),
     hasQuickJsWasm: existsSync(join(unpacked, 'quickjs-wasi', 'quickjs.wasm')),
   }
@@ -397,6 +407,8 @@ test('runs the bundled Pi SDK workflow without system npm from the packaged appl
     hasExcludedRoot: false,
     hasTestArtifact: false,
     hasNativePty: true,
+    hasForeignPtyPrebuild: false,
+    hasDuplicateRendererDependency: false,
     hasCodemodeWorker: true,
     hasQuickJsWasm: true,
   })

@@ -841,6 +841,7 @@ if (!hasSingleInstanceLock) {
         runtimeHost,
         reloadHosts: synchronizeAffectedPiRuntimes,
         restartHosts: synchronizeAffectedPiRuntimes,
+        synchronizeRetrySettings: () => runtimeHost.synchronizeRetrySettings(),
         scopeResolver: conversationScopeResolver,
       })
       const externalControlDirectory = join(

@@ -84,6 +84,7 @@ import type {
   PiIntegrationOperationResult,
   PiIntegrationScope,
   PiIntegrationSnapshot,
+  PiRetrySettingsUpdate,
 } from './pi-integrations'
 import type {
   ApplicationUpdateActionResult,
@@ -159,6 +160,7 @@ export interface PiPilotApi {
     remove(scope: PiIntegrationScope, source: string): Promise<PiIntegrationOperationResult>
     restart(scope: PiIntegrationScope): Promise<PiIntegrationOperationResult>
     setRetryEnabled(scope: PiIntegrationScope, enabled: boolean): Promise<PiIntegrationOperationResult>
+    setRetrySettings(scope: PiIntegrationScope, settings: PiRetrySettingsUpdate): Promise<PiIntegrationOperationResult>
     subscribe(listener: (operation: PiIntegrationOperation) => void): () => void
     update(scope: PiIntegrationScope, source: string): Promise<PiIntegrationOperationResult>
   }

@@ -1,5 +1,7 @@
 import { mkdir } from 'node:fs/promises'
-import type { AgentSessionRuntime } from '@earendil-works/pi-coding-agent'
+import { SettingsManager, type AgentSessionRuntime } from '@earendil-works/pi-coding-agent'
+import { sanitizeConversationErrorDetails } from '../../shared/conversation-errors'
+import { applyRuntimeRetrySettings, getRuntimeRetrySettings } from './runtime-retry-policy'
 import type { RuntimeDelivery } from './runtime-delivery'
 import { runtimeMcpStatus } from './runtime-native-mcp'
 import { answerBrowserTool } from './runtime-browser-tools'
@@ -27,10 +29,84 @@ export interface RuntimeDispatchResult {
 }
 
 export interface RuntimeDispatchContext {
+  agentDir?: string
   emitEvent?(event: LocalPiRpcEvent): void
   liveMessageSnapshot?(): LocalPiLiveMessageSnapshot
   messagesSnapshot?(): readonly (AgentSessionRuntime['session']['messages'][number] | LocalPiAgentMessage)[]
   delivery?: RuntimeDelivery
+}
+
+export const RUNTIME_RESPONSE_RETRY_CUSTOM_TYPE = 'pipilot.response-retry'
+const pendingResponseRetries = new WeakSet<AgentSessionRuntime['session']>()
+
+/** Retry only the still-current failure, without replaying a user's input hooks or tools. */
+function dispatchResponseRetry(
+  runtime: AgentSessionRuntime,
+  command: Extract<LocalPiRpcCommand, { type: 'retry_response' }>,
+  context: RuntimeDispatchContext,
+): Promise<RuntimeDispatchResult> {
+  const { session } = runtime
+  if (session.sessionId !== command.expectedSessionId) throw new Error('The conversation changed before this reply could be retried.')
+  if (pendingResponseRetries.has(session) || !session.isIdle || session.pendingMessageCount > 0 ||
+      (context.delivery?.snapshot().items.length ?? 0) > 0) {
+    throw new Error('Wait for the current reply and queued messages to finish before retrying.')
+  }
+  // Native retry durably omits a failed attempt before its countdown starts.
+  // If the user stops that countdown the raw branch still owns the failure,
+  // although it is no longer in model context. Consult that authoritative tail.
+  const branch = session.sessionManager.getBranch?.()
+  const messages = branch
+    ? branch.flatMap((entry) => entry.type === 'message' ? [entry.message] : [])
+    : session.messages
+  let latest: AgentSessionRuntime['session']['messages'][number] | undefined
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]!
+    if (message.role === 'assistant' || message.role === 'user' || message.role === 'toolResult') {
+      latest = message
+      break
+    }
+  }
+  if (latest?.role !== 'assistant' || latest.timestamp !== command.expectedTimestamp ||
+      (latest.stopReason !== 'error' && latest.stopReason !== 'aborted')) {
+    throw new Error('This failed reply is no longer the latest reply in this conversation.')
+  }
+  pendingResponseRetries.add(session)
+  return new Promise((resolve) => {
+    let accepted = false
+    const finish = (response: LocalPiRpcResponse) => {
+      if (accepted) return
+      accepted = true
+      unsubscribe()
+      resolve({ replaced: false, response })
+    }
+    const unsubscribe = session.subscribe((event) => {
+      if (event.type === 'agent_start') finish(noDataSuccess('retry_response'))
+    })
+    // The official public API runs AgentSession's full retry, extension, and
+    // settlement lifecycle. This empty, hidden audit entry is removed by our
+    // context extension before provider conversion; no user message is added.
+    // Failed assistant attempts are already omitted by Pi's provider transform.
+    void session.sendCustomMessage({
+      customType: RUNTIME_RESPONSE_RETRY_CUSTOM_TYPE,
+      content: [],
+      display: false,
+      details: { failedTimestamp: command.expectedTimestamp },
+    }, { triggerTurn: true }).then(
+      () => finish(noDataSuccess('retry_response')),
+      (error: unknown) => {
+        if (!accepted) finish(failedResponse('retry_response', error))
+        else context.emitEvent?.({
+          type: 'extension_error',
+          extensionPath: '<inline:pipilot-response-retry>',
+          event: 'retry_response',
+          error: sanitizeConversationErrorDetails(error instanceof Error ? error.message : String(error)),
+        })
+      },
+    ).finally(() => {
+      pendingResponseRetries.delete(session)
+      unsubscribe()
+    })
+  })
 }
 
 export interface RuntimeExternalSubmitCommand {
@@ -99,11 +175,13 @@ export async function removeRuntimeQueuedMessage(
 
 function getState(runtime: AgentSessionRuntime): LocalPiRpcResponse {
   const { session } = runtime
+  const retry = session.settingsManager ? getRuntimeRetrySettings(session) : undefined
   return successResponse({
     type: 'response',
     command: 'get_state',
     success: true,
     data: {
+      ...(retry ? { retry: { enabled: retry.enabled, maxRetries: retry.maxRetries } } : {}),
       model: session.model,
       thinkingLevel: session.thinkingLevel,
       isStreaming: session.isStreaming,
@@ -124,12 +202,31 @@ function getMessages(runtime: AgentSessionRuntime, context: RuntimeDispatchConte
   // Read the partial message and its event boundary in one synchronous turn.
   // Renderer can replay only newer events without losing or duplicating tokens.
   const live = context.liveMessageSnapshot?.()
+  let messages = context.messagesSnapshot?.() ?? runtime.session.messages
+  if (runtime.session.isIdle) {
+    // Pi omits a failed attempt from provider context before waiting to retry.
+    // Stopping that wait must not erase the visible failure or its retry action.
+    // Restore only the authoritative branch tail in this UI snapshot, leaving
+    // the SDK's messages and provider context untouched.
+    const branch = runtime.session.sessionManager.getBranch?.() ?? []
+    for (let index = branch.length - 1; index >= 0; index -= 1) {
+      const entry = branch[index]!
+      if (entry.type !== 'message') continue
+      const message = entry.message
+      if (message.role !== 'assistant' && message.role !== 'user' && message.role !== 'toolResult') continue
+      if (message.role === 'assistant' && message.stopReason === 'error' &&
+        !messages.some((candidate) => candidate.role === 'assistant' && candidate.timestamp === message.timestamp)) {
+        messages = [...messages, message]
+      }
+      break
+    }
+  }
   return successResponse({
     type: 'response',
     command: 'get_messages',
     success: true,
     data: {
-      messages: context.messagesSnapshot?.() ?? runtime.session.messages,
+      messages,
       ...(live ? { live } : {}),
     },
   })
@@ -384,6 +481,8 @@ export async function dispatchRuntimeCommand(
       }
       case 'prompt':
         return dispatchPrompt(runtime, command)
+      case 'retry_response':
+        return dispatchResponseRetry(runtime, command, context)
       case 'steer':
         await session.steer(command.message, command.images, { source: 'rpc' })
         return { replaced: false, response: noDataSuccess('steer') }
@@ -507,9 +606,26 @@ export async function dispatchRuntimeCommand(
       case 'set_auto_compaction':
         session.setAutoCompactionEnabled(command.enabled)
         return { replaced: false, response: noDataSuccess('set_auto_compaction') }
-      case 'set_auto_retry':
-        session.setAutoRetryEnabled(command.enabled)
+      case 'set_auto_retry': {
+        let retry = getRuntimeRetrySettings(session)
+        if (command.reloadSettings) {
+          if (!context.agentDir) throw new Error('The runtime settings directory is unavailable.')
+          // Reload only retry settings, preserving live model/compaction overrides
+          // and each trusted project's precedence without rewriting global files.
+          const fresh = SettingsManager.create(session.sessionManager.getCwd(), context.agentDir, {
+            projectTrusted: session.settingsManager.isProjectTrusted(),
+          })
+          const errors = fresh.drainErrors()
+          if (errors.length > 0) throw new Error('The saved retry settings could not be read.')
+          retry = fresh.getRetrySettings()
+        }
+        applyRuntimeRetrySettings(session, {
+          ...retry,
+          ...(command.enabled === undefined ? {} : { enabled: command.enabled }),
+          ...(command.maxRetries === undefined ? {} : { maxRetries: command.maxRetries }),
+        })
         return { replaced: false, response: noDataSuccess('set_auto_retry') }
+      }
       case 'abort_retry':
         session.abortRetry()
         return { replaced: false, response: noDataSuccess('abort_retry') }

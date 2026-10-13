@@ -1,11 +1,14 @@
 import * as React from 'react'
 import { Switch } from '@/components/ui/switch'
+import { Input } from '@/components/ui/input'
+import { Button } from '@/components/ui/button'
 import { MarkdownContent } from '@/components/chat/markdown/MarkdownContent'
 import { useT } from '@/i18n'
 import { usePiIntegrations } from '@/store/pi-integrations'
 import { usePiRpcActions, usePiRuntime } from '@/store/pi-rpc'
 import { useConversationOperationFeedback } from '@/renderer/composer/use-operation-feedback'
 import type { ModelsConfigSnapshot } from '@/shared/models-config'
+import { PI_RETRY_DEFAULT_MAX_RETRIES, PI_RETRY_MAX_RETRIES_LIMIT } from '@/shared/pi-integrations'
 import { SettingsGroup, SettingsRow, StatusText } from './kit'
 
 const SEPARATOR = '\u0000'
@@ -28,6 +31,14 @@ export function ModelsRuntimeSettings({ snapshot, operationOwnerKey, onSetDefaul
   const connected = runtime.runtime?.state === 'ready'
   const run = (key: string, operation: () => Promise<void>) => void feedback.run(key, operation, t('composer.modelActionFailed'))
   const retry = integrations.snapshot?.retry
+  const [retryCount, setRetryCount] = React.useState(String(PI_RETRY_DEFAULT_MAX_RETRIES))
+  const retryBusy = ['operating', 'loading', 'checking'].includes(integrations.status)
+  const retryCountValue = Number(retryCount)
+  const validRetryCount = /^\d+$/u.test(retryCount) && Number.isSafeInteger(retryCountValue) && retryCountValue <= PI_RETRY_MAX_RETRIES_LIMIT
+  React.useEffect(() => {
+    setRetryCount(String(retry?.globalMaxRetries ?? PI_RETRY_DEFAULT_MAX_RETRIES))
+  }, [operationOwnerKey, retry?.globalMaxRetries])
+  React.useEffect(() => { setRetryState(null) }, [operationOwnerKey])
 
   // Models grouped by provider, the current default kept even when Pi cannot list it now.
   const byProvider = React.useMemo(() => {
@@ -43,9 +54,9 @@ export function ModelsRuntimeSettings({ snapshot, operationOwnerKey, onSetDefaul
   }, [runtime.models, snapshot?.defaultModel, snapshot?.defaultProvider])
   const defaultValue = snapshot?.defaultProvider && snapshot.defaultModel ? `${snapshot.defaultProvider}${SEPARATOR}${snapshot.defaultModel}` : ''
 
-  const changeRetry = async (enabled: boolean) => {
+  const changeRetry = async (enabled: boolean, maxRetries = retry?.globalMaxRetries ?? PI_RETRY_DEFAULT_MAX_RETRIES) => {
     setRetryState(null)
-    const result = await integrations.setRetryEnabled(enabled)
+    const result = await integrations.setRetrySettings({ enabled, maxRetries })
     setRetryState(result ? (result.runtimeSync === 'synchronized' ? 'synchronized' : 'persisted-only') : 'failed')
   }
 
@@ -89,10 +100,30 @@ export function ModelsRuntimeSettings({ snapshot, operationOwnerKey, onSetDefaul
     {retry ? <SettingsRow label={t('settings.models.usage.retry')} info={t('settings.integrations.retry.globalDesc')}
       description={retryState === 'persisted-only' ? <StatusText tone="warning">{t('settings.integrations.retry.persistedOnly')}</StatusText>
         : retryState === 'failed' ? <StatusText tone="danger">{t('settings.integrations.retry.persistenceFailed')}</StatusText>
-          : retry.globalEnabled !== retry.effective.enabled ? t('settings.integrations.retry.overrideNotice') : undefined}>
+          : retry.globalEnabled !== retry.effective.enabled || retry.globalMaxRetries !== retry.effective.maxRetries ? t('settings.integrations.retry.overrideNotice') : undefined}>
       <Switch aria-label={t('settings.models.usage.retry')} checked={retry.globalEnabled}
-        disabled={integrations.status === 'operating' || integrations.status === 'loading' || integrations.status === 'checking'}
+        disabled={retryBusy}
         onCheckedChange={(checked) => void changeRetry(checked)} />
+    </SettingsRow> : null}
+    {retry ? <SettingsRow label={t('settings.integrations.retry.maxRetries')} htmlFor="models-retry-count"
+      info={t('settings.integrations.retry.maxRetriesInfo', { max: PI_RETRY_MAX_RETRIES_LIMIT })}
+      description={<span id="models-retry-count-feedback" role={!validRetryCount ? 'alert' : undefined} className={!validRetryCount ? 'text-destructive' : undefined}>
+        {!validRetryCount ? t('settings.integrations.retry.invalidMaxRetries', { max: PI_RETRY_MAX_RETRIES_LIMIT })
+          : retry.effective.enabled && retry.effective.maxRetries > 0
+            ? t('settings.integrations.retry.effectiveCount', { count: retry.effective.maxRetries })
+            : t('settings.integrations.retry.effectiveDisabled')}
+      </span>}>
+      <Input id="models-retry-count" className="w-20" type="number" inputMode="numeric" min={0} max={PI_RETRY_MAX_RETRIES_LIMIT} step={1}
+        value={retryCount} disabled={retryBusy} aria-invalid={!validRetryCount} aria-describedby="models-retry-count-feedback"
+        onChange={(event) => { setRetryCount(event.target.value); setRetryState(null) }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' && validRetryCount && !retryBusy) {
+            event.preventDefault()
+            void changeRetry(retry.globalEnabled, retryCountValue)
+          }
+        }} />
+      <Button size="sm" variant="outline" disabled={retryBusy || !validRetryCount || retryCountValue === retry.globalMaxRetries}
+        onClick={() => void changeRetry(retry.globalEnabled, retryCountValue)}>{t('common.save')}</Button>
     </SettingsRow> : null}
     {feedback.error ? <div data-settings-row role="alert" data-model-settings-action-error className="px-3 py-2 text-caption text-destructive [&_.md-body]:text-caption [&_.md-body]:text-destructive"><MarkdownContent markdown={feedback.error} /></div> : null}
   </SettingsGroup>

@@ -198,6 +198,15 @@ export type Turn =
   | AnchoredTurn<{ kind: 'agent'; id: string; markdown: string; state?: 'streaming' | 'complete' | 'aborted' | 'error' }>
   | AnchoredTurn<{ kind: 'thinking'; id: string; text: string; state: 'streaming' | 'complete' | 'aborted' | 'error' }>
   | AnchoredTurn<{ kind: 'notice'; id: string; notice: 'compacting' | 'compacted' | 'compaction-failed' | 'response-aborted' | 'response-error' }>
+  | AnchoredTurn<{
+      kind: 'response-error'
+      id: string
+      timestamp: number
+      provider: string
+      model: string
+      state: 'error' | 'aborted'
+      error: import('@/shared/conversation-errors').ConversationErrorClassification
+    }>
   | AnchoredTurn<{ kind: 'tool'; id: string; call: ToolCall }>
   | AnchoredTurn<{
       kind: 'plan'

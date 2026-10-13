@@ -16,7 +16,7 @@ const roots: string[] = []
 
 function payload(
   source?: string,
-  retry: { globalEnabled: boolean; effectiveEnabled: boolean } = {
+  retry: { globalEnabled: boolean; effectiveEnabled: boolean; globalMaxRetries?: number; effectiveMaxRetries?: number } = {
     globalEnabled: true,
     effectiveEnabled: true,
   },
@@ -40,9 +40,10 @@ function payload(
     updates: [],
     retry: {
       globalEnabled: retry.globalEnabled,
+      globalMaxRetries: retry.globalMaxRetries ?? 3,
       effective: {
         enabled: retry.effectiveEnabled,
-        maxRetries: 3,
+        maxRetries: retry.effectiveMaxRetries ?? 3,
         baseDelayMs: 1000,
         maxAgentDelayMs: 60_000,
       },
@@ -55,7 +56,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
-async function fixture() {
+async function fixture(synchronizeRetrySettings?: () => Promise<void>) {
   const root = await mkdtemp(join(tmpdir(), 'pipilot-integrations-service-'))
   roots.push(root)
   const projectCwd = join(root, 'project')
@@ -98,6 +99,7 @@ async function fixture() {
     runtimeHost: runtimeHost as never,
     reloadHosts,
     restartHosts,
+    synchronizeRetrySettings,
     scopeResolver: {
       prepare: vi.fn(async () => ({ scope: { kind: 'projectless' }, cwd: projectlessCwd })),
       resolve: vi.fn(async () => ({ scope: activeScope, cwd: projectCwd })),
@@ -365,7 +367,7 @@ describe('LocalPiIntegrationService', () => {
     try {
       const result = await service.setRetryEnabled({ kind: 'project', workspaceId }, false)
       expect(commands[commands.length - 1]).toMatchObject({ action: 'set-retry', enabled: false })
-      expect(runtimeHost.request).toHaveBeenCalledWith({ type: 'set_auto_retry', enabled: true })
+      expect(runtimeHost.request).toHaveBeenCalledWith({ type: 'set_auto_retry', enabled: true, maxRetries: 3 })
       expect(result).toMatchObject({
         runtimeSync: 'synchronized',
         snapshot: {
@@ -378,6 +380,36 @@ describe('LocalPiIntegrationService', () => {
     } finally {
       await service.dispose()
     }
+  })
+
+  it('preserves a project retry count override when applying a different global count', async () => {
+    const { helperRun, runtimeHost, service } = await fixture()
+    helperRun.mockResolvedValueOnce(payload(undefined, {
+      globalEnabled: true, effectiveEnabled: true, globalMaxRetries: 5, effectiveMaxRetries: 7,
+    }))
+    try {
+      const result = await service.setRetrySettings({ kind: 'project', workspaceId }, { enabled: true, maxRetries: 5 })
+      expect(helperRun).toHaveBeenCalledWith(expect.objectContaining({ action: 'set-retry', enabled: true, maxRetries: 5 }), expect.any(Function))
+      expect(runtimeHost.request).toHaveBeenCalledWith({ type: 'set_auto_retry', enabled: true, maxRetries: 7 })
+      expect(result.snapshot.retry).toMatchObject({ globalMaxRetries: 5, effective: { maxRetries: 7 } })
+    } finally { await service.dispose() }
+  })
+
+  it('synchronizes all retained runtimes after persistence and reports partial failure without rollback', async () => {
+    const sync = vi.fn(async () => undefined)
+    const { helperRun, runtimeHost, reloadHosts, restartHosts, service } = await fixture(sync)
+    try {
+      await service.setRetrySettings({ kind: 'global' }, { enabled: true, maxRetries: 5 })
+      expect(sync).toHaveBeenCalledOnce()
+      expect(runtimeHost.request).not.toHaveBeenCalled()
+      expect(reloadHosts).not.toHaveBeenCalled()
+      expect(restartHosts).not.toHaveBeenCalled()
+      sync.mockRejectedValueOnce(new Error('One background runtime became unavailable.'))
+      expect(await service.setRetrySettings({ kind: 'global' }, { enabled: true, maxRetries: 0 })).toMatchObject({ runtimeSync: 'persisted-only' })
+      helperRun.mockRejectedValueOnce(new Error('Could not persist.'))
+      await expect(service.setRetrySettings({ kind: 'global' }, { enabled: true, maxRetries: 3 })).rejects.toThrow()
+      expect(sync).toHaveBeenCalledTimes(2)
+    } finally { await service.dispose() }
   })
 
   it('re-reads the active project effective value when retry is changed from global Settings', async () => {
@@ -414,6 +446,7 @@ describe('LocalPiIntegrationService', () => {
       expect(runtimeHost.request).toHaveBeenCalledWith({
         type: 'set_auto_retry',
         enabled: true,
+        maxRetries: 3,
       })
       expect(result).toMatchObject({
         runtimeSync: 'synchronized',

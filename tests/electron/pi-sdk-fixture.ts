@@ -26,6 +26,13 @@ interface PiSdkFixtureOptions {
   /** Deterministic live Markdown chunks for real renderer performance checks. */
   responseChunks?: Readonly<Record<string, { chunks: readonly string[]; intervalMs: number }>>
   retryEnabled?: boolean
+  retryMaxRetries?: number
+  retryBaseDelayMs?: number
+  /** Inject failures at the real provider boundary, including after completed tools. */
+  providerFault?: (request: { prompt: string; body: unknown; hasWriteResult: boolean; attempt: number }) =>
+    | { kind: 'http'; status: number; message: string }
+    | { kind: 'empty' }
+    | null
   /** Fail the actual provider request without replacing the SDK or runtime. */
   providerErrors?: Readonly<Record<string, string>>
   writeToolPrompts?: Readonly<Record<string, {
@@ -96,6 +103,11 @@ export async function startPiSdkFixture(
         const { prompt, model, hasWriteResult } = readFixtureRequest(protocol, body)
         prompts.push(prompt)
         requests.push({ protocol, prompt, hasWriteResult })
+        const fault = options.providerFault?.({ prompt, body, hasWriteResult, attempt: prompts.filter((value) => value === prompt).length })
+        if (fault?.kind === 'http') {
+          response.writeHead(fault.status, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { message: fault.message } }))
+          return
+        }
         const providerError = options.providerErrors?.[prompt]
         if (providerError) {
           response.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { message: providerError, type: 'invalid_request_error' } }))
@@ -106,6 +118,10 @@ export async function startPiSdkFixture(
         if (promptDelay > 0) await delay(promptDelay)
         const content = `Fixture response: ${prompt}`
         const stream = createFixtureStreamWriter(protocol, response, model)
+        if (fault?.kind === 'empty') {
+          stream.finish(false)
+          return
+        }
         const providerToolCall = options.providerToolCall?.({ prompt, body })
         if (providerToolCall) {
           stream.toolCall!(providerToolCall)
@@ -224,8 +240,9 @@ export async function startPiSdkFixture(
         : {}),
       retry: {
         enabled: options.retryEnabled ?? false,
-        maxRetries: options.retryEnabled ? 3 : 0,
-        baseDelayMs: 10,
+        maxRetries: options.retryMaxRetries ?? (options.retryEnabled ? 3 : 0),
+        baseDelayMs: options.retryBaseDelayMs ?? 10,
+        provider: { maxRetries: 0 },
       },
     }, null, 2)}\n`, 'utf8'),
     writeFile(

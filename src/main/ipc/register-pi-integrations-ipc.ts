@@ -85,7 +85,7 @@ export function registerPiIntegrationsIpc({
   registerValidatedHandler(
     piIntegrationsSetRetryContract,
     isTrustedSender,
-    ({ scope, enabled }) => service.setRetryEnabled(scope, enabled).catch(mapIntegrationError),
+    ({ scope, enabled, maxRetries }) => service.setRetrySettings(scope, { enabled, maxRetries }).catch(mapIntegrationError),
   )
   registerValidatedHandler(
     piIntegrationsRestartContract,

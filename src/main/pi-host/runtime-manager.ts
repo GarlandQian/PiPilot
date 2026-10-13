@@ -37,6 +37,7 @@ import {
 } from './runtime-event-projector'
 import { RuntimeExtensionUiBridge } from './runtime-extension-ui-bridge'
 import { RuntimeDelivery } from './runtime-delivery'
+import { installRuntimeRetryPolicy } from './runtime-retry-policy'
 import { createRuntimeNativeMcpExtensions } from './runtime-native-mcp'
 import { PIPILOT_CONVERSATION_TASK_EXTENSION } from './runtime-conversation-task'
 import { PIPILOT_BROWSER_TOOLS_EXTENSION, registerBrowserToolEmitter } from './runtime-browser-tools'
@@ -658,6 +659,7 @@ export class RuntimeManager {
       }
       const generationBefore = entry.generation
       const result = await dispatchRuntimeCommand(entry.runtime, command, {
+        agentDir: this.agentDir,
         emitEvent: (event) => this.emitRuntimeEvent(runtimeId, entry, event),
         liveMessageSnapshot: () => ({
           message: entry.liveMessage.message,
@@ -1024,6 +1026,7 @@ export class RuntimeManager {
     entry.unsubscribeSession?.()
     // Browser tool calls of this session ask Main through this Runtime's events.
     const releaseBrowserTools = registerBrowserToolEmitter(entry.runtime.session.sessionId, (event) => this.emitRuntimeEvent(runtimeId, entry, event))
+    const releaseRetryPolicy = installRuntimeRetryPolicy(entry.runtime.session)
     entry.liveMessage = createRuntimeLiveMessageState()
     entry.streamingHistory = null
     const unsubscribe = entry.runtime.session.subscribe(
@@ -1045,7 +1048,7 @@ export class RuntimeManager {
         }
       },
     )
-    entry.unsubscribeSession = () => { unsubscribe(); releaseBrowserTools() }
+    entry.unsubscribeSession = () => { unsubscribe(); releaseBrowserTools(); releaseRetryPolicy() }
   }
 
   private emitRuntimeEvent(

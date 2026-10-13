@@ -87,6 +87,8 @@ Pi 默认目录为 `~/.pi/agent`。可在 **设置 → 通用 → Pi 配置目�
 
 目录优先级依次为：设置中选择的目录 → `PI_CODING_AGENT_DIR` → 便携版 `data/agent/` → `~/.pi/agent`。模型、认证、Packages、全局 MCP 配置和会话共用该目录；项目 `.pi/` 文件仍在项目中，PiPilot 界面设置独立保存。
 
+在 **设置 → 模型** 中配置自动重试开关和最大次数。失败回复显示原因、脱敏详情及“重试回复”；自动重试时显示倒计时，并可停止。可信项目的重试配置优先于全局默认值。
+
 文件位置和默认包行为见[配置与数据说明](docs/usage.zh-CN.md#pi-配置与数据)，可选的本地 MCP 控制接口见 [External Control](docs/usage.zh-CN.md#external-control)。
 
 ## 常见问题
@@ -120,6 +122,10 @@ pnpm dev
 | `pnpm package:linux` | Linux x64 AppImage/DEB/RPM |
 
 请在对应操作系统中运行原生打包。发布流程还会构建 Linux ARM64，在一次性 runner 上验证安装与更新路径，再汇总经过校验的产物。
+
+候选包构建与源码验证并行执行；Electron 测试分到两台独立机器，macOS 包完成后立即开始 Intel 检查。公开发布仍须通过全部源码、运行时、安装、更新和产物清单检查。Electron 与打包工具按系统和架构缓存下载，已压缩的安装包上传时不再重复压缩。
+
+仅供 Renderer 使用的依赖放在 `devDependencies`，所需代码与资源由 Vite 打入 `out/renderer`；Pi SDK 和 Main 在运行时需要的依赖保留在 `dependencies`。安装包保留目标平台的终端二进制文件及完整的内置 npm。
 
 应用由 Electron Main、sandbox preload 和 React 组成，Renderer 通过共享 Zod 契约及白名单 IPC 访问 Pi 与文件系统。主要代码位于 `src/main/`、`src/preload/`、`src/shared/`、`src/components/` 和 `tests/`。
 

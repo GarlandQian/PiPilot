@@ -474,8 +474,8 @@ describe('official Pi transcript presentation', () => {
 
     expect(projectLocalPiTurns(state)).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        kind: 'agent',
-        markdown: 'The provider rejected this request.',
+        kind: 'response-error',
+        error: expect.objectContaining({ sanitizedDetails: 'The provider rejected this request.' }),
         state: 'error',
       }),
       expect.objectContaining({
@@ -514,11 +514,11 @@ describe('official Pi transcript presentation', () => {
         },
       })
       const turns = projectLocalPiTurns(state)
-      const diagnosticTurn = turns.find((turn) => turn.kind === 'agent')
+      const diagnosticTurn = turns.find((turn) => turn.kind === 'response-error')
       const thinkingTurn = turns.find((turn) => turn.kind === 'thinking')
       const response = projectResponsePresentation(groupConversationTurns(turns)[0]!, { active: false, status: 'idle' })
 
-      expect(diagnosticTurn).toMatchObject({ kind: 'agent', markdown: diagnostic, state: turnState })
+      expect(diagnosticTurn).toMatchObject({ kind: 'response-error', error: { sanitizedDetails: diagnostic }, state: turnState })
       if (withThinking) expect(thinkingTurn).toMatchObject({ kind: 'thinking', state: turnState })
       else expect(thinkingTurn).toBeUndefined()
       expect(response.status).toBe(responseStatus)
@@ -528,4 +528,39 @@ describe('official Pi transcript presentation', () => {
       expect(stopped.errorMessage).toBe(diagnostic)
     },
   )
+
+  it('shows the provider error separately from both partial text and internal empty placeholders', () => {
+    const diagnostic = "400: role 'developer' is not allowed"
+    for (const text of ['A useful partial answer.', '[Empty assistant message]', '  [Empty assistant message]  ']) {
+      const failed = { ...assistant([{ type: 'text', text }], 'error'), errorMessage: diagnostic }
+      const turns = projectLocalPiTurns(createLocalPiProjectorState({
+        generation: 4, sessionId: 'session-a', messages: [failed],
+      }))
+      expect(turns.find((turn) => turn.kind === 'response-error')).toMatchObject({
+        kind: 'response-error', timestamp: 2, provider: 'fixture', model: 'fixture-model', state: 'error',
+        error: { category: 'configuration', retryable: false, sanitizedDetails: diagnostic },
+      })
+      const answers = turns.filter((turn) => turn.kind === 'agent')
+      expect(answers).toEqual(text.startsWith('A useful')
+        ? [expect.objectContaining({ markdown: text })]
+        : [])
+      expect(failed.content[0]).toEqual({ type: 'text', text })
+    }
+  })
+
+  it('keeps successful tools and partial thinking when a subsequent provider response fails', () => {
+    const state = createLocalPiProjectorState({
+      generation: 4, sessionId: 'session-a', messages: [
+        assistant([{ type: 'toolCall', id: 'finished-tool', name: 'bash', arguments: { command: 'pwd' } }], 'toolUse'),
+        { role: 'toolResult', toolCallId: 'finished-tool', toolName: 'bash', content: [{ type: 'text', text: '/fixture' }], isError: false, timestamp: 3 },
+        { ...assistant([{ type: 'thinking', thinking: 'Checking the completed command.' }], 'error'), timestamp: 4 },
+      ],
+    })
+    const turns = projectLocalPiTurns(state)
+    expect(turns).toEqual([
+      expect.objectContaining({ kind: 'tool', call: expect.objectContaining({ status: 'success', output: '/fixture' }) }),
+      expect.objectContaining({ kind: 'thinking', text: 'Checking the completed command.' }),
+      expect.objectContaining({ kind: 'response-error', timestamp: 4, error: expect.objectContaining({ category: 'unknown' }) }),
+    ])
+  })
 })

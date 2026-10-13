@@ -31,6 +31,23 @@ afterEach(() => {
 })
 
 describe('official Retry projection', () => {
+  it('redacts provider and summarization error details before exposing retry surfaces', () => {
+    const error = '503 https://example.test/mcp?token=fixture-secret Authorization: Bearer fixture-credential'
+    const events: LocalPiRpcEvent[] = [
+      { type: 'auto_retry_start', attempt: 1, maxAttempts: 3, delayMs: 2_000, errorMessage: error },
+      { type: 'auto_retry_end', success: false, attempt: 3, finalError: error },
+      { type: 'summarization_retry_scheduled', attempt: 1, maxAttempts: 3, delayMs: 2_000, errorMessage: error },
+    ]
+    for (const event of events) {
+      const state = apply(createLocalPiProjectorState({ generation: 7, sessionId: 'session-a' }), event)
+      const activity = JSON.stringify(projectRetryActivity(state))
+      expect(activity).toContain('503')
+      expect(activity).toContain('[redacted]')
+      expect(activity).not.toContain('fixture-secret')
+      expect(activity).not.toContain('fixture-credential')
+    }
+  })
+
   it('keeps official waiting cancellable without package status enrichment', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-08-10T00:00:00.000Z'))

@@ -14,6 +14,9 @@ files:
   - '!node_modules/**/*.test.*'
   - '!node_modules/**/{test,tests,__tests__,coverage}/**'
   - '!node_modules/node-pty/{deps,scripts,src}/**/*'
+  # Release jobs run on the target OS. Keep node-pty's matching prebuild and
+  # native build/Release, without creating a second platform files matcher.
+  - '!node_modules/node-pty/prebuilds/!(${platform}-${arch}){,/**/*}'
   - '!node_modules/pipilot-npm/**/*'
 
 extraResources:
@@ -33,6 +36,10 @@ asarUnpack:
 afterPack: build/apply-electron-fuses.cjs
 npmRebuild: true
 nativeRebuilder: sequential
+# Match electron_config_cache in Actions. Builder does not read that install
+# environment variable, so set its download cache explicitly as well.
+electronDownload:
+  cache: .cache/electron
 electronLanguages:
   - en-US
   - zh-CN

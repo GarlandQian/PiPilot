@@ -314,13 +314,21 @@ test('manages bundled Pi SDK integrations and MCP drafts across responsive Setti
     const globalRetry = modelsPane.getByRole('switch', { name: 'Retry failed requests', exact: true })
     await expect(globalRetry).toBeChecked()
     await expect(modelsPane.getByText(
-      'A project override makes the effective value differ from the persisted global value.',
+      "This project's retry switch or retry count overrides the saved global setting.",
     )).toBeVisible()
+    const retryCount = modelsPane.getByRole('spinbutton', { name: 'Maximum automatic retries', exact: true })
+    await expect(retryCount).toHaveValue('3')
+    await retryCount.fill('5')
+    await modelsPane.locator('[data-settings-row]').filter({ has: page.getByRole('spinbutton', { name: 'Maximum automatic retries', exact: true }) }).getByRole('button', { name: 'Save', exact: true }).click()
+    await expect.poll(async () => JSON.parse(
+      await readFile(join(agentDir, 'settings.json'), 'utf8'),
+    )).toMatchObject({ retry: { enabled: true, maxRetries: 5 } })
+    await expect(modelsPane.getByText('Automatic retries are disabled for this conversation.', { exact: true })).toBeVisible()
     await globalRetry.click()
     await expect(globalRetry).not.toBeChecked()
     await expect.poll(async () => JSON.parse(
       await readFile(join(agentDir, 'settings.json'), 'utf8'),
-    )).toMatchObject({ retry: { enabled: false } })
+    )).toMatchObject({ retry: { enabled: false, maxRetries: 5 } })
 
     // A package opens as a page of its own.
     await settingsNavigation.getByRole('button', { name: 'Packages', exact: true }).click()

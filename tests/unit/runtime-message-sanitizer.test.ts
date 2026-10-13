@@ -12,6 +12,57 @@ function runtimeMessage(value: unknown): RuntimeMessage {
 }
 
 describe('Runtime message sanitizer', () => {
+  it('preserves real provider errors and never invents assistant text', () => {
+    const message = runtimeMessage({
+      role: 'assistant', content: [{ type: 'text', text: '' }], timestamp: 1,
+      stopReason: 'error', errorMessage: '400: text content is empty',
+    })
+    expect(sanitizeRuntimeFinalizedMessage(message)).toMatchObject({
+      content: [], stopReason: 'error', errorMessage: '400: text content is empty',
+    })
+  })
+
+  it('marks an upstream empty success as a native-retryable failure without erasing thinking', () => {
+    const message = runtimeMessage({
+      role: 'assistant', content: [{ type: 'thinking', thinking: 'Partial reasoning' }],
+      stopReason: 'stop', timestamp: 1,
+    })
+    expect(sanitizeRuntimeFinalizedMessage(message)).toMatchObject({
+      content: [{ type: 'thinking', thinking: 'Partial reasoning' }],
+      stopReason: 'error', errorMessage: 'Upstream response ended without any text or tool output.',
+    })
+  })
+
+  it('normalizes only confirmed upstream empty errors for native retry and keeps aborts intact', () => {
+    expect(sanitizeRuntimeFinalizedMessage(runtimeMessage({ role: 'assistant', content: [], stopReason: 'error', errorMessage: 'Empty response' })))
+      .toMatchObject({ content: [], stopReason: 'error', errorMessage: 'Empty response\nUpstream response ended without content.' })
+    expect(sanitizeRuntimeFinalizedMessage(runtimeMessage({ role: 'assistant', content: [], stopReason: 'aborted', errorMessage: 'Request aborted' })))
+      .toMatchObject({ content: [], stopReason: 'aborted', errorMessage: 'Request aborted' })
+  })
+
+  it('does not treat a valid tool call or a length-limited response as an empty failure', () => {
+    const tool = runtimeMessage({ role: 'assistant', content: [{ type: 'toolCall', id: 'one', name: 'write', arguments: {} }], stopReason: 'toolUse' })
+    const limited = runtimeMessage({ role: 'assistant', content: [], stopReason: 'length' })
+    expect(sanitizeRuntimeFinalizedMessage(tool)).toBe(tool)
+    expect(sanitizeRuntimeFinalizedMessage(limited)).toBe(limited)
+  })
+
+  it.each(['ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', '408: Request timeout'])(
+    'normalizes %s once so native retry matches the displayed diagnosis', (errorMessage) => {
+      const original = runtimeMessage({ role: 'assistant', content: [], stopReason: 'error', errorMessage })
+      const normalized = sanitizeRuntimeFinalizedMessage(original)
+      expect(normalized).toMatchObject({ errorMessage: `Network error: ${errorMessage}`, content: [] })
+      expect(sanitizeRuntimeFinalizedMessage(normalized)).toBe(normalized)
+    },
+  )
+
+  it('omits historical empty assistant placeholders and hidden retry audit entries from provider context', () => {
+    const user = runtimeMessage({ role: 'user', content: 'Original prompt', timestamp: 1 })
+    const failed = runtimeMessage({ role: 'assistant', content: [{ type: 'text', text: '[Empty assistant message]' }], stopReason: 'error', timestamp: 2 })
+    const retry = runtimeMessage({ role: 'custom', customType: 'pipilot.response-retry', content: [], display: false, timestamp: 3 })
+    expect(sanitizeRuntimeProviderContext([user, failed, retry])).toEqual([user])
+  })
+
   it('persists image-only user messages without an empty text block', () => {
     const image = {
       type: 'image' as const,

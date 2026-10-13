@@ -48,6 +48,18 @@ export interface ResponsePresentationOptions {
   status: AgentStatus
 }
 
+/** Synthetic plan/status/compaction surfaces do not advance the response tail. */
+export function latestResponseFailureId(turns: readonly Turn[]): string | null {
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = turns[index]!
+    if (turn.kind === 'response-error') return turn.state === 'error' ? turn.id : null
+    if (turn.kind === 'user' || turn.kind === 'agent' || turn.kind === 'tool' || turn.kind === 'thinking') return null
+    // A contentless abort has no agent turn, but still proves a later attempt.
+    if (turn.kind === 'notice' && (turn.notice === 'response-aborted' || turn.notice === 'response-error')) return null
+  }
+  return null
+}
+
 function answerCandidateId(turns: readonly Turn[]): string | null {
   let candidate: string | null = null
   for (const turn of turns) {
@@ -76,6 +88,7 @@ function regionForTurn(
     case 'user':
     case 'thinking':
     case 'notice':
+    case 'response-error':
     case 'plan':
     case 'response-actions':
       return 'persistent'
@@ -123,6 +136,8 @@ function responseStatus(
             : isFailureStatus(status)
               ? status
               : 'completed'
+    } else if (turn.kind === 'response-error') {
+      status = turn.state === 'aborted' ? 'cancelled' : 'failed'
     } else if (turn.kind === 'notice') {
       if (turn.notice === 'response-error') status = 'failed'
       if (turn.notice === 'response-aborted') status = 'cancelled'

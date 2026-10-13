@@ -466,6 +466,7 @@ export type LocalPiMcpServerStatus = z.infer<typeof localPiMcpServerStatusSchema
 
 export const localPiSessionStateSchema = z
   .object({
+    retry: z.object({ enabled: z.boolean(), maxRetries: z.number().int().min(0).max(100) }).strict().optional(),
     model: localPiModelSchema.optional(),
     thinkingLevel: localPiThinkingLevelSchema,
     isStreaming: z.boolean(),
@@ -575,6 +576,7 @@ export const localPiRpcCommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('steer'), message: z.string(), images: z.array(localPiImageContentSchema).optional() }).strict(),
   z.object({ type: z.literal('follow_up'), message: z.string(), images: z.array(localPiImageContentSchema).optional() }).strict(),
   z.object({ type: z.literal('abort') }).strict(),
+  z.object({ type: z.literal('retry_response'), expectedSessionId: z.string().min(1), expectedTimestamp: z.number().finite().nonnegative() }).strict(),
   z.object({ type: z.literal('new_session'), parentSession: z.string().optional() }).strict(),
   z.object({ type: z.literal('get_state') }).strict(),
   z.object({ type: z.literal('set_model'), provider: z.string(), modelId: z.string() }).strict(),
@@ -600,7 +602,8 @@ export const localPiRpcCommandSchema = z.discriminatedUnion('type', [
   }).strict(),
   z.object({ type: z.literal('compact'), customInstructions: z.string().optional() }).strict(),
   z.object({ type: z.literal('set_auto_compaction'), enabled: z.boolean() }).strict(),
-  z.object({ type: z.literal('set_auto_retry'), enabled: z.boolean() }).strict(),
+  z.object({ type: z.literal('set_auto_retry'), enabled: z.boolean().optional(), maxRetries: z.number().int().min(0).max(100).optional(), reloadSettings: z.literal(true).optional() }).strict()
+    .refine((command) => command.enabled !== undefined || command.maxRetries !== undefined || command.reloadSettings === true, { message: 'A retry setting or reload request is required.' }),
   z.object({ type: z.literal('abort_retry') }).strict(),
   z.object({ type: z.literal('bash'), command: z.string(), excludeFromContext: z.boolean().optional() }).strict(),
   z.object({ type: z.literal('abort_bash') }).strict(),
@@ -931,6 +934,7 @@ export const localPiRpcSuccessResponseSchema = z.discriminatedUnion('command', [
   localPiNoDataSuccessSchema('steer'),
   localPiNoDataSuccessSchema('follow_up'),
   localPiNoDataSuccessSchema('abort'),
+  localPiNoDataSuccessSchema('retry_response'),
   z.object({ ...localPiSuccessResponseBase, command: z.literal('new_session'), data: z.object({ cancelled: z.boolean() }).strict() }).strict(),
   z.object({ ...localPiSuccessResponseBase, command: z.literal('get_state'), data: localPiSessionStateSchema }).strict(),
   z.object({ ...localPiSuccessResponseBase, command: z.literal('set_model'), data: localPiModelSchema }).strict(),

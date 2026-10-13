@@ -102,6 +102,7 @@ import {
   piIntegrationOperationEventSchema,
   piIntegrationOperationResultSchema,
   piIntegrationScopeSchema,
+  piRetrySettingsUpdateSchema,
   piIntegrationSnapshotSchema,
 } from '../pi-integrations'
 import {
@@ -482,7 +483,7 @@ export const piIntegrationsCheckUpdatesContract = defineIpcContract(
 )
 export const piIntegrationsSetRetryContract = defineIpcContract(
   ipcChannels.piIntegrationsSetRetry,
-  z.object({ ...piIntegrationRequestFields, enabled: z.boolean() }).strict(),
+  z.object({ ...piIntegrationRequestFields, ...piRetrySettingsUpdateSchema.shape }).strict(),
   piIntegrationOperationResultSchema,
 )
 export const piIntegrationsRestartContract = defineIpcContract(

@@ -1232,6 +1232,12 @@ export default function App() {
               jumpRequest={conversationJump}
               status={pi.status}
               onFork={actions.fork}
+              onRetryResponse={actions.retryResponse}
+              onConfigureModel={() => setSettingsSection('models')}
+              onStopRetry={actions.abortRetry}
+              retryResponseDisabled={!conversationReady || pi.status === 'running' || pi.status === 'planning' || pi.compacting || Boolean(pi.session?.isStreaming) || pi.queue.pendingCount > 0}
+              retryPolicy={pi.session?.retry}
+              retryActivity={pi.retryActivity}
               onExportResponse={(anchorEntryId) => exportConversation({ kind: 'response', anchorEntryId })}
               onExportMessage={(entryId) => exportConversation({ kind: 'message', entryId })}
               onPlanAction={runPlanAction}
