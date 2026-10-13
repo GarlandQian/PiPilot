@@ -58,18 +58,6 @@ else if (args[0] === 'install') {
   const directory = path.join(prefix, 'node_modules', name);
   fs.mkdirSync(directory, { recursive: true });
   fs.writeFileSync(path.join(directory, 'package.json'), JSON.stringify({ name, version: spec.slice(versionAt + 1) }));
-  if (name === '@narumitw/pi-plan-mode' && ${JSON.stringify(concurrentEdit)} !== 'none') {
-    (async () => {
-      const { SettingsManager } = await import(${JSON.stringify(import.meta.resolve('@earendil-works/pi-coding-agent'))});
-      const settings = SettingsManager.create(${JSON.stringify(cwd)}, ${JSON.stringify(work.agentDir)}, { projectTrusted: true });
-      settings.setPackages([...(settings.getGlobalSettings().packages ?? []), ${JSON.stringify(externalPackage)}]);
-      if (${JSON.stringify(concurrentEdit)} === 'same-package') {
-        fs.writeFileSync(path.join(directory, 'package.json'), JSON.stringify({ name, version: '9.0.0' }));
-      }
-      await settings.flush();
-      if (settings.drainErrors().length) throw new Error('Fixture CLI settings update failed');
-    })().catch(() => { process.exitCode = 1; });
-  }
 } else { process.exitCode = 1; }
 `)
     await writeFile(join(work.agentDir, 'settings.json'), JSON.stringify({
@@ -78,6 +66,21 @@ else if (args[0] === 'install') {
     }))
     const settings = SettingsManager.create(cwd, work.agentDir, { projectTrusted: true })
     const packageManager = new DefaultPackageManager({ cwd, agentDir: work.agentDir, settingsManager: settings })
+    const install = packageManager.install.bind(packageManager)
+    vi.spyOn(packageManager, 'install').mockImplementation(async (source, options) => {
+      await install(source, options)
+      if (source !== PI_RECOMMENDED_PACKAGES[0].source || concurrentEdit === 'none') return
+      // Interleave a separate real SDK settings writer at the installation boundary,
+      // before bootstrap reloads. Avoid loading the entire SDK in a fixture subprocess.
+      const cliSettings = SettingsManager.create(cwd, work.agentDir, { projectTrusted: true })
+      cliSettings.setPackages([...(cliSettings.getGlobalSettings().packages ?? []), externalPackage])
+      if (concurrentEdit === 'same-package') {
+        await writeFile(join(work.agentDir, 'npm', 'node_modules', '@narumitw/pi-plan-mode', 'package.json'),
+          JSON.stringify({ name: '@narumitw/pi-plan-mode', version: '9.0.0' }))
+      }
+      await cliSettings.flush()
+      expect(cliSettings.drainErrors()).toEqual([])
+    })
     const result = await bootstrapRecommendedPackages({
       agentDir: work.agentDir,
       packageManager,

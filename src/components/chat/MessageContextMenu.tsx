@@ -75,7 +75,9 @@ export function MessageTargetMenu({ children, target }: { children: React.ReactE
       selection: message.root.current ? messageSelectionText(message.root.current, window.getSelection()) : null,
       markdown: message.markdown, target })
   }
-  return <ContextMenu key={`${references?.ownerKey}:${message.source.sourceId}`}>
+  // A streamed message gains its persisted source ID without becoming a new
+  // message. Keep its selectable DOM intact; snapshot validation guards old IDs.
+  return <ContextMenu key={references?.ownerKey}>
     <ContextMenuTrigger asChild onContextMenu={capture} onPointerDown={(event) => {
       // Radix opens a touch/pen menu from its timer without dispatching contextmenu.
       if (event.pointerType !== 'mouse') capture(event)
