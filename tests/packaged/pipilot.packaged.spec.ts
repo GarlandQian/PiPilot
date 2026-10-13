@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
+import { execFile, spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import { once } from 'node:events'
 import { existsSync, readdirSync, realpathSync } from 'node:fs'
 import {
@@ -14,6 +14,7 @@ import { createRequire } from 'node:module'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { basename, delimiter, dirname, join, resolve } from 'node:path'
+import { promisify } from 'node:util'
 import {
   chromium,
   expect,
@@ -373,6 +374,16 @@ async function stopPackagedApp(
   browser: Browser | null,
   appProcess: ChildProcess,
 ) {
+  if (process.platform === 'win32' && appProcess.exitCode === null && appProcess.signalCode === null) {
+    if (!appProcess.pid) throw new Error('The packaged fixture has no process ID.')
+    // Closing a CDP target does not own Electron's utility processes. Killing
+    // only the parent can orphan them with the fixture workspace as their cwd.
+    // Terminate this fixture's exact process tree while its parent is still alive.
+    await promisify(execFile)('taskkill.exe', ['/PID', String(appProcess.pid), '/T', '/F'], { windowsHide: true })
+    if (!await waitForProcessExit(appProcess, 3_000)) {
+      throw new Error('The packaged fixture process tree did not terminate.')
+    }
+  }
   // Electron can keep a CDP target alive on Linux while a utility process is
   // draining. Cleanup must not consume the whole Playwright test timeout.
   await settleWithin(
