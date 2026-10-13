@@ -44,7 +44,9 @@ test('manages providers through the list, the preset picker and full-page editor
     const errors: string[] = []
     page.on('pageerror', (error) => errors.push(error.message))
     await page.setViewportSize({ width: 1440, height: 900 })
-    await expect(page.locator('[data-model-thinking-trigger]')).toContainText('Fake Chat')
+    // Wait for the cold SDK runtime before exercising model settings, as the
+    // other desktop fixtures do. Keep interaction assertions at their usual limit.
+    await expect(page.locator('[data-model-thinking-trigger]')).toContainText('Fake Chat', { timeout: 20_000 })
     // The conversation's model picker leads to Settings › Models.
     await page.locator('[data-model-thinking-trigger]').click()
     await page.getByRole('button', { name: 'Manage models…', exact: true }).click()
