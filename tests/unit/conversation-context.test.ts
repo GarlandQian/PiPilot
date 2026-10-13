@@ -24,8 +24,51 @@ describe('conversation context evidence', () => {
       ...tool('abandoned', 'user', 'write', { path: 'other-branch.md' })]
     const view = projectConversationContext(entries, 'ls-result', [])
     expect(view.sources).toEqual([{ path: 'input.md', entryId: 'user', action: 'read' }])
-    expect(view.outputs).toEqual([{ path: 'output.md', entryId: 'user', action: 'write' }])
+    expect(view.changedFiles).toEqual([{ path: 'output.md', entryId: 'user', action: 'write', toolCallId: 'write' }])
     expect(projectConversationContext(entries, 'missing', []).valid).toBe(false)
+    expect(projectConversationContext(entries, 'missing', []).changedFiles).toEqual([])
+  })
+
+  it('keeps each round’s file evidence while deduplicating successful writes within the round', () => {
+    const entries = [user(), ...tool('create', 'user', 'write', { path: 'shared.md' }),
+      ...tool('revise', 'create-result', 'edit', { path: 'shared.md' }),
+      ...tool('failed-revise', 'revise-result', 'edit', { path: 'shared.md' }, true),
+      message('next-user', 'failed-revise-result', { role: 'user', content: 'Revise it again', timestamp: 3 }),
+      ...tool('next-revise', 'next-user', 'edit', { path: 'shared.md' })]
+    expect(projectConversationContext(entries, 'next-revise-result', []).changedFiles).toEqual([
+      { path: 'shared.md', entryId: 'next-user', action: 'edit', toolCallId: 'next-revise' },
+      { path: 'shared.md', entryId: 'user', action: 'edit', toolCallId: 'revise' },
+    ])
+    expect(projectConversationContext(entries, 'create-result', []).changedFiles).toEqual([
+      { path: 'shared.md', entryId: 'user', action: 'write', toolCallId: 'create' },
+    ])
+  })
+
+  it('uses active context edits for file arguments and omits removed calls or results', () => {
+    const entries: LocalPiSessionEntry[] = [user(), ...tool('write', 'user', 'write', { path: 'old.md' }),
+      { type: 'context_edit', id: 'replace', parentId: 'write-result', timestamp: '', targetId: 'write', replacement: {
+        content: [{ type: 'toolCall', id: 'write', name: 'write', arguments: { path: 'replacement.md' } }],
+      } },
+      { type: 'context_edit', id: 'remove-call', parentId: 'replace', timestamp: '', targetId: 'write', replacement: null },
+      { type: 'context_edit', id: 'remove-result', parentId: 'replace', timestamp: '', targetId: 'write-result', replacement: null },
+      { type: 'context_edit', id: 'replace-with-text', parentId: 'replace', timestamp: '', targetId: 'write', replacement: { content: 'Mentioned fake.md' } }]
+    expect(projectConversationContext(entries, 'replace', []).changedFiles).toEqual([
+      { path: 'replacement.md', entryId: 'user', action: 'write', toolCallId: 'write' },
+    ])
+    for (const leaf of ['remove-call', 'remove-result', 'replace-with-text']) {
+      expect(projectConversationContext(entries, leaf, []).changedFiles).toEqual([])
+    }
+  })
+
+  it('ignores unmatched, unfinished and non-file calls rather than extracting paths from output', () => {
+    const entries = [user(), ...tool('shell', 'user', 'bash', { command: 'write fake.md', path: 'also-fake.md' }),
+      ...tool('blank', 'shell-result', 'write', { path: ' ' }),
+      ...tool('mismatch', 'blank-result', 'write', { path: 'mismatch.md' }),
+      message('unfinished', 'mismatch-result', assistant([{ type: 'toolCall', id: 'unfinished', name: 'write', arguments: { path: 'unfinished.md' } }]))]
+    const mismatch = entries[6]!
+    if (mismatch.type !== 'message' || mismatch.message.role !== 'toolResult') throw new Error('fixture')
+    mismatch.message.toolName = 'edit'
+    expect(projectConversationContext(entries, 'unfinished', []).changedFiles).toEqual([])
   })
 
   it('handles successful nested calls without calling a failed parent or unfinished call successful', () => {
@@ -37,11 +80,14 @@ describe('conversation context evidence', () => {
       { id: '2', name: 'read', arguments: { path: 'nested.md' }, status: 'ok' },
       { id: '3', name: 'mcp__docs__fetch', status: 'unfinished' },
       { id: '4', name: 'write', arguments: { path: 'bad.md' }, status: 'error' },
+      { id: '5', name: 'write', arguments: { path: 'created.md' }, status: 'ok' },
+      { id: '6', name: 'edit', arguments: { path: 'created.md' }, status: 'ok' },
+      { id: '7', name: 'write', arguments: { path: 'unfinished.md' }, status: 'unfinished' },
     ] }
     const view = projectConversationContext(entries, 'code-result', [])
     expect(view.capabilities).toEqual([{ name: 'docs / search', kind: 'mcp', entryId: 'user' }])
     expect(view.sources[0]?.path).toBe('nested.md')
-    expect(view.outputs).toEqual([])
+    expect(view.changedFiles).toEqual([{ path: 'created.md', entryId: 'user', action: 'edit', toolCallId: 'code' }])
   })
 
   it.each(['read_mcp_resource', 'list_mcp_resources', 'list_mcp_resource_templates'])(

@@ -203,6 +203,31 @@ describe('workspace session state', () => {
     )).toBe(true)
   })
 
+  it.each([false, true])('recognizes a notification target copied across IPC (catalog identity: %s)', (catalogued) => {
+    const listed = session('completed', 'before', '', catalogued
+      ? { catalogId: `cat_${'a'.repeat(64)}` } : {})
+    const target = structuredClone(listed)
+    // A catalog refresh can replace the selection capability without changing
+    // the physical session that the completed notification points at.
+    if (catalogued) target.selectionToken = 'sel_after'
+    const status = { scope: projectScope, sessionId: listed.sessionId, status: 'completed' as const, selected: true as const }
+
+    expect(isOfficialSessionActiveRow(target, [listed], projectScope, listed.sessionId)).toBe(true)
+    expect(runtimeStateForOfficialSession(target, [status], [listed])).toBe(status)
+  })
+
+  it('does not confuse a copied notification target with another file sharing its session id', () => {
+    const first = session('same-id', 'first', '', { catalogId: `cat_${'a'.repeat(64)}` })
+    const second = session('same-id', 'second', '', { catalogId: `cat_${'b'.repeat(64)}` })
+    const target = { ...structuredClone(first), selectionToken: 'sel_refreshed' }
+    const legacyStatus = { scope: projectScope, sessionId: first.sessionId, status: 'completed' as const, selected: true as const }
+
+    expect(isOfficialSessionActiveRow(target, [first, second], projectScope, first.sessionId)).toBe(false)
+    expect(runtimeStateForOfficialSession(target, [legacyStatus], [first, second])).toBeUndefined()
+    expect(isOfficialSessionActiveRow(target, [second], projectScope, first.sessionId)).toBe(false)
+    expect(runtimeStateForOfficialSession(target, [legacyStatus], [second])).toBeUndefined()
+  })
+
   it('keeps a background Session queued count on its exact opaque row', () => {
     const background = session('queued-id', 'q'.repeat(32), '2026-08-08T02:00:00.000Z')
     const runtimeState = runtimeStateForOfficialSession(background, [{

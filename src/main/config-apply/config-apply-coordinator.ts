@@ -55,6 +55,14 @@ export class ConfigApplyCoordinator {
     return status ? { ...status } : undefined
   }
 
+  /** A durable save is complete before Runtime reload; the UI observes its separate apply status. */
+  schedule(revision: ConfigApplyRevision): ConfigApplyStatus {
+    void this.apply(revision).catch(() => undefined)
+    return this.getStatus(revision.path, revision.fingerprint) ?? {
+      fingerprint: revision.fingerprint, state: 'failed', total: 0, applied: 0, failed: 0,
+    }
+  }
+
   async apply(revision: ConfigApplyRevision): Promise<ConfigApplyStatus> {
     let job = this.jobs.get(revision.path)
     if (!job && this.jobs.size >= MAX_RETAINED_TARGETS) {
@@ -95,6 +103,10 @@ export class ConfigApplyCoordinator {
 
   private attempt(job: ApplyJob): Promise<ConfigApplyStatus> {
     if (job.inFlight) return job.inFlight
+    // A repeated revision can target a recovered or newer Runtime. Publish this
+    // attempt immediately so observers do not stop on its previous final state.
+    // Keep confirmed identities for the native apply's per-Runtime deduplication.
+    job.status = { fingerprint: job.fingerprint, state: 'pending', total: 0, applied: 0, failed: 0 }
     const operation = this.run(job)
     job.inFlight = operation
     void operation.finally(() => {

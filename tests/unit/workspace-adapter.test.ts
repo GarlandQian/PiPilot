@@ -4,9 +4,38 @@ import type {
   OfficialPiSessionSummary,
   SessionCatalogListResult,
 } from '../../src/shared/conversation-scope'
-import { loadOfficialSessionCatalog } from '../../src/renderer/adapters/workspace-adapter'
+import { applyWorkspacePresentation, loadOfficialSessionCatalog, loadWorkspacePresentation } from '../../src/renderer/adapters/workspace-adapter'
 
 const scope: ConversationScope = { kind: 'projectless' }
+
+describe('project presentation scans', () => {
+  it('does not reject project entry when Git discovery conflicts, and can refresh later', async () => {
+    const workspaceId = 'fixture-workspace'
+    const conflict = Object.assign(new Error('The workspace change was updated outside PiPilot.'), { code: 'WORKSPACE_CHANGE_CONFLICT' })
+    const files = { list: vi.fn().mockRejectedValueOnce(conflict).mockResolvedValueOnce({ workspaceId, modifiedCount: 2 }) }
+    const changes = { list: vi.fn().mockRejectedValueOnce(conflict).mockResolvedValueOnce({ workspaceId, branch: 'main' }) }
+    await expect(loadWorkspacePresentation({ files, changes }, workspaceId)).resolves.toEqual({ workspaceId })
+    await expect(loadWorkspacePresentation({ files, changes }, workspaceId)).resolves.toEqual({ workspaceId, filesModified: 2, branch: 'main' })
+  })
+
+  it('keeps a successful decoration when the other scan fails, without accepting another project', async () => {
+    const files = { list: vi.fn().mockResolvedValue({ workspaceId: 'project-a', modifiedCount: 3 }) }
+    const changes = { list: vi.fn().mockRejectedValueOnce(new Error('Git unavailable')).mockResolvedValueOnce({ workspaceId: 'project-b', branch: 'foreign' }) }
+    await expect(loadWorkspacePresentation({ files, changes }, 'project-a')).resolves.toEqual({ workspaceId: 'project-a', filesModified: 3 })
+    await expect(loadWorkspacePresentation({ files, changes }, 'project-a')).resolves.toEqual({ workspaceId: 'project-a', filesModified: 3 })
+  })
+
+  it('preserves only same-project decorations and ignores a late response from the previous project', () => {
+    const original = { workspace: { id: 'project-a', branch: 'feature-a' }, filesModified: 4 }
+    expect(applyWorkspacePresentation(original, { workspaceId: 'project-a' })).toBe(original)
+    // Navigation clears the new project's decorative values before it scans.
+    const switched = { workspace: { id: 'project-b', branch: '' }, filesModified: 0 }
+    expect(applyWorkspacePresentation(switched, { workspaceId: 'project-a', branch: 'feature-a', filesModified: 4 })).toBe(switched)
+    expect(applyWorkspacePresentation(switched, { workspaceId: 'project-b' })).toBe(switched)
+    expect(applyWorkspacePresentation(switched, { workspaceId: 'project-b', branch: 'main', filesModified: 1 }))
+      .toEqual({ workspace: { id: 'project-b', branch: 'main' }, filesModified: 1 })
+  })
+})
 
 function row(index: number): OfficialPiSessionSummary {
   return {

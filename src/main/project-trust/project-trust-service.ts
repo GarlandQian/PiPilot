@@ -108,6 +108,10 @@ export class ProjectTrustService {
       const settings = SettingsManager.create(this.options.agentDir, this.options.agentDir, { projectTrusted: false })
       settings.setDefaultProjectTrust(policy)
       await settings.flush()
+      // The SDK records read/write failures instead of rejecting flush(). A
+      // failed preference change must not look successful or reload runtimes.
+      const errors = settings.drainErrors()
+      if (errors.length > 0) throw errors[0]!.error
     })
     // Undecided projects follow the policy; reload the ones that change.
     await Promise.all(this.projectPaths().map((cwd) => this.apply(cwd)))

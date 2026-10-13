@@ -9,7 +9,7 @@ export class PiDirectoryPreference {
 
   constructor(private readonly file: string, readonly defaultDirectory: string) {
     try {
-      const value = JSON.parse(readFileSync(file, 'utf8')) as { directory?: unknown }
+      const value = JSON.parse(readFileSync(file, 'utf8').replace(/^\uFEFF/u, '')) as { directory?: unknown }
       if (value.directory !== null && (typeof value.directory !== 'string' || !isAbsolute(value.directory) || /[\0\r\n]/u.test(value.directory))) {
         throw new Error('Invalid Pi directory preference.')
       }

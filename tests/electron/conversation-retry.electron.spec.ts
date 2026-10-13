@@ -75,17 +75,17 @@ test('explains a permanent error and retries the response without duplicating th
   } finally { await closeFixtureApplication(app); await fixture.close() }
 })
 
-test('automatically recovers empty and HTTP 429 responses and enforces the configured retry limit', async ({}, testInfo) => {
+test('uses native retries for HTTP 503 and HTTP 429 responses and enforces the configured retry limit', async ({}, testInfo) => {
   test.setTimeout(90_000)
   const userData = testInfo.outputPath('user-data')
   const agentDir = testInfo.outputPath('pi-agent')
-  const emptyPrompt = 'Recover an empty response'
+  const overloadedPrompt = 'Recover from HTTP 503 service unavailability'
   const throttledPrompt = 'Recover from HTTP 429 rate limiting'
   const unavailablePrompt = 'Enforce two retries'
   await seedSettings(userData)
   const fixture = await startPiSdkFixture({
     agentDir, retryEnabled: true, retryMaxRetries: 2, retryBaseDelayMs: 1_000,
-    providerFault: ({ prompt, attempt }) => prompt === emptyPrompt && attempt === 1 ? { kind: 'empty' }
+    providerFault: ({ prompt, attempt }) => prompt === overloadedPrompt && attempt === 1 ? { kind: 'http', status: 503, message: 'Service unavailable' }
       : prompt === throttledPrompt && attempt <= 2 ? { kind: 'http', status: 429, message: 'Too many requests. Please retry later.' }
       : prompt === unavailablePrompt ? { kind: 'http', status: 503, message: 'Service unavailable' } : null,
   })
@@ -96,9 +96,9 @@ test('automatically recovers empty and HTTP 429 responses and enforces the confi
     page.on('pageerror', (error) => errors.push(error.message))
     await page.setViewportSize({ width: 1440, height: 900 })
     await expect(page.locator('[data-model-thinking-trigger]')).toContainText('Fake Chat', { timeout: 20_000 })
-    await send(page, emptyPrompt)
-    await expect(page.getByText(`Fixture response: ${emptyPrompt}`, { exact: true })).toBeVisible({ timeout: 15_000 })
-    expect(fixture.prompts.filter((prompt) => prompt === emptyPrompt)).toHaveLength(2)
+    await send(page, overloadedPrompt)
+    await expect(page.getByText(`Fixture response: ${overloadedPrompt}`, { exact: true })).toBeVisible({ timeout: 15_000 })
+    expect(fixture.prompts.filter((prompt) => prompt === overloadedPrompt)).toHaveLength(2)
     await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0)
     await send(page, throttledPrompt)
     await expect(page.getByText(`Fixture response: ${throttledPrompt}`, { exact: true })).toBeVisible({ timeout: 15_000 })

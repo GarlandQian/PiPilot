@@ -1,0 +1,62 @@
+diff --git a/dist/core/exec.js b/dist/core/exec.js
+index 29657fa0006e5dc6173d8f058e83bdb4451c72b4..f687b9403234a8852a20f19d043733fb5741f951 100644
+--- a/dist/core/exec.js
++++ b/dist/core/exec.js
+@@ -11,6 +11,7 @@ export async function execCommand(command, args, cwd, options) {
+     return new Promise((resolve) => {
+         const proc = spawn(command, args, {
+             cwd,
++            windowsHide: true,
+             shell: false,
+             stdio: ["ignore", "pipe", "pipe"],
+         });
+diff --git a/dist/core/package-manager.js b/dist/core/package-manager.js
+index e733dc065bb1838f9bb86cfe026ae9e64c2e10b1..b2b2465e2382e3e01fbf621da760975a2b263848 100644
+--- a/dist/core/package-manager.js
++++ b/dist/core/package-manager.js
+@@ -2142,6 +2142,7 @@ export class DefaultPackageManager {
+         const env = getEnv();
+         return spawnProcess(command, args, {
+             cwd: options?.cwd,
++            windowsHide: true,
+             stdio: isStdoutTakenOver() ? ["ignore", 2, 2] : "inherit",
+             env,
+         });
+@@ -2151,6 +2152,7 @@ export class DefaultPackageManager {
+         const env = options?.env ? { ...baseEnv, ...options.env } : baseEnv;
+         return spawnProcess(command, args, {
+             cwd: options?.cwd,
++            windowsHide: true,
+             stdio: ["ignore", "pipe", "pipe"],
+             env,
+         });
+@@ -2211,6 +2213,7 @@ export class DefaultPackageManager {
+     runCommandSync(command, args) {
+         const env = getEnv();
+         const result = spawnProcessSync(command, args, {
++            windowsHide: true,
+             stdio: ["ignore", "pipe", "pipe"],
+             encoding: "utf-8",
+             env,
+diff --git a/dist/utils/tools-manager.js b/dist/utils/tools-manager.js
+index 39b1f1ae3357925c68127b580340208c5d557ed9..47b08413241baea98b1b2f319c666b7894230806 100644
+--- a/dist/utils/tools-manager.js
++++ b/dist/utils/tools-manager.js
+@@ -63,7 +63,7 @@ const TOOLS = {
+ // Check if a command exists in PATH by trying to run it
+ function commandExists(cmd) {
+     try {
+-        const result = spawnSync(cmd, ["--version"], { stdio: "pipe" });
++        const result = spawnSync(cmd, ["--version"], { stdio: "pipe", windowsHide: true });
+         // Check for ENOENT error (command not found)
+         return result.error === undefined || result.error === null;
+     }
+@@ -165,7 +165,7 @@ function formatSpawnFailure(result) {
+     return `exit status ${result.status ?? "unknown"}`;
+ }
+ function runExtractionCommand(command, args) {
+-    const result = spawnSync(command, args, { stdio: "pipe" });
++    const result = spawnSync(command, args, { stdio: "pipe", windowsHide: true });
+     if (!result.error && result.status === 0) {
+         return null;
+     }

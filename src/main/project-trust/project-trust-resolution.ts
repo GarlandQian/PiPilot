@@ -36,7 +36,10 @@ export function parentProjectPath(path: string) {
 /** Pi reads `defaultProjectTrust` from the global settings file only. */
 export function readProjectTrustPolicy(agentDir: string): ProjectTrustPolicy {
   try {
-    const value = (JSON.parse(readFileSync(join(agentDir, 'settings.json'), 'utf8')) as { defaultProjectTrust?: unknown }).defaultProjectTrust
+    // Windows editors may write a UTF-8 BOM. Pi's SettingsManager strips it;
+    // trust must use the same policy rather than silently falling back to ask.
+    const text = readFileSync(join(agentDir, 'settings.json'), 'utf8').replace(/^\uFEFF/u, '')
+    const value = (JSON.parse(text) as { defaultProjectTrust?: unknown }).defaultProjectTrust
     return value === 'always' || value === 'never' ? value : 'ask'
   } catch {
     return 'ask'

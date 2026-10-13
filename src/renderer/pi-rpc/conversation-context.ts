@@ -7,6 +7,11 @@ export interface ConversationResource {
   entryId: string
   action: 'read' | 'write' | 'edit'
 }
+export interface ConversationChangedFile extends ConversationResource {
+  action: 'write' | 'edit'
+  /** The visible invocation; nested codemode calls point to their parent. */
+  toolCallId: string
+}
 export interface ConversationCapability {
   name: string
   kind: 'skill' | 'mcp'
@@ -23,15 +28,22 @@ function object(value: unknown): Record<string, unknown> | null {
 export function projectConversationContext(entries: readonly LocalPiSessionEntry[], leafId: string | null, commands: readonly LocalPiSlashCommand[]) {
   const branch = getConversationBranchEntries(entries, leafId)
   const sources = new Map<string, ConversationResource>()
-  const outputs = new Map<string, ConversationResource>()
+  const changedFiles = new Map<string, ConversationChangedFile>()
   const capabilities = new Map<string, ConversationCapability>()
   const links = new Map<string, ConversationLink>()
-  const recordFile = (name: string, args: Record<string, unknown> | null, entryId: string) => {
-    if (!['read', 'write', 'edit'].includes(name) || typeof args?.path !== 'string' || !args.path.trim()) return
-    const resource: ConversationResource = { path: args.path, entryId, action: name as ConversationResource['action'] }
-    const list = resource.action === 'read' ? sources : outputs
-    list.delete(resource.path)
-    list.set(resource.path, resource)
+  const recordFile = (name: string, args: Record<string, unknown> | null, entryId: string, toolCallId: string) => {
+    if ((name !== 'read' && name !== 'write' && name !== 'edit') || typeof args?.path !== 'string' || !args.path.trim()) return
+    const path = args.path
+    if (name === 'read') {
+      sources.delete(path)
+      sources.set(path, { path, entryId, action: name })
+      return
+    }
+    // A file can be involved in several replies. Only coalesce repeated
+    // successful writes within the same user response anchor.
+    const key = JSON.stringify([entryId, path])
+    changedFiles.delete(key)
+    changedFiles.set(key, { path, entryId, action: name, toolCallId })
   }
   for (const command of commands) if (command.source === 'skill') {
     const name = command.name.replace(/^skill:/u, '')
@@ -99,12 +111,12 @@ export function projectConversationContext(entries: readonly LocalPiSessionEntry
     if (message.toolName === 'codemode') for (const call of message.nestedCalls?.calls ?? []) {
       if (call.status === 'ok') {
         recordMcp(call.name, invoked.entryId, object(call.arguments))
-        recordFile(call.name, object(call.arguments), invoked.entryId)
+        recordFile(call.name, object(call.arguments), invoked.entryId, invoked.call.id)
       }
     }
     if (message.isError) continue
     const args = object(invoked.call.arguments)
-    recordFile(message.toolName, args, invoked.entryId)
+    recordFile(message.toolName, args, invoked.entryId, invoked.call.id)
     const details = object(message.details)
     recordMcp(message.toolName, invoked.entryId, args, details)
     if (message.toolName === 'mcp' && typeof details?.server === 'string' && typeof details.tool === 'string') {
@@ -117,7 +129,7 @@ export function projectConversationContext(entries: readonly LocalPiSessionEntry
     suggestionsCurrent: lastTaskIndex > lastUserIndex,
     task: branch ? getConversationTaskSnapshotFromBranch(branch) : null,
     sources: [...sources.values()].reverse(),
-    outputs: [...outputs.values()].reverse(),
+    changedFiles: [...changedFiles.values()].reverse(),
     capabilities: [...capabilities.values()].sort((a, b) => Number(Boolean(b.entryId)) - Number(Boolean(a.entryId)) || a.name.localeCompare(b.name)),
     links: [...links.values()].reverse(),
   }

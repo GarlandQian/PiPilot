@@ -1,7 +1,6 @@
 import { mkdir } from 'node:fs/promises'
 import { SettingsManager, type AgentSessionRuntime } from '@earendil-works/pi-coding-agent'
 import { sanitizeConversationErrorDetails } from '../../shared/conversation-errors'
-import { applyRuntimeRetrySettings, getRuntimeRetrySettings } from './runtime-retry-policy'
 import type { RuntimeDelivery } from './runtime-delivery'
 import { runtimeMcpStatus } from './runtime-native-mcp'
 import { answerBrowserTool } from './runtime-browser-tools'
@@ -175,7 +174,7 @@ export async function removeRuntimeQueuedMessage(
 
 function getState(runtime: AgentSessionRuntime): LocalPiRpcResponse {
   const { session } = runtime
-  const retry = session.settingsManager ? getRuntimeRetrySettings(session) : undefined
+  const retry = session.settingsManager?.getRetrySettings()
   return successResponse({
     type: 'response',
     command: 'get_state',
@@ -607,7 +606,7 @@ export async function dispatchRuntimeCommand(
         session.setAutoCompactionEnabled(command.enabled)
         return { replaced: false, response: noDataSuccess('set_auto_compaction') }
       case 'set_auto_retry': {
-        let retry = getRuntimeRetrySettings(session)
+        let retry = session.settingsManager.getRetrySettings()
         if (command.reloadSettings) {
           if (!context.agentDir) throw new Error('The runtime settings directory is unavailable.')
           // Reload only retry settings, preserving live model/compaction overrides
@@ -619,11 +618,11 @@ export async function dispatchRuntimeCommand(
           if (errors.length > 0) throw new Error('The saved retry settings could not be read.')
           retry = fresh.getRetrySettings()
         }
-        applyRuntimeRetrySettings(session, {
+        session.settingsManager.applyOverrides({ retry: {
           ...retry,
           ...(command.enabled === undefined ? {} : { enabled: command.enabled }),
           ...(command.maxRetries === undefined ? {} : { maxRetries: command.maxRetries }),
-        })
+        } })
         return { replaced: false, response: noDataSuccess('set_auto_retry') }
       }
       case 'abort_retry':

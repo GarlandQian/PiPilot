@@ -71,18 +71,25 @@ export class ConversationNavigationRepository {
   initialize() {
     if (this.initialized) return this.snapshot()
 
+    let rawText: string | undefined
     try {
-      const raw: unknown = JSON.parse(readFileSync(this.filePath, 'utf8'))
-      const document = persistedConversationNavigationSchema.parse(raw)
-      this.activeScope = document.activeScope
+      rawText = readFileSync(this.filePath, 'utf8')
     } catch (error) {
-      if (isMissingFile(error)) {
-        this.onDiagnostic('created')
-      } else {
+      if (!isMissingFile(error)) throw error
+    }
+    if (rawText === undefined) {
+      this.onDiagnostic('created')
+      this.activeScope = { kind: 'projectless' }
+    } else {
+      try {
+        const raw: unknown = JSON.parse(rawText.replace(/^\uFEFF/u, ''))
+        const document = persistedConversationNavigationSchema.parse(raw)
+        this.activeScope = document.activeScope
+      } catch {
         this.backUpCorruptFile()
         this.onDiagnostic('recovered-corrupt')
+        this.activeScope = { kind: 'projectless' }
       }
-      this.activeScope = { kind: 'projectless' }
     }
 
     this.initialized = true

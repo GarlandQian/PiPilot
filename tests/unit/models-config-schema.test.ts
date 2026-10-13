@@ -105,6 +105,25 @@ describe('parseModelsConfigDocument', () => {
     expect(document.diagnostics.some((entry) => entry.code === 'MODELS_DUPLICATE_KEY')).toBe(true)
   })
 
+  it('accepts a UTF-8 BOM without losing raw fields or structured edit offsets', () => {
+    const text = `\uFEFF${DOCUMENT}`
+    expect(parseModelsConfigDocument(text)).toMatchObject({ valid: true, diagnostics: [] })
+    const raw = rawModelsProviderDefinition(text, 'acme')!
+    expect(raw).toMatchObject({ apiKey: 'sk-secret-1', compat: { supportsStore: false } })
+    const changed = upsertModelsProvider(text, 'acme', { ...raw, name: 'Updated Gateway' })
+    const renamed = renameModelsProvider(changed, 'plain', 'renamed')
+    const removed = removeModelsProvider(renamed, 'renamed')
+    expect(removed.startsWith('\uFEFF')).toBe(true)
+    expect(removed).toContain('// Custom gateway provider.')
+    expect(parseModelsConfigDocument(removed)).toMatchObject({
+      valid: true, providers: [{ id: 'acme', name: 'Updated Gateway', hasApiKey: true }],
+    })
+    const duplicate = parseModelsConfigDocument('\uFEFF{"providers":{"a":{},"a":{}}}')
+    expect(duplicate.diagnostics).toEqual([expect.objectContaining({
+      code: 'MODELS_DUPLICATE_KEY', offset: 22, column: 23,
+    })])
+  })
+
   it('rejects a non-object root', () => {
     const document = parseModelsConfigDocument('[1, 2]')
     expect(document.valid).toBe(false)

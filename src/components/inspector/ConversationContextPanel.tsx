@@ -162,7 +162,6 @@ export function ConversationContextPanel({ presentation, planMode, goalMode, onR
       {plan ? <PluginPlan plan={plan} onReveal={onRevealPlan} /> : null}
       {goal ? <PluginGoal key={`${goal.scopeKey}:${goal.sessionId}:${goal.generation}:${goal.goal?.id ?? ''}`} goal={goal} onAction={onGoalAction} /> : null}
     </div> : null}
-    {context.outputs.length ? <Section title={t('taskContext.outputs')} count={context.outputs.length} initiallyOpen><ResourceList items={context.outputs} onNavigate={onNavigate} /></Section> : null}
     {context.sources.length ? <Section title={t('taskContext.sources')} count={context.sources.length}><ResourceList items={context.sources} onNavigate={onNavigate} /></Section> : null}
     {usedCapabilities.length ? <Section title={t('taskContext.capabilities')} count={usedCapabilities.length}>
       <ul className="space-y-1">{usedCapabilities.slice(0, capabilityLimit).map((item) => <li key={`${item.kind}:${item.name}`} className="min-w-0">

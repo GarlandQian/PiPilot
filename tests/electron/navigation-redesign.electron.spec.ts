@@ -26,7 +26,7 @@ async function taskMenu(page: Page, name: string, row = taskRow(page, name)) {
   await row.locator('..').getByRole('button', { name: 'More actions', exact: true }).click()
 }
 
-/** Codex keeps Archived behind the sidebar's Organize menu. */
+/** The sidebar shortcut opens archive management in Settings. */
 async function openArchived(page: Page) {
   await page.getByRole('button', { name: 'Organize and sort', exact: true }).click()
   await page.getByRole('menuitem', { name: /^Archived tasks/u }).click()
@@ -75,6 +75,72 @@ async function seedTask(page: Page, prompt: string, title: string) {
   await expect(taskRow(page, title)).toBeVisible()
   return page.evaluate(() => window.pipilot!.localPi.runtime.status())
 }
+
+test('manages archived conversations in Settings and deletes only the confirmed archived histories', async ({}, testInfo) => {
+  test.setTimeout(90_000)
+  const userDataPath = testInfo.outputPath('user-data')
+  const projectPath = testInfo.outputPath('archive-cleanup-project')
+  await Promise.all([userDataPath, projectPath].map((path) => mkdir(path, { recursive: true })))
+  const project = await realpath(projectPath)
+  await writeFile(join(userDataPath, 'settings.json'), JSON.stringify({
+    version: SETTINGS_SCHEMA_VERSION, settings: { ...DEFAULT_SETTINGS, locale: 'en-US' },
+  }))
+  const fixture = await startPiSdkFixture({ agentDir: testInfo.outputPath('pi-agent') })
+  let app: ElectronApplication | undefined
+  try {
+    app = await electron.launch({ args: [resolve(process.cwd())], env: { ...process.env, ...fixture.env, PIPILOT_E2E_USER_DATA: userDataPath } })
+    const fixtureTrash = await installFixtureTrash(app, testInfo)
+    const page = await app.firstWindow()
+    await page.waitForLoadState('domcontentloaded')
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await expect(page.locator('[data-model-thinking-trigger]')).toContainText('Fake Chat', { timeout: 20_000 })
+    await addProject(app, page, project)
+    const saved = []
+    for (const title of ['Archived first', 'Archived second', 'Keep unarchived']) {
+      if (saved.length) await page.getByRole('button', { name: `New task in ${basename(project)}`, exact: true }).click()
+      saved.push(await seedTask(page, `History for ${title}`, title))
+    }
+    const files = saved.map((session) => {
+      if (!session.sessionFile) throw new Error('An isolated conversation was not saved.')
+      return session.sessionFile
+    })
+    const contents = await Promise.all(files.map((file) => readFile(file, 'utf8')))
+    for (const title of ['Archived first', 'Archived second']) {
+      await taskMenu(page, title)
+      await page.getByRole('menuitem', { name: 'Archive', exact: true }).click()
+      await expect(taskRow(page, title)).toHaveCount(0)
+    }
+    await page.getByRole('button', { name: 'Settings', exact: true }).click()
+    await page.getByRole('region', { name: 'Settings', exact: true }).getByRole('button', { name: 'Archived conversations', exact: true }).click()
+    await expect(archivedRow(page, 'Archived first')).toBeVisible()
+    await expect(archivedRow(page, 'Archived second')).toBeVisible()
+    await page.screenshot({ path: testInfo.outputPath('archived-conversations-settings.png'), animations: 'disabled' })
+    await page.getByRole('button', { name: 'Delete all archived', exact: true }).click()
+    const dialog = page.getByRole('alertdialog', { name: 'Delete all archived conversations?', exact: true })
+    await expect(dialog).toContainText('these 2 archived conversations')
+    await expect(dialog).toContainText('Unarchived conversations are not affected')
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+    expect(await Promise.all(files.map((file) => readFile(file, 'utf8')))).toEqual(contents)
+    await page.getByRole('button', { name: 'Delete all archived', exact: true }).click()
+    await dialog.getByRole('button', { name: 'Delete all archived', exact: true }).click()
+    await expect(dialog).toBeHidden({ timeout: 15_000 })
+    await expect(archivedRow(page, 'Archived first')).toHaveCount(0)
+    await expect(archivedRow(page, 'Archived second')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Delete all archived', exact: true })).toBeDisabled()
+    for (const index of [0, 1]) {
+      await expect(access(files[index])).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(await readFile(join(fixtureTrash, basename(files[index])), 'utf8')).toBe(contents[index])
+    }
+    expect(await readFile(files[2], 'utf8')).toBe(contents[2])
+    await page.getByRole('button', { name: 'Back to app', exact: true }).click()
+    await expect(taskRow(page, 'Keep unarchived')).toHaveAttribute('aria-current', 'page')
+    const current = await page.evaluate(() => window.pipilot!.localPi.runtime.status())
+    expect(current).toMatchObject({ generation: saved[2].generation, sessionFile: saved[2].sessionFile, state: 'ready' })
+  } finally {
+    if (app) await closeFixtureApplication(app)
+    await fixture.close()
+  }
+})
 
 test('stops the exact background task before archiving and restores it without resuming queued work', async ({}, testInfo) => {
   test.setTimeout(90_000)
@@ -125,7 +191,7 @@ test('stops the exact background task before archiving and restores it without r
     await openArchived(page)
     await archivedRow(page, 'Running archive target').click({ button: 'right' })
     await page.getByRole('menuitem', { name: 'Unarchive', exact: true }).click()
-    await page.getByRole('button', { name: 'Archived tasks', exact: true }).click()
+    await page.getByRole('button', { name: 'Back to app', exact: true }).click()
     await taskRow(page, 'Running archive target').click()
     await expect(page.getByRole('log', { name: 'Conversation' })).toContainText('Save the task before running')
     await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0)
@@ -237,10 +303,11 @@ test('restores an existing project task and persists pin/archive without deletin
     await archivedRow(page, 'Remembered task').click()
     await expect.poll(async () => (await page.evaluate(() => window.pipilot!.localPi.runtime.status()))
       .sessionState?.sessionId).toBe(first.sessionState!.sessionId)
+    await openArchived(page)
     await archivedRow(page, 'Remembered task').click({ button: 'right' })
     await page.getByRole('menuitem', { name: 'Unarchive', exact: true }).click()
     await expect(archivedRow(page, 'Remembered task')).toHaveCount(0)
-    await page.getByRole('button', { name: 'Archived tasks', exact: true }).click()
+    await page.getByRole('button', { name: 'Back to app', exact: true }).click()
     await expect(taskRow(page, 'Remembered task')).toHaveAttribute('aria-current', 'page')
 
     await taskMenu(page, 'Remembered task')
@@ -324,7 +391,7 @@ test('deletes the named background task while preserving the active task, then c
     await dialog.getByRole('button', { name: 'Delete', exact: true }).click()
     await expect(dialog).toBeHidden()
     await expect(archivedRow(page, 'Background task A')).toHaveCount(0)
-    await page.getByRole('button', { name: 'Archived tasks', exact: true }).click()
+    await page.getByRole('button', { name: 'Back to app', exact: true }).click()
     await expect(taskRow(page, 'Background task A')).toHaveCount(0)
     await expect(taskRow(page, 'Active task B')).toHaveAttribute('aria-current', 'page')
     await expect(composer).toHaveText('Keep the active B draft')
@@ -353,6 +420,7 @@ test('deletes the named background task while preserving the active task, then c
     await openArchived(page)
     await archivedRow(page, 'Active task B').click()
     await expect(conversation.getByText('Fixture response: The active B transcript must survive', { exact: true })).toBeVisible()
+    await openArchived(page)
     await archivedRow(page, 'Active task B').hover()
     await archivedRow(page, 'Active task B').locator('..').getByRole('button', { name: 'Delete', exact: true }).click()
     await expect(dialog).toContainText('Delete "Active task B"?')
@@ -360,7 +428,7 @@ test('deletes the named background task while preserving the active task, then c
     await dialog.getByRole('button', { name: 'Delete', exact: true }).click()
     await expect(dialog).toBeHidden()
     await expect(archivedRow(page, 'Active task B')).toHaveCount(0)
-    await page.getByRole('button', { name: 'Archived tasks', exact: true }).click()
+    await page.getByRole('button', { name: 'Back to app', exact: true }).click()
     await expect(taskRow(page, 'Active task B')).toHaveCount(0)
     await expect(page.locator('[data-conversation-welcome]')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Start writing', exact: true })).toBeVisible()

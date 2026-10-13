@@ -22,20 +22,17 @@ describe('Runtime message sanitizer', () => {
     })
   })
 
-  it('marks an upstream empty success as a native-retryable failure without erasing thinking', () => {
+  it('preserves the native outcome of an empty success without erasing thinking', () => {
     const message = runtimeMessage({
       role: 'assistant', content: [{ type: 'thinking', thinking: 'Partial reasoning' }],
       stopReason: 'stop', timestamp: 1,
     })
-    expect(sanitizeRuntimeFinalizedMessage(message)).toMatchObject({
-      content: [{ type: 'thinking', thinking: 'Partial reasoning' }],
-      stopReason: 'error', errorMessage: 'Upstream response ended without any text or tool output.',
-    })
+    expect(sanitizeRuntimeFinalizedMessage(message)).toBe(message)
   })
 
-  it('normalizes only confirmed upstream empty errors for native retry and keeps aborts intact', () => {
+  it('keeps upstream empty errors and aborts intact for native retry classification', () => {
     expect(sanitizeRuntimeFinalizedMessage(runtimeMessage({ role: 'assistant', content: [], stopReason: 'error', errorMessage: 'Empty response' })))
-      .toMatchObject({ content: [], stopReason: 'error', errorMessage: 'Empty response\nUpstream response ended without content.' })
+      .toMatchObject({ content: [], stopReason: 'error', errorMessage: 'Empty response' })
     expect(sanitizeRuntimeFinalizedMessage(runtimeMessage({ role: 'assistant', content: [], stopReason: 'aborted', errorMessage: 'Request aborted' })))
       .toMatchObject({ content: [], stopReason: 'aborted', errorMessage: 'Request aborted' })
   })
@@ -48,11 +45,10 @@ describe('Runtime message sanitizer', () => {
   })
 
   it.each(['ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', '408: Request timeout'])(
-    'normalizes %s once so native retry matches the displayed diagnosis', (errorMessage) => {
+    'preserves %s without adding retry-triggering text', (errorMessage) => {
       const original = runtimeMessage({ role: 'assistant', content: [], stopReason: 'error', errorMessage })
       const normalized = sanitizeRuntimeFinalizedMessage(original)
-      expect(normalized).toMatchObject({ errorMessage: `Network error: ${errorMessage}`, content: [] })
-      expect(sanitizeRuntimeFinalizedMessage(normalized)).toBe(normalized)
+      expect(normalized).toBe(original)
     },
   )
 

@@ -40,17 +40,3 @@ export function shouldStartTypewriterFromEmpty(
 ) {
   return motionEnabled && animateOnMount && streaming
 }
-
-/**
- * Settlement changes the status, not the reader's disclosure or viewport.
- * Hydrated history still starts closed in the presentation component.
- */
-export function thinkingDisclosureAfterPhaseChange(
-  wasStreaming: boolean,
-  streaming: boolean,
-  manualOpen: boolean | null,
-): boolean | null {
-  if (wasStreaming === streaming) return null
-  if (streaming) return true
-  return manualOpen ?? true
-}

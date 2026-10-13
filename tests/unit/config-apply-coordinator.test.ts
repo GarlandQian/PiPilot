@@ -86,6 +86,31 @@ describe('ConfigApplyCoordinator', () => {
     expect(runtime.reload.mock.calls.map(([target]) => target.runtimeId)).toEqual(['rt_a', 'rt_b', 'rt_b'])
   })
 
+  it.each(['failed', 'applied'] as const)('schedules the same revision as pending after it was %s', async (previousState) => {
+    const { runtime, coordinator, save } = await fixture()
+    runtime.busy = false
+    if (previousState === 'failed') runtime.reload.mockRejectedValueOnce(new Error('Host unavailable'))
+    const revision = await save('models.json', '{}')
+    expect(await coordinator.apply(revision)).toMatchObject({ state: previousState })
+    if (previousState === 'applied') runtime.targets[0]!.generation += 1
+
+    let finish!: () => void
+    const waiting = new Promise<void>((resolve) => { finish = resolve })
+    runtime.reload.mockImplementationOnce(() => waiting)
+    const scheduled = coordinator.schedule(revision)
+    const completion = coordinator.apply(revision)
+    try {
+      expect(scheduled).toMatchObject({ state: 'pending', fingerprint: revision.fingerprint, failed: 0 })
+      await vi.waitFor(() => expect(runtime.reload).toHaveBeenCalledTimes(2))
+      expect(coordinator.getStatus(revision.path)).toMatchObject({ state: 'pending' })
+    } finally {
+      finish()
+      await completion
+    }
+    expect(coordinator.getStatus(revision.path)).toMatchObject({ state: 'applied', total: 1, applied: 1, failed: 0 })
+    expect(runtime.reload).toHaveBeenCalledTimes(2)
+  })
+
   it('cannot let an older in-flight save erase a superseding revision', async () => {
     const { runtime, coordinator, save } = await fixture()
     runtime.busy = false

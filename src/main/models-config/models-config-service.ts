@@ -52,7 +52,7 @@ interface ModelsConfigServiceOptions {
   agentDirectory?: string
   management?: Pick<
     LocalPiIntegrationService,
-    'modelsDefaults' | 'setDefaultModel' | 'testModel'
+    'setDefaultModel' | 'testModel'
   > & Partial<Pick<LocalPiIntegrationService, 'modelCatalog' | 'builtinProviders'>>
   /** models.dev, which knows many models Pi's catalog does not. */
   modelsDev?: { index(): Promise<ModelsDevIndex | null> }
@@ -70,6 +70,7 @@ export class ModelsConfigService {
   private readonly agentDirectory: string
   private readonly management?: ModelsConfigServiceOptions['management']
   private readonly modelsDev?: ModelsConfigServiceOptions['modelsDev']
+  private saveQueue: Promise<unknown> = Promise.resolve()
 
   constructor(options: ModelsConfigServiceOptions) {
     if (!isAbsolute(options.homeDirectory)) {
@@ -92,7 +93,19 @@ export class ModelsConfigService {
     return this.snapshot(target, targetPath, disk.exists, disk.content, defaults)
   }
 
-  async save(
+  save(
+    rawTarget: ModelsConfigTarget,
+    content: string,
+    expectedFingerprint: string,
+  ): Promise<ModelsConfigSnapshot> {
+    // Multiple windows can edit the same global file. Keep its fingerprint
+    // check and replacement together so two successful saves cannot clobber one another.
+    const operation = this.saveQueue.then(() => this.saveCurrent(rawTarget, content, expectedFingerprint))
+    this.saveQueue = operation.catch(() => undefined)
+    return operation
+  }
+
+  private async saveCurrent(
     rawTarget: ModelsConfigTarget,
     content: string,
     expectedFingerprint: string,
@@ -272,28 +285,9 @@ export class ModelsConfigService {
     })
   }
 
-  /*
-   * Defaults come from the official Pi management helper when it is available
-   * (it reads them through the official SettingsManager). A direct read-only
-   * JSONC parse of Pi's real settings.json keeps the surface usable when the
-   * helper cannot run — reading must never take the models surface down.
-   */
+  // These are persisted global preferences in the same Agent directory.
+  // Reading them must not launch an SDK helper or delay acknowledging an already saved file.
   private async readDefaults(): Promise<ModelsConfigDefaults> {
-    if (this.management) {
-      try {
-        const payload = await this.management.modelsDefaults()
-        return modelsConfigDefaultsSchema.parse({
-          defaultProvider: payload.defaultProvider,
-          defaultModel: payload.defaultModel,
-        })
-      } catch {
-        // Fall through to the direct read-only parse below.
-      }
-    }
-    return this.readDefaultsFromFile()
-  }
-
-  private async readDefaultsFromFile(): Promise<ModelsConfigDefaults> {
     const settingsPath = join(this.agentDirectory, 'settings.json')
     let content: string
     try {
@@ -302,7 +296,7 @@ export class ModelsConfigService {
       return {}
     }
     const errors: ParseError[] = []
-    const parsed: unknown = parseJsonc(content, errors, { allowTrailingComma: true })
+    const parsed: unknown = parseJsonc(content.replace(/^\uFEFF/u, ''), errors, { allowTrailingComma: true })
     if (errors.length > 0 || typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
       return {}
     }
@@ -436,7 +430,7 @@ export class ModelsConfigController {
     if (!restart) {
       return modelsConfigSaveResultSchema.parse({ snapshot, apply: 'saved' })
     }
-    const applyStatus = await this.applyCoordinator.apply({
+    const applyStatus = this.applyCoordinator.schedule({
       path: snapshot.path,
       fingerprint: snapshot.fingerprint,
     })

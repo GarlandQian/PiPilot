@@ -201,7 +201,7 @@ test('persists complete per-session drafts across reload and restart, and durabl
         .filter({ has: page.getByRole('button', { name: 'Draft A', exact: true }) })
         .getByRole('button', { name: 'Delete', exact: true }).click()
       await page.getByRole('alertdialog', { name: 'Delete conversation?', exact: true }).getByRole('button', { name: 'Delete', exact: true }).click()
-      await page.getByRole('button', { name: 'Archived tasks', exact: true }).click()
+      await page.getByRole('button', { name: 'Back to app', exact: true }).click()
       await expect(session(page, 'Draft A')).toHaveCount(0)
       await expect(session(page, 'Draft B')).toHaveAttribute('aria-current', 'page')
       await expectDraft(page, retainedText, 'retained-b.png')

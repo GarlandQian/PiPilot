@@ -9,10 +9,11 @@ import { transientTurnAnimationKey } from './ConversationMessages'
 /** Every source segment keeps its place, including commentary before tools.
  * Disclosures belong to the individual thinking/tool renderer, never the reply.
  */
-export function ConversationResponse({ response, highlighted, anchorRef, renderPrompt, renderSegment, searchPreview }: {
+export function ConversationResponse({ response, highlighted, anchorRef, renderPrompt, renderSegment, searchPreview, files }: {
   response: ResponsePresentation
   highlighted: boolean
   searchPreview?: React.ReactNode
+  files?: React.ReactNode
   anchorRef?: (node: HTMLDivElement | null) => void
   sessionKey: string | null
   focusRequest?: SubagentInspectorFocusRequest | null
@@ -44,5 +45,6 @@ export function ConversationResponse({ response, highlighted, anchorRef, renderP
       >{renderSegment(item, true)}</div>)}
       {response.isActive && !response.work.hasActiveWork ? <p role="status" className="flex items-center gap-2 py-2 text-caption text-muted-foreground"><TbLoader2 className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden />{t('chat.work.waiting')}</p> : null}
     </div>
+    {files}
   </div>
 }

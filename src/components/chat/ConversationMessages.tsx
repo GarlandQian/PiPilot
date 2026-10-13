@@ -12,7 +12,7 @@ import { MarkdownContent } from './markdown/MarkdownContent'
 import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { primaryShortcut } from '@/lib/keyboard-shortcuts'
-import { nextTypewriterText, shouldStartTypewriterFromEmpty, thinkingDisclosureAfterPhaseChange, transientTurnAnimationKey } from '@/renderer/pi-rpc/live-typewriter'
+import { nextTypewriterText, shouldStartTypewriterFromEmpty, transientTurnAnimationKey } from '@/renderer/pi-rpc/live-typewriter'
 import { userMessageMarkdown } from '@/renderer/composer/message-context'
 import { MessageContextMenu } from './MessageContextMenu'
 import { useSettings } from '@/store/settings'
@@ -247,9 +247,7 @@ export const ThinkingMessage = React.memo(function ThinkingMessage({
 }) {
   const t = useT()
   const streaming = turn.state === 'streaming'
-  const [open, setOpen] = React.useState(streaming)
-  const previousStreamingRef = React.useRef(streaming)
-  const manualOpenRef = React.useRef<boolean | null>(null)
+  const [open, setOpen] = React.useState(false)
   const contentId = React.useId()
   const durationKey = React.useMemo(
     () => transientTurnAnimationKey(turn.id),
@@ -258,18 +256,6 @@ export const ThinkingMessage = React.memo(function ThinkingMessage({
   const [elapsedSeconds, setElapsedSeconds] = React.useState<number | null>(
     () => thinkingDurations.completed.get(durationKey) ?? null,
   )
-
-  React.useEffect(() => {
-    const nextOpen = thinkingDisclosureAfterPhaseChange(
-      previousStreamingRef.current,
-      streaming,
-      manualOpenRef.current,
-    )
-    if (nextOpen === null) return
-    previousStreamingRef.current = streaming
-    if (streaming) manualOpenRef.current = null
-    setOpen(nextOpen)
-  }, [streaming])
 
   React.useEffect(() => {
     if (!streaming) {
@@ -300,10 +286,7 @@ export const ThinkingMessage = React.memo(function ThinkingMessage({
   return (
     <Collapsible
       open={open}
-      onOpenChange={(nextOpen) => {
-        manualOpenRef.current = nextOpen
-        setOpen(nextOpen)
-      }}
+      onOpenChange={setOpen}
     >
       <CollapsibleTrigger asChild>
         <button

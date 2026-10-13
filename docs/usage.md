@@ -6,17 +6,27 @@
 
 - **Projects and conversations** — choose project folders explicitly or start a projectless chat;
   browse, search, organize, and manage Pi sessions. Filter by activity, sort by recent or name, and
-  show archived tasks from the sidebar's View Options menu.
+  manage archived tasks in Settings → Archived conversations (also linked from View Options).
 - **Conversation workspace** — follow messages and tool activity in one timeline. While Pi
   replies, queue or steer a message (⌘⇧↩ picks the other); reorder queued messages, take one back
   into the input to edit, or steer it. Stopping a reply puts unsent messages back into the input.
   Use Commands, Skills, file references, model selection, and Thinking controls.
+  Thinking starts collapsed, including live reasoning. Expanding it is your choice; finishing a
+  reply does not automatically collapse it again.
+- **Turn navigation** — use the ticks at the left edge of the transcript to browse the current
+  branch. Hover or focus a tick to preview its question and latest reply as Markdown; click to
+  jump without switching branches or stopping work. Bookmark a turn in its preview using Pi's
+  session labels. Arrow keys, Home, and End browse the ticks; Enter jumps.
+- **Files involved** — each response lists its successful writes and edits in a collapsed footer.
+  Open the current file, review its working-tree changes, or locate the original tool call.
+  These are files touched during that turn, not a declaration of finished deliverables.
 - **Local drafts** — restore unsent text, references, and images after restarting. Drafts stay in
   PiPilot's local application storage; sending or clearing input removes its saved draft, and
   deleting a conversation removes its draft. Shutdown waits for pending draft writes.
 - **Conversation overview** — the inspector's Overview tab keeps a short summary, status, and
   up to three next-step drafts. Plan and Goal each get one status row; Plan links to its card in
-  the conversation. Only relevant outputs, sources, used Skills/MCP, and web links appear.
+  the conversation. Only relevant sources, used Skills/MCP, and web links appear; files written or
+  edited belong to their response rounds.
 - **Export** — export the current conversation branch, a response round, or a single message as
   Markdown. Tool logs are optional; images are saved beside the Markdown file. System messages
   and hidden thinking are excluded. A whole conversation can also be saved as Pi's own HTML page
@@ -111,7 +121,12 @@ or leased work is protected. Reclaiming a cache never removes a conversation fro
 In **Settings > Appearance**, choose System, Light, or Dark and use the Liquid Glass slider to
 adjust glass-surface tint from Clear to Tinted. Existing appearance settings are retained when the
 new preference is added. In the session sidebar, the always-visible filters show all, running, or
-attention-needed sessions; **View Options** changes sort order or toggles archived tasks.
+attention-needed sessions; **View Options** changes sort order and links to archived conversations.
+
+In **Settings → Archived conversations**, restore a conversation, delete it, or choose **Delete all
+archived conversations**. The confirmation applies only to the archived conversations shown, not
+normal conversations. Failed deletions stay archived and can be retried; unavailable projects may
+need reconnecting before their conversations can be managed.
 
 In **Settings > General**, completion sound is enabled by default and can be turned off independently
 of desktop notifications. A completed conversation sounds once only when you are not viewing it;
@@ -140,15 +155,17 @@ three next-step drafts. This metadata is stored as custom entries in the officia
 Historical built-in plan records remain in the session; Overview reuses their metadata but does
 not reactivate their approvals or execution state. Older conversations have no generated summary
 until the assistant updates it. A suggested next step appends to the existing draft and preserves
-references and images; it never sends automatically. File entries link to their conversation
-records, and a mentioned web URL is not a claim that the page was visited.
+references and images; it never sends automatically. Sources link to their conversation records.
+Each response's **Files involved** lists successful writes and edits, with actions to open the
+current file, review changes, or locate the tool call. A mentioned web URL is not a claim that the
+page was visited.
 
 Use a conversation's sidebar **… > Export conversation…** menu, beside its pin/archive actions, and
 choose Markdown, HTML, or Pi session. HTML comes from Pi's renderer and needs the conversation to be
 open; a Pi session export copies the session file as it is.
 Exporting an unopened or background conversation does not switch the current conversation or start
 its agent. Message actions still export individual messages or response rounds. Keep the generated
-image folder beside the Markdown file; workspace output links are retained without copying their files.
+image folder beside the Markdown file; workspace file links are retained without copying their files.
 
 To import, use a project's **… > Import conversation…**, or the menu beside the sidebar's
 new-conversation button. Preview the file, edit its name, choose a project or general chat, then confirm.
@@ -238,6 +255,14 @@ application data directory. Do not commit API keys, tokens, or real session cont
 ## Model and MCP settings
 
 In **Settings → Models**, add a provider from the presets or enter a custom endpoint. Pi's built-in API-key providers save credentials in `auth.json`; custom providers remain in `models.json`. Fetch a remote model list, add an ID manually, and test the selected model. Forms and JSON stay synchronized, sensitive values are masked by default, and unsaved edits receive an exit prompt. The conversation model menu also links to provider setup.
+
+Saving a custom provider confirms the file write first. Runtime reload is tracked separately:
+pending means the saved configuration is still applying or waiting for running work to finish.
+An application failure does not undo the saved file; retry applying it from the displayed status.
+
+Automatic retries use Pi's native retry flow. In **Settings → Models**, turn them on or off and set
+the retry count (three by default). Pi determines which errors can be retried and how long to wait;
+PiPilot displays its attempt and countdown and provides a stop action.
 
 The custom endpoint's API type selects the request protocol; it does not sign in to a subscription. Address and credential guidance changes with the selected protocol. Model-list discovery supports OpenAI Chat Completions/Responses, Anthropic and Gemini; other protocols require model IDs added manually. Azure uses deployment names as model IDs. A custom Vertex or Bedrock provider needs its own key or bearer token; use Pi's built-in provider for ADC or AWS credential-chain authentication. Existing extension protocols and advanced JSON remain editable.
 

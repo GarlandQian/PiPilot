@@ -126,20 +126,26 @@ export class ObservedPiSessionDirectoryRepository {
   async initialize() {
     if (this.initialized) return
 
+    let rawText: string | undefined
     try {
-      const rawText = await readFile(this.filePath, 'utf8')
-      const document = persistedObservedDirectoryDocumentSchema.parse(
-        JSON.parse(rawText) as unknown,
-      )
-      this.scopes = structuredClone(document.scopes)
+      rawText = await readFile(this.filePath, 'utf8')
     } catch (error) {
-      if (isMissingFile(error)) {
-        this.onDiagnostic('created')
-      } else {
+      if (!isMissingFile(error)) throw error
+    }
+    if (rawText === undefined) {
+      this.onDiagnostic('created')
+      this.scopes = []
+    } else {
+      try {
+        const document = persistedObservedDirectoryDocumentSchema.parse(
+          JSON.parse(rawText.replace(/^\uFEFF/u, '')) as unknown,
+        )
+        this.scopes = structuredClone(document.scopes)
+      } catch {
         await this.backUpCorruptFile()
         this.onDiagnostic('recovered-corrupt')
+        this.scopes = []
       }
-      this.scopes = []
     }
 
     this.initialized = true

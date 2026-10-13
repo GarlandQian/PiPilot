@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { SettingsManager } from '@earendil-works/pi-coding-agent'
 import { canonicalProjectPath, resolveProjectTrust } from '../../src/main/project-trust/project-trust-resolution'
 import { ProjectTrustService } from '../../src/main/project-trust/project-trust-service'
 import { RuntimeMaintenanceBusyError } from '../../src/main/pi-host/runtime-maintenance-gate'
@@ -52,6 +53,14 @@ describe('project trust resolution', () => {
     expect(resolveProjectTrust(project, agentDir, sessionFile)).toMatchObject({ state: 'untrusted', trusted: false })
   })
 
+  it('matches Pi for a Windows UTF-8 BOM settings file', () => {
+    withResources(project)
+    writeFileSync(join(agentDir, 'settings.json'), `\uFEFF${JSON.stringify({ defaultProjectTrust: 'always' })}`)
+    const sdk = SettingsManager.create(project, agentDir, { projectTrusted: false })
+    expect(sdk.getDefaultProjectTrust()).toBe('always')
+    expect(resolveProjectTrust(project, agentDir, sessionFile)).toMatchObject({ state: 'trusted', trusted: true, policy: 'always' })
+  })
+
   it('prefers a session decision, then the nearest saved decision', () => {
     withResources(project)
     const parent = canonicalProjectPath(join(root, 'projects'))
@@ -69,6 +78,32 @@ describe('project trust resolution', () => {
 })
 
 describe('project trust service', () => {
+  it('applies the saved default to newly added projects and asks again when that default is disabled', async () => {
+    const recent: Array<{ id: string; path: string }> = []
+    const trust = service(vi.fn(async () => undefined), recent)
+    await trust.initialize()
+    expect(await trust.setPolicy('always')).toBe('always')
+    withResources(project)
+    recent.push({ id: ID, path: project })
+    expect(trust.status(ID)).toMatchObject({ state: 'trusted', trusted: true, policy: 'always' })
+    expect(await trust.setPolicy('ask')).toBe('ask')
+    expect(trust.status(ID)).toMatchObject({ state: 'undecided', trusted: false, policy: 'ask' })
+    expect(() => readFileSync(join(agentDir, 'trust.json'), 'utf8')).toThrow()
+    trust.dispose()
+  })
+
+  it('reports a settings failure instead of appearing to save a default that never took effect', async () => {
+    const reloadRuntimes = vi.fn(async () => undefined)
+    const trust = service(reloadRuntimes)
+    await trust.initialize()
+    const invalidSettings = '{ invalid settings'
+    writeFileSync(join(agentDir, 'settings.json'), invalidSettings)
+    await expect(trust.setPolicy('always')).rejects.toMatchObject({ code: 'PROJECT_TRUST_FAILED' })
+    expect(reloadRuntimes).not.toHaveBeenCalled()
+    expect(readFileSync(join(agentDir, 'settings.json'), 'utf8')).toBe(invalidSettings)
+    trust.dispose()
+  })
+
   it('migrates already added projects to trusted once', async () => {
     withResources(project)
     const trust = service()

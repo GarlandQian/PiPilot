@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import {
   nextTypewriterText,
   shouldStartTypewriterFromEmpty,
-  thinkingDisclosureAfterPhaseChange,
 } from '../../src/renderer/pi-rpc/live-typewriter'
 
 describe('live response typewriter', () => {
@@ -39,15 +38,4 @@ describe('live response typewriter', () => {
     expect(shouldStartTypewriterFromEmpty(false, true, true)).toBe(false)
   })
 
-  it('keeps settled reasoning in place while preserving manual disclosure choices', () => {
-    expect(thinkingDisclosureAfterPhaseChange(true, false, null)).toBe(true)
-    expect(thinkingDisclosureAfterPhaseChange(true, false, true)).toBe(true)
-    expect(thinkingDisclosureAfterPhaseChange(true, false, false)).toBe(false)
-  })
-
-  it('opens a new live reasoning phase and ignores unchanged phases', () => {
-    expect(thinkingDisclosureAfterPhaseChange(false, true, false)).toBe(true)
-    expect(thinkingDisclosureAfterPhaseChange(true, true, true)).toBeNull()
-    expect(thinkingDisclosureAfterPhaseChange(false, false, true)).toBeNull()
-  })
 })

@@ -3,8 +3,10 @@ import { requestProjectTrustPrompt } from './project-trust'
 import { sessionComposerDrafts } from '@/renderer/composer/session-drafts'
 import { CatalogInvalidationQueue } from '@/renderer/catalog-invalidation-queue'
 import {
+  applyWorkspacePresentation,
   createDefaultWorkspaceAdapter,
   loadOfficialSessionCatalog,
+  loadWorkspacePresentation,
   type WorkspaceAdapter,
 } from '@/renderer/adapters/workspace-adapter'
 import type {
@@ -523,24 +525,16 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       return
     }
 
-    const [directory, changes] = await Promise.all([
-      adapter.files.list(workspace.id, '.'),
-      adapter.changes.list(workspace.id),
-    ])
+    const presentation = await loadWorkspacePresentation(adapter, workspace.id)
     if (
       requestId !== contentRequest.current ||
       expectedScopeEpoch !== scopeEpoch.current ||
-      workspace.id !== stateRef.current.workspace?.id
+      workspace.id !== stateRef.current.workspace?.id ||
+      (presentation.filesModified === undefined && presentation.branch === undefined)
     ) {
       return
     }
-    updateState((previous) => ({
-      ...previous,
-      filesModified: directory.modifiedCount,
-      workspace: previous.workspace
-        ? { ...previous.workspace, branch: changes.branch }
-        : null,
-    }))
+    updateState((previous) => applyWorkspacePresentation(previous, presentation))
   }, [adapter, updateState])
 
   const refreshRuntimeState = React.useCallback(async (scope: ConversationScope) => {
@@ -582,13 +576,11 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     scope: ConversationScope,
     refreshContent = false,
   ) => {
+    // Branch/file counts are supplementary. A slow or conflicting Git read
+    // must not block entering the conversation or its project trust prompt.
+    if (refreshContent) void refreshWorkspaceContentFor(stateRef.current.workspace)
     await refreshRuntimeState(scope)
-    await Promise.all([
-      refreshCatalogFor(scope, true),
-      ...(refreshContent
-        ? [refreshWorkspaceContentFor(stateRef.current.workspace)]
-        : []),
-    ])
+    await refreshCatalogFor(scope, true)
   }, [refreshCatalogFor, refreshRuntimeState, refreshWorkspaceContentFor])
 
   React.useEffect(() => {

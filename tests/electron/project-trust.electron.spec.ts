@@ -12,7 +12,7 @@ async function projectSkillLoaded(page: Page) {
 }
 
 test('an added project with Pi resources asks for trust and loads them only once trusted', { tag: '@core' }, async ({}, testInfo) => {
-  test.setTimeout(90_000)
+  test.setTimeout(120_000)
   const userData = testInfo.outputPath('user-data')
   const agentDir = testInfo.outputPath('pi-agent')
   const projectPath = testInfo.outputPath('Trust project')
@@ -78,6 +78,40 @@ test('an added project with Pi resources asks for trust and loads them only once
     await page.locator('[data-context-panel-nav-id="general"]').click()
     await page.getByLabel('New projects').selectOption('never')
     await expect.poll(async () => JSON.parse(await readFile(join(agentDir, 'settings.json'), 'utf8')).defaultProjectTrust).toBe('never')
+
+    // A user's default must apply to the first runtime of a newly added
+    // project, including Windows-authored settings with a UTF-8 BOM.
+    await page.getByLabel('New projects').selectOption('always')
+    await expect.poll(async () => JSON.parse(await readFile(join(agentDir, 'settings.json'), 'utf8')).defaultProjectTrust).toBe('always')
+    await writeFile(join(agentDir, 'settings.json'), `\uFEFF${await readFile(join(agentDir, 'settings.json'), 'utf8')}`)
+    const addResourceProject = async (name: string) => {
+      const directory = testInfo.outputPath(name)
+      await mkdir(join(directory, '.pi', 'skills', 'trust-fixture-skill'), { recursive: true })
+      await writeFile(join(directory, '.pi', 'skills', 'trust-fixture-skill', 'SKILL.md'),
+        '---\nname: trust-fixture-skill\ndescription: Loaded only for a trusted project.\n---\n\nUse the trusted project fixture.\n')
+      const canonical = await realpath(directory)
+      await app.evaluate(({ dialog }, selected) => {
+        Object.defineProperty(dialog, 'showOpenDialog', { configurable: true, value: async () => ({ canceled: false, filePaths: [selected] }) })
+      }, canonical)
+      await page.getByRole('button', { name: 'Back to app', exact: true }).click()
+      await page.getByRole('button', { name: 'Add project folder', exact: true }).click()
+      await expect.poll(() => page.evaluate(() => window.pipilot!.localPi.runtime.status()), { timeout: 20_000 })
+        .toMatchObject({ state: 'ready', cwd: canonical })
+    }
+    await addResourceProject('Trust by default')
+    await expect(composer).toBeEditable()
+    await expect.poll(() => projectSkillLoaded(page), { timeout: 20_000 }).toBe(true)
+    await expect(sheet).toHaveCount(0)
+    await expect(page.locator('[data-project-trust-notice]')).toHaveCount(0)
+
+    await page.getByRole('button', { name: 'Settings', exact: true }).click()
+    await page.locator('[data-context-panel-nav-id="general"]').click()
+    await page.getByLabel('New projects').selectOption('ask')
+    await expect.poll(async () => JSON.parse(await readFile(join(agentDir, 'settings.json'), 'utf8')).defaultProjectTrust).toBe('ask')
+    await addResourceProject('Ask by default')
+    await expect(sheet.getByRole('heading', { name: 'Trust “Ask by default”?' })).toBeVisible()
+    await sheet.getByRole('button', { name: 'Decide Later', exact: true }).click()
+    expect(await projectSkillLoaded(page)).toBe(false)
   } finally {
     await closeFixtureApplication(app)
     await fixture.close()

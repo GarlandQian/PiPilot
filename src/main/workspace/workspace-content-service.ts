@@ -1432,7 +1432,7 @@ export class WorkspaceContentService {
     return value
   }
 
-  private async loadGitSnapshot(root: string): Promise<GitSnapshot> {
+  private async loadGitSnapshot(root: string, retries = 2): Promise<GitSnapshot> {
     try {
       const topLevel = await this.runGitText(root, ['rev-parse', '--show-toplevel'])
       const canonicalTopLevel = await realpath(topLevel.stdout.trim())
@@ -1474,7 +1474,14 @@ export class WorkspaceContentService {
         ]),
         this.runGitText(root, ['branch', '--show-current']).catch(() => ({ stdout: '', stderr: '' })),
       ])
-      if (revision !== await this.gitRevision(root, indexPath)) this.changeConflict()
+      if (revision !== await this.gitRevision(root, indexPath)) {
+        // Status discovery is a read, not a reviewed write. An editor may
+        // refresh/stage the index while it runs; retry the entire snapshot so
+        // the list and statistics describe one revision. Mutations still
+        // validate the caller's original target revision before touching files.
+        if (retries > 0) return this.loadGitSnapshot(root, retries - 1)
+        this.changeConflict()
+      }
       return {
         available: true,
         branch: branchResult.stdout.trim().slice(0, 512),

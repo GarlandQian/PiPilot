@@ -31,6 +31,7 @@ export interface SettingsLayoutProps {
   section: SettingsSectionId
   /** Opens another pane, when one pane points at another (MCP Servers → Packages). */
   onNavigate: (section: SettingsSectionId) => void
+  archivedConversationsHost?(element: HTMLDivElement | null): void
   compact?: boolean
   detailVisible?: boolean
   onBack?: () => void
@@ -41,6 +42,7 @@ export function SettingsLayout({
   operationOwnerKey,
   section,
   onNavigate,
+  archivedConversationsHost,
   compact = false,
   detailVisible = true,
   onBack,
@@ -127,6 +129,7 @@ export function SettingsLayout({
       case 'terminal': return <TerminalSettings />
       case 'about': return <AboutSettings />
       case 'scheduled-tasks': return <ScheduledTasksSettings />
+      case 'archived-conversations': return <div ref={archivedConversationsHost} />
     }
   }
 

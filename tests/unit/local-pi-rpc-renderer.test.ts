@@ -646,6 +646,87 @@ describe('local Pi generation hydration', () => {
 })
 
 describe('local Pi transcript projector', () => {
+  it.each(['retrying', 'stopped', 'completed'] as const)('preserves question editing after native retry omissions while %s', (phase) => {
+    const prompt = user('Retry this request', 1)
+    const firstFailure = { ...assistant([], 'error'), timestamp: 2, errorMessage: '503 Service unavailable' }
+    const secondFailure = { ...assistant([], 'error'), timestamp: 3, errorMessage: '429 Too many requests' }
+    const response = { ...assistant([{ type: 'text' as const, text: 'Recovered' }], 'stop'), timestamp: 4 }
+    const entries: LocalPiSessionEntry[] = [
+      messageEntry('question', null, prompt),
+      messageEntry('failed-first', 'question', firstFailure),
+      { type: 'context_edit', id: 'omit-first', parentId: 'failed-first', timestamp: '2026-10-14T00:00:00Z', targetId: 'failed-first', replacement: null },
+      messageEntry('failed-second', 'omit-first', secondFailure),
+      { type: 'context_edit', id: 'omit-second', parentId: 'failed-second', timestamp: '2026-10-14T00:00:00Z', targetId: 'failed-second', replacement: null },
+      ...(phase === 'completed' ? [messageEntry('answer', 'omit-second', response)] : []),
+    ]
+    const messages = phase === 'retrying' ? [prompt] : [prompt, phase === 'stopped' ? secondFailure : response]
+    const state = createLocalPiProjectorState({
+      generation: 7, sessionId: 'session-a', messages,
+      entrySnapshot: { generation: 7, sessionId: 'session-a', entries, leafId: entries[entries.length - 1]!.id, cursor: entries[entries.length - 1]!.id },
+    })
+    const origins = alignLocalPiMessageOrigins(state.entrySnapshot!, messages)
+    expect(origins?.[0]).toEqual({ entryId: 'question', role: 'user', forkEntryId: 'question' })
+    expect(projectLocalPiTurns(state).find((turn) => turn.kind === 'user')).toMatchObject({ anchorEntryId: 'question' })
+    if (phase === 'stopped') expect(origins?.[1]?.entryId).toBe('failed-second')
+    if (phase === 'completed') expect(projectLocalPiTurns(state).find((turn) => turn.kind === 'response-actions')).toMatchObject({ forkEntryId: 'question' })
+    // Raw history stays intact; omission affects only projected origins.
+    expect(entries.filter((entry) => entry.type === 'message')).toHaveLength(phase === 'completed' ? 4 : 3)
+  })
+
+  it('does not restore omitted earlier failures or bind messages from another branch with matching roles', () => {
+    const prompt = user('Same text', 1)
+    const firstFailure = { ...assistant([], 'error'), timestamp: 2 }
+    const lastFailure = { ...assistant([], 'error'), timestamp: 3 }
+    const entries: LocalPiSessionEntry[] = [
+      messageEntry('question', null, prompt),
+      messageEntry('first', 'question', firstFailure),
+      { type: 'context_edit', id: 'omit-first', parentId: 'first', timestamp: '', targetId: 'first', replacement: null },
+      messageEntry('last', 'omit-first', lastFailure),
+      { type: 'context_edit', id: 'omit-last', parentId: 'last', timestamp: '', targetId: 'last', replacement: null },
+    ]
+    const snapshot = { generation: 7, sessionId: 'session-a', entries, leafId: 'omit-last', cursor: 'omit-last' }
+    expect(alignLocalPiMessageOrigins(snapshot, [prompt, firstFailure])).toBeNull()
+    expect(alignLocalPiMessageOrigins(snapshot, [user('Same text', 99), lastFailure])).toBeNull()
+  })
+
+  it('applies the latest retained context edit without importing omissions from an abandoned branch', () => {
+    const prompt = user('Original question', 1)
+    const answer = { ...assistant([{ type: 'text' as const, text: 'Answer' }], 'stop'), timestamp: 2 }
+    const entries: LocalPiSessionEntry[] = [
+      messageEntry('question', null, prompt),
+      messageEntry('answer', 'question', answer),
+      { type: 'context_edit', id: 'omit', parentId: 'answer', timestamp: '', targetId: 'question', replacement: null },
+      { type: 'context_edit', id: 'replace', parentId: 'omit', timestamp: '', targetId: 'question', replacement: { content: 'Updated question' } },
+      { type: 'context_edit', id: 'other-branch', parentId: 'omit', timestamp: '', targetId: 'answer', replacement: null },
+    ]
+    const snapshot = { generation: 7, sessionId: 'session-a', entries, leafId: 'replace', cursor: 'other-branch' }
+    expect(alignLocalPiMessageOrigins(snapshot, [user('Updated question', 1), answer])).toEqual([
+      { entryId: 'question', role: 'user', forkEntryId: 'question' },
+      { entryId: 'answer', role: 'assistant', forkEntryId: null },
+    ])
+  })
+
+  it('matches Pi checkpoints including their system message without replaying older summaries or edits', () => {
+    const prompt = user('Kept question', 1)
+    const answer = { ...assistant([{ type: 'text' as const, text: 'Kept answer' }], 'stop'), timestamp: 2 }
+    const system = { role: 'system' as const, content: 'Current instructions', timestamp: 4 }
+    const entries: LocalPiSessionEntry[] = [
+      messageEntry('old-system', null, { ...system, timestamp: 0 }),
+      messageEntry('question', 'old-system', prompt),
+      { type: 'compaction', id: 'old-checkpoint', parentId: 'question', timestamp: '', summary: 'Old summary', firstKeptEntryId: 'question', tokensBefore: 100 },
+      messageEntry('answer', 'old-checkpoint', answer),
+      { type: 'compaction', id: 'checkpoint', parentId: 'answer', timestamp: '', summary: 'Current summary', firstKeptEntryId: 'old-system', tokensBefore: 200, systemMessage: system },
+    ]
+    const snapshot = { generation: 7, sessionId: 'session-a', entries, leafId: 'checkpoint', cursor: 'checkpoint' }
+    const messages: LocalPiAgentMessage[] = [system, { role: 'compactionSummary', summary: 'Current summary', tokensBefore: 200, timestamp: 4 }, prompt, answer]
+    expect(alignLocalPiMessageOrigins(snapshot, messages)).toEqual([
+      { entryId: 'checkpoint', role: 'system', forkEntryId: null },
+      { entryId: 'checkpoint', role: 'compactionSummary', forkEntryId: null },
+      { entryId: 'question', role: 'user', forkEntryId: 'question' },
+      { entryId: 'answer', role: 'assistant', forkEntryId: null },
+    ])
+  })
+
   it('projects one exact response action from the active official entry branch', () => {
     const activeUser = user('Repeat this prompt', 2)
     const toolAssistant = {

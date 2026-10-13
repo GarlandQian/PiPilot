@@ -8,8 +8,8 @@ type TreeRequest = (command: { type: 'get_tree_outline' }) => Promise<{ rows: re
  * The open conversation's session tree, read again whenever `key` changes
  * (a new message, a branch switch, a bookmark). Null while unavailable.
  */
-export function useConversationTree(request: TreeRequest | null, key: string | null) {
-  const [tree, setTree] = React.useState<ConversationTree | null>(null)
+export function useConversationTree(request: TreeRequest | null, key: string | null, ownerKey: string | null = key) {
+  const [snapshot, setSnapshot] = React.useState<{ ownerKey: string; tree: ConversationTree } | null>(null)
   const [tick, setTick] = React.useState(0)
   const reload = React.useCallback(() => setTick((value) => value + 1), [])
   // Read again only when the key changes, never because the caller re-rendered.
@@ -18,15 +18,15 @@ export function useConversationTree(request: TreeRequest | null, key: string | n
   const enabled = request !== null
   React.useEffect(() => {
     const read = requestRef.current
-    if (!enabled || !read || !key) { setTree(null); return }
+    if (!enabled || !read || !key || !ownerKey) { setSnapshot(null); return }
     let cancelled = false
     // A large tree waits for the transcript to settle before it is read.
     const timer = setTimeout(() => {
       read({ type: 'get_tree_outline' }).then((result) => {
-        if (!cancelled) setTree(buildConversationTree(result.rows, result.leafId))
-      }, () => { if (!cancelled) setTree(null) })
+        if (!cancelled) setSnapshot({ ownerKey, tree: buildConversationTree(result.rows, result.leafId) })
+      }, () => { if (!cancelled) setSnapshot(null) })
     }, 300)
     return () => { cancelled = true; clearTimeout(timer) }
-  }, [enabled, key, tick])
-  return { tree, reload }
+  }, [enabled, key, ownerKey, tick])
+  return { tree: enabled && key && snapshot?.ownerKey === ownerKey ? snapshot.tree : null, reload }
 }

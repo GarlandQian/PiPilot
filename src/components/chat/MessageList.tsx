@@ -10,6 +10,9 @@ import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { createConversationResponseProjector, latestResponseFailureId, type ResponsePresentation, type ResponsePresentationSegment } from '@/renderer/pi-rpc/response-presentation'
 import { ConversationResponse } from './ConversationResponse'
+import { ConversationRail } from './ConversationRail'
+import { projectConversationRailItems } from './conversation-rail'
+import { ResponseFiles, type ResponseFileItem } from './ResponseFiles'
 import { ResponseErrorCard, type ResponseRetryPolicy } from './ResponseErrorCard'
 import type { RetryActivityProjection } from '@/renderer/pi-rpc/adapters/retry'
 import { MarkdownContent } from './markdown/MarkdownContent'
@@ -47,6 +50,12 @@ interface MessageListProps {
   subagentFocusRequest?: SubagentInspectorFocusRequest | null
   onOpenSubagent?: (toolCallId: string) => void
   onOpenCommand?: (toolCallId: string) => void
+  bookmarks?: ReadonlyMap<string, string>
+  onBookmark?: (entryId: string, label: string | null) => Promise<void>
+  onNavigate?: (entryId: string, toolCallId?: string) => void
+  filesByEntry?: ReadonlyMap<string, readonly ResponseFileItem[]>
+  onOpenFile?: (path: string) => void
+  onReviewFile?: (path: string) => void
 }
 
 export interface ConversationJumpRequest {
@@ -55,9 +64,12 @@ export interface ConversationJumpRequest {
   sequence: number
   query?: string
   match?: ConversationSearchMatch
+  toolCallId?: string
 }
 
 const NO_TURN_KEYS: ReadonlySet<string> = new Set()
+const NO_BOOKMARKS: ReadonlyMap<string, string> = new Map()
+const NO_FILES: readonly ResponseFileItem[] = []
 
 /** Completed rows receive stable data and flags while the live row advances. */
 const ConversationRow = React.memo(function ConversationRow({ response, latest, anchorNodes, highlighted,
@@ -65,8 +77,10 @@ const ConversationRow = React.memo(function ConversationRow({ response, latest, 
   onRetryResponse, onConfigureModel, onStopRetry, retryResponseDisabled, retryPolicy, retryActivity, currentFailureId,
   animateAgentKeys, streamingAgentKeys, hiddenResponseActionIds, motionEnabled,
   onTypingChange, thinkingDurations, forkBusy, forkingId, onFork, canFork, searchRequest,
-}: Pick<MessageListProps, 'sessionKey' | 'selectedSubagentId' | 'subagentFocusRequest' | 'onOpenSubagent' | 'onOpenCommand' | 'onPlanAction' | 'onExportResponse' | 'onExportMessage' | 'onRetryResponse' | 'onConfigureModel' | 'onStopRetry' | 'retryResponseDisabled' | 'retryPolicy' | 'retryActivity'> & {
+  files, onOpenFile, onReviewFile, onNavigate,
+}: Pick<MessageListProps, 'sessionKey' | 'selectedSubagentId' | 'subagentFocusRequest' | 'onOpenSubagent' | 'onOpenCommand' | 'onPlanAction' | 'onExportResponse' | 'onExportMessage' | 'onRetryResponse' | 'onConfigureModel' | 'onStopRetry' | 'retryResponseDisabled' | 'retryPolicy' | 'retryActivity' | 'onOpenFile' | 'onReviewFile' | 'onNavigate'> & {
   response: ResponsePresentation
+  files: readonly ResponseFileItem[]
   currentFailureId: string | null
   /** The newest reply keeps its actions in view; earlier ones show them on hover. */
   latest: boolean
@@ -89,7 +103,9 @@ const ConversationRow = React.memo(function ConversationRow({ response, latest, 
   const actions = responseActions?.kind === 'turn' && responseActions.turn.kind === 'response-actions' && !hiddenResponseActionIds.has(responseActions.turn.id)
     ? responseActions.turn : undefined
   const renderPrompt = React.useCallback((turn: Extract<Turn, { kind: 'user' }>) => <UserMessage turn={turn} onExport={onExportMessage} />, [onExportMessage])
-  const toolSearch = React.useMemo<ToolSearchRequest | undefined>(() => searchRequest?.query && searchRequest.match?.role === 'toolResult'
+  const toolSearch = React.useMemo<ToolSearchRequest | undefined>(() => searchRequest?.toolCallId
+    ? { sequence: searchRequest.sequence, query: '', toolCallId: searchRequest.toolCallId }
+    : searchRequest?.query && searchRequest.match?.role === 'toolResult'
     ? { sequence: searchRequest.sequence, query: searchRequest.query, toolCallId: searchRequest.match.toolCallId } : undefined, [searchRequest])
   const anchorRef = React.useCallback((node: HTMLDivElement | null) => {
     if (!response.anchorEntryId) return
@@ -123,6 +139,8 @@ const ConversationRow = React.memo(function ConversationRow({ response, latest, 
   }
   const match = toolSearch ? searchRequest?.match : undefined
   return <ConversationResponse response={response} sessionKey={sessionKey} focusRequest={subagentFocusRequest}
+    files={<ResponseFiles items={files} onOpen={onOpenFile} onReview={onReviewFile}
+      onLocate={response.anchorEntryId && onNavigate ? (toolCallId) => onNavigate(response.anchorEntryId!, toolCallId) : undefined} />}
     highlighted={highlighted} anchorRef={anchorRef} renderPrompt={renderPrompt} renderSegment={renderSegment}
     searchPreview={match ? <aside data-conversation-search-result className="mac-box mb-4 space-y-1 p-3 text-caption">
       <p className="text-muted-foreground">{t('conversationSearch.toolContext')}</p>
@@ -153,6 +171,12 @@ export function MessageList({
   subagentFocusRequest,
   onOpenSubagent,
   onOpenCommand,
+  bookmarks = NO_BOOKMARKS,
+  onBookmark,
+  onNavigate,
+  filesByEntry,
+  onOpenFile,
+  onReviewFile,
 }: MessageListProps) {
   const t = useT()
   const { appearance } = useSettings()
@@ -270,12 +294,19 @@ export function MessageList({
     }
     pauseFollowing()
     setHighlightedEntryId(jumpRequest.entryId)
-    target.scrollIntoView({
-      block: 'start',
-      behavior: motionEnabled ? 'smooth' : 'auto',
-    })
-    // Let the highlight paint before its short-lived feedback timer starts.
+    // Allow collapsed tool groups to commit their opening before looking up
+    // the exact invocation. The request is cancelled on another jump/session.
     highlightFrameRef.current = requestAnimationFrame(() => {
+      const toolTarget = jumpRequest.toolCallId
+        ? [...target.querySelectorAll<HTMLElement>('[data-tool-id]')].find((node) => node.dataset.toolId === jumpRequest.toolCallId)
+        : undefined
+      ;(toolTarget ?? target).scrollIntoView({
+        block: 'start',
+        behavior: motionEnabled ? 'smooth' : 'auto',
+      })
+      // The file menu closes after choosing Locate. Move keyboard focus with
+      // that explicit jump instead of leaving it on an offscreen menu trigger.
+      toolTarget?.querySelector<HTMLButtonElement>('button[aria-expanded]')?.focus({ preventScroll: true })
       highlightFrameRef.current = requestAnimationFrame(() => {
         highlightFrameRef.current = null
         highlightTimerRef.current = setTimeout(() => {
@@ -319,6 +350,7 @@ export function MessageList({
 
   const responseProjector = React.useMemo(() => createConversationResponseProjector(), [sessionKey])
   const projectedResponseGroups = React.useMemo(() => responseProjector.project(turns, status), [responseProjector, turns, status])
+  const railItems = React.useMemo(() => projectConversationRailItems(projectedResponseGroups, bookmarks), [projectedResponseGroups, bookmarks])
   const currentFailureId = React.useMemo(() => latestResponseFailureId(turns), [turns])
   const transcriptTyping = animateAgentKeys.size > 0 ||
     streamingAgentKeys.size > 0 ||
@@ -353,7 +385,7 @@ export function MessageList({
         </div>
       ) : (
         <div ref={scrollRef} {...scrollProps} tabIndex={0} className="scroll-slim h-full min-w-0 scroll-pt-[calc(var(--toolbar-inset,0px)+12px)] overflow-x-hidden overflow-y-auto outline-none focus-visible:focus-ring">
-          <div ref={contentRef} className={cn('mx-auto flex w-full min-w-0 max-w-(--conversation-width) flex-col gap-10 px-6 pt-[calc(var(--toolbar-inset,0px)+2rem)] pb-8', turns.length === 0 && 'min-h-full justify-center')}>
+          <div ref={contentRef} className={cn('mx-auto flex w-full min-w-0 max-w-(--conversation-width) flex-col gap-10 pr-6 pl-10 pt-[calc(var(--toolbar-inset,0px)+2rem)] pb-8', turns.length === 0 && 'min-h-full justify-center')}>
             {turns.length === 0 && status !== 'running' && status !== 'planning' ? emptyState : null}
             {historyTruncated && (
               <div className="flex items-center gap-1.5 text-caption text-muted-foreground" role="status">
@@ -373,6 +405,10 @@ export function MessageList({
               selectedSubagentId={selectedSubagentId}
               onOpenSubagent={onOpenSubagent}
               onOpenCommand={onOpenCommand}
+              files={response.anchorEntryId ? filesByEntry?.get(response.anchorEntryId) ?? NO_FILES : NO_FILES}
+              onOpenFile={onOpenFile}
+              onReviewFile={onReviewFile}
+              onNavigate={onNavigate}
               onPlanAction={onPlanAction}
               onExportResponse={onExportResponse}
               onExportMessage={onExportMessage}
@@ -409,6 +445,9 @@ export function MessageList({
           </div>
         </div>
       )}
+
+      {ready && sessionKey && onNavigate ? <ConversationRail ownerKey={sessionKey} items={railItems}
+        scrollRef={scrollRef} anchorNodes={anchorNodes} onNavigate={onNavigate} onBookmark={onBookmark} /> : null}
 
       {ready && canJumpToLatest && (
         <Button

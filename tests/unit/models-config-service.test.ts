@@ -57,10 +57,18 @@ async function fixture({ helperAvailable = true, customAgentDirectory = false } 
       responsePreview: 'OK',
     }
   })
+  const agentDirectory = customAgentDirectory ? join(root, 'custom-agent') : join(home, '.pi', 'agent')
+  if (helperAvailable) {
+    await mkdir(agentDirectory, { recursive: true })
+    await writeFile(join(agentDirectory, 'settings.json'), JSON.stringify({
+      defaultProvider: 'anthropic', defaultModel: 'claude-opus-4-5',
+    }))
+  }
+  const management = { modelsDefaults, setDefaultModel, testModel }
   const service = new ModelsConfigService({
     homeDirectory: home,
-    ...(customAgentDirectory ? { agentDirectory: join(root, 'custom-agent') } : {}),
-    management: { modelsDefaults, setDefaultModel, testModel },
+    agentDirectory,
+    management,
   })
   return { home, service, modelsDefaults, setDefaultModel, testModel }
 }
@@ -123,7 +131,7 @@ describe('ModelsConfigService', () => {
       .resolves.toBe('{ "providers": { "legacy": {} } }')
   })
 
-  it('falls back to a read-only settings.json parse when the helper is unavailable', async () => {
+  it('reads global defaults from settings.json without requiring a management helper', async () => {
     const { home, service } = await fixture({ helperAvailable: false })
     const settingsDirectory = join(home, '.pi', 'agent')
     await mkdir(settingsDirectory, { recursive: true })
@@ -146,6 +154,62 @@ describe('ModelsConfigService', () => {
 
     await writeFile(join(settingsDirectory, 'settings.json'), '{ broken', 'utf8')
     await expect(service.defaults()).resolves.toEqual({})
+  })
+
+  it('loads and saves the persisted file without waiting for a stalled defaults helper', async () => {
+    const { service, modelsDefaults } = await fixture()
+    modelsDefaults.mockImplementation(() => new Promise(() => undefined))
+    const initial = await service.load({ kind: 'global' })
+    const content = '{ "providers": { "saved": { "baseUrl": "https://example.test" } } }'
+    const saved = await service.save({ kind: 'global' }, content, initial.fingerprint)
+    expect(saved).toMatchObject({ content, defaultProvider: 'anthropic', defaultModel: 'claude-opus-4-5' })
+    await expect(service.defaults()).resolves.toMatchObject({ defaultProvider: 'anthropic' })
+    expect(modelsDefaults).not.toHaveBeenCalled()
+  })
+
+  it('rejects a concurrent stale save instead of acknowledging and losing one provider edit', async () => {
+    const { service } = await fixture()
+    const initial = await service.load({ kind: 'global' })
+    const first = '{ "providers": { "first": {} } }'
+    const second = '{ "providers": { "second": {} } }'
+    const results = await Promise.allSettled([
+      service.save({ kind: 'global' }, first, initial.fingerprint),
+      service.save({ kind: 'global' }, second, initial.fingerprint),
+    ])
+    expect(results.map((result) => result.status)).toEqual(['fulfilled', 'rejected'])
+    expect(results[1]).toMatchObject({ reason: { code: 'MODELS_CONFIG_CONFLICT' } })
+    const current = await service.load({ kind: 'global' })
+    expect(current.content).toBe(first)
+    await expect(service.save({ kind: 'global' }, second, current.fingerprint)).resolves.toMatchObject({ content: second })
+  })
+
+  it('retains a portable Agent models file across a new service without falling back to the user home', async () => {
+    const { home, service } = await fixture({ customAgentDirectory: true })
+    const agentDirectory = join(home, '..', 'custom-agent')
+    const initial = await service.load({ kind: 'global' })
+    const content = '{ "providers": { "portable": { "apiKey": "fixture-key", "models": [{ "id": "fixture-model" }] } } }'
+    await service.save({ kind: 'global' }, content, initial.fingerprint)
+    const restarted = new ModelsConfigService({ homeDirectory: join(home, 'another-home'), agentDirectory })
+    const restored = await restarted.load({ kind: 'global' })
+    expect(restored.content).toBe(content)
+    expect(restored.providers).toMatchObject([{ id: 'portable', hasApiKey: true, models: [{ id: 'fixture-model' }] }])
+    await expect(readFile(join(home, '.pi', 'agent', 'models.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('loads Windows BOM models and defaults without changing their persisted contents or fingerprint', async () => {
+    const { home, service } = await fixture()
+    const agentDirectory = join(home, '.pi', 'agent')
+    const content = '\uFEFF{"providers":{"windows":{"models":[{"id":"saved-model"}]}}}'
+    await writeFile(join(agentDirectory, 'models.json'), content)
+    await writeFile(join(agentDirectory, 'settings.json'), '\uFEFF{"defaultProvider":"windows","defaultModel":"saved-model"}')
+    const loaded = await service.load({ kind: 'global' })
+    expect(loaded).toMatchObject({
+      valid: true, content, defaultProvider: 'windows', defaultModel: 'saved-model',
+      providers: [{ id: 'windows', models: [{ id: 'saved-model' }] }],
+    })
+    const saved = await service.save({ kind: 'global' }, content, loaded.fingerprint)
+    expect(saved.fingerprint).toBe(loaded.fingerprint)
+    await expect(readFile(loaded.path, 'utf8')).resolves.toBe(content)
   })
 
   it('rejects apiKey values and external edits without overwriting them', async () => {
@@ -268,5 +332,28 @@ describe('ModelsConfigService', () => {
     } finally {
       coordinator.dispose()
     }
+  })
+
+  it('acknowledges a durable save before slow Runtime application and preserves it after reload failure', async () => {
+    const { home, service } = await fixture()
+    const initial = await service.load({ kind: 'global' })
+    const runtime = new FakeConfigApplyRuntime()
+    runtime.busy = false
+    let failReload!: (error: Error) => void
+    runtime.reload.mockImplementation(() => new Promise<void>((_resolve, reject) => { failReload = reject }))
+    const coordinator = new ConfigApplyCoordinator(runtime)
+    const controller = new ModelsConfigController(service, coordinator)
+    try {
+      const content = '{ "providers": { "persisted": { "baseUrl": "https://example.test" } } }'
+      const saved = await controller.save({ kind: 'global' }, content, initial.fingerprint)
+      expect(saved).toMatchObject({ apply: 'pending', snapshot: { content, applyStatus: { state: 'pending' } } })
+      await expect(readFile(saved.snapshot.path, 'utf8')).resolves.toBe(content)
+      await vi.waitFor(() => expect(runtime.reload).toHaveBeenCalledOnce())
+      failReload(new Error('Fixture Runtime unavailable'))
+      await vi.waitFor(() => expect(coordinator.getStatus(saved.snapshot.path)).toMatchObject({ state: 'failed' }))
+      await expect(controller.load({ kind: 'global' })).resolves.toMatchObject({ content, applyStatus: { state: 'failed' } })
+      const restarted = new ModelsConfigService({ homeDirectory: home })
+      await expect(restarted.load({ kind: 'global' })).resolves.toMatchObject({ content, providers: [{ id: 'persisted' }] })
+    } finally { coordinator.dispose() }
   })
 })

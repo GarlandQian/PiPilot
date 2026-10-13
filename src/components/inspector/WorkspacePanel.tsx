@@ -50,7 +50,7 @@ const VISIBLE_REFRESH_MS = 5_000
  * docks or hides. The change list keeps refreshing quietly for the toolbar.
  */
 export function WorkspacePanelContents({ adapter, containers, workspaceId, workspaceName, review, files, fileTabs, visibleFile, active,
-  sessionKey, refreshRevision, lastTurnPaths, onOpenFile, onShowReview, onAddWorkspaceReference, onChangeTotals }: {
+  sessionKey, refreshRevision, lastTurnPaths, reviewFileRequest, onOpenFile, onShowReview, onAddWorkspaceReference, onChangeTotals }: {
   adapter: WorkspaceAdapter
   containers: PanelTabContainers
   workspaceId: string
@@ -64,6 +64,7 @@ export function WorkspacePanelContents({ adapter, containers, workspaceId, works
   sessionKey: string | null
   refreshRevision?: number | string
   lastTurnPaths?: readonly string[]
+  reviewFileRequest?: { path: string; sequence: number } | null
   onOpenFile(path: string): void
   onShowReview(): void
   onAddWorkspaceReference?: (entry: WorkspacePathSearchEntry) => void
@@ -97,6 +98,12 @@ export function WorkspacePanelContents({ adapter, containers, workspaceId, works
   const [fileSearchQuery, setFileSearchQuery] = React.useState('')
   const [diffFocus, setDiffFocus] = React.useState<{ path: string; sequence: number } | null>(null)
   const focusSequence = React.useRef(0)
+  React.useEffect(() => { setDiffFocus(null) }, [sessionKey])
+  React.useEffect(() => {
+    if (!reviewFileRequest) return
+    setDiffScope('unstaged')
+    setDiffFocus({ path: reviewFileRequest.path, sequence: ++focusSequence.current })
+  }, [reviewFileRequest])
   const lifecycle = React.useRef(0)
   const rootLoaded = React.useRef(false)
   const directoryReads = React.useRef(new Map<string, Promise<void>>())

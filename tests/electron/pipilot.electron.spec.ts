@@ -2431,9 +2431,11 @@ test('runs Composer mentions and the local Pi RPC workflow through the renderer 
       `Fixture reasoning: ${thinkingPrompt}`,
       { exact: true },
     )
-    await expect(thinkingToggle).toHaveAttribute('aria-expanded', 'true', {
+    await expect(thinkingToggle).toHaveAttribute('aria-expanded', 'false', {
       timeout: 20_000,
     })
+    await expect(thinkingContent).toBeHidden()
+    await thinkingToggle.click()
     await expect(thinkingContent).toBeVisible()
     await thinkingToggle.evaluate((element) => {
       const probeTarget = element as HTMLButtonElement & {

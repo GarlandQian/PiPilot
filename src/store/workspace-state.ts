@@ -85,6 +85,16 @@ export interface OfficialSessionOpeningTarget {
   sessionId?: string
 }
 
+function sameOfficialSessionRow(left: OfficialPiSessionSummary, right: OfficialPiSessionSummary) {
+  if (!sameConversationScope(left.scope, right.scope)) return false
+  // Notifications/search return IPC copies, not the sidebar's object instance.
+  // Catalog identity survives token refreshes and distinguishes copied files
+  // whose official Pi session ids happen to collide.
+  return left.catalogId && right.catalogId
+    ? left.catalogId === right.catalogId
+    : left.selectionToken === right.selectionToken
+}
+
 /**
  * Keep the pending-row indicator tied to the catalog's opaque identity. Once
  * activation has confirmed a canonical session id, use it only when that id
@@ -117,7 +127,7 @@ export function isOfficialSessionActiveRow(
   if (!activeSessionId || summary.sessionId !== activeSessionId) return false
 
   return !siblings.some((candidate) =>
-    candidate !== summary &&
+    !sameOfficialSessionRow(candidate, summary) &&
     sameConversationScope(candidate.scope, summary.scope) &&
     candidate.sessionId === summary.sessionId)
 }
@@ -134,7 +144,9 @@ export function runtimeStateForOfficialSession(
   if (exact) return exact
 
   const duplicateSessionId = siblings.some((candidate) =>
-    candidate !== summary && candidate.sessionId === summary.sessionId)
+    !sameOfficialSessionRow(candidate, summary) &&
+    sameConversationScope(candidate.scope, summary.scope) &&
+    candidate.sessionId === summary.sessionId)
   if (duplicateSessionId) return undefined
 
   return scoped.find((status) =>

@@ -76,3 +76,12 @@ export function updateTaskOrganization(
   else tasks[key] = next
   return { ...preferences, tasks }
 }
+
+/** Remove metadata only after Main confirms deletion of this exact file. */
+export function removeTaskOrganization(preferences: NavigationPreferences, summary: OfficialPiSessionSummary): NavigationPreferences {
+  const key = taskOrganizationKey(summary)
+  const tasks = { ...preferences.tasks }
+  delete tasks[key]
+  const lastSelected = Object.fromEntries(Object.entries(preferences.lastSelected).filter(([, selected]) => selected !== key))
+  return { tasks, lastSelected }
+}

@@ -1,5 +1,6 @@
 import * as React from 'react'
-import { TbAdjustmentsHorizontal, TbArchive, TbChevronLeft, TbEdit, TbFolderPlus, TbLoader2, TbMessageCircle, TbSearch } from 'react-icons/tb'
+import { createPortal } from 'react-dom'
+import { TbAdjustmentsHorizontal, TbArchive, TbEdit, TbFolderPlus, TbLoader2, TbMessageCircle, TbSearch } from 'react-icons/tb'
 import { Button } from '@/components/ui/button'
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -10,7 +11,7 @@ import { primaryShiftShortcut, primaryShortcut } from '@/lib/keyboard-shortcuts'
 import { useMinuteClock } from '@/lib/relative-time'
 import { cn } from '@/lib/utils'
 import { readProjectExpansionPreferences, writeProjectExpansionPreferences } from '@/renderer/layout-preferences'
-import { readNavigationPreferences, taskOrganizationKey, updateTaskOrganization, writeNavigationPreferences } from '@/renderer/navigation-preferences'
+import { readNavigationPreferences, removeTaskOrganization, taskOrganizationKey, updateTaskOrganization, writeNavigationPreferences } from '@/renderer/navigation-preferences'
 import type { ConversationScope, OfficialPiSessionSummary } from '@/shared/conversation-scope'
 import type { WorkspaceSummary } from '@/shared/schemas/workspace'
 import { usePiExtensionUi, usePiRuntime } from '@/store/pi-rpc'
@@ -21,6 +22,7 @@ import { ConversationList, ProjectNavigationGroup, resolveSidebarSessionIndicato
 import { subscribeNextAttention } from './attention-navigation'
 import { archivedSessionToLeave, isSidebarSessionRunning, presentPinnedSessions, presentSidebarSessions, sidebarConversationTitle, sidebarProjectIndicator, sortSidebarProjects, type SidebarOrganization, type SidebarSessionSort } from '@/components/layout/session-navigation'
 import { projectlessCatalogNeedsDiscovery, sessionCatalogLoadTargets } from './session-catalog-search'
+import { ArchivedConversationsSettings } from '@/components/settings/ArchivedConversationsSettings'
 
 /** Codex shows a handful of tasks per project before "Show more". */
 const INITIAL_SESSION_LIMIT = 5
@@ -39,6 +41,10 @@ function readPreference<T extends string>(key: string, values: readonly T[], fal
 export interface SessionsPanelProps {
   onSearchAll?: () => void
   hidden?: boolean
+  archiveSettingsHost?: HTMLDivElement | null
+  archiveSettingsActive?: boolean
+  deletedSession?: OfficialPiSessionSummary | null
+  onOpenArchived(): void
   conversationReady: boolean
   selectionRevision: number
   renamingSelectionToken: string | null
@@ -57,6 +63,7 @@ export interface SessionsPanelProps {
   beforeTasks?: React.ReactNode
   onImport(scope: ConversationScope): void
   onStartProjectTask(workspaceId: string): void
+  onEnterProjectTask(workspaceId: string): void
   onChooseWorkspace(): void
   onPinWorkspace(workspaceId: string, pinned: boolean): void
   onRevealWorkspace(workspaceId: string): void
@@ -91,9 +98,10 @@ function NavigationRow({ icon, label, shortcut, disabled, onClick, children }: {
 
 export function SessionsPanel({
   onSearchAll,
+  archiveSettingsHost, archiveSettingsActive = false, deletedSession, onOpenArchived,
   hidden = false, conversationReady, selectionRevision, renamingSelectionToken, deletingSelectionToken, isOpeningSessionRow,
   onSelect, onNewPrimary, onNewProjectless, onRenameStart, onRenameCommit, onDuplicate,
-  onDelete, onExport, onPopout, beforeTasks, onImport, onStartProjectTask, onChooseWorkspace, onPinWorkspace, onRevealWorkspace, onRemoveWorkspace,
+  onDelete, onExport, onPopout, beforeTasks, onImport, onStartProjectTask, onEnterProjectTask, onChooseWorkspace, onPinWorkspace, onRevealWorkspace, onRemoveWorkspace,
 }: SessionsPanelProps) {
   const workspace = useWorkspaceStore()
   const pi = usePiRuntime()
@@ -101,7 +109,6 @@ export function SessionsPanel({
   const { snapshot: notifications, markRead } = useTaskNotifications()
   const t = useT()
   const now = useMinuteClock()
-  const [view, setView] = React.useState<'tasks' | 'archived'>('tasks')
   const [organization, setOrganization] = React.useState<SidebarOrganization>(() =>
     readPreference(ORGANIZATION_PREFERENCE, ['project', 'chronological'], 'project'))
   const [sessionSort, setSessionSort] = React.useState<SidebarSessionSort>(() =>
@@ -121,12 +128,15 @@ export function SessionsPanel({
   const projectlessDiscoveryStarted = React.useRef(false)
   const knownProjectIds = React.useRef<ReadonlySet<string> | null>(null)
   // One list and Archived both span every project, so every catalog loads.
-  const loadAllCatalogs = organization === 'chronological' || view === 'archived'
+  const loadAllCatalogs = organization === 'chronological' || archiveSettingsActive
   const loadSessionCatalog = workspace.loadSessionCatalog
   const runtimeSessionStatuses = pi.runtime?.sessionStatuses
   const projectlessCatalogStatus = workspace.sessionCatalogs.projectless?.status
 
   React.useEffect(() => writeNavigationPreferences(preferences), [preferences])
+  React.useEffect(() => {
+    if (deletedSession) setPreferences((current) => removeTaskOrganization(current, deletedSession))
+  }, [deletedSession])
   React.useEffect(() => writeProjectExpansionPreferences(projectExpansion), [projectExpansion])
   React.useEffect(() => {
     try {
@@ -432,7 +442,7 @@ export function SessionsPanel({
           <DropdownMenuRadioItem value="name">{t('sidebar.sessions.sortName')}</DropdownMenuRadioItem>
         </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={() => setView('archived')}>
+        <DropdownMenuItem onSelect={onOpenArchived}>
           <TbArchive aria-hidden />{t('nav.redesign.archived')}
           {archivedCount > 0 && <span className="ml-auto pl-4 text-caption tabular-nums text-muted-foreground">{archivedCount}</span>}
         </DropdownMenuItem>
@@ -450,28 +460,16 @@ export function SessionsPanel({
     </SidebarIconButton>
   )
 
-  if (view === 'archived') {
-    return (
-      <div hidden={hidden} className="min-w-0 px-2.5 pb-4 pt-0.5" data-navigation="archived">
-        {archiveDialog}
-        <button type="button" onClick={() => setView('tasks')}
-          className="mb-2 flex h-[30px] w-full items-center gap-1 rounded-[8px] px-1.5 text-left text-app font-semibold text-foreground outline-none hover:bg-fill focus-visible:focus-ring">
-          <TbChevronLeft className="size-4 text-muted-foreground" aria-hidden />
-          {t('nav.redesign.archived')}
-        </button>
-        {catalogsLoading && (
-          <p role="status" className="mb-2 flex items-center gap-1.5 px-2.5 text-micro text-muted-foreground">
-            <TbLoader2 className="size-3 animate-spin motion-reduce:animate-none" aria-hidden />
-            {t('sidebar.project.loading')}
-          </p>
-        )}
-        <ConversationList {...actions} items={archived.items} activeSessionId={activeSessionId} now={now}
-          variant="archived" emptyLabel={catalogsLoading ? undefined : t('nav.redesign.archiveEmpty')} />
-      </div>
-    )
-  }
-
   return (
+    <>
+    {archiveSettingsHost ? createPortal(<ArchivedConversationsSettings items={archived.items} actions={actions}
+      activeSessionId={activeSessionId} now={now} loading={catalogsLoading}
+      unresolvedCount={Math.max(0, Object.values(preferences.tasks).filter((item) => item.archived).length - archivedCount)}
+      preferences={preferences} onPreferencesChange={setPreferences}
+      onRefresh={() => {
+        void loadSessionCatalog({ kind: 'projectless' }, true).catch(() => undefined)
+        for (const project of workspace.recentProjects) if (project.available) startProjectCatalogLoad(project.id, true)
+      }} />, archiveSettingsHost) : null}
     <div hidden={hidden} className="min-w-0 px-2.5 pb-4 pt-0.5" data-navigation="tasks">
       {archiveDialog}
       <nav aria-label={t('sidebar.nav')} className="mb-3 flex flex-col gap-px">
@@ -521,6 +519,7 @@ export function SessionsPanel({
             onAddProject={onChooseWorkspace}
             onToggleProject={toggleProject}
             onStartProjectTask={onStartProjectTask}
+            onEnterProjectTask={onEnterProjectTask}
             onImportProject={(workspaceId) => onImport({ kind: 'project', workspaceId })}
             onRevealProject={onRevealWorkspace}
             onLoadMore={(id) => setProjectSessionLimits((previous) => ({
@@ -555,5 +554,6 @@ export function SessionsPanel({
         </>
       )}
     </div>
+    </>
   )
 }

@@ -338,7 +338,7 @@ function ConversationRow({
         {indicator === 'unread' && <span className="pointer-events-none absolute top-1/2 left-[3px] size-[5px] -translate-y-1/2 rounded-full bg-primary" aria-hidden />}
         <div className="pointer-events-none relative min-w-0">
           <span className="block truncate text-app">{title}</span>
-          {variant === 'timeline' && item.scopeLabel && <span className="block truncate text-micro text-muted-foreground">{item.scopeLabel}</span>}
+          {(variant === 'timeline' || variant === 'archived') && item.scopeLabel && <span className="block truncate text-micro text-muted-foreground">{item.scopeLabel}</span>}
         </div>
 
         {/* Codex: the age sits on the right; running state replaces it; hover swaps in actions. */}
@@ -495,6 +495,8 @@ export interface ProjectNavigationGroupProps extends ConversationListActions {
   onAddProject(): void
   onToggleProject(projectId: string, expanded: boolean): void
   onStartProjectTask(projectId: string): void
+  /** The empty-project row enters the current draft; explicit New task creates one. */
+  onEnterProjectTask?(projectId: string): void
   onImportProject?(projectId: string): void
   onRevealProject?(projectId: string): void
   onLoadMore(projectId: string): void
@@ -647,6 +649,7 @@ export function ProjectNavigationGroup({
   onAddProject,
   onToggleProject,
   onStartProjectTask,
+  onEnterProjectTask,
   onImportProject,
   onRevealProject,
   onLoadMore,
@@ -751,7 +754,7 @@ export function ProjectNavigationGroup({
                       activeSessionId={activeSessionId}
                       now={now}
                       actions={conversationActions}
-                      onStartProjectTask={onStartProjectTask}
+                      onStartProjectTask={onEnterProjectTask ?? onStartProjectTask}
                       onLoadMore={onLoadMore}
                       onAddProject={onAddProject}
                       onRetryProject={(projectId) => onToggleProject(projectId, true)}

@@ -4,7 +4,6 @@ import type {
   MessageEndEvent,
 } from '@earendil-works/pi-coding-agent'
 import {
-  classifyConversationError,
   isEmptyAssistantPlaceholder,
 } from '../../shared/conversation-errors'
 export { EMPTY_ASSISTANT_CONTENT_FALLBACK } from '../../shared/conversation-errors'
@@ -82,33 +81,9 @@ export function sanitizeRuntimeFinalizedMessage<T extends RuntimeMessage>(
   // Custom messages are extension-owned UI/session records. Provider context
   // is sanitized from a copy below; message_end must not rewrite persistence.
   if (message.role === 'custom') return message
-  const sanitized = sanitizeRuntimeMessageContent(message)
-  if (sanitized.role !== 'assistant') return sanitized
-  // Empty assistant content is an outcome, never a fabricated reply. Preserve
-  // failed/aborted records and their original errors for the transcript.
-  if (sanitized.stopReason === 'aborted') return sanitized
-  const error = classifyConversationError(sanitized.errorMessage)
-  if (sanitized.stopReason === 'error') {
-    if (error.category === 'empty-response' && !/ended without/iu.test(sanitized.errorMessage ?? '')) {
-      return { ...sanitized, errorMessage: `${sanitized.errorMessage}\nUpstream response ended without content.` } as T
-    }
-    if (error.category === 'network' && !/^Network error:/iu.test(sanitized.errorMessage ?? '')) {
-      return { ...sanitized, errorMessage: `Network error: ${sanitized.errorMessage}` } as T
-    }
-    return sanitized
-  }
-  const hasOutput = sanitized.content.some((block) => block.type === 'toolCall' ||
-    (block.type === 'text' && block.text.trim().length > 0 && !isEmptyAssistantPlaceholder(block.text)))
-  if (sanitized.stopReason === 'stop' && !hasOutput) {
-    // Pi's native retry policy recognizes "ended without" and owns the budget,
-    // backoff, cancellation, history omission, and extension settlement.
-    return {
-      ...sanitized,
-      stopReason: 'error',
-      errorMessage: sanitized.errorMessage || 'Upstream response ended without any text or tool output.',
-    } as T
-  }
-  return sanitized
+  // Content cleanup must not change the provider's outcome/error to influence
+  // retry. Pi owns classification, backoff and settlement for the original result.
+  return sanitizeRuntimeMessageContent(message)
 }
 
 function isEmptyCustomMessage(message: RuntimeMessage): boolean {

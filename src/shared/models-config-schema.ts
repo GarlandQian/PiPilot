@@ -26,6 +26,12 @@ const EDIT_OPTIONS = {
   formattingOptions: { insertSpaces: true, tabSize: 2, eol: '\n' },
 }
 
+// Windows editors may prefix UTF-8 JSON with a BOM. Treat it as whitespace
+// while parsing, keeping every offset aligned with the unchanged source text.
+function jsoncParsingText(text: string) {
+  return text.startsWith('\uFEFF') ? ` ${text.slice(1)}` : text
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -78,7 +84,7 @@ function diagnosticAtPath(
 function duplicateKeyDiagnostics(text: string) {
   const diagnostics: ModelsConfigDiagnostic[] = []
   const keysByObject = new Map<string, Set<string>>()
-  visit(text, {
+  visit(jsoncParsingText(text), {
     onObjectProperty(property, offset, length, line, column, pathSupplier) {
       const objectPath = JSON.stringify(pathSupplier())
       const keys = keysByObject.get(objectPath) ?? new Set<string>()
@@ -386,7 +392,7 @@ function providerFromRaw(
 
 export function parseModelsConfigDocument(text: string): ModelsConfigDocument {
   const parseErrors: ParseError[] = []
-  const root = parseTree(text, parseErrors, PARSE_OPTIONS)
+  const root = parseTree(jsoncParsingText(text), parseErrors, PARSE_OPTIONS)
   const diagnostics = parseErrors.map((error) => diagnostic(
     text,
     `MODELS_JSON_${printParseErrorCode(error.error).toUpperCase()}`,
@@ -475,7 +481,7 @@ export function rawModelsProviderDefinition(
   providerId: string,
 ): Record<string, unknown> | undefined {
   const errors: ParseError[] = []
-  const root = parseTree(text, errors, PARSE_OPTIONS)
+  const root = parseTree(jsoncParsingText(text), errors, PARSE_OPTIONS)
   if (errors.length > 0 || !root) return undefined
   const node = findNodeAtLocation(root, ['providers', providerId])
   const value = node ? getNodeValue(node) : undefined
@@ -532,7 +538,7 @@ export function structuredProviderPayload(definition: Record<string, unknown>): 
 
 function requireEditableDocument(text: string) {
   const errors: ParseError[] = []
-  const root = parseTree(text, errors, PARSE_OPTIONS)
+  const root = parseTree(jsoncParsingText(text), errors, PARSE_OPTIONS)
   if (
     errors.length > 0 ||
     root?.type !== 'object' ||
@@ -545,7 +551,7 @@ function requireEditableDocument(text: string) {
 }
 
 function edit(text: string, path: (string | number)[], value: unknown) {
-  return applyEdits(text, modify(text, path, value, EDIT_OPTIONS))
+  return applyEdits(text, modify(jsoncParsingText(text), path, value, EDIT_OPTIONS))
 }
 
 function deeplyEqual(left: unknown, right: unknown): boolean {

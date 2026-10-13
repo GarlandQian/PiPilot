@@ -108,22 +108,29 @@ export class WorkspaceRepository {
   async initialize(): Promise<WorkspaceSnapshot> {
     if (this.initialized) return this.snapshot()
 
+    let rawText: string | undefined
     try {
-      const rawText = readFileSync(this.filePath, 'utf8')
-      const parsed: unknown = JSON.parse(rawText)
-      const document = persistedWorkspaceDocumentSchema.parse(parsed)
-      this.currentId = undefined
-      this.recent = document.recent.map((record) => ({ ...record, available: true }))
+      rawText = readFileSync(this.filePath, 'utf8')
     } catch (error) {
-      if (!isMissingFile(error)) {
+      // A temporarily locked or unreadable file is not corrupt. Do not move
+      // it aside or replace the user's project list with an empty one.
+      if (!isMissingFile(error)) throw error
+    }
+    if (rawText === undefined) {
+      this.onDiagnostic('created')
+      this.recent = []
+    } else {
+      try {
+        const parsed: unknown = JSON.parse(rawText.replace(/^\uFEFF/u, ''))
+        const document = persistedWorkspaceDocumentSchema.parse(parsed)
+        this.recent = document.recent.map((record) => ({ ...record, available: true }))
+      } catch {
         this.backUpCorruptFile()
         this.onDiagnostic('recovered-corrupt')
-      } else {
-        this.onDiagnostic('created')
+        this.recent = []
       }
-      this.currentId = undefined
-      this.recent = []
     }
+    this.currentId = undefined
 
     this.initialized = true
     this.revision = 1

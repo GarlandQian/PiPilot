@@ -23,6 +23,25 @@ function branchedSession(cwd: string) {
   ]
 }
 
+const retryPrompt = 'Edit my question after stopping automatic retry.'
+
+function stoppedRetrySession(cwd: string) {
+  const timestamp = '2026-10-01T02:00:00Z'
+  const entry = (id: string, parentId: string | null, message: object) => ({ type: 'message', id, parentId, timestamp, message })
+  const failedReply = { ...assistant, role: 'assistant', stopReason: 'error', content: [], errorMessage: '429 Too many requests' }
+  // Pi omits failed attempts from model context during native retry. Stopping
+  // the wait leaves these entries in history while the UI restores the last error.
+  return [
+    { type: 'session', version: 3, id: 'stopped-retry-fixture', timestamp, cwd },
+    entry('retry-question', null, { role: 'user', timestamp: 1, content: retryPrompt }),
+    entry('retry-first-error', 'retry-question', failedReply),
+    { type: 'context_edit', id: 'omit-first', parentId: 'retry-first-error', timestamp, targetId: 'retry-first-error', replacement: null },
+    entry('retry-last-error', 'omit-first', { ...failedReply, timestamp: 3 }),
+    { type: 'context_edit', id: 'omit-last', parentId: 'retry-last-error', timestamp, targetId: 'retry-last-error', replacement: null },
+    { type: 'session_info', id: 'retry-name', parentId: 'omit-last', timestamp, name: 'Stopped after retry' },
+  ]
+}
+
 test('switches between edited questions and edits a question into a new branch', async ({}, testInfo) => {
   test.setTimeout(90_000)
   const userData = testInfo.outputPath('user-data'), agentDir = testInfo.outputPath('pi-agent'), projectPath = testInfo.outputPath('Branch project')
@@ -34,7 +53,12 @@ test('switches between edited questions and edits a question into a new branch',
   await mkdir(sessions, { recursive: true })
   const sessionPath = join(sessions, 'branched.jsonl')
   await writeFile(sessionPath, branchedSession(cwd).map((line) => JSON.stringify(line)).join('\n') + '\n')
-  const fixture = await startPiSdkFixture({ agentDir })
+  const retrySessionPath = join(sessions, 'stopped-retry.jsonl')
+  await writeFile(retrySessionPath, stoppedRetrySession(cwd).map((line) => JSON.stringify(line)).join('\n') + '\n')
+  const stoppedPrompt = 'Stop this answer, then edit my question.'
+  let release!: () => void
+  const gate = new Promise<void>((resolveGate) => { release = resolveGate })
+  const fixture = await startPiSdkFixture({ agentDir, promptGates: { [stoppedPrompt]: gate } })
   const app = await electron.launch({ args: [resolve(process.cwd())], env: { ...process.env, ...fixture.env, PIPILOT_E2E_USER_DATA: userData, PIPILOT_E2E_DISABLE_AUTO_RESTART: '1' } })
   try {
     const page = await app.firstWindow()
@@ -71,7 +95,41 @@ test('switches between edited questions and edits a question into a new branch',
     await expect(transcript).toContainText('Blue.')
     // Nothing was deleted: the session file still has every entry.
     expect((await readFile(sessionPath, 'utf8'))).toContain('Carrot, the second answer.')
+
+    const composer = page.getByRole('textbox', { name: 'Message input', exact: true })
+    await composer.fill(stoppedPrompt)
+    await composer.press('Enter')
+    await expect.poll(() => fixture.prompts.includes(stoppedPrompt)).toBe(true)
+    await page.getByRole('button', { name: 'Stop', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0)
+    const stoppedQuestion = transcript.locator('[data-conversation-question]').filter({ hasText: stoppedPrompt })
+    await stoppedQuestion.hover()
+    await expect(stoppedQuestion.locator('[data-question-edit]')).toBeEnabled()
+    await stoppedQuestion.locator('[data-question-edit]').click()
+    await expect(composer).toHaveText(stoppedPrompt)
+    const revisedPrompt = 'Answer this edited question after stopping.'
+    await composer.fill(revisedPrompt)
+    await composer.press('Enter')
+    await expect(transcript.getByText(`Fixture response: ${revisedPrompt}`, { exact: true })).toBeVisible()
+    expect((await readFile(sessionPath, 'utf8'))).toContain(stoppedPrompt)
+    expect((await readFile(sessionPath, 'utf8'))).toContain('Carrot, the second answer.')
+
+    await page.locator('[data-session-list="project"]').getByRole('button', { name: 'Stopped after retry', exact: true }).click()
+    const retryQuestion = transcript.locator('[data-conversation-question]').filter({ hasText: retryPrompt })
+    await retryQuestion.hover()
+    await expect(retryQuestion.locator('[data-question-edit]')).toBeEnabled()
+    await retryQuestion.locator('[data-question-edit]').click()
+    await expect(composer).toHaveText(retryPrompt)
+    const recoveredPrompt = 'Answer this revised question after retry stopped.'
+    await composer.fill(recoveredPrompt)
+    await composer.press('Enter')
+    await expect(transcript.getByText(`Fixture response: ${recoveredPrompt}`, { exact: true })).toBeVisible()
+    const retryHistory = await readFile(retrySessionPath, 'utf8')
+    expect(retryHistory).toContain(retryPrompt)
+    expect(retryHistory).toContain('retry-first-error')
+    expect(retryHistory).toContain('retry-last-error')
   } finally {
+    release()
     await closeFixtureApplication(app)
     await fixture.close()
   }

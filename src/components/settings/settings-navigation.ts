@@ -1,5 +1,5 @@
 import type * as React from 'react'
-import { TbBooks, TbClock, TbCpu, TbInfoCircle, TbPackage, TbPalette, TbServer2, TbSettings, TbStack2, TbTerminal2 } from 'react-icons/tb'
+import { TbArchive, TbBooks, TbClock, TbCpu, TbInfoCircle, TbPackage, TbPalette, TbServer2, TbSettings, TbStack2, TbTerminal2 } from 'react-icons/tb'
 import { PiLogo } from '@/components/PiLogo'
 import type { MessageKey } from '@/i18n'
 import { SETTINGS_ROUTE_IDS, type SettingsRouteId } from '@/renderer/layout-preferences'
@@ -35,6 +35,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroupMeta[] = [
     { id: 'scheduled-tasks', labelKey: 'scheduledTasks.title', descriptionKey: 'scheduledTasks.description', icon: TbClock, tint: '#ff3b30', searchTerms: 'schedule automation recurring 定时 计划 自动 重复 任务' },
   ] },
   { id: 'application', labelKey: 'settings.redesign.applicationGroup', sections: [
+    { id: 'archived-conversations', labelKey: 'settings.archived.title', descriptionKey: 'settings.archived.description', icon: TbArchive, tint: '#8e8e93', searchTerms: 'archived conversations tasks restore delete history cleanup 归档 会话 任务 恢复 删除 历史 清理' },
     { id: 'external-control', labelKey: 'settings.nav.externalControl', descriptionKey: 'settings.redesign.externalControl', icon: PiLogo, tint: '#007aff', searchTerms: 'external control MCP client launcher pipilot-mcp agent bridge 外部 控制 客户端 启动器' },
     { id: 'about', labelKey: 'settings.nav.about', descriptionKey: 'settings.redesign.about', icon: TbInfoCircle, tint: '#8e8e93', searchTerms: 'version updates release download credits acknowledgements license 版本 更新 发布 下载 致谢 许可' },
   ] },

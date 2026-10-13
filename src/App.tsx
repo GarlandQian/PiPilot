@@ -42,6 +42,9 @@ import { CompareModelsSheet } from '@/components/chat/CompareModelsSheet'
 import { selectComparison } from '@/store/comparisons'
 import { useConversationTree } from '@/store/conversation-tree'
 import { branchPoints } from '@/renderer/pi-rpc/conversation-tree'
+import { projectConversationContext } from '@/renderer/pi-rpc/conversation-context'
+import { conversationResourcePath } from '@/renderer/conversation-resource-path'
+import type { ResponseFileItem } from '@/components/chat/ResponseFiles'
 import { ConversationSearchDialog } from '@/components/chat/ConversationSearchDialog'
 import { ConversationExportDialog } from '@/components/chat/ConversationExportDialog'
 import { ConversationImportDialog } from '@/components/chat/ConversationImportDialog'
@@ -201,6 +204,8 @@ export default function App() {
   } = useWorkbenchNavigation()
   const [searchScope, setSearchScope] = React.useState<'current' | 'all'>('current')
   const [searchOpen, setSearchOpen] = React.useState(false)
+  const [archiveSettingsHost, setArchiveSettingsHost] = React.useState<HTMLDivElement | null>(null)
+  const [deletedSession, setDeletedSession] = React.useState<OfficialPiSessionSummary | null>(null)
   const [exportTarget, setExportTarget] = React.useState<ConversationExportTarget | null>(null)
   const [exportName, setExportName] = React.useState('')
   const [importScope, setImportScope] = React.useState<ConversationScope | null>(null)
@@ -363,7 +368,16 @@ export default function App() {
   const treeRequest = React.useCallback((command: { type: 'get_tree_outline' }) => actions.request(command), [actions])
   const treeKey = conversationReady && 'sessionId' in conversation
     ? `${conversation.sessionId}:${pi.session?.messageCount ?? 0}:${pi.session?.isStreaming ? 1 : 0}:${treeRevision}` : null
-  const { tree: conversationTree } = useConversationTree(conversationReady ? treeRequest : null, treeKey)
+  const { tree: conversationTree } = useConversationTree(conversationReady ? treeRequest : null, treeKey, conversationSessionKey)
+  const conversationBookmarks = React.useMemo(() => new Map(conversationTree?.rows.flatMap((row) => row.label ? [[row.id, row.label] as const] : []) ?? []), [conversationTree])
+  const bookmarkOwner = React.useRef(conversationSessionKey)
+  bookmarkOwner.current = conversationSessionKey
+  const setConversationBookmark = React.useCallback(async (entryId: string, label: string | null) => {
+    const owner = conversationSessionKey
+    if (!owner || bookmarkOwner.current !== owner || !conversationTree?.byId.has(entryId)) throw new Error(t('conversationRail.bookmarkFailed'))
+    await actions.setLabel(entryId, label)
+    if (bookmarkOwner.current === owner) reloadConversationTree()
+  }, [actions, conversationSessionKey, conversationTree, reloadConversationTree, t])
   const runBranchOperation = React.useCallback(async (operation: () => Promise<unknown>) => {
     await branchFeedback.run('branch', async () => { await operation(); reloadConversationTree() }, t('branches.failed'))
   }, [branchFeedback, reloadConversationTree, t])
@@ -438,12 +452,13 @@ export default function App() {
   React.useEffect(() => {
     setConversationJump(null)
   }, [conversationSessionKey])
-  const navigateConversationOutline = React.useCallback((entryId: string) => {
+  const navigateConversationOutline = React.useCallback((entryId: string, toolCallId?: string) => {
     if (!conversationSessionKey) return
     setConversationJump({
       sessionKey: conversationSessionKey,
       entryId,
       sequence: ++conversationJumpSequence.current,
+      ...(toolCallId ? { toolCallId } : {}),
     })
   }, [conversationSessionKey])
   const navigateContextRecord = React.useCallback((entryId: string) => {
@@ -586,8 +601,9 @@ export default function App() {
   }, [requestSessionOpening, setRail])
   const openConversation = React.useCallback((item: SidebarConversationItem) => {
     setPendingSearchJump(null)
+    setRail('sessions')
     requestSessionOpening(item)
-  }, [requestSessionOpening])
+  }, [requestSessionOpening, setRail])
   const openConversationFromPalette = React.useCallback((item: SidebarConversationItem) => {
     setPendingSearchJump(null)
     setRail('sessions')
@@ -623,6 +639,21 @@ export default function App() {
   }, [workspace.activeScope, workspace.recentProjects])
 
   const projectAvailable = workspace.activeScope.kind === 'project' && workspace.workspace?.available === true
+  const resourceRoot = projectAvailable && conversationReady ? pi.runtime?.cwd : undefined
+  const filesByEntry = React.useMemo(() => {
+    const grouped = new Map<string, ResponseFileItem[]>()
+    if (!conversationReady || !sessionEntries || sessionEntries.sessionId !== workspace.activeSessionId || sessionEntries.generation !== pi.runtime?.generation) return grouped
+    for (const file of projectConversationContext(sessionEntries.entries, sessionEntries.leafId, []).changedFiles) {
+      const item: ResponseFileItem = resourceRoot && conversationResourcePath(file.path, resourceRoot)
+        ? file : { ...file, openDisabledReason: t('responseFiles.unavailable') }
+      const files = grouped.get(file.entryId) ?? []
+      files.push(item)
+      grouped.set(file.entryId, files)
+    }
+    return grouped
+  }, [conversationReady, sessionEntries, workspace.activeSessionId, pi.runtime?.generation, resourceRoot, t])
+  const [reviewFileRequest, setReviewFileRequest] = React.useState<{ sessionKey: string; path: string; sequence: number } | null>(null)
+  const reviewFileSequence = React.useRef(0)
   /** Closing a tab also lets go of what it showed. */
   const closePanelTab = React.useCallback((id: string) => {
     if (id === 'action') setActionRun(null)
@@ -641,6 +672,16 @@ export default function App() {
   const openFile = React.useCallback((path: string) => {
     if (projectAvailable) panel.open(panelTab('file', path))
   }, [panel, projectAvailable])
+  const openConversationFile = React.useCallback((path: string) => {
+    const relative = resourceRoot ? conversationResourcePath(path, resourceRoot) : null
+    if (relative) openFile(relative)
+  }, [openFile, resourceRoot])
+  const reviewConversationFile = React.useCallback((path: string) => {
+    const relative = resourceRoot ? conversationResourcePath(path, resourceRoot) : null
+    if (!relative || !conversationSessionKey) return
+    setReviewFileRequest({ sessionKey: conversationSessionKey, path: relative, sequence: ++reviewFileSequence.current })
+    openReview()
+  }, [conversationSessionKey, openReview, resourceRoot])
   /** ⌘P: the files tab with its search field ready. */
   const searchFiles = React.useCallback(() => {
     if (!projectAvailable) return
@@ -966,7 +1007,7 @@ export default function App() {
     {panel.state.tabs.tree ? createPortal(<ConversationTreePanel tree={conversationTree} busy={!conversationReady || (pi.session?.isStreaming ?? false)}
       onSwitch={(leafId, summarize) => runBranchOperation(() => actions.navigateTree(leafId, { summarize }))}
       onEdit={(entryId) => runBranchOperation(() => actions.navigateTree(entryId))}
-      onLabel={async (entryId, label) => { await actions.setLabel(entryId, label); reloadConversationTree() }} />, panelContainers.get('tree')) : null}
+      onLabel={setConversationBookmark} />, panelContainers.get('tree')) : null}
     {panelWorkspace && workspaceAdapter ? <WorkspacePanelContents
       key={panelWorkspace.id}
       adapter={workspaceAdapter}
@@ -981,6 +1022,7 @@ export default function App() {
       sessionKey={conversationSessionKey}
       refreshRevision={`${conversationScopeKey(workspace.activeScope)}:${pi.status}:${pi.session?.isStreaming ?? false}:${commitRevision}`}
       lastTurnPaths={lastTurnPaths}
+      reviewFileRequest={reviewFileRequest?.sessionKey === conversationSessionKey ? reviewFileRequest : null}
       onOpenFile={openFile}
       onShowReview={openReview}
       onAddWorkspaceReference={conversationReady ? addWorkspaceReferenceToComposer : undefined}
@@ -1077,6 +1119,10 @@ export default function App() {
             >
               <SessionsPanel
                 onSearchAll={() => { setSearchScope('all'); setSearchOpen(true) }}
+                archiveSettingsHost={archiveSettingsHost}
+                deletedSession={deletedSession}
+                archiveSettingsActive={!conversationWorkspace && settingsSection === 'archived-conversations'}
+                onOpenArchived={() => setSettingsSection('archived-conversations')}
                 hidden={!conversationWorkspace}
                 conversationReady={conversationReady}
                 selectionRevision={selectionRevision}
@@ -1126,6 +1172,19 @@ export default function App() {
                     kind: 'project',
                     workspaceId,
                   }))
+                  setRail('sessions')
+                }}
+                onEnterProjectTask={(workspaceId) => {
+                  // Empty sessions are not on disk until their first message.
+                  // The placeholder should return to that draft rather than
+                  // create a fresh session and briefly blank the whole view.
+                  if (conversationReady && workspace.activeScope.kind === 'project' &&
+                    workspace.activeScope.workspaceId === workspaceId && pi.session?.messageCount === 0 &&
+                    !pi.session.isStreaming && !pi.session.isCompacting && pi.queue.pendingCount === 0) {
+                    startWriting()
+                  } else {
+                    requestSwitch(() => workspace.newSession({ kind: 'project', workspaceId }))
+                  }
                   setRail('sessions')
                 }}
                 onChooseWorkspace={() => {
@@ -1259,6 +1318,12 @@ export default function App() {
               selectedSubagentId={panel.isVisible('subagent') ? selectedSubagentCall?.id ?? null : null}
               onOpenSubagent={openSubagentExecution}
               onOpenCommand={openCommandExecution}
+              bookmarks={conversationBookmarks}
+              onBookmark={setConversationBookmark}
+              onNavigate={navigateConversationOutline}
+              filesByEntry={filesByEntry}
+              onOpenFile={projectAvailable ? openConversationFile : undefined}
+              onReviewFile={projectAvailable ? reviewConversationFile : undefined}
             />
             <Composer
               status={conversationReady ? (
@@ -1352,6 +1417,7 @@ export default function App() {
               operationOwnerKey={operationOwnerKey}
               section={settingsSection}
               onNavigate={setSettingsSection}
+              archivedConversationsHost={setArchiveSettingsHost}
               compact={frameLayoutMode === 'settings-compact'}
               detailVisible={frameLayoutMode !== 'settings-compact' || compactSettingsDetailOpen}
               onBack={frameLayoutMode === 'settings-compact' ? closeCompactSettingsDetail : undefined}
@@ -1521,6 +1587,7 @@ export default function App() {
                   target.summary.scope,
                   target.summary.selectionToken,
                 ).then(() => {
+                  setDeletedSession(target.summary)
                   setPendingDeletion(null)
                 }).catch((error) => {
                   setDeletionError(

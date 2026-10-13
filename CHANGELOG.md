@@ -10,6 +10,14 @@ Each version section supplies the highlights for its GitHub Release. Download li
 
 ### 中文
 
+- **轮次预览与涉及文件**：对话左侧增加轮次刻度、Markdown 预览和 Pi 原生标签收藏，点击只跳转阅读，不中断执行。移除概览中含义不清的「产出」，将成功写入和修改的文件归入对应回复，提供打开当前文件、查看更改和定位工具调用。
+- **会话导航与归档**：重复点击当前会话或空项目的开始任务不再重新加载；已归档会话移入设置，可恢复、单独删除或确认后删除所有可用的归档会话，失败项保留以便重试。
+- **完成通知跳转**：用稳定的会话文件身份识别通知目标，避免将通知返回的新对象误判为另一条会话，重复加载已经打开的内容。
+- **停止后编辑消息**：正确对应 Pi 原生重试排除的失败回复与会话历史，停止等待或重试结束后仍可编辑原问题并重新发送，保留原有分支记录。
+- **添加项目**：Git 分支与变更信息改为独立后台读取，短暂的索引冲突不再阻止打开项目或跳过信任提示；迟到的读取结果不会污染其他项目。
+- **思考与模型保存**：思考默认折叠，手动展开后回复结束不会自动收回；模型配置写入后立即确认，Runtime 重载单独跟踪，避免耗时重载一直占用保存按钮。
+- **Windows 数据读取与后台进程**：支持带 UTF-8 BOM 的项目、会话索引、模型和信任设置；读取失败不再被当成损坏元数据并重置。Pi SDK 后台包管理、命令与工具探测补齐隐藏控制台窗口的参数。
+- **原生重试**：移除 PiPilot 对自动重试判断的覆盖，统一使用 Pi 原生重试流程，保留次数设置、状态展示、取消和手动恢复入口。
 - **消息右键菜单**：复制选中内容、完整消息 Markdown、代码和链接，引用消息或选区，编辑并重新提问，或从当前问题创建分叉；支持键盘打开菜单。
 - **侧问更完整**：独立选择模型和思考级别，查看思考过程与工具调用，在侧问面板直接回答扩展的交互问题；关闭面板或切换任务后保留草稿与历史，可重新打开已保存的侧问并继续，也可进入完整对话。
 - **终端链接**：终端和运行命令输出中的网页与本地预览地址支持按修饰键打开，右键可复制地址、在默认浏览器或 PiPilot 浏览器中打开，普通点击继续用于选择文本。
@@ -19,6 +27,14 @@ Each version section supplies the highlights for its GitHub Release. Download li
 
 ### English
 
+- **Turn previews and files involved:** Add transcript-edge ticks, Markdown previews and bookmarks backed by Pi session labels. Jumping only changes the reading position and never interrupts execution. Replace the ambiguous Outputs section with successful writes and edits grouped under each response, with actions to open the current file, review changes and locate its tool call.
+- **Conversation navigation and archives:** Reselecting the current conversation or an empty project's Start task no longer reloads the view. Manage archived conversations in Settings, with restore, individual deletion and confirmed deletion of all available archived conversations; failed items remain available to retry.
+- **Completion notification navigation:** Match notification targets by stable session-file identity so a new IPC object does not cause an already-open conversation to reload.
+- **Editing after stopping:** Align conversation history with failed attempts omitted by Pi's native retries, keeping questions editable after stopping a retry or finishing retries. Edited questions can be sent again without deleting the original branches.
+- **Adding projects:** Read Git branch and change information independently in the background, so a transient index conflict cannot block opening the project or its trust prompt. Late results cannot update another project.
+- **Thinking and model saves:** Thinking starts collapsed and manually expanded content stays open after completion. Model file saves are acknowledged separately from Runtime reload, so reload latency no longer holds the save button.
+- **Windows storage and background processes:** Accept UTF-8 BOMs in project metadata, session indexes, models and trust settings. Read failures no longer reset metadata as though it were corrupt. Hide console windows for Pi SDK background package management, commands and tool probes.
+- **Native retries:** Remove PiPilot's automatic retry classification override and use Pi's native retry flow, retaining retry settings, status, cancellation and manual recovery actions.
 - **Message context menus:** Copy selected text, complete message Markdown, code or links; quote a message or selection, edit and ask again, or fork from the current question. Menus also open from the keyboard.
 - **More complete side questions:** Choose a separate model and thinking level, inspect thinking and tool calls, and answer extension questions inside the side panel. Drafts and history survive closing the panel or switching tasks; reopen saved side conversations to continue, or open the full conversation.
 - **Terminal links:** Modifier-click web and local preview addresses in terminals and command output. Right-click to copy the address or open it in the default browser or PiPilot browser; ordinary clicks remain available for text selection.

@@ -110,7 +110,7 @@ function contextEntries(
     const entry = path[index]
     if (!entry) continue
     if (entry.id === compaction.firstKeptEntryId) foundFirstKept = true
-    if (foundFirstKept) selected.push(entry)
+    if (foundFirstKept && !(entry.type === 'message' && entry.message.role === 'system')) selected.push(entry)
   }
   for (let index = compactionIndex + 1; index < path.length; index += 1) {
     const entry = path[index]
@@ -153,14 +153,58 @@ export function alignLocalPiMessageOrigins(
   const path = activeSessionPath(snapshot.entries, snapshot.leafId)
   if (!path) return null
 
+  const context = contextEntries(path)
+  const edits = new Map<string, Extract<LocalPiSessionEntry, { type: 'context_edit' }>['replacement']>()
+  for (const entry of context) {
+    if (entry.type === 'context_edit') edits.set(entry.targetId, entry.replacement)
+  }
   const origins: LocalPiMessageOrigin[] = []
-  for (const entry of contextEntries(path)) {
+  const sourceEntries: LocalPiSessionEntry[] = []
+  for (const [index, entry] of context.entries()) {
+    // Pi's native retry records context_edit omissions while preserving raw
+    // history. Only the current projected context participates in alignment.
+    if (edits.has(entry.id) && edits.get(entry.id) === null) continue
+    // A retained older compaction is metadata; only the newest checkpoint
+    // emits a summary (and, in current Pi, its optional system message).
+    if (entry.type === 'compaction') {
+      if (index > 0) continue
+      if (entry.systemMessage) {
+        origins.push({ entryId: entry.id, role: 'system', forkEntryId: null })
+        sourceEntries.push(entry)
+      }
+    }
     const origin = messageOrigin(entry)
-    if (origin) origins.push(origin)
+    if (origin) {
+      origins.push(origin)
+      sourceEntries.push(entry)
+    }
+  }
+  // get_messages retains the final persisted error in the UI when native
+  // retry has omitted it and the user stops waiting. Restore that exact tail
+  // only, at the same final position as the Main snapshot. Earlier attempts
+  // and entries on another branch must never acquire editable origins.
+  let lastMessageEntry: Extract<LocalPiSessionEntry, { type: 'message' }> | undefined
+  for (let index = path.length - 1; index >= 0; index -= 1) {
+    const entry = path[index]!
+    if (entry.type !== 'message' ||
+        (entry.message.role !== 'assistant' && entry.message.role !== 'user' && entry.message.role !== 'toolResult')) continue
+    lastMessageEntry = entry
+    break
+  }
+  const lastMessage = messages[messages.length - 1]
+  if (lastMessageEntry?.type === 'message' && lastMessageEntry.message.role === 'assistant' &&
+      lastMessageEntry.message.stopReason === 'error' && lastMessage?.role === 'assistant' &&
+      lastMessage.stopReason === 'error' && lastMessage.timestamp === lastMessageEntry.message.timestamp &&
+      !sourceEntries.includes(lastMessageEntry)) {
+    origins.push({ entryId: lastMessageEntry.id, role: 'assistant', forkEntryId: null })
+    sourceEntries.push(lastMessageEntry)
   }
   if (origins.length !== messages.length) return null
   for (let index = 0; index < messages.length; index += 1) {
-    if (origins[index]?.role !== messages[index]?.role) return null
+    const message = messages[index]!
+    if (origins[index]?.role !== message.role) return null
+    const entry = sourceEntries[index]
+    if (entry?.type === 'message' && entry.message.timestamp !== message.timestamp) return null
   }
   return origins
 }

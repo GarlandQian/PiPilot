@@ -9,6 +9,7 @@ import {
 } from '@/store/pi-rpc'
 import { conversationScopeKey, type useWorkspaceStore } from '@/store/workspace'
 import { sidebarConversationTitle } from '@/components/layout/session-navigation'
+import { isOfficialSessionActiveRow, runtimeStateForOfficialSession } from '@/store/workspace-state'
 
 interface SessionOpening {
   operationId: number
@@ -118,6 +119,20 @@ export function useSessionOpening({
     item: SidebarConversationItem,
     afterHydration?: () => Promise<void>,
   ) => {
+    const siblings = workspace.sessionCatalogs[conversationScopeKey(item.summary.scope)]?.rows ?? []
+    const selected = runtimeStateForOfficialSession(item.summary, pi.runtime?.sessionStatuses, siblings)?.selected
+    const currentTarget = pi.runtime ? {
+      scopeKey: conversationScopeKey(item.summary.scope),
+      generation: pi.runtime.generation,
+      sessionId: item.summary.sessionId,
+    } : null
+    // Clicking the open conversation is navigation, not a request to tear down
+    // and hydrate its transcript again. Keep running work and its input intact.
+    // Failed/loading views still take the normal activation path so clicks retry.
+    if (!openingRef.current && !switching && !afterHydration &&
+      isOfficialSessionActiveRow(item.summary, siblings, workspace.activeScope, workspace.activeSessionId, selected) &&
+      piGenerationHydrationOutcome(currentTarget, conversationScopeKey(workspace.activeScope),
+        workspace.activeSessionId, pi.runtime, pi.session, pi.hydration, pi.loading, transcriptLoading) === 'ready') return
     abandonSessionOpening()
     let resolveHydration: (success: boolean) => void = () => undefined
     const hydration = new Promise<boolean>((resolve) => { resolveHydration = resolve })
@@ -154,7 +169,7 @@ export function useSessionOpening({
         throw error
       }
     }, opening.operationId)
-  }, [abandonSessionOpening, requestSwitch, settleSessionOpening, t, workspace])
+  }, [abandonSessionOpening, requestSwitch, settleSessionOpening, t, workspace, pi, switching, transcriptLoading])
 
   return { openingSession, switching, selectionRevision, abandonSessionOpening, requestSwitch, requestSessionOpening }
 }

@@ -224,6 +224,33 @@ test('keeps background completion unread until its exact task is opened, while v
     await expect(page.getByRole('button', { name: 'Notifications', exact: true })).toBeVisible()
     await expect(notificationPopover(page)).toHaveCount(0)
 
+    // A notification resolves a fresh IPC object/capability, even when its
+    // physical conversation is already visible. It must not reload that view.
+    await page.evaluate((scope) => window.pipilot!.sessionCatalog.refresh(scope), foreground.scope)
+    const composer = page.getByRole('textbox', { name: 'Message input', exact: true })
+    await composer.fill('Keep this unsent follow-up while opening the notification')
+    const transcript = page.getByRole('log', { name: 'Conversation', exact: true })
+    await transcript.evaluate((element) => {
+      const state = globalThis as typeof globalThis & { notificationViewWatch?: { removed: boolean; observer: MutationObserver } }
+      const content = element.firstElementChild!
+      const observer = new MutationObserver(() => {
+        if (!content.isConnected) state.notificationViewWatch!.removed = true
+      })
+      state.notificationViewWatch = { removed: false, observer }
+      observer.observe(element, { childList: true, subtree: true })
+    })
+    await page.getByRole('button', { name: 'Notifications', exact: true }).click()
+    await page.locator(`[data-task-notification-id="${foreground.id}"]`).getByRole('button').click()
+    await expect(notificationPopover(page)).toHaveCount(0)
+    await expectResponse(page, 'Complete while I am reading this task')
+    await expectSelected(page, runtimeA)
+    await expect(composer).toHaveText('Keep this unsent follow-up while opening the notification')
+    expect(await transcript.evaluate(() => {
+      const state = globalThis as typeof globalThis & { notificationViewWatch?: { removed: boolean; observer: MutationObserver } }
+      state.notificationViewWatch!.observer.disconnect()
+      return state.notificationViewWatch!.removed
+    })).toBe(false)
+
     const beforePlugin = await notificationItems(page)
     await submit(page, '/fixture-command')
     await expect(page.locator('[data-conversation-notices]').getByText('Fixture command ran', { exact: true })).toBeVisible()

@@ -25,6 +25,7 @@ export const SETTINGS_ROUTE_IDS = [
   'resources',
   'local-environment',
   'scheduled-tasks',
+  'archived-conversations',
   'external-control',
   'about',
 ] as const

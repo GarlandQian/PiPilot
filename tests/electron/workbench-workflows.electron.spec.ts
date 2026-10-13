@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { _electron as electron, expect, test } from '@playwright/test'
 import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from '../../src/shared/settings'
@@ -52,7 +52,37 @@ test('connects project actions, conversation navigation and resource views witho
     await page.getByRole('option').filter({ hasText: 'First project inspection' }).click()
     await expect(page.locator('[data-outline-highlighted="true"]')).toContainText('First project inspection')
     await expect(readmeResource).toBeVisible()
+    const rail = page.getByRole('navigation', { name: 'Conversation turns', exact: true })
+    const firstTick = rail.getByRole('button', { name: 'Turn 1: First project inspection', exact: true })
+    await expect(rail.getByRole('button')).toHaveCount(3)
+    await input.fill('Keep this unsent draft while browsing')
+    const beforeNavigation = await page.evaluate(() => window.pipilot!.localPi.runtime.status())
+    await firstTick.hover()
+    const preview = page.locator('[data-conversation-rail-preview]')
+    await expect(preview).toContainText('Fixture response: First project inspection')
+    await preview.getByRole('button', { name: 'Bookmark this turn', exact: true }).click()
+    await expect(firstTick).toHaveAttribute('data-bookmarked', 'true')
+    await expect.poll(async () => (await readFile(beforeNavigation.sessionFile!, 'utf8')).includes('"type":"label"')).toBe(true)
+    await firstTick.focus()
+    await firstTick.press('ArrowDown')
+    const secondTick = rail.getByRole('button', { name: 'Turn 2: Second project inspection', exact: true })
+    await expect(secondTick).toBeFocused()
+    await expect(preview).toContainText('Fixture response: Second project inspection')
+    await secondTick.press('Enter')
+    await expect(page.locator('[data-outline-highlighted="true"]')).toContainText('Second project inspection')
+    await expect(input).toHaveText('Keep this unsent draft while browsing')
+    const afterNavigation = await page.evaluate(() => window.pipilot!.localPi.runtime.status())
+    expect([afterNavigation.generation, afterNavigation.sessionFile]).toEqual([beforeNavigation.generation, beforeNavigation.sessionFile])
+    await firstTick.hover()
+    await expect(preview.getByRole('button', { name: 'Remove bookmark', exact: true })).toBeVisible()
     await page.screenshot({ path: testInfo.outputPath('workbench-reading-light.png'), animations: 'disabled' })
+    await page.evaluate(() => window.pipilot!.settings.update({ appearance: { theme: 'dark' } }))
+    await page.setViewportSize({ width: 1100, height: 680 })
+    await expect(preview).toBeVisible()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    await page.screenshot({ path: testInfo.outputPath('conversation-rail-dark-minimum.png'), animations: 'disabled' })
+    await preview.press('Escape')
+    await page.setViewportSize({ width: 1440, height: 900 })
     // Without Git, the review says so instead of showing a blank list.
     await selectInspectorView(page, 'Review')
     await expect(page.locator('[data-panel-view="review"]')).toContainText('Git changes are unavailable for this workspace.')
@@ -72,8 +102,11 @@ test('connects project actions, conversation navigation and resource views witho
     await input.fill('Run background review')
     await page.getByRole('button', { name: 'Send', exact: true }).click()
     await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible()
+    await firstTick.click()
+    await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'New task in Canvas', exact: true }).click()
     await expect(page.locator('[data-conversation-welcome]')).toBeVisible()
+    await expect(rail).toHaveCount(0)
     // Background work keeps its row and shows it is running instead of its age.
     const reviewRow = projectTasks.getByRole('button', { name: 'Workspace review', exact: true }).locator('..')
     await expect(reviewRow.locator('[data-session-indicator="running"]')).toHaveCount(1)
@@ -84,6 +117,7 @@ test('connects project actions, conversation navigation and resource views witho
     await expect(reviewRow.locator('[data-session-indicator="running"]')).toHaveCount(0, { timeout: 15_000 })
     await projectTasks.getByRole('button', { name: 'Workspace review', exact: true }).click()
     await expect(page.getByRole('log', { name: 'Conversation' })).toContainText('Fixture response: Run background review')
+    await expect(firstTick).toHaveAttribute('data-bookmarked', 'true')
   } finally {
     await closeFixtureApplication(app)
     await fixture.close()

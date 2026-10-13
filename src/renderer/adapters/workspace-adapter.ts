@@ -63,6 +63,44 @@ export async function loadOfficialSessionCatalog(
   return { status: 'ready', rows }
 }
 
+export interface WorkspacePresentation {
+  workspaceId: string
+  filesModified?: number
+  branch?: string
+}
+
+/** Header decorations cannot reject a successful project/session activation. */
+export async function loadWorkspacePresentation(adapter: {
+  files: Pick<PiPilotApi['files'], 'list'>
+  changes: Pick<PiPilotApi['changes'], 'list'>
+}, workspaceId: string): Promise<WorkspacePresentation> {
+  const [directory, changes] = await Promise.allSettled([
+    Promise.resolve().then(() => adapter.files.list(workspaceId, '.')),
+    Promise.resolve().then(() => adapter.changes.list(workspaceId)),
+  ])
+  // The inspector owns its own read/error/retry UI. Preserve the last known
+  // decoration when its background scan races Git or the filesystem.
+  return {
+    workspaceId,
+    ...(directory.status === 'fulfilled' && directory.value.workspaceId === workspaceId
+      ? { filesModified: directory.value.modifiedCount } : {}),
+    ...(changes.status === 'fulfilled' && changes.value.workspaceId === workspaceId
+      ? { branch: changes.value.branch } : {}),
+  }
+}
+
+/** A delayed scan can update only the project that requested it. */
+export function applyWorkspacePresentation<T extends { workspace: { id: string; branch: string } | null; filesModified: number }>(
+  current: T,
+  presentation: WorkspacePresentation,
+): T {
+  if (!current.workspace || current.workspace.id !== presentation.workspaceId) return current
+  const filesModified = presentation.filesModified ?? current.filesModified
+  const branch = presentation.branch ?? current.workspace.branch
+  if (filesModified === current.filesModified && branch === current.workspace.branch) return current
+  return { ...current, filesModified, workspace: { ...current.workspace, branch } }
+}
+
 export function createDefaultWorkspaceAdapter(): WorkspaceAdapter | null {
   if (typeof window === 'undefined' || !window.pipilot) return null
   return {

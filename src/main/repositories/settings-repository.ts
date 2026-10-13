@@ -90,7 +90,7 @@ export class SettingsRepository {
 
     let document: ReturnType<typeof parseSettingsDocument>
     try {
-      const raw: unknown = JSON.parse(rawText)
+      const raw: unknown = JSON.parse(rawText.replace(/^\uFEFF/u, ''))
       document = parseSettingsDocument(raw)
     } catch {
       this.backUpCorruptFile()

@@ -395,6 +395,48 @@ describe('WorkspaceContentService Git changes', () => {
     }
   }, 15_000)
 
+  it('recaptures a read-only Git snapshot when another process changes the index during discovery', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pipilot-content-index-discovery-'))
+    try {
+      await initializeIndex(root, { 'main.txt': 'base\n' })
+      await writeFile(join(root, 'main.txt'), 'changed\n', 'utf8')
+      const service = serviceFor(root)
+      const reader = service as unknown as { gitRevision(root: string, indexPath: string): Promise<string> }
+      const original = reader.gitRevision.bind(service)
+      let revisions = 0
+      const readRevision = vi.spyOn(reader, 'gitRevision').mockImplementation(async (cwd, indexPath) => {
+        // Inject after all snapshot commands finish but before their final
+        // revision check. Do not race an unrelated Git child with the fixture write.
+        if (++revisions === 2) await git(root, ['add', '--', 'main.txt'])
+        return original(cwd, indexPath)
+      })
+      const snapshot = await service.listChanges(workspaceId)
+      expect(readRevision).toHaveBeenCalledTimes(4)
+      expect(snapshot.files).toMatchObject([{ path: 'main.txt', stage: 'staged', added: 1, deleted: 1 }])
+      expect(await readFile(join(root, 'main.txt'), 'utf8')).toBe('changed\n')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 15_000)
+
+  it('bounds Git discovery retries instead of accepting a continuously changing index', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pipilot-content-index-busy-'))
+    try {
+      await initializeIndex(root, { 'main.txt': 'base\n' })
+      const service = serviceFor(root)
+      const reader = service as unknown as { gitRevision(root: string, indexPath: string): Promise<string> }
+      let revision = 0
+      // Exhaust the consistency retry policy deterministically. Actual index
+      // writes and their resulting projection are covered by the test above.
+      const readRevision = vi.spyOn(reader, 'gitRevision').mockImplementation(async () => `fixture-revision-${++revision}`)
+      await expect(service.listChanges(workspaceId)).rejects.toMatchObject({ code: 'WORKSPACE_CHANGE_CONFLICT' })
+      expect(readRevision).toHaveBeenCalledTimes(6)
+      expect(await readFile(join(root, 'main.txt'), 'utf8')).toBe('base\n')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 15_000)
+
   it('omits untracked symlink escapes and rejects a workspace switch during a diff read', async () => {
     const root = await mkdtemp(join(tmpdir(), 'pipilot-content-safe-diff-'))
     const outside = await mkdtemp(join(tmpdir(), 'pipilot-content-private-'))

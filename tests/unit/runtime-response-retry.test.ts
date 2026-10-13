@@ -8,8 +8,8 @@ import {
 import { describe, expect, it, vi } from 'vitest'
 import { dispatchRuntimeCommand } from '../../src/main/pi-host/runtime-command-dispatcher'
 import { PIPILOT_RUNTIME_MESSAGE_SANITIZER_EXTENSION } from '../../src/main/pi-host/runtime-message-sanitizer'
-import { installRuntimeRetryPolicy } from '../../src/main/pi-host/runtime-retry-policy'
 import { localPiRpcCommandSchema } from '../../src/shared/local-pi'
+import { alignLocalPiMessageOrigins } from '../../src/renderer/pi-rpc/response-provenance'
 import { startPiSdkFixture, type PiSdkFixture } from '../electron/pi-sdk-fixture'
 
 describe('response retry through the installed Pi SDK', () => {
@@ -19,9 +19,6 @@ describe('response retry through the installed Pi SDK', () => {
     const cwd = join(root, 'project')
     const output = join(cwd, 'evidence.md')
     const prompt = 'Write once and summarize'
-    const responseChunks: Record<string, { chunks: string[]; intervalMs: number }> = {
-      [prompt]: { chunks: [], intervalMs: 0 },
-    }
     await mkdir(cwd)
     let fixture: PiSdkFixture | undefined
     let session: Awaited<ReturnType<typeof createAgentSession>>['session'] | undefined
@@ -30,13 +27,19 @@ describe('response retry through the installed Pi SDK', () => {
       let manualRequests = 0
       const providerBodies: Array<{ messages: Array<{ role: string; content?: unknown }> }> = []
       fixture = await startPiSdkFixture({
-        agentDir, retryEnabled: true, responseChunks,
-        providerFault: ({ prompt: requestedPrompt }) => {
+        agentDir, retryEnabled: true,
+        providerFault: ({ prompt: requestedPrompt, hasWriteResult }) => {
+          if (requestedPrompt === prompt && hasWriteResult && (!manualRetry || ++manualRequests === 1)) {
+            return { kind: 'http', status: 503, message: 'Service unavailable' }
+          }
           const faults: Record<string, { status: number; message: string }> = {
+            'Invalid request': { status: 400, message: 'Unsupported role' },
             'Invalid token setting': { status: 400, message: 'max_tokens must not exceed 500' },
             'Invalid authentication': { status: 401, message: 'Authentication failed for endpoint https://localhost:5000/v1' },
             'Invalid request guidance': { status: 400, message: 'request failed; please retry your request' },
             'Temporary overload': { status: 503, message: 'Service unavailable' },
+            'Temporary rate limit': { status: 429, message: 'Too many requests' },
+            'Permanent quota': { status: 429, message: 'insufficient_quota: billing limit reached' },
           }
           const fault = faults[requestedPrompt]
           return fault ? { kind: 'http', ...fault } : null
@@ -44,7 +47,6 @@ describe('response retry through the installed Pi SDK', () => {
         writeToolPrompts: { [prompt]: { path: output, content: 'Written once.' } },
         providerToolCall: ({ body }) => {
           providerBodies.push(body as typeof providerBodies[number])
-          if (manualRetry && ++manualRequests > 1) responseChunks[prompt]!.chunks = ['Recovered answer.']
           return null
         },
       })
@@ -66,7 +68,6 @@ describe('response retry through the installed Pi SDK', () => {
       })
       session = created.session
       await session.bindExtensions({ mode: 'rpc' })
-      const releaseRetryPolicy = installRuntimeRetryPolicy(session)
       settingsManager.applyOverrides({ retry: { enabled: true, maxRetries: 1, baseDelayMs: outcome === 'cancelled' ? 10_000 : 1 }, compaction: { enabled: false } })
       const events: AgentSessionEvent[] = []
       session.subscribe((event) => events.push(event))
@@ -86,6 +87,21 @@ describe('response retry through the installed Pi SDK', () => {
       expect(events.filter((event) => event.type === 'tool_execution_start')).toHaveLength(1)
       expect(await readFile(output, 'utf8')).toBe('Written once.')
       expect(session.isIdle).toBe(true)
+      const assertQuestionCanBeEdited = async () => {
+        const runtime = { session } as AgentSessionRuntime
+        const [messages, entries] = await Promise.all([
+          dispatchRuntimeCommand(runtime, { type: 'get_messages' }),
+          dispatchRuntimeCommand(runtime, { type: 'get_entries' }),
+        ])
+        if (!messages.response.success || messages.response.command !== 'get_messages' ||
+            !entries.response.success || entries.response.command !== 'get_entries') throw new Error('Expected transcript snapshots')
+        const questionEntry = entries.response.data.entries.find((entry) => entry.type === 'message' && entry.message.role === 'user')
+        expect(alignLocalPiMessageOrigins({
+          generation: 1, sessionId: session!.sessionId,
+          entries: entries.response.data.entries, leafId: entries.response.data.leafId, cursor: null,
+        }, messages.response.data.messages)?.find((origin) => origin.role === 'user')?.forkEntryId).toBe(questionEntry!.id)
+      }
+      await assertQuestionCanBeEdited()
       if (outcome === 'cancelled') {
         const modelContext = session.messages
         expect(modelContext.some((message) => message.role === 'assistant' && message.timestamp === failure.timestamp)).toBe(false)
@@ -118,29 +134,29 @@ describe('response retry through the installed Pi SDK', () => {
       expect(session.messages.filter((message) => message.role === 'user')).toHaveLength(1)
       expect(providerBodies.every((body) => body.messages.filter((message) => message.role === 'user').length === 1)).toBe(true)
       expect(providerBodies.every((body) => !JSON.stringify(body).includes('pipilot.response-retry'))).toBe(true)
-      expect(JSON.stringify(session.messages[session.messages.length - 1])).toContain('Recovered answer.')
+      expect(JSON.stringify(session.messages[session.messages.length - 1])).toContain(`Fixture response: ${prompt}`)
       expect((await dispatchRuntimeCommand(runtime, command)).response.success).toBe(false)
       const raw = await readFile(session.sessionFile!, 'utf8')
       expect(raw).toContain('pipilot.response-retry')
       expect(raw).not.toContain('[Empty assistant message]')
+      await assertQuestionCanBeEdited()
 
-      // Pi's loose retry regex otherwise mistakes a field value/URL port or
-      // echoed retry advice for a transient HTTP status. Keep these permanent.
-      for (const invalidPrompt of ['Invalid token setting', 'Invalid authentication', 'Invalid request guidance']) {
+      // These outcomes intentionally track the installed Pi SDK, including its
+      // loose text classifier. PiPilot must not disable retry or rewrite errors
+      // to replace the native decision with its display-only diagnosis.
+      for (const [requestedPrompt, expectedRequests] of [
+        ['Invalid request', 1], ['Permanent quota', 1],
+        ['Invalid token setting', 2], ['Invalid authentication', 2], ['Invalid request guidance', 2],
+        ['Temporary overload', 2], ['Temporary rate limit', 2],
+      ] as const) {
         events.length = 0
         const requestCount = fixture.requests.length
-        await session.prompt(invalidPrompt)
-        expect(fixture.requests.length - requestCount).toBe(1)
-        expect(events.filter((event) => event.type === 'auto_retry_start')).toEqual([])
+        await session.prompt(requestedPrompt)
+        expect(fixture.requests.length - requestCount).toBe(expectedRequests)
+        expect(events.filter((event) => event.type === 'auto_retry_start')).toHaveLength(expectedRequests - 1)
         expect(session.messages[session.messages.length - 1]).toMatchObject({ role: 'assistant', stopReason: 'error' })
         expect(settingsManager.getRetrySettings()).toMatchObject({ enabled: true, maxRetries: 1 })
       }
-      events.length = 0
-      const requestCount = fixture.requests.length
-      await session.prompt('Temporary overload')
-      expect(fixture.requests.length - requestCount).toBe(2)
-      expect(events).toContainEqual(expect.objectContaining({ type: 'auto_retry_start', attempt: 1, maxAttempts: 1 }))
-      releaseRetryPolicy()
     } finally {
       await session?.abort()
       session?.dispose()
