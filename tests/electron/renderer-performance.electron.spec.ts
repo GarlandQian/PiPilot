@@ -53,6 +53,7 @@ test('measures input, frame gaps and session switches with 1000 replies and 32KB
   const app = await electron.launch({ args: [resolve(process.cwd())], env: { ...process.env, ...fixture.env,
     PIPILOT_E2E_USER_DATA: userData, PIPILOT_E2E_DISABLE_AUTO_RESTART: '1' } })
   let previousClipboard: string | undefined
+  let bodyFailed = false
   try {
     const page = await app.firstWindow()
     await page.setViewportSize({ width: 1440, height: 900 })
@@ -72,7 +73,13 @@ test('measures input, frame gaps and session switches with 1000 replies and 32KB
       const start = performance.now()
       await target.click()
       await expect(target).toHaveAttribute('aria-current', 'page')
-      await expect(page.locator('[data-conversation-response]')).toHaveCount(target === long ? HISTORY_REPLIES : 1)
+      // Loading 2,000 persisted messages can exceed the default 5s on a busy
+      // runner. This is a readiness wait, not a performance threshold: retain
+      // the actual elapsed time in switchMs rather than hiding slower loads.
+      await expect(page.locator('[data-conversation-response]')).toHaveCount(
+        target === long ? HISTORY_REPLIES : 1,
+        { timeout: 30_000 },
+      )
       switches.push(performance.now() - start)
     }
     const input = page.getByRole('textbox', { name: 'Message input', exact: true })
@@ -142,10 +149,23 @@ test('measures input, frame gaps and session switches with 1000 replies and 32KB
     await expect.poll(() => viewport.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(4)
     expect(errors).toEqual([])
     await input.fill('')
+  } catch (error) {
+    bodyFailed = true
+    throw error
   } finally {
     release()
     if (previousClipboard !== undefined) await app.evaluate(({ clipboard }, value) => clipboard.writeText(value), previousClipboard).catch(() => {})
-    await closeFixtureApplication(app)
-    await fixture.close()
+    try {
+      await closeFixtureApplication(app)
+    } catch (error) {
+      // Only terminate this isolated test process, never a user's application.
+      // A stalled Quit must not replace the original assertion or leave a
+      // renderer consuming resources during the retry and subsequent tests.
+      app.process().kill('SIGKILL')
+      if (!bodyFailed) throw error
+      await testInfo.attach('cleanup-error', { body: String(error), contentType: 'text/plain' })
+    } finally {
+      await fixture.close()
+    }
   }
 })
