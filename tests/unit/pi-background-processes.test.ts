@@ -85,8 +85,11 @@ const { execCommand } = await import(new URL('./core/exec.js', entry));
 result = { updates, execution: await execCommand('fixture-extension', ['argument with spaces'], root) };
 `)
   expect([...new Set(captured.calls.map((call) => call.phase))]).toEqual(['discover', 'install', 'check-updates', 'extension-command'])
-  // Pi also removes macOS quarantine after an installation; that operation cannot create a Windows console.
-  for (const call of captured.calls.filter((call) => call.command !== 'xattr')) {
+  // Pi marks installed directories as ignored by file providers on macOS/Linux.
+  // These platform-only attribute commands cannot create a Windows console.
+  const attributeCalls = captured.calls.filter((call) => ['xattr', 'setfattr'].includes(call.command))
+  expect(attributeCalls.every((call) => call.phase === 'install' && call.stdio === 'ignore')).toBe(true)
+  for (const call of captured.calls.filter((call) => !['xattr', 'setfattr'].includes(call.command))) {
     expect(call, `${call.phase}: ${call.command}`).toHaveProperty('windowsHide', true)
   }
   expect(captured.calls.filter((call) => call.phase !== 'install').every((call) =>
