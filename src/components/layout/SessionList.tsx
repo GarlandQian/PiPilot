@@ -25,16 +25,6 @@ import { TbAppWindow,
 } from 'react-icons/tb'
 import { Button } from '@/components/ui/button'
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
-import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
@@ -669,7 +659,6 @@ export function ProjectNavigationGroup({
   const shell = useProjectWorkflowActions()
   const [worktreeSource, setWorktreeSource] = React.useState<WorkspaceSummary | null>(null)
   const [archivingWorktree, setArchivingWorktree] = React.useState<ManagedWorktree | null>(null)
-  const [archiveProject, setArchiveProject] = React.useState<SidebarProjectNavigation | null>(null)
   const worktrees = useWorktreeIndex(projects.map((navigation) => navigation.project.id))
 
   return (
@@ -682,20 +671,6 @@ export function ProjectNavigationGroup({
           if (ranSetup) shell?.openActionRun(created.workspaceId)
         }} /> : null}
       <ArchiveWorktreeDialog worktree={archivingWorktree} onOpenChange={(open) => { if (!open) setArchivingWorktree(null) }} />
-      <AlertDialog open={archiveProject !== null} onOpenChange={(open) => { if (!open) setArchiveProject(null) }}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t('sidebar.project.archiveAllTitle', { name: archiveProject?.project.name ?? '' })}</AlertDialogTitle>
-            <AlertDialogDescription>{t('sidebar.project.archiveAllDescription', { count: archiveProject?.taskCount ?? 0 })}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
-            <AlertDialogAction onClick={() => { if (archiveProject) onArchiveProjectTasks(archiveProject.project.id) }}>
-              {t('sidebar.project.archiveAllConfirm')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
 
       {projects.length === 0 ? (
         <button
@@ -714,7 +689,7 @@ export function ProjectNavigationGroup({
               navigation, worktree, onStartProjectTask, onImportProject, onRevealProject, onPinProject, onRemoveProject,
               onNewWorktree: () => setWorktreeSource(project),
               onArchiveWorktree: () => { if (worktree) setArchivingWorktree(worktree) },
-              onArchiveAll: () => setArchiveProject(navigation),
+              onArchiveAll: () => onArchiveProjectTasks(navigation.project.id),
             }
             return (
               <li key={project.id}>

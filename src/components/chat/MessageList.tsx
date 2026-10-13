@@ -85,6 +85,9 @@ const ConversationRow = React.memo(function ConversationRow({ response, latest, 
   canFork: boolean
 }) {
   const t = useT()
+  const responseActions = response.segments.find((item) => item.kind === 'turn' && item.turn.kind === 'response-actions')
+  const actions = responseActions?.kind === 'turn' && responseActions.turn.kind === 'response-actions' && !hiddenResponseActionIds.has(responseActions.turn.id)
+    ? responseActions.turn : undefined
   const renderPrompt = React.useCallback((turn: Extract<Turn, { kind: 'user' }>) => <UserMessage turn={turn} onExport={onExportMessage} />, [onExportMessage])
   const toolSearch = React.useMemo<ToolSearchRequest | undefined>(() => searchRequest?.query && searchRequest.match?.role === 'toolResult'
     ? { sequence: searchRequest.sequence, query: searchRequest.query, toolCallId: searchRequest.match.toolCallId } : undefined, [searchRequest])
@@ -102,7 +105,9 @@ const ConversationRow = React.memo(function ConversationRow({ response, latest, 
       case 'agent': {
         const key = agentAnimationKey(turn)
         return <AgentMessage turn={turn} animationKey={key} animateOnMount={animateAgentKeys.has(key)}
-          motionEnabled={motionEnabled} onTypingChange={onTypingChange} streaming={streamingAgentKeys.has(key)} />
+          motionEnabled={motionEnabled} onTypingChange={onTypingChange} streaming={streamingAgentKeys.has(key)}
+          onFork={actions?.forkEntryId ? () => onFork(actions) : undefined} forkDisabled={forkBusy || !canFork}
+          onExport={actions?.anchorEntryId && onExportResponse ? () => onExportResponse(actions.anchorEntryId!) : undefined} />
       }
       case 'thinking': return <ThinkingMessage turn={turn} thinkingDurations={thinkingDurations} />
       case 'notice': return <NoticeMessage turn={turn} />
@@ -384,7 +389,7 @@ export function MessageList({
               motionEnabled={motionEnabled}
               onTypingChange={handleTypingChange}
               thinkingDurations={thinkingDurations}
-              forkBusy={forkFeedback.pending !== null}
+              forkBusy={forkFeedback.pending !== null || status === 'running' || status === 'planning'}
               forkingId={forkFeedback.pending?.action}
               onFork={fork}
               canFork={Boolean(onFork)}

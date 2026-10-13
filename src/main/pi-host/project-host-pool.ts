@@ -20,14 +20,18 @@ import {
   type PiHostUiRequestEventEnvelope,
 } from '../../shared/pi-host-protocol'
 import {
+  DEFAULT_PI_HOST_REQUEST_TIMEOUT_MS,
   PiHostController,
   type PiHostControllerSnapshot,
   type PiHostRequestOptions,
 } from './pi-host-controller'
+import { DEFAULT_MAX_EXTENSION_UI_DEADLINE_MS } from './runtime-extension-ui-bridge'
 import { RuntimeMaintenanceBusyError, RuntimeMaintenanceGate, type RuntimeMaintenancePermit } from './runtime-maintenance-gate'
 
 // Cold packaged Intel startup loads the SDK extension graph under Rosetta.
 const PROJECT_RUNTIME_CREATE_TIMEOUT_MS = 120_000
+// Startup, model_select and prompt preflight hooks can wait for a human answer.
+export const PROJECT_RUNTIME_INTERACTIVE_TIMEOUT_MS = DEFAULT_MAX_EXTENSION_UI_DEADLINE_MS + DEFAULT_PI_HOST_REQUEST_TIMEOUT_MS
 const DEFAULT_IDLE_HOST_TIMEOUT_MS = 60_000
 
 export type ProjectHostScopeKind = 'project' | 'projectless'
@@ -575,6 +579,7 @@ export class ProjectHostPool {
     const result = await this.requestHost(entry, { type: 'runtime.bind' }, {
       runtimeId,
       runtimeGeneration: runtime.descriptor.generation,
+      timeoutMs: PROJECT_RUNTIME_INTERACTIVE_TIMEOUT_MS,
     })
     const parsed = runtimeBindResultSchema.safeParse(result)
     if (!parsed.success) {
@@ -635,7 +640,8 @@ export class ProjectHostPool {
       }, {
         runtimeId,
         runtimeGeneration: runtime.descriptor.generation,
-        ...(timeoutMs === undefined ? {} : { timeoutMs }),
+        ...(timeoutMs !== undefined ? { timeoutMs }
+          : command.type === 'set_model' ? { timeoutMs: PROJECT_RUNTIME_INTERACTIVE_TIMEOUT_MS } : {}),
       }, maintenancePermit)
       const parsed = runtimeCommandResultSchema.safeParse(result)
       if (!parsed.success) {
@@ -712,7 +718,7 @@ export class ProjectHostPool {
     }, {
       runtimeId,
       runtimeGeneration: expectedGeneration,
-      ...(timeoutMs === undefined ? {} : { timeoutMs }),
+      timeoutMs: timeoutMs ?? PROJECT_RUNTIME_INTERACTIVE_TIMEOUT_MS,
     })
     const parsed = runtimeExternalSubmitResultSchema.safeParse(result)
     if (!parsed.success) {

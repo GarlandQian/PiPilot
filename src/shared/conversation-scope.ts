@@ -191,6 +191,11 @@ export type SessionCatalogRenameResult = z.infer<
   typeof sessionCatalogRenameResultSchema
 >
 
+export const sessionCatalogArchivePreparationSchema = z.object({
+  status: z.enum(['ready', 'confirmationRequired']),
+}).strict()
+export type SessionCatalogArchivePreparation = z.infer<typeof sessionCatalogArchivePreparationSchema>
+
 export const conversationActivationResultSchema = z
   .object({
     scope: conversationScopeSchema,

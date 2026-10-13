@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { resolveSidebarSessionIndicatorState } from '../../src/components/layout/SessionList'
 import {
   isSidebarSessionRunning,
+  archivedSessionToLeave,
   isNewBackgroundResult,
   presentPinnedSessions,
   presentSidebarSessions,
@@ -10,6 +11,7 @@ import {
   sortSidebarProjects,
 } from '../../src/components/layout/session-navigation'
 import type { SidebarConversationItem } from '../../src/components/layout/SessionList'
+import { taskOrganizationKey } from '../../src/renderer/navigation-preferences'
 
 describe('sidebar session indicator presentation', () => {
   it('keeps the exact opening row in loading regardless of runtime state', () => {
@@ -92,6 +94,19 @@ function conversation(
 }
 
 describe('sidebar navigation views', () => {
+  it('preserves newer navigation when archiving the old active task finishes', () => {
+    const active = { ...conversation('Archived active task', 'completed'), selected: true }
+    const opening = { ...conversation('New selected task', 'completed'), selected: true, loading: true }
+    const archived = new Set([taskOrganizationKey(active.summary)])
+    expect(archivedSessionToLeave([active], archived, 4, 4)).toBe(active)
+    // Both rows remain selected until B hydrates; neither may let A's archive cancel B.
+    expect(archivedSessionToLeave([active, opening], archived, 4, 5)).toBeUndefined()
+    expect(archivedSessionToLeave([active, opening], archived, 4, 4)).toBeUndefined()
+    // New task navigation has no catalog row yet, but its intent revision still wins.
+    expect(archivedSessionToLeave([active], archived, 4, 5)).toBeUndefined()
+    expect(archivedSessionToLeave([{ ...active, selected: false }, { ...opening, loading: false }], archived, 4, 5)).toBeUndefined()
+  })
+
   it('summarizes a collapsed project by its most urgent hidden task', () => {
     const quiet = conversation('Quiet', 'completed')
     const running = conversation('Working', 'running')

@@ -13,7 +13,8 @@ import { useT } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { primaryShortcut } from '@/lib/keyboard-shortcuts'
 import { nextTypewriterText, shouldStartTypewriterFromEmpty, thinkingDisclosureAfterPhaseChange, transientTurnAnimationKey } from '@/renderer/pi-rpc/live-typewriter'
-import { parsePromptSkillEnvelope } from '@/renderer/pi-rpc/prompt-presentation'
+import { userMessageMarkdown } from '@/renderer/composer/message-context'
+import { MessageContextMenu } from './MessageContextMenu'
 import { useSettings } from '@/store/settings'
 import type { Turn } from '@/types/chat'
 import { Collapse } from '@/components/ui/motion'
@@ -39,7 +40,8 @@ export const UserMessage = React.memo(function UserMessage({ turn, onExport }: {
   const questionId = React.useId()
   const branches = React.useContext(QuestionBranchesContext)
   const branchPoint = turn.anchorEntryId ? branches?.points.get(turn.anchorEntryId) : undefined
-  const questionText = React.useMemo(() => parsePromptSkillEnvelope(turn.text)?.userMessage ?? turn.text, [turn.text])
+  const questionText = React.useMemo(() => userMessageMarkdown(turn.text, (title) => t('taskContext.planKickoff', { title })), [turn.text, t])
+  const source = { kind: 'message' as const, sourceId: turn.anchorEntryId ?? turn.id, label: t('precision.userMessage') }
   const longQuestion = questionText.length > 600 || questionText.split('\n').length > 7
   const copyTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   React.useEffect(() => () => { if (copyTimer.current) clearTimeout(copyTimer.current) }, [])
@@ -48,10 +50,13 @@ export const UserMessage = React.memo(function UserMessage({ turn, onExport }: {
     : new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' })
         .format(turn.timestamp)
   return (
+    <MessageContextMenu source={source} markdown={questionText}
+      onEdit={branches && turn.anchorEntryId ? () => branches.edit(turn.anchorEntryId!) : undefined} editDisabled={branches?.busy}
+      onExport={onExport && turn.anchorEntryId ? () => onExport(turn.anchorEntryId!) : undefined}>
     <div className="group/question ml-auto w-fit min-w-0 max-w-[90%]" data-conversation-question>
       <div className="min-w-0 rounded-[18px] bg-[#e9e9eb] px-3.5 py-2 dark:bg-[#3a3a3c]">
         <div id={questionId} className={cn('conversation-question-content min-w-0 text-foreground', longQuestion && !expanded && '[&_[data-prompt-message]]:max-h-40 [&_[data-prompt-message]]:overflow-hidden')}>
-          <QuoteSelection source={{ kind: 'message', sourceId: turn.anchorEntryId ?? turn.id, label: t('precision.userMessage') }}>
+          <QuoteSelection source={source}>
             <UserMessageContent text={turn.text} />
           </QuoteSelection>
         </div>
@@ -70,7 +75,7 @@ export const UserMessage = React.memo(function UserMessage({ turn, onExport }: {
           disabled={branches.busy} aria-label={t('branches.edit')} title={t('branches.edit')} data-question-edit
           onClick={() => branches.edit(turn.anchorEntryId!)}><TbPencil aria-hidden /></Button> : null}
         <Button variant="ghost" size="icon-xs" className={cn('opacity-0 group-hover/question:opacity-100 focus-visible:opacity-100', !branches && !branchPoint && 'ml-auto')} aria-label={t(copied ? 'chat.messageCopied' : copyFailed ? 'chat.response.copyFailed' : 'chat.user.copy')} onClick={() => {
-          void navigator.clipboard.writeText(turn.text).then(() => { setCopied(true); setCopyFailed(false) }).catch(() => setCopyFailed(true))
+          void navigator.clipboard.writeText(questionText).then(() => { setCopied(true); setCopyFailed(false) }).catch(() => setCopyFailed(true))
           if (copyTimer.current) clearTimeout(copyTimer.current)
           copyTimer.current = setTimeout(() => setCopied(false), 1400)
         }}>{copied ? <TbCheck aria-hidden /> : <TbCopy aria-hidden />}</Button>
@@ -80,6 +85,7 @@ export const UserMessage = React.memo(function UserMessage({ turn, onExport }: {
       </div>
       {copyFailed ? <p role="status" className="mt-2 text-caption text-destructive">{t('chat.response.copyFailed')}</p> : null}
     </div>
+    </MessageContextMenu>
   )
 })
 
@@ -179,6 +185,9 @@ export const AgentMessage = React.memo(function AgentMessage({
   streaming,
   motionEnabled,
   onTypingChange,
+  onFork,
+  forkDisabled,
+  onExport,
 }: {
   turn: Extract<Turn, { kind: 'agent' }>
   animationKey: string
@@ -186,6 +195,9 @@ export const AgentMessage = React.memo(function AgentMessage({
   streaming?: boolean
   motionEnabled: boolean
   onTypingChange(turnKey: string, typing: boolean): void
+  onFork?: () => void
+  forkDisabled?: boolean
+  onExport?: () => void
 }) {
   const t = useT()
   const handleTypingChange = React.useCallback((typing: boolean) => {
@@ -199,10 +211,13 @@ export const AgentMessage = React.memo(function AgentMessage({
     onTypingChange: handleTypingChange,
   })
   const settled = !streaming && markdown === turn.markdown
+  const source = { kind: 'message' as const, sourceId: `${turn.anchorEntryId ?? ''}/${turn.id}`, label: t('precision.assistantMessage') }
 
   return (
+    <MessageContextMenu source={source} markdown={markdown} onFork={settled ? onFork : undefined} forkDisabled={forkDisabled}
+      onExport={settled ? onExport : undefined} exportLabel="export.response">
     <div className="conversation-answer-content min-w-0">
-      <QuoteSelection source={{ kind: 'message', sourceId: `${turn.anchorEntryId ?? ''}/${turn.id}`, label: t('precision.assistantMessage') }}>
+      <QuoteSelection source={source}>
         <MarkdownContent markdown={markdown} streaming={!settled} />
       </QuoteSelection>
       {settled && turn.state === 'aborted' ? (
@@ -212,6 +227,7 @@ export const AgentMessage = React.memo(function AgentMessage({
         </div>
       ) : null}
     </div>
+    </MessageContextMenu>
   )
 })
 

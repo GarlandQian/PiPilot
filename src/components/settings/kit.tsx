@@ -262,7 +262,7 @@ export function FormActions({ onCancel, onSave, saving = false, canSave = true, 
 }
 
 /** A sheet: slides from under the toolbar over the settings, for picking or editing something small. */
-export function SettingsSheet({ open, onOpenChange, title, description, children, footer, wide = false, ...props }: {
+export function SettingsSheet({ open, onOpenChange, title, description, children, footer, wide = false, bodyLayout = 'scroll', ...props }: {
   open: boolean
   onOpenChange(open: boolean): void
   title: React.ReactNode
@@ -270,6 +270,8 @@ export function SettingsSheet({ open, onOpenChange, title, description, children
   children: React.ReactNode
   footer?: React.ReactNode
   wide?: boolean
+  /** Contained content owns its scrolling (for example, a list/detail browser). */
+  bodyLayout?: 'scroll' | 'contained'
 } & Omit<React.ComponentProps<typeof DialogContent>, 'title' | 'children'>) {
   return <Dialog open={open} onOpenChange={onOpenChange}>
     {/* Like a macOS sheet, a click beside it does not dismiss it (and lose what was typed); Esc and Cancel do. */}
@@ -283,7 +285,8 @@ export function SettingsSheet({ open, onOpenChange, title, description, children
         {description ? <DialogDescription asChild><div className="mt-1 text-caption leading-snug text-muted-foreground">{description}</div></DialogDescription>
           : <DialogDescription asChild><div className="sr-only">{title}</div></DialogDescription>}
       </div>
-      <div className="@container/settings-workspace scroll-slim min-h-0 flex-1 overflow-y-auto px-5 pb-4">{children}</div>
+      <div className={cn('@container/settings-workspace min-h-0 flex-1 px-5 pb-4', bodyLayout === 'scroll'
+        ? 'scroll-slim overflow-y-auto' : 'flex flex-col overflow-hidden')}>{children}</div>
       {footer ? <div className="shrink-0 border-t border-border/70 px-5 py-3">{footer}</div> : null}
     </DialogContent>
   </Dialog>

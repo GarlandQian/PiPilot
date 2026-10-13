@@ -66,7 +66,7 @@ export function ActionRunPanel({ workspaceId, runId, onSelectRun, onClose }: {
       </header>
       {error ? <p role="alert" className="shrink-0 border-b border-border px-3 py-1.5 text-caption text-destructive">{error}</p> : null}
       <div className="scroll-slim min-h-0 flex-1 overflow-auto p-3 [&_[data-shell-log-output]]:max-h-none">
-        {run.output ? <ShellLogViewer key={run.id} label={run.name} source={run.output} live={live} tone={run.status === 'failed' ? 'error' : 'default'} />
+        {run.output ? <ShellLogViewer key={run.id} label={run.name} source={run.output} live={live} tone={run.status === 'failed' ? 'error' : 'default'} linkScope={{ kind: 'project', workspaceId }} />
           : <p className="text-caption text-muted-foreground">{t('projectActions.noOutput')}</p>}
       </div>
     </>}

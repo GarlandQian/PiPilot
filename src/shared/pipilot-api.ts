@@ -58,6 +58,7 @@ import type {
   ConversationActivationResult,
   ConversationNavigationSnapshot,
   ConversationScope,
+  SessionCatalogArchivePreparation,
   SessionCatalogCursor,
   SessionCatalogDeleteResult,
   SessionCatalogListResult,
@@ -207,6 +208,7 @@ export interface PiPilotApi {
     }
   }
   readonly sessionCatalog: {
+    prepareArchive(scope: ConversationScope, selectionToken: SessionCatalogSelectionToken, stopRunning: boolean): Promise<SessionCatalogArchivePreparation>
     delete(scope: ConversationScope, selectionToken: SessionCatalogSelectionToken): Promise<SessionCatalogDeleteResult>
     list(scope: ConversationScope, cursor?: SessionCatalogCursor): Promise<SessionCatalogListResult>
     open(scope: ConversationScope, selectionToken: SessionCatalogSelectionToken): Promise<ConversationActivationResult>

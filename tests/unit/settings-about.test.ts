@@ -43,5 +43,7 @@ describe('About update feedback', () => {
     expect(markup).toContain('settings.redesign.updatesIdle')
     expect(markup).toContain('applicationUpdate.check')
     expect(markup).not.toContain('role="alert"')
+    expect(markup).toContain('data-about-notices-row')
+    expect(markup).not.toContain('data-about-credits')
   })
 })

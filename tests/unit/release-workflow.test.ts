@@ -17,6 +17,8 @@ interface Step {
 }
 
 interface Job {
+  uses?: string
+  with?: Record<string, unknown>
   needs?: string | string[]
   if?: string
   permissions?: Record<string, string>
@@ -28,7 +30,10 @@ interface Job {
   }
 }
 
-interface Workflow { jobs: Record<string, Job> }
+interface Workflow {
+  on?: { workflow_call?: { inputs?: Record<string, { type: string; default?: unknown }> } }
+  jobs: Record<string, Job>
+}
 
 async function workflow(name: string) {
   return yaml.load(await readFile(`.github/workflows/${name}.yml`, 'utf8'))
@@ -91,11 +96,21 @@ describe('release workflow gates', () => {
   })
 
   it('shards Electron contracts across machines while retaining isolated desktop workers', async () => {
-    const { jobs } = await workflow('verify')
+    const [verify, ci, release] = await Promise.all([
+      workflow('verify'), workflow('ci'), workflow('release'),
+    ])
+    const { jobs } = verify
+    const scopeInput = verify.on?.workflow_call?.inputs?.electron_scope
+    expect(scopeInput).toEqual({ type: 'string', default: 'full' })
+    for (const caller of [ci, release]) {
+      expect(caller.jobs.verify.uses).toBe('./.github/workflows/verify.yml')
+    }
+    expect(ci.jobs.verify.with?.electron_scope).toBe('core')
+    expect(release.jobs.verify.with?.electron_scope ?? scopeInput?.default).toBe('full')
     expect(jobs.desktop.strategy?.matrix.shard).toEqual([1, 2])
     expect(jobs.desktop.strategy?.['fail-fast']).toBe(false)
     expect(step(jobs.desktop, 'Electron E2E and integration contracts').run)
-      .toBe('pnpm test:electron --shard=${{ matrix.shard }}/2')
+      .toBe("pnpm test:electron --shard=${{ matrix.shard }}/2 ${{ inputs.electron_scope == 'core' && '--grep @core' || '' }}")
     expect(step(jobs.desktop, 'Upload failure artifacts').with?.name).toContain('${{ matrix.shard }}')
     const config = await readFile('playwright.electron.config.ts', 'utf8')
     expect(config).toMatch(/workers:\s*1/)

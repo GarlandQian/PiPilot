@@ -1,6 +1,7 @@
 import type { BrowserWindow } from 'electron'
 import {
   sessionCatalogDeleteContract,
+  sessionCatalogPrepareArchiveContract,
   sessionCatalogListContract,
   sessionCatalogOpenContract,
   sessionCatalogRenameContract,
@@ -14,6 +15,7 @@ import {
 } from '../conversations/official-pi-session-catalog'
 import { OfficialPiSessionActivationError } from '../conversations/official-pi-session-activation-service'
 import { OfficialPiSessionDeletionError } from '../conversations/official-pi-session-deletion-service'
+import { PiRuntimeFrontendError, type PiRuntimeFrontend } from '../pi-host/pi-runtime-frontend'
 import type { ApplicationUrlPolicy } from '../security/url-policy'
 import {
   createTrustedSenderValidator,
@@ -23,6 +25,7 @@ import {
 
 interface RegisterSessionCatalogIpcOptions {
   catalog: OfficialPiSessionCatalog
+  runtimeHost: PiRuntimeFrontend
   contextService: ConversationContextService
   getMainWindow(): BrowserWindow | null
   policy: ApplicationUrlPolicy
@@ -33,6 +36,7 @@ function mapCatalogError(error: unknown) {
     error instanceof OfficialPiSessionCatalogError ||
     error instanceof OfficialPiSessionActivationError ||
     error instanceof OfficialPiSessionDeletionError ||
+    error instanceof PiRuntimeFrontendError ||
     error instanceof ConversationScopeError
   ) {
     return new MainProcessError(error.code, error.message)
@@ -48,6 +52,13 @@ export function registerSessionCatalogIpc(options: RegisterSessionCatalogIpcOpti
     policy,
   } = options
   const isTrustedSender = createTrustedSenderValidator(policy, getMainWindow)
+
+  registerValidatedHandler(sessionCatalogPrepareArchiveContract, isTrustedSender, async ({ scope, selectionToken, stopRunning }) => {
+    try {
+      const target = await catalog.resolveReadTarget(scope, selectionToken)
+      return await options.runtimeHost.prepareSessionArchive(target.sessionFile, target.sessionId, stopRunning)
+    } catch (error) { throw mapCatalogError(error) }
+  })
 
   registerValidatedHandler(
     sessionCatalogDeleteContract,

@@ -5,6 +5,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useT } from '@/i18n'
 import { useSettings } from '@/store/settings'
 import { cn } from '@/lib/utils'
+import { MessageTargetMenu } from '../MessageContextMenu'
 
 const COLLAPSE_LINE_THRESHOLD = 24
 const COLLAPSED_VISIBLE_LINES = 12
@@ -57,6 +58,7 @@ export function CodeBlock({
   }
 
   return (
+    <MessageTargetMenu target={{ code }}>
     <figure className="group/code my-2.5 overflow-hidden rounded-lg bg-surface-inset shadow-[inset_0_0_0_0.5px_var(--color-border)] [&_[data-slot=button]]:size-6 [&_[data-slot=button]]:rounded-[5px] [&_[data-slot=button]]:text-muted-foreground [&_[data-slot=button]_svg]:size-3.5">
       <figcaption className="flex h-8 items-center gap-0.5 border-b border-border/70 pr-1.5 pl-3">
         <span className="min-w-0 flex-1 truncate text-micro font-medium text-muted-foreground" title={filePath ?? language}>
@@ -140,5 +142,6 @@ export function CodeBlock({
         </button>
       )}
     </figure>
+    </MessageTargetMenu>
   )
 }

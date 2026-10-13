@@ -14,6 +14,7 @@ import {
 } from '../../src/main/pi-host/runtime-manager'
 import { PIPILOT_RUNTIME_MESSAGE_SANITIZER_EXTENSION_NAME } from '../../src/main/pi-host/runtime-message-sanitizer'
 import { PIPILOT_CONVERSATION_TASK_EXTENSION_PATH } from '../../src/main/pi-host/runtime-conversation-task'
+import { PROJECT_RUNTIME_INTERACTIVE_TIMEOUT_MS } from '../../src/main/pi-host/project-host-pool'
 
 const managers = new Set<RuntimeManager>()
 const roots = new Set<string>()
@@ -78,6 +79,76 @@ function emitSessionEvent(
 }
 
 describe('Pi Host RuntimeManager', () => {
+  it.each(['startup', 'model_select', 'preflight'] as const)('keeps a sibling responsive during %s questions and expires questions before the operation deadline', async (phase) => {
+    let interactive = false
+    const answers: boolean[] = []
+    const { manager, sessionDir, agentDir } = await createFixture([{
+      name: 'bounded-interaction-fixture',
+      factory: (pi) => {
+        pi.on('session_start', async (_event, context) => {
+          if (interactive && phase === 'startup') answers.push(await context.ui.confirm('Startup', 'Continue?'))
+        })
+        pi.on('model_select', async (_event, context) => {
+          if (interactive && phase === 'model_select') answers.push(await context.ui.confirm('Model', 'Continue?'))
+        })
+        pi.on('input', async (_event, context) => {
+          if (interactive && phase === 'preflight') {
+            answers.push(await context.ui.confirm('Input', 'Continue?'))
+            // A second dialog cannot obtain another full budget at the deadline.
+            answers.push(await context.ui.confirm('Second input', 'Continue?'))
+          }
+          return { action: 'handled' }
+        })
+      },
+    }])
+    await writeFile(join(agentDir, 'models.json'), JSON.stringify({ providers: {
+      'fixture-interaction': {
+        baseUrl: 'https://fixture.invalid/v1', api: 'openai-completions', apiKey: 'fixture-no-network',
+        models: [{ id: 'initial-model' }, { id: 'interactive-model' }],
+      },
+    } }))
+    const parent = await manager.create({ runtimeId: 'rt_interaction_parent', sessionDir })
+    await manager.bindRuntime(parent.runtimeId, parent.generation)
+    const side = await manager.create({ runtimeId: 'rt_interaction_side', sessionDir })
+    if (phase !== 'startup') await manager.bindRuntime(side.runtimeId, side.generation)
+    if (phase === 'model_select') await manager.command(side.runtimeId, { type: 'set_model', provider: 'fixture-interaction', modelId: 'initial-model' }, side.generation)
+    let requested!: () => void
+    const question = new Promise<void>((resolve) => { requested = resolve })
+    const requests: string[] = []
+    manager.subscribeUiRequests((record) => {
+      if (record.request.method !== 'confirm') return
+      requests.push(record.request.id)
+      requested()
+    })
+    interactive = true
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    try {
+      const pending = phase === 'startup'
+        ? manager.bindRuntime(side.runtimeId, side.generation, PROJECT_RUNTIME_INTERACTIVE_TIMEOUT_MS)
+        : phase === 'model_select'
+          ? manager.command(side.runtimeId, { type: 'set_model', provider: 'fixture-interaction', modelId: 'interactive-model' }, side.generation, PROJECT_RUNTIME_INTERACTIVE_TIMEOUT_MS)
+          : manager.externalSubmit(side.runtimeId, { message: 'Ask an input question.', mode: 'prompt' }, side.generation, PROJECT_RUNTIME_INTERACTIVE_TIMEOUT_MS)
+      let finished = false
+      void pending.then(() => { finished = true }, () => { finished = true })
+      await question
+      await vi.advanceTimersByTimeAsync(31_000)
+      expect(finished).toBe(false)
+      await expect(manager.command(parent.runtimeId, { type: 'get_state' }, parent.generation)).resolves.toMatchObject({
+        response: { success: true, command: 'get_state' },
+      })
+      await vi.advanceTimersByTimeAsync(PROJECT_RUNTIME_INTERACTIVE_TIMEOUT_MS - 30_000 - 31_000)
+      await expect(pending).resolves.toBeDefined()
+      expect(answers).toEqual(phase === 'preflight' ? [false, false] : [false])
+      expect(requests).toHaveLength(1)
+      await expect(manager.command(parent.runtimeId, { type: 'get_state' }, parent.generation)).resolves.toMatchObject({
+        response: { success: true, command: 'get_state' },
+      })
+    } finally {
+      interactive = false
+      vi.useRealTimers()
+    }
+  })
+
   it('reuses a completed import identity after a lost response without duplicating file or history', async () => {
     const { manager, sessionDir } = await createFixture()
     const importHistory = { importId: 'a24daef3-ac83-43c4-9d56-d926cfe693bf', title: 'Import retry', messages: [{ role: 'user' as const, content: [{ type: 'text' as const, text: 'Only one historical message' }] }] }

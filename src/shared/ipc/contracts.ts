@@ -91,6 +91,7 @@ import {
   conversationScopeSchema,
   officialPiSessionSummarySchema,
   sessionCatalogDeleteResultSchema,
+  sessionCatalogArchivePreparationSchema,
   sessionCatalogCursorSchema,
   sessionCatalogListResultSchema,
   sessionCatalogRenameResultSchema,
@@ -171,6 +172,7 @@ export const ipcChannels = {
   modelsConfigProviderCatalog: 'pipilot:models:provider-catalog',
   modelsConfigGetDefaults: 'pipilot:models:getDefaults',
   sessionCatalogDelete: 'pipilot:session-catalog:delete',
+  sessionCatalogPrepareArchive: 'pipilot:session-catalog:prepare-archive',
   sessionCatalogList: 'pipilot:session-catalog:list',
   sessionCatalogOpen: 'pipilot:session-catalog:open',
   sessionCatalogRename: 'pipilot:session-catalog:rename',
@@ -501,6 +503,11 @@ export const sessionCatalogDeleteContract = defineIpcContract(
   ipcChannels.sessionCatalogDelete,
   z.object({ ...requestFields, scope: conversationScopeSchema, selectionToken: sessionCatalogSelectionTokenSchema }).strict(),
   sessionCatalogDeleteResultSchema,
+)
+export const sessionCatalogPrepareArchiveContract = defineIpcContract(
+  ipcChannels.sessionCatalogPrepareArchive,
+  z.object({ ...requestFields, scope: conversationScopeSchema, selectionToken: sessionCatalogSelectionTokenSchema, stopRunning: z.boolean() }).strict(),
+  sessionCatalogArchivePreparationSchema,
 )
 export const sessionCatalogRefreshContract = defineIpcContract(
   ipcChannels.sessionCatalogRefresh,

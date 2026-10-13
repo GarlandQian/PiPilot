@@ -1,4 +1,5 @@
 import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
+import { createServer } from 'node:http'
 import { basename, join, resolve } from 'node:path'
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page, type TestInfo } from '@playwright/test'
 import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from '../../src/shared/settings'
@@ -225,6 +226,86 @@ async function expectRenderedOutput(page: Page, panel: Locator, marker: string) 
     return page.evaluate(() => navigator.clipboard.readText())
   }).toContain(marker)
 }
+
+test('opens web and local links from a live terminal and environment output without stealing text selection', async ({}, testInfo) => {
+  test.skip(process.platform === 'win32', 'This real PTY fixture uses a deterministic POSIX shell.')
+  test.setTimeout(90_000)
+  const server = createServer((_request, response) => { response.setHeader('Content-Type', 'text/html'); response.end('<title>Terminal link fixture</title><h1>Local preview</h1>') })
+  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
+  const address = server.address()
+  if (!address || typeof address === 'string') throw new Error('Missing fixture port')
+  const url = `http://127.0.0.1:${address.port}/preview?from=terminal`
+  const bare = `127.0.0.1:${address.port}/bare`
+  const fixture = await launchTerminalFixture(testInfo)
+  const { app, page, projectA, errors } = fixture
+  const modifier = process.platform === 'darwin' ? 'Meta' : 'Control'
+  type OpenerState = typeof globalThis & { terminalOpenedUrls: string[] }
+  const opened = () => app.evaluate(() => (globalThis as OpenerState).terminalOpenedUrls)
+  try {
+    await isolateClipboard(page)
+    await app.evaluate(({ shell }) => {
+      const state = globalThis as OpenerState
+      state.terminalOpenedUrls = []
+      Object.defineProperty(shell, 'openExternal', { configurable: true, value: async (target: string) => { state.terminalOpenedUrls.push(target) } })
+    })
+    await writeFile(join(projectA, 'links.sh'), `printf '\\033[32m%s\\033[0m\\n' '${url}'\nprintf '%s\\n' '${bare}'\n`)
+    await addProject(app, page, projectA)
+    await page.getByRole('button', { name: 'Terminal', exact: true }).click()
+    const terminal = await activeTerminal(page)
+    await enterCommand(terminal.panel, '/bin/sh ./links.sh')
+    const webRow = terminal.panel.locator('.xterm-rows > div').filter({ hasText: url }).last()
+    await expect(webRow).toBeVisible()
+    // xterm's text rows have pointer-events:none; its screen receives gestures.
+    const screen = terminal.panel.locator('.xterm-screen')
+    const pointFor = async (row: Locator) => {
+      const rowBox = await row.boundingBox()
+      const screenBox = await screen.boundingBox()
+      if (!rowBox || !screenBox) throw new Error('Missing rendered terminal geometry')
+      return { x: rowBox.x - screenBox.x + 35, y: rowBox.y - screenBox.y + rowBox.height / 2 }
+    }
+    const webPoint = await pointFor(webRow)
+    await screen.hover({ position: webPoint })
+    await expect(terminal.panel.getByRole('application')).toHaveAttribute('title', new RegExp('Right-click'))
+    await screen.click({ position: webPoint })
+    expect(await opened()).toEqual([])
+    await screen.click({ position: webPoint, modifiers: [modifier] })
+    await expect.poll(opened).toEqual([url])
+    const localRow = terminal.panel.locator('.xterm-rows > div').filter({ hasText: bare }).last()
+    const localPoint = await pointFor(localRow)
+    await screen.hover({ position: localPoint })
+    await expect(terminal.panel.getByRole('application')).toHaveAttribute('title', new RegExp('/bare'))
+    await screen.click({ button: 'right', position: localPoint })
+    await page.getByRole('menuitem', { name: 'Copy address', exact: true }).click()
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(bare)
+    await enterCommand(terminal.panel, "printf 'LINK_INPUT_STILL_WORKS\\n'")
+    await expect(terminal.panel.locator('.xterm-rows')).toContainText('LINK_INPUT_STILL_WORKS')
+
+    // Environment commands render through the read-only log viewer, not xterm.
+    await page.getByRole('button', { name: 'Settings', exact: true }).click()
+    await page.getByRole('region', { name: 'Settings', exact: true }).getByRole('button', { name: 'Local Environment', exact: true }).click()
+    await page.locator('[data-local-environment]').getByRole('button', { name: 'Add Action…', exact: true }).click()
+    const sheet = page.locator('[data-project-action-sheet]')
+    await sheet.getByLabel('Action name', { exact: true }).fill('Print preview address')
+    await sheet.getByRole('textbox', { name: /^Command(?:\s|$)/u }).fill('/bin/sh ./links.sh')
+    await sheet.getByRole('button', { name: 'Save', exact: true }).click()
+    await expect(sheet).toHaveCount(0)
+    await page.getByRole('button', { name: 'Back to app', exact: true }).click()
+    await page.locator('[data-project-run]').getByRole('button', { name: 'Run Print preview address', exact: true }).click()
+    const output = page.locator('[data-action-run-panel]')
+    const link = output.getByRole('link', { name: url, exact: true })
+    await expect(link).toBeVisible()
+    await link.click()
+    expect(await opened()).toEqual([url])
+    await link.click({ modifiers: [modifier] })
+    await expect.poll(opened).toEqual([url, url])
+    await link.click({ button: 'right' })
+    await page.getByRole('menuitem', { name: 'Open in PiPilot browser', exact: true }).click()
+    await expect(page.locator('[data-browser-address]')).toHaveValue(url)
+    await expect(page.getByRole('tab', { name: /Terminal link fixture/ })).toBeVisible()
+    await page.screenshot({ path: testInfo.outputPath('terminal-link-browser.png') })
+    expect(errors).toEqual([])
+  } finally { await fixture.close(); await new Promise<void>((done, reject) => server.close((error) => error ? reject(error) : done())) }
+})
 
 test('preserves named terminals and viewport across hiding, tabs and projects, and retains natural exits', { tag: '@core' }, async ({}, testInfo) => {
   test.skip(process.platform === 'win32', 'This real PTY fixture uses a deterministic POSIX shell.')

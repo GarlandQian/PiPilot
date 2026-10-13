@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { isSafeExternalUrl } from '@/shared/external-url'
+import { MessageTargetMenu } from '../MessageContextMenu'
 
 export function sanitizeHref(href?: string): string | undefined {
   return href && isSafeExternalUrl(href) ? href : undefined
@@ -24,6 +25,7 @@ export function MarkdownLink({ href, children, ...rest }: MarkdownLinkProps) {
     return <span className="text-muted-foreground line-through decoration-muted-foreground/50">{children}</span>
   }
   return (
+    <MessageTargetMenu target={{ link: { href: safe, open: () => openExternal(safe) } }}>
     <a
       {...rest}
       href={safe}
@@ -37,5 +39,6 @@ export function MarkdownLink({ href, children, ...rest }: MarkdownLinkProps) {
     >
       {children}
     </a>
+    </MessageTargetMenu>
   )
 }

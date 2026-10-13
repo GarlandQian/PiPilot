@@ -7,6 +7,9 @@ import { cn } from '@/lib/utils'
 import { findShellLogMatches, MAX_LOG_MATCHES, projectShellLog, type ShellLogColor } from '@/renderer/pi-rpc/shell-log'
 import { MarkdownContent } from './markdown/MarkdownContent'
 import { useFollowingViewport } from './useFollowingViewport'
+import { TerminalTextLink } from '@/components/inspector/TerminalLinks'
+import { findTerminalLinks } from '@/components/inspector/terminal-links'
+import type { ConversationScope } from '@/shared/conversation-scope'
 
 interface ShellLogViewerProps {
   quoteSource?: Omit<QuoteSource, 'literal'>
@@ -16,6 +19,7 @@ interface ShellLogViewerProps {
   tone?: 'default' | 'error'
   live?: boolean
   allowMarkdown?: boolean
+  linkScope?: ConversationScope
 }
 
 const sgrColorClass: Record<ShellLogColor, string> = {
@@ -25,7 +29,7 @@ const sgrColorClass: Record<ShellLogColor, string> = {
 }
 
 /** A bounded output viewport with explicit reading/following intent. */
-export function ShellLogViewer({ label, source, sourceTruncated, tone, live = false, allowMarkdown = false, quoteSource }: ShellLogViewerProps) {
+export function ShellLogViewer({ label, source, sourceTruncated, tone, live = false, allowMarkdown = false, quoteSource, linkScope }: ShellLogViewerProps) {
   const t = useT()
   const ownerKey = React.useId()
   const initiallyLive = React.useRef(live)
@@ -36,6 +40,7 @@ export function ShellLogViewer({ label, source, sourceTruncated, tone, live = fa
   const [query, setQuery] = React.useState('')
   const [activeMatch, setActiveMatch] = React.useState(0)
   const [copyState, setCopyState] = React.useState<'idle' | 'copied' | 'failed'>('idle')
+  const [linkError, setLinkError] = React.useState<string | null>(null)
   const manualView = React.useRef(false)
   const copyTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const matchRef = React.useRef<HTMLElement>(null)
@@ -79,7 +84,8 @@ export function ShellLogViewer({ label, source, sourceTruncated, tone, live = fa
     if (matches.length) setActiveMatch((selectedMatch + direction + matches.length) % matches.length)
   }
   const highlighted = React.useMemo(() => {
-    if (!matches.length && !output.styles.length) return output.text
+    const links = findTerminalLinks(output.text)
+    if (!matches.length && !output.styles.length && !links.length) return output.text
     const nodes: React.ReactNode[] = []
     let styleIndex = 0
     const styledRange = (start: number, end: number) => {
@@ -99,18 +105,34 @@ export function ShellLogViewer({ label, source, sourceTruncated, tone, live = fa
       }
       return range
     }
+    let linkIndex = 0
+    const linkedRange = (start: number, end: number) => {
+      const range: React.ReactNode[] = []
+      let position = start
+      while (position < end) {
+        const link = links[linkIndex]
+        if (!link || link.start >= end) { range.push(...styledRange(position, end)); break }
+        if (link.end <= position) { linkIndex += 1; continue }
+        if (link.start > position) { range.push(...styledRange(position, link.start)); position = link.start }
+        const next = Math.min(link.end, end)
+        range.push(<TerminalTextLink key={`link-${position}`} target={link} scope={linkScope} onError={setLinkError}>{styledRange(position, next)}</TerminalTextLink>)
+        position = next
+        if (position >= link.end) linkIndex += 1
+      }
+      return range
+    }
     let previous = 0
     matches.forEach((match, index) => {
-      nodes.push(...styledRange(previous, match.start))
+      nodes.push(...linkedRange(previous, match.start))
       nodes.push(<mark key={match.start} ref={index === selectedMatch ? matchRef : undefined}
         className={cn('rounded-sm bg-warning/20 text-inherit', index === selectedMatch && 'bg-warning/40 outline outline-warning/50')}>
-        {styledRange(match.start, match.end)}
+        {linkedRange(match.start, match.end)}
       </mark>)
       previous = match.end
     })
-    nodes.push(...styledRange(previous, output.text.length))
+    nodes.push(...linkedRange(previous, output.text.length))
     return nodes
-  }, [matches, output, selectedMatch])
+  }, [matches, output, selectedMatch, linkScope])
 
   return <section className="shell-log-viewer min-w-0 overflow-hidden rounded-[12px] bg-surface-inset shadow-[inset_0_0_0_0.5px_var(--color-border)]" data-tool-evidence="auto" data-shell-log-viewer>
     <header className="flex min-h-8 flex-wrap items-center gap-1.5 border-b border-border/60 px-2.5 py-1">
@@ -153,6 +175,7 @@ export function ShellLogViewer({ label, source, sourceTruncated, tone, live = fa
         </QuoteSelection>
       </div>
     </div>
+    {linkError ? <p role="alert" className="border-t border-border/60 px-3 py-1 text-caption text-destructive">{linkError}</p> : null}
     {(!following || output.truncated || sourceTruncated || copyState === 'failed') ? <footer className="flex min-w-0 items-center gap-2 border-t border-border/60 px-2.5 py-1">
       <span className="min-w-0 flex-1 text-micro text-muted-foreground" role="status">
         {copyState === 'failed' ? t('tool.redesign.copyFailed') : newOutputWaiting ? t('tool.redesign.newOutput') : output.truncated || sourceTruncated ? t('tool.outputTruncated') : t('tool.redesign.paused')}

@@ -1,6 +1,7 @@
 import * as React from 'react'
 import { TbAdjustmentsHorizontal, TbArchive, TbChevronLeft, TbEdit, TbFolderPlus, TbLoader2, TbMessageCircle, TbSearch } from 'react-icons/tb'
 import { Button } from '@/components/ui/button'
+import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Kbd } from '@/components/ui/kbd'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -18,7 +19,7 @@ import { useTaskNotifications } from '@/store/task-notifications'
 import { createOfficialSessionLookup, deriveSessionActivityState } from '@/store/workspace-state'
 import { ConversationList, ProjectNavigationGroup, resolveSidebarSessionIndicatorState, SidebarIconButton, SidebarSection, type ConversationListActions, type SidebarConversationItem, type SidebarProjectNavigation } from '@/components/layout/SessionList'
 import { subscribeNextAttention } from './attention-navigation'
-import { presentPinnedSessions, presentSidebarSessions, sidebarProjectIndicator, sortSidebarProjects, type SidebarOrganization, type SidebarSessionSort } from '@/components/layout/session-navigation'
+import { archivedSessionToLeave, isSidebarSessionRunning, presentPinnedSessions, presentSidebarSessions, sidebarConversationTitle, sidebarProjectIndicator, sortSidebarProjects, type SidebarOrganization, type SidebarSessionSort } from '@/components/layout/session-navigation'
 import { projectlessCatalogNeedsDiscovery, sessionCatalogLoadTargets } from './session-catalog-search'
 
 /** Codex shows a handful of tasks per project before "Show more". */
@@ -39,6 +40,7 @@ export interface SessionsPanelProps {
   onSearchAll?: () => void
   hidden?: boolean
   conversationReady: boolean
+  selectionRevision: number
   renamingSelectionToken: string | null
   deletingSelectionToken: string | null
   isOpeningSessionRow(summary: OfficialPiSessionSummary, siblings: readonly OfficialPiSessionSummary[]): boolean
@@ -89,7 +91,7 @@ function NavigationRow({ icon, label, shortcut, disabled, onClick, children }: {
 
 export function SessionsPanel({
   onSearchAll,
-  hidden = false, conversationReady, renamingSelectionToken, deletingSelectionToken, isOpeningSessionRow,
+  hidden = false, conversationReady, selectionRevision, renamingSelectionToken, deletingSelectionToken, isOpeningSessionRow,
   onSelect, onNewPrimary, onNewProjectless, onRenameStart, onRenameCommit, onDuplicate,
   onDelete, onExport, onPopout, beforeTasks, onImport, onStartProjectTask, onChooseWorkspace, onPinWorkspace, onRevealWorkspace, onRemoveWorkspace,
 }: SessionsPanelProps) {
@@ -105,6 +107,13 @@ export function SessionsPanel({
   const [sessionSort, setSessionSort] = React.useState<SidebarSessionSort>(() =>
     readPreference(SESSION_SORT_PREFERENCE, ['recent', 'created', 'name'], 'recent'))
   const [preferences, setPreferences] = React.useState(readNavigationPreferences)
+  const [archivingKeys, setArchivingKeys] = React.useState<ReadonlySet<string>>(new Set())
+  const archivingRef = React.useRef(false)
+  const latestSelectionRevision = React.useRef(selectionRevision)
+  latestSelectionRevision.current = selectionRevision
+  const [archiveRequest, setArchiveRequest] = React.useState<{
+    items: SidebarConversationItem[]; projectName?: string; requiresStop: boolean; error?: string
+  } | null>(null)
   const [projectExpansion, setProjectExpansion] = React.useState<ReadonlyMap<string, boolean>>(readProjectExpansionPreferences)
   const [projectSessionLimits, setProjectSessionLimits] = React.useState<Readonly<Record<string, number>>>({})
   const [listLimit, setListLimit] = React.useState(LIST_PAGE_SIZE)
@@ -229,7 +238,7 @@ export function SessionsPanel({
           unread: notices.length > 0 || preferences.tasks[organizationKey]?.unread === true,
           scopeLabel: project?.name ?? t('sidebar.generalChats'),
           loading: opening,
-          disabled: opening || summary.selectionToken === deletingSelectionToken || project?.available === false,
+          disabled: opening || archivingKeys.has(organizationKey) || summary.selectionToken === deletingSelectionToken || project?.available === false,
           selected: active || opening,
           status,
           needsAttention: !opening && (runtime?.needsUserInput === true || (active &&
@@ -241,7 +250,9 @@ export function SessionsPanel({
       }
     }
     return { items, unreadNotices }
-  }, [deletingSelectionToken, extensionUi.dialog, isOpeningSessionRow, notifications.items, pi.runtime?.generation, pi.session?.pendingMessageCount, pi.status, preferences.tasks, runtimeSessionStatuses, t, workspace.activeScope, workspace.activeSessionId, workspace.recentProjects, workspace.sessionCatalogs])
+  }, [archivingKeys, deletingSelectionToken, extensionUi.dialog, isOpeningSessionRow, notifications.items, pi.runtime?.generation, pi.session?.pendingMessageCount, pi.status, preferences.tasks, runtimeSessionStatuses, t, workspace.activeScope, workspace.activeSessionId, workspace.recentProjects, workspace.sessionCatalogs])
+  const latestItems = React.useRef(allItems)
+  latestItems.current = allItems
 
   // ⌘⌥A: the next row (after the open one, wrapping) that needs attention.
   const attentionRows = React.useRef<{ items: SidebarConversationItem[]; onSelect(item: SidebarConversationItem): void }>({ items: [], onSelect })
@@ -277,13 +288,53 @@ export function SessionsPanel({
     if (item.summary.scope.kind === 'project') onStartProjectTask(item.summary.scope.workspaceId)
     else onNewProjectless()
   }
+  const needsArchiveStop = (item: SidebarConversationItem) => isSidebarSessionRunning(item) || item.needsAttention === true
+  const performArchive = async (items: SidebarConversationItem[], stopRunning: boolean) => {
+    if (archivingRef.current) return
+    archivingRef.current = true
+    const startedSelectionRevision = latestSelectionRevision.current
+    setArchivingKeys(new Set(items.map((item) => taskOrganizationKey(item.summary))))
+    const archivedKeys = new Set<string>()
+    const remaining: SidebarConversationItem[] = []
+    const failures: string[] = []
+    let requiresStop = false
+    try {
+      for (const item of items) {
+        try {
+          if (!window.pipilot) throw new Error('The desktop bridge is unavailable.')
+          const result = await window.pipilot.sessionCatalog.prepareArchive(item.summary.scope, item.summary.selectionToken, stopRunning)
+          if (result.status === 'confirmationRequired') { remaining.push(item); requiresStop = true }
+          else {
+            // Commit at this task's confirmed boundary; other tasks may take longer to stop.
+            setPreferences((previous) => updateTaskOrganization(previous, item.summary, { archived: true, pinned: false }))
+            archivedKeys.add(taskOrganizationKey(item.summary))
+          }
+        } catch (error) {
+          remaining.push(item)
+          failures.push(`${sidebarConversationTitle(item.summary)}: ${error instanceof Error ? error.message : String(error)}`)
+        }
+      }
+      // Defer navigation/catalog refresh until the batch has consumed its selection tokens.
+      // A newer navigation intent wins even while the old task remains the active runtime.
+      const open = archivedSessionToLeave(latestItems.current, archivedKeys, startedSelectionRevision, latestSelectionRevision.current)
+      if (open) leaveArchived(open)
+      setArchiveRequest(remaining.length ? {
+        items: remaining, requiresStop: requiresStop || stopRunning,
+        ...(failures.length ? { error: failures.join('\n') } : {}),
+      } : null)
+    } finally {
+      archivingRef.current = false
+      setArchivingKeys(new Set())
+    }
+  }
   const actions: ConversationListActions = {
     renamingSelectionToken, onSelect, onRenameStart, onRenameCommit, onDuplicate, onDelete, onExport, onPopout,
     onPin: (item, pinned) => organize(item, { pinned }),
     onArchive: (item, archived) => {
-      organize(item, { archived, ...(archived ? { pinned: false } : {}) })
-      // Codex: archiving the open task goes on to a new task where it was, so the archived one leaves the list.
-      if (archived && item.selected) leaveArchived(item)
+      if (!archived) { organize(item, { archived: false }); return }
+      if (archivingRef.current) return
+      if (needsArchiveStop(item)) setArchiveRequest({ items: [item], requiresStop: true })
+      else void performArchive([item], false)
     },
     onMarkUnread: (item, unread) => {
       organize(item, { unread })
@@ -292,11 +343,30 @@ export function SessionsPanel({
   }
 
   const archiveProjectTasks = (projectId: string) => {
+    if (archivingRef.current) return
     const tasks = allItems.filter((item) => item.summary.scope.kind === 'project' && item.summary.scope.workspaceId === projectId && !item.archived)
-    setPreferences((previous) => tasks.reduce((next, item) => updateTaskOrganization(next, item.summary, { archived: true, pinned: false }), previous))
-    const open = tasks.find((item) => item.selected)
-    if (open) leaveArchived(open)
+    if (tasks.length) setArchiveRequest({ items: tasks, requiresStop: tasks.some(needsArchiveStop), projectName: workspace.recentProjects.find((project) => project.id === projectId)?.name })
   }
+
+  const archiveDialog = <AlertDialog open={archiveRequest !== null} onOpenChange={(open) => { if (!open && !archivingRef.current) setArchiveRequest(null) }}>
+    <AlertDialogContent>
+      <AlertDialogHeader>
+        <AlertDialogTitle>{archiveRequest?.error ? t('sidebar.archive.failedTitle') : archiveRequest?.projectName
+          ? t('sidebar.project.archiveAllTitle', { name: archiveRequest.projectName }) : t('sidebar.archive.runningTitle')}</AlertDialogTitle>
+        <AlertDialogDescription>{archiveRequest?.error ? t('sidebar.archive.failedDescription') : archiveRequest?.projectName
+          ? t('sidebar.archive.batchDescription', { count: archiveRequest.items.length, busy: archiveRequest.items.filter(needsArchiveStop).length })
+          : t('sidebar.archive.runningDescription')}</AlertDialogDescription>
+      </AlertDialogHeader>
+      {archiveRequest?.error ? <p role="alert" className="max-h-48 overflow-auto whitespace-pre-wrap text-caption text-destructive">{archiveRequest.error}</p> : null}
+      <AlertDialogFooter>
+        <AlertDialogCancel disabled={archivingKeys.size > 0}>{t('common.cancel')}</AlertDialogCancel>
+        <Button disabled={archivingKeys.size > 0} onClick={() => { if (archiveRequest) void performArchive(archiveRequest.items, archiveRequest.requiresStop) }}>
+          {archivingKeys.size > 0 ? t('sidebar.archive.stopping') : archiveRequest?.requiresStop ? t('sidebar.archive.stopConfirm')
+            : archiveRequest?.error ? t('sidebar.archive.retry') : t('sidebar.project.archiveAllConfirm')}
+        </Button>
+      </AlertDialogFooter>
+    </AlertDialogContent>
+  </AlertDialog>
 
   const projects = sortSidebarProjects(workspace.recentProjects, sessionSort).map((project): SidebarProjectNavigation => {
     const catalog = workspace.sessionCatalogs[`project:${project.id}`]
@@ -383,6 +453,7 @@ export function SessionsPanel({
   if (view === 'archived') {
     return (
       <div hidden={hidden} className="min-w-0 px-2.5 pb-4 pt-0.5" data-navigation="archived">
+        {archiveDialog}
         <button type="button" onClick={() => setView('tasks')}
           className="mb-2 flex h-[30px] w-full items-center gap-1 rounded-[8px] px-1.5 text-left text-app font-semibold text-foreground outline-none hover:bg-fill focus-visible:focus-ring">
           <TbChevronLeft className="size-4 text-muted-foreground" aria-hidden />
@@ -402,6 +473,7 @@ export function SessionsPanel({
 
   return (
     <div hidden={hidden} className="min-w-0 px-2.5 pb-4 pt-0.5" data-navigation="tasks">
+      {archiveDialog}
       <nav aria-label={t('sidebar.nav')} className="mb-3 flex flex-col gap-px">
         <NavigationRow icon={<TbEdit />} label={t('nav.redesign.newTask')} shortcut={primaryShortcut('N')}
           disabled={workspace.activeScope.kind === 'project' && !activeProject?.available}

@@ -210,6 +210,12 @@ async function withTimeout<T>(
   }
 }
 
+function dialogDeadlineForOperation(timeoutMs: number): number {
+  // Use the original operation budget, including queue time. Serial dialogs
+  // share this deadline, leaving a bounded grace period for their hooks to exit.
+  return Date.now() + timeoutMs - Math.min(DEFAULT_OPERATION_TIMEOUT_MS, timeoutMs / 10)
+}
+
 export class RuntimeManager {
   private readonly cwd: string
   private readonly agentDir: string
@@ -577,8 +583,9 @@ export class RuntimeManager {
     this.assertActive()
     const effectiveTimeoutMs = requireTimeout(timeoutMs)
     const entry = this.requireEntry(runtimeId)
+    const dialogDeadline = dialogDeadlineForOperation(effectiveTimeoutMs)
     return withTimeout(
-      this.enqueue(entry, async () => {
+      this.enqueue(entry, () => entry.uiBridge.withDialogDeadline(dialogDeadline, async () => {
         if (entry.disposing) {
           throw new RuntimeManagerError(
             'RUNTIME_NOT_FOUND',
@@ -599,7 +606,7 @@ export class RuntimeManager {
           entry.extensionsBound = true
         }
         return describeRuntime(runtimeId, entry, this.cwd)
-      }),
+      })),
       effectiveTimeoutMs,
       `Binding runtime ${runtimeId}`,
     )
@@ -614,6 +621,7 @@ export class RuntimeManager {
     this.assertActive()
     const effectiveTimeoutMs = requireTimeout(timeoutMs)
     const entry = this.requireEntry(runtimeId)
+    const dialogDeadline = dialogDeadlineForOperation(effectiveTimeoutMs)
     // Reserve delivery identity before waiting behind another Runtime command.
     // Read-only receipt queries can then distinguish queued acceptance from a
     // message that never reached this Host.
@@ -692,7 +700,9 @@ export class RuntimeManager {
     // A browser tool answer resolves a tool call that runs inside queued work.
     const operation = command.type === 'abort' || command.type === 'get_delivery_state' || command.type === 'browser_tool_response'
       ? execute()
-      : this.enqueue(entry, execute)
+      : this.enqueue(entry, command.type === 'set_model'
+        ? () => entry.uiBridge.withDialogDeadline(dialogDeadline, execute)
+        : execute)
     return withTimeout(
       operation,
       effectiveTimeoutMs,
@@ -709,8 +719,9 @@ export class RuntimeManager {
     this.assertActive()
     const effectiveTimeoutMs = requireTimeout(timeoutMs)
     const entry = this.requireEntry(runtimeId)
+    const dialogDeadline = dialogDeadlineForOperation(effectiveTimeoutMs)
     return withTimeout(
-      this.enqueue(entry, async () => {
+      this.enqueue(entry, () => entry.uiBridge.withDialogDeadline(dialogDeadline, async () => {
         if (entry.disposing) {
           throw new RuntimeManagerError(
             'RUNTIME_NOT_FOUND',
@@ -737,7 +748,7 @@ export class RuntimeManager {
           runtime: describeRuntime(runtimeId, entry, this.cwd),
           acceptedMode: result.acceptedMode,
         }
-      }),
+      })),
       effectiveTimeoutMs,
       `Runtime ${runtimeId} external submit`,
     )

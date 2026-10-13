@@ -67,6 +67,7 @@ import {
   piIntegrationsSetRetryContract,
   piIntegrationsUpdateContract,
   sessionCatalogDeleteContract,
+  sessionCatalogPrepareArchiveContract,
   sessionCatalogListContract,
   sessionCatalogOpenContract,
   sessionCatalogRenameContract,
@@ -379,6 +380,7 @@ const api: PiPilotApi = {
     },
   },
   sessionCatalog: {
+    prepareArchive: (scope: ConversationScope, selectionToken: SessionCatalogSelectionToken, stopRunning: boolean) => invoke(sessionCatalogPrepareArchiveContract, { context: createContext(), scope, selectionToken, stopRunning }),
     delete: (scope: ConversationScope, selectionToken: SessionCatalogSelectionToken) => invoke(sessionCatalogDeleteContract, { context: createContext(), scope, selectionToken }),
     list: (scope: ConversationScope, cursor?: SessionCatalogCursor) => invoke(sessionCatalogListContract, { context: createContext(), scope, cursor }),
     open: (scope: ConversationScope, selectionToken: SessionCatalogSelectionToken) => invoke(sessionCatalogOpenContract, { context: createContext(), scope, selectionToken }),

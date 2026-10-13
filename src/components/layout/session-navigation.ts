@@ -1,5 +1,6 @@
 import type { OfficialPiSessionSummary } from '@/shared/conversation-scope'
 import { conversationTitleFromText } from '@/shared/conversation-title'
+import { taskOrganizationKey } from '@/renderer/navigation-preferences'
 import type { AgentStatus } from '@/types/chat'
 import type { SessionActivityState } from '@/store/workspace-state'
 
@@ -14,6 +15,7 @@ interface SessionPresentationItem {
   status?: AgentStatus
   activityState?: SessionActivityState
   selected?: boolean
+  loading?: boolean
   pinned?: boolean
   archived?: boolean
   needsAttention?: boolean
@@ -41,6 +43,14 @@ export function sidebarSessionNeedsAttention(item: SessionPresentationItem) {
 export function isNewBackgroundResult(item: SessionPresentationItem, previousStatus?: AgentStatus): boolean {
   return !item.selected && (previousStatus === 'running' || previousStatus === 'planning') &&
     item.status === 'completed'
+}
+
+/** Finishing an archive must not replace a newer navigation, including one still opening. */
+export function archivedSessionToLeave<T extends SessionPresentationItem>(
+  items: readonly T[], archivedKeys: ReadonlySet<string>, startedRevision: number, currentRevision: number,
+): T | undefined {
+  if (startedRevision !== currentRevision || items.some((item) => item.loading)) return undefined
+  return items.find((item) => item.selected && archivedKeys.has(taskOrganizationKey(item.summary)))
 }
 
 export type SidebarProjectIndicator = 'attention' | 'failed' | 'running' | 'unread' | 'none'

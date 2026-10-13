@@ -35,6 +35,7 @@ import { requestNextAttention } from '@/components/frame/attention-navigation'
 import { QuestionBranchesContext, type QuestionBranches } from '@/components/chat/question-branches'
 import { ConversationTreePanel } from '@/components/inspector/ConversationTreePanel'
 import { BrowserPanel } from '@/components/inspector/BrowserPanel'
+import { TerminalLinksContext } from '@/components/inspector/TerminalLinks'
 import { PullRequestsPanel } from '@/components/inspector/PullRequestsPanel'
 import { ComparisonPanel, ComparisonSidebarSection } from '@/components/inspector/ComparisonPanel'
 import { CompareModelsSheet } from '@/components/chat/CompareModelsSheet'
@@ -928,6 +929,14 @@ export default function App() {
   // A restored conversation drops tabs for files deleted since (Codex reopens them otherwise).
   const tabsKeyRef = React.useRef(conversationTabsKey)
   tabsKeyRef.current = conversationTabsKey
+  const terminalLinks = React.useMemo(() => ({
+    scope: workspace.activeScope,
+    async openInternal(scope: ConversationScope, url: string) {
+      await window.pipilot!.browserPane.open(conversationScopeKey(scope), url)
+      // Opening a page must not move a different conversation's panel after navigation.
+      if (tabsKeyRef.current === conversationTabsKey && sameConversationScope(scope, workspace.activeScope)) panel.open(panelTab('browser'))
+    },
+  }), [workspace.activeScope, conversationTabsKey, panel])
   const checkedFileTabs = React.useRef<string | null>(null)
   const fileTabKey = fileTabs.join('\u0000')
   React.useEffect(() => {
@@ -1000,6 +1009,10 @@ export default function App() {
     />, panelContainers.get('terminal')) : null}
     {panel.state.tabs.sidechat ? createPortal(<SideConversationsPanel request={sideQuestion}
       ownerKey={`${conversationScopeKey(workspace.activeScope)}:${workspace.activeSessionId ?? 'unselected'}`} ready={conversationReady}
+      scope={workspace.activeScope} parentSessionId={workspace.activeSessionId}
+      parentModel={conversationReady ? selectedModel : null} models={conversationReady ? pi.models : []}
+      thinkingLevel={pi.session?.thinkingLevel ?? null} thinkingLevels={pi.thinkingLevels}
+      sendShortcut={settings.composer.sendShortcut} onOpenConversation={openConversationById}
       visible={conversationWorkspace && panel.isVisible('sidechat')} />, panelContainers.get('sidechat')) : null}
     {panel.state.tabs.subagent && selectedSubagentCall ? createPortal(<SubagentExecutionPanel call={selectedSubagentCall} onClose={closeSubagentExecution} />, panelContainers.get('subagent')) : null}
     {panel.state.tabs.command && selectedCommandCall ? createPortal(<CommandExecutionPanel call={selectedCommandCall} onClose={closeCommandExecution} />, panelContainers.get('command')) : null}
@@ -1012,6 +1025,7 @@ export default function App() {
   return (
     <QuestionBranchesContext.Provider value={questionBranches}>
     <TooltipProvider delayDuration={350}>
+      <TerminalLinksContext.Provider value={terminalLinks}>
       <TerminalActionsContext.Provider value={{ scope: workspace.activeScope, open: openTerminalHere, openExternal: openExternalHere }}>
       <ProjectWorkflowActionsProvider value={projectWorkflowActions}>
       <PrecisionReferencesProvider ownerKey={`${conversationScopeKey(workspace.activeScope)}:${workspace.activeSessionId ?? 'unselected'}`}
@@ -1065,6 +1079,7 @@ export default function App() {
                 onSearchAll={() => { setSearchScope('all'); setSearchOpen(true) }}
                 hidden={!conversationWorkspace}
                 conversationReady={conversationReady}
+                selectionRevision={selectionRevision}
                 renamingSelectionToken={renamingToken}
                 deletingSelectionToken={deletingSelectionToken}
                 isOpeningSessionRow={isOpeningSessionRow}
@@ -1639,6 +1654,7 @@ export default function App() {
       </PrecisionReferencesProvider>
       </ProjectWorkflowActionsProvider>
       </TerminalActionsContext.Provider>
+      </TerminalLinksContext.Provider>
     </TooltipProvider>
     </QuestionBranchesContext.Provider>
   )

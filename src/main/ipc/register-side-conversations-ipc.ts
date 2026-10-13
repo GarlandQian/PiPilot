@@ -11,6 +11,9 @@ export function registerSideConversationsIpc(options: { getMainWindow(): Browser
   const unregister = [
     registerValidatedHandler(contracts.sideConversationCreateContract, trusted, ({ input }) => safe(() => options.service.create(input))),
     registerValidatedHandler(contracts.sideConversationGetContract, trusted, ({ sideId }) => safe(() => options.service.get(sideId))),
+    registerValidatedHandler(contracts.sideConversationListContract, trusted, ({ input }) => safe(() => options.service.list(input))),
+    registerValidatedHandler(contracts.sideConversationConfigureContract, trusted, ({ input }) => safe(() => options.service.configure(input))),
+    registerValidatedHandler(contracts.sideConversationRespondContract, trusted, ({ input }) => safe(() => options.service.respond(input))),
     registerValidatedHandler(contracts.sideConversationSendContract, trusted, ({ input }) => safe(() => options.service.send(input))),
     registerValidatedHandler(contracts.sideConversationAbortContract, trusted, ({ sideId }) => safe(() => options.service.abort(sideId))),
     registerValidatedHandler(contracts.sideConversationReleaseContract, trusted, ({ sideId }) => safe(() => options.service.release(sideId))),

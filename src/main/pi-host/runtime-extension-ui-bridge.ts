@@ -80,6 +80,7 @@ export class RuntimeExtensionUiBridge {
   private readonly maxDeadlineMs: number
   private readonly maxPendingDialogs: number
   private readonly onFatal?: ExtensionUiFatalSink
+  private operationDialogDeadline: number | undefined
   private editorText = ''
   private capacityReached = false
   private readonly unsupportedMethods = new Set<string>()
@@ -274,6 +275,17 @@ export class RuntimeExtensionUiBridge {
     return this.pendingDialogs.size
   }
 
+  /** Leave the enclosing command time to finish after its last dialog expires. */
+  async withDialogDeadline<T>(deadline: number, operation: () => Promise<T>): Promise<T> {
+    const previousDeadline = this.operationDialogDeadline
+    this.operationDialogDeadline = Math.min(deadline, previousDeadline ?? Infinity)
+    try {
+      return await operation()
+    } finally {
+      this.operationDialogDeadline = previousDeadline
+    }
+  }
+
   /**
    * Settles a dialog by its request id. Late or unknown responses are ignored
    * (idempotent), which keeps a dismissed dialog from resurfacing or settling
@@ -429,9 +441,12 @@ export class RuntimeExtensionUiBridge {
     const signal = options?.signal
     if (signal?.aborted) return Promise.resolve(defaultValue)
     const pluginTimeout = options?.timeout
-    const deadlineMs = pluginTimeout === undefined
-      ? this.maxDeadlineMs
-      : Math.min(pluginTimeout, this.maxDeadlineMs)
+    const deadlineMs = Math.min(
+      pluginTimeout ?? this.maxDeadlineMs,
+      this.maxDeadlineMs,
+      this.operationDialogDeadline === undefined ? Infinity : this.operationDialogDeadline - Date.now(),
+    )
+    if (deadlineMs <= 0) return Promise.resolve(defaultValue)
     const id = randomUUID()
 
     return new Promise<T>((resolve) => {

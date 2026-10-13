@@ -6,6 +6,26 @@ Each version section supplies the highlights for its GitHub Release. Download li
 
 ## Unreleased
 
+## 0.12.1
+
+### 中文
+
+- **消息右键菜单**：复制选中内容、完整消息 Markdown、代码和链接，引用消息或选区，编辑并重新提问，或从当前问题创建分叉；支持键盘打开菜单。
+- **侧问更完整**：独立选择模型和思考级别，查看思考过程与工具调用，在侧问面板直接回答扩展的交互问题；关闭面板或切换任务后保留草稿与历史，可重新打开已保存的侧问并继续，也可进入完整对话。
+- **终端链接**：终端和运行命令输出中的网页与本地预览地址支持按修饰键打开，右键可复制地址、在默认浏览器或 PiPilot 浏览器中打开，普通点击继续用于选择文本。
+- **停止后归档**：归档运行中或有待处理工作的任务前先确认并停止对应任务；支持批量归档，未能停止的任务保留在列表中。恢复已归档任务不会自动恢复排队消息。
+- **开源软件与致谢**：“关于”中的致谢与第三方许可合并，支持按软件包搜索、按许可证筛选，并在独立阅读区域查看完整许可正文。
+- **托盘显示与验证**：改进 macOS 高分辨率托盘图标、Windows 系统主题和高对比度适配，以及 Linux 面板上的可见性。普通推送运行核心 Electron 测试，发布预演与正式发布仍运行完整测试和安装包检查。
+
+### English
+
+- **Message context menus:** Copy selected text, complete message Markdown, code or links; quote a message or selection, edit and ask again, or fork from the current question. Menus also open from the keyboard.
+- **More complete side questions:** Choose a separate model and thinking level, inspect thinking and tool calls, and answer extension questions inside the side panel. Drafts and history survive closing the panel or switching tasks; reopen saved side conversations to continue, or open the full conversation.
+- **Terminal links:** Modifier-click web and local preview addresses in terminals and command output. Right-click to copy the address or open it in the default browser or PiPilot browser; ordinary clicks remain available for text selection.
+- **Stop before archiving:** Confirm and stop the exact running task or pending work before archiving, including batches. Tasks that cannot be stopped stay in the list. Restoring an archived task does not automatically resume queued messages.
+- **Open source and acknowledgements:** Combine credits and third-party notices in About, with package search, license filtering and a separate reader for complete license text.
+- **Tray icons and verification:** Improve high-resolution macOS icons, Windows system theme and high-contrast support, and visibility on Linux panels. Ordinary pushes run core Electron tests; release dry runs and publication retain the full suite and packaged application checks.
+
 ## 0.12.0
 
 ### 中文

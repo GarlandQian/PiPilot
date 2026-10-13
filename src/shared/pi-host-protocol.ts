@@ -15,7 +15,8 @@ export const PI_HOST_PROTOCOL_VERSION = 2 as const
 // session can legitimately exceed the old 16 MiB transport ceiling even when
 // every individual message is bounded, so retain a finite but practical cap.
 export const PI_HOST_MAX_ENVELOPE_BYTES = 64 * 1024 * 1024
-export const PI_HOST_MAX_REQUEST_TIMEOUT_MS = 10 * 60 * 1_000
+// Interactive commands allow the full dialog budget plus time for the hook to exit.
+export const PI_HOST_MAX_REQUEST_TIMEOUT_MS = 10 * 60 * 1_000 + 30_000
 // Host DTO inspection is iterative. Match the renderer's explicitly supported
 // 20,000-level Pi session tree contract instead of rejecting it in Utility.
 export const PI_HOST_MAX_DTO_DEPTH = 20_000

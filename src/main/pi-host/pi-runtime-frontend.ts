@@ -821,6 +821,7 @@ export class PiRuntimeFrontend {
     this.assertNotDisposed()
     const runtime = this.requireControlRuntime(handle)
     this.assertAdmission(runtime.hostScope.cwd)
+    this.assertSessionAvailable({ sessionFile: runtime.descriptor.sessionFile ?? undefined })
     const token = this.markCommandStart(runtime, handle.generation)
     const expectedEventRevision = runtime.activity.eventRevision
     try {
@@ -888,12 +889,24 @@ export class PiRuntimeFrontend {
   }
 
   /** One command to this exact Runtime (a browser tool answer, a model choice). */
-  async commandControlRuntime(handle: PiRuntimeControlHandle, command: Extract<LocalPiRpcCommand, { type: 'browser_tool_response' | 'set_model' }>) {
+  async commandControlRuntime(handle: PiRuntimeControlHandle, command: Extract<LocalPiRpcCommand, { type: 'browser_tool_response' | 'set_model' | 'set_thinking_level' | 'get_available_models' | 'get_available_thinking_levels' }>) {
     this.assertNotDisposed()
     const runtime = this.requireControlRuntime(handle)
-    const result = await this.pool.command(runtime.runtimeId, command, handle.generation)
-    if (!result.response.success) throw new PiRuntimeFrontendError('PI_RUNTIME_OPERATION_FAILED', result.response.error || 'Pi rejected the command.')
-    return result.response
+    if (command.type === 'set_model' || command.type === 'set_thinking_level') {
+      this.assertAdmission(runtime.hostScope.cwd)
+      this.assertSessionAvailable({ sessionFile: runtime.descriptor.sessionFile ?? undefined })
+    }
+    const token = this.markCommandStart(runtime, handle.generation)
+    try {
+      const result = await this.pool.command(runtime.runtimeId, command, handle.generation)
+      this.requireControlRuntime(handle)
+      if (this.runtimes.get(runtime.runtimeId) !== runtime || result.runtime.generation !== handle.generation) {
+        throw new PiRuntimeFrontendError('PI_RUNTIME_STALE_GENERATION', 'The controlled Pi runtime changed while applying the command.')
+      }
+      if (!result.response.success) throw new PiRuntimeFrontendError('PI_RUNTIME_OPERATION_FAILED', result.response.error || 'Pi rejected the command.')
+      return result.response
+    } catch (error) { throw this.toFrontendError(error) }
+    finally { this.markCommandEnd(runtime, token) }
   }
 
   /** Read the exact background Session; never consult the selected Renderer transcript. */
@@ -1306,6 +1319,44 @@ export class PiRuntimeFrontend {
     })
   }
 
+  /** Verify the exact saved task is stopped before Renderer hides it. Never cold-start or select it. */
+  prepareSessionArchive(sessionFile: string, sessionId: string, stopRunning: boolean): Promise<{ status: 'ready' | 'confirmationRequired' }> {
+    const identity = pathIdentity(sessionFile)
+    this.assertSessionAvailable({ sessionFile })
+    this.releasingSessionFiles.add(identity)
+    return this.enqueue(async () => {
+      this.assertNotDisposed()
+      if ([...this.pendingPreparations].some((entry) => entry.sessionFiles.has(identity))) {
+        throw new PiRuntimeFrontendError('PI_RUNTIME_OPERATION_FAILED', 'This task is still opening. Retry archiving after it opens.')
+      }
+      const runtime = [...this.runtimes.values()].find((entry) =>
+        pathIdentity(entry.descriptor.sessionFile ?? entry.lastCredibleSessionFile ?? '') === identity)
+      if (!runtime) return { status: 'ready' as const }
+      const handle = this.controlHandleFor(runtime)
+      if (handle.sessionId !== sessionId) throw new PiRuntimeFrontendError('PI_RUNTIME_STALE_GENERATION', 'The task changed before it could be archived.')
+      const busy = () => summarizeRuntimeActivity(runtime.activity).lifecycle !== 'idle'
+      const inspectBusy = async () => {
+        const state = await this.getControlRuntimeState(handle)
+        const result = await this.pool.command(handle.runtimeId, { type: 'get_delivery_state', expectedSessionId: sessionId }, handle.generation)
+        this.requireControlRuntime(handle)
+        if (result.runtime.generation !== handle.generation) throw new PiRuntimeFrontendError('PI_RUNTIME_STALE_GENERATION', 'The task changed while confirming its stop.')
+        const delivery = this.parseDeliveryResponse(result.response)
+        this.updateActivity(runtime, { type: 'delivery_state', delivery })
+        return busy() || isSessionStateBusy(state) || isDeliverySnapshotBusy(delivery)
+      }
+      const needsStop = busy() || await inspectBusy()
+      if (needsStop && !stopRunning) return { status: 'confirmationRequired' as const }
+      if (needsStop) {
+        // Release dialogs that an extension may be awaiting before its abort can settle.
+        await Promise.all([...runtime.activity.pendingUiRequests].map((id) =>
+          this.respondToControlExtensionUi(handle, { type: 'extension_ui_response', id, cancelled: true })))
+        await this.abortControlRuntime(handle, PI_RUNTIME_ABORT_GRACE_TIMEOUT_MS)
+        if (await inspectBusy()) throw new PiRuntimeFrontendError('PI_RUNTIME_OPERATION_FAILED', 'The task has not finished stopping. It has not been archived. Retry after it stops.')
+      }
+      return { status: 'ready' as const }
+    }).finally(() => { this.releasingSessionFiles.delete(identity) })
+  }
+
   /**
    * Release a cached Runtime that owns the selected persisted Session.
    *
@@ -1443,6 +1494,7 @@ export class PiRuntimeFrontend {
       ? this.requireAbortTarget()
       : this.requireActive()
     this.assertAdmission(runtime.hostScope.cwd)
+    if (command.type !== 'abort' && !command.type.startsWith('get_')) this.assertSessionAvailable({ sessionFile: runtime.descriptor.sessionFile ?? undefined })
     const expectedGeneration = runtime.descriptor.generation
     const recoveryHostEpoch = command.type === 'abort'
       ? this.pool.getSnapshot().hosts.find((host) => sameHostScope(host.scope, runtime.hostScope))?.controller.hostEpoch
@@ -2426,7 +2478,7 @@ export class PiRuntimeFrontend {
   private assertSessionAvailable(target: Pick<PreparedRuntimeTarget, 'sessionFile' | 'forkSessionFile'>): void {
     if ([target.sessionFile, target.forkSessionFile].some((file) =>
       file !== undefined && this.releasingSessionFiles.has(pathIdentity(file)))) {
-      throw new PiRuntimeFrontendError('PI_RUNTIME_OPERATION_FAILED', 'The Session is being released. Retry after deletion finishes.')
+      throw new PiRuntimeFrontendError('PI_RUNTIME_OPERATION_FAILED', 'The task is being archived or released. Retry after it finishes.')
     }
   }
 

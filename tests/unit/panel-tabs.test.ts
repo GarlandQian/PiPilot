@@ -157,11 +157,11 @@ describe('panel tabs store', () => {
     expect(next.get('c')).toBe(EMPTY_PANEL_TABS)
   })
 
-  it('forgets passing tabs when leaving a conversation', () => {
+  it('retains side conversations but forgets transient output when leaving a conversation', () => {
     const store = new PanelTabsStore(null)
-    store.set('a', [review, panelTab('command')].reduce((next, tab) => openPanelTab(next, tab), EMPTY_PANEL_TABS))
+    store.set('a', [review, panelTab('sidechat'), panelTab('command')].reduce((next, tab) => openPanelTab(next, tab), EMPTY_PANEL_TABS))
     store.leave('a')
-    expect(store.get('a').right.tabIds).toEqual(['review'])
+    expect(store.get('a').right.tabIds).toEqual(['review', 'sidechat'])
   })
 
   it('survives unreadable storage', () => {

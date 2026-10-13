@@ -12,6 +12,7 @@ import type {
 } from '../../src/main/pi-host/pi-host-controller'
 import { projectPiHostDto } from '../../src/main/pi-host/pi-host-dto'
 import {
+  PROJECT_RUNTIME_INTERACTIVE_TIMEOUT_MS,
   ProjectHostPool,
   type ProjectHostControllerLike,
   type ProjectHostScope,
@@ -637,6 +638,25 @@ describe('ProjectHostPool', () => {
       runtimeGeneration: runtime.generation,
       timeoutMs: 90_000,
     })
+    await pool.dispose()
+  })
+
+  it('budgets startup, model selection and submit preflight for interaction while preserving ordinary and explicit deadlines', async () => {
+    const { controllers, pool } = createHarness()
+    const runtime = await pool.createRuntime(projectA, { sessionDir: '/sessions/a' })
+    const latestOptions = () => controllers[0].requests[controllers[0].requests.length - 1]?.options
+    await pool.bindRuntime(runtime.runtimeId, runtime.generation)
+    expect(latestOptions()?.timeoutMs).toBe(PROJECT_RUNTIME_INTERACTIVE_TIMEOUT_MS)
+
+    await pool.command(runtime.runtimeId, { type: 'set_model', provider: 'fixture', modelId: 'fixture' }, runtime.generation)
+    expect(latestOptions()?.timeoutMs).toBe(PROJECT_RUNTIME_INTERACTIVE_TIMEOUT_MS)
+    await pool.externalSubmit(runtime.runtimeId, 'Ask the extension.', 'prompt', runtime.generation)
+    expect(latestOptions()?.timeoutMs).toBe(PROJECT_RUNTIME_INTERACTIVE_TIMEOUT_MS)
+
+    await pool.command(runtime.runtimeId, { type: 'get_state' }, runtime.generation)
+    expect(latestOptions()).not.toHaveProperty('timeoutMs')
+    await pool.command(runtime.runtimeId, { type: 'set_model', provider: 'fixture', modelId: 'fixture' }, runtime.generation, 90_000)
+    expect(latestOptions()?.timeoutMs).toBe(90_000)
     await pool.dispose()
   })
 

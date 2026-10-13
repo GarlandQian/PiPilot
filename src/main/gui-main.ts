@@ -71,6 +71,7 @@ import { configureSessionSecurity } from './security/session-security'
 import { createApplicationUrlPolicy } from './security/url-policy'
 import { createMainWindow } from './windows/create-main-window'
 import { buildApplicationMenuTemplate } from './windows/application-menu'
+import { createTrayIcons, followTrayTheme, trayIconVariant } from './windows/tray-icon'
 import { ipcChannels, type AppCommand } from '../shared/ipc/contracts'
 import { TerminalService } from './terminal/terminal-service'
 import { ProjectHostPool } from './pi-host/project-host-pool'
@@ -326,6 +327,7 @@ let mainWindow: BrowserWindow | null = null
 let windowStateController: WindowStateController | null = null
 let applicationTray: Tray | null = null
 let traySettingsUnsubscribe: (() => boolean) | null = null
+let trayThemeUnsubscribe: (() => void) | null = null
 let piHostPool: ProjectHostPool | null = null
 let piRuntimeFrontend: PiRuntimeFrontend | null = null
 let projectWorkflowsService: ReturnType<typeof createProjectWorkflowsService> | null = null
@@ -484,6 +486,8 @@ async function disposeApplicationResources() {
 
   traySettingsUnsubscribe?.()
   traySettingsUnsubscribe = null
+  trayThemeUnsubscribe?.()
+  trayThemeUnsubscribe = null
   applicationTray?.destroy()
   applicationTray = null
 
@@ -582,19 +586,9 @@ function createApplicationTray() {
   const iconPath = app.isPackaged
     ? join(process.resourcesPath, 'tray-icon.png')
     : join(app.getAppPath(), 'build/tray-icon.png')
-  let icon = nativeImage.createFromPath(iconPath)
-  if (icon.isEmpty()) {
-    const fallbackSvg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
-      '<path fill="#000" d="M14.7 9.6 H58.8 Q60.9 9.6 60.9 11.8 V17.3 Q60.9 19.4 58.8 19.4 H49.1 V41.4 Q49.1 45.7 53.3 45.7 H55.6 Q58.8 45.7 58.8 48.9 V51 Q58.8 54.2 55.6 54.2 H51 Q39.3 54.2 39.3 42.7 V19.4 H26.4 C26.4 33 25.5 45.2 21.1 51.8 Q19.4 54.4 16.6 54.2 Q13.2 53.9 12.6 51.2 Q12.2 49.5 13.2 47.8 C16.2 41.4 16.8 30.8 16.8 19.4 H14.5 C12.2 19.4 10.3 19.8 9.2 20.2 Q8.6 21.7 6.9 21.5 L4.5 21.1 Q2.6 20.7 3.1 18.5 C4.5 12.6 8.6 9.6 14.7 9.6 Z"/>' +
-      '</svg>'
-    icon = nativeImage.createFromDataURL(
-      `data:image/svg+xml;charset=utf-8,${encodeURIComponent(fallbackSvg)}`,
-    )
-  }
-  icon = icon.resize({ width: 18, height: 18 })
-  if (process.platform === 'darwin') icon.setTemplateImage(true)
-
-  applicationTray = new Tray(icon)
+  const icons = createTrayIcons(nativeImage, nativeImage.createFromPath(iconPath), process.platform)
+  applicationTray = new Tray(icons[trayIconVariant(process.platform, nativeTheme)])
+  trayThemeUnsubscribe = followTrayTheme(process.platform, nativeTheme, applicationTray, icons)
   applicationTray.setToolTip('PiPilot')
   updateApplicationTrayMenu()
   traySettingsUnsubscribe = settingsRepository.subscribe(
@@ -1110,6 +1104,7 @@ if (!hasSingleInstanceLock) {
       })
       registerSessionCatalogIpc({
         catalog: officialPiSessionCatalog,
+        runtimeHost,
         contextService: conversationContextService,
         getMainWindow: () => mainWindow,
         policy,

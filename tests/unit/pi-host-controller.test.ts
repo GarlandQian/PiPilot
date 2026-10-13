@@ -19,6 +19,7 @@ import {
   type PiHostCommand,
   type PiHostRequestEnvelope,
 } from '../../src/shared/pi-host-protocol'
+import { PROJECT_RUNTIME_INTERACTIVE_TIMEOUT_MS } from '../../src/main/pi-host/project-host-pool'
 
 describe('Pi Host utility path resolution', () => {
   it('resolves a utility entry outside a lazy Main chunk directory', () => {
@@ -531,6 +532,41 @@ describe('PiHostController', () => {
         pid: null,
       })
     })
+  })
+
+  it('keeps the shared Host available beyond thirty seconds for a bounded interactive request', async () => {
+    let interactiveRequest: PiHostRequestEnvelope | undefined
+    const harness = createHarness({
+      requestTimeoutMs: 30_000,
+      onRequest: (request): PiHostDto | undefined => {
+        if (request.command.type === 'runtime.bind') {
+          interactiveRequest = request
+          return undefined
+        }
+        if (request.command.type === 'shutdown') return { stopped: true }
+        return { siblingReady: true }
+      },
+    })
+    controllers.add(harness.controller)
+    await harness.controller.start()
+    vi.useFakeTimers()
+    try {
+      const pending = harness.controller.request({ type: 'runtime.bind' }, {
+        runtimeId: 'rt_side', runtimeGeneration: 1, timeoutMs: PROJECT_RUNTIME_INTERACTIVE_TIMEOUT_MS,
+      })
+      const outcome = pending.catch((error: unknown) => error)
+      await vi.advanceTimersByTimeAsync(31_000)
+      expect(interactiveRequest?.timeoutMs).toBe(PROJECT_RUNTIME_INTERACTIVE_TIMEOUT_MS)
+      expect(harness.utility.killed).toBe(false)
+      await expect(harness.controller.request({ type: 'runtime.command', rpc: { type: 'get_state' } }, {
+        runtimeId: 'rt_parent', runtimeGeneration: 1,
+      })).resolves.toEqual({ siblingReady: true })
+      await vi.advanceTimersByTimeAsync(PROJECT_RUNTIME_INTERACTIVE_TIMEOUT_MS - 31_000)
+      expect(await outcome).toMatchObject({ code: 'TIMEOUT' })
+      expect(harness.utility.killed).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('routes runtime events, ignores stale epochs, and sends validated credits', async () => {

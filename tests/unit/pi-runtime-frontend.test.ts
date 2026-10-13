@@ -317,6 +317,12 @@ class FakeFrontendPool {
       case 'get_messages':
         response = { type: 'response', command: 'get_messages', success: true, data: { messages: [] } }
         break
+      case 'get_available_models':
+        response = { type: 'response', command: 'get_available_models', success: true, data: { models: [] } }
+        break
+      case 'get_available_thinking_levels':
+        response = { type: 'response', command: 'get_available_thinking_levels', success: true, data: { levels: ['off'] } }
+        break
       case 'get_delivery_state':
         response = {
           type: 'response', command: 'get_delivery_state', success: true,
@@ -672,6 +678,81 @@ function createHarness(options: PiRuntimeFrontendOptions = {}) {
   return { frontend, pool }
 }
 
+describe('Preparing exact tasks for archive', () => {
+  it('archives idle and unloaded tasks without starting or stopping a runtime', async () => {
+    const { frontend, pool } = createHarness()
+    await expect(frontend.prepareSessionArchive('/sessions/unloaded.jsonl', 'unloaded', false)).resolves.toEqual({ status: 'ready' })
+    expect(pool.createCount).toBe(0)
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/idle-archive.jsonl' })
+    const selected = frontend.getActiveRuntimeIdentity()!
+    await expect(frontend.prepareSessionArchive(selected.sessionFile!, selected.sessionId!, false)).resolves.toEqual({ status: 'ready' })
+    await expect(frontend.prepareSessionArchive(selected.sessionFile!, selected.sessionId!, true)).resolves.toEqual({ status: 'ready' })
+    expect(pool.commandCalls.some(({ command }) => command.type === 'abort')).toBe(false)
+    // Renderer can still look idle when the authoritative SDK or delivery state has started work.
+    pool.setRuntimeSessionState(selected.runtimeId, { isStreaming: true })
+    await expect(frontend.prepareSessionArchive(selected.sessionFile!, selected.sessionId!, false)).resolves.toEqual({ status: 'confirmationRequired' })
+    pool.setRuntimeSessionState(selected.runtimeId, { isStreaming: false })
+    pool.emitEvent(runtimeEvent(selected.runtimeId, selected.generation, { type: 'agent_settled' }))
+    pool.deliveryStates.set(selected.runtimeId, managedDelivery('queued'))
+    await expect(frontend.prepareSessionArchive(selected.sessionFile!, selected.sessionId!, false)).resolves.toEqual({ status: 'confirmationRequired' })
+    const frozen = managedDelivery('frozen', true, 2)
+    pool.deliveryStates.set(selected.runtimeId, frozen)
+    pool.emitEvent(runtimeEvent(selected.runtimeId, selected.generation, { type: 'delivery_state', delivery: frozen }))
+    await expect(frontend.prepareSessionArchive(selected.sessionFile!, selected.sessionId!, false)).resolves.toEqual({ status: 'ready' })
+    expect(pool.deliveryStates.get(selected.runtimeId)).toEqual(frozen)
+    expect(pool.commandCalls.some(({ command }) => command.type === 'abort' || command.type === 'resume_delivery')).toBe(false)
+    await frontend.dispose()
+  })
+
+  it('requires confirmation and waits for the exact background task to stop with its queue paused', async () => {
+    const { frontend, pool } = createHarness()
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/selected-during-archive.jsonl' })
+    const selected = frontend.getActiveRuntimeIdentity()!
+    const lease = await frontend.acquireControlRuntime({ scope: projectScope, sessionFile: '/sessions/background-archive.jsonl' })
+    pool.setRuntimeSessionState(lease.runtimeId, { isStreaming: true, pendingMessageCount: 1 })
+    pool.emitEvent(runtimeEvent(lease.runtimeId, lease.generation, { type: 'agent_start' }))
+    await expect(frontend.prepareSessionArchive(lease.sessionFile!, lease.sessionId, false)).resolves.toEqual({ status: 'confirmationRequired' })
+    expect(pool.commandCalls.some(({ command }) => command.type === 'abort')).toBe(false)
+    const abortGate = deferred()
+    pool.abortDelay = abortGate.promise
+    let settled = false
+    const stopping = frontend.prepareSessionArchive(lease.sessionFile!, lease.sessionId, true).then((result) => { settled = true; return result })
+    await vi.waitFor(() => expect(pool.commandCalls.some(({ command, runtimeId }) => command.type === 'abort' && runtimeId === lease.runtimeId)).toBe(true))
+    expect(settled).toBe(false)
+    await expect(frontend.submitControlPrompt(lease, 'Do not sneak in while archiving', 'auto')).rejects.toThrow('being archived')
+    expect(frontend.getActiveRuntimeIdentity()).toEqual(selected)
+    pool.setRuntimeSessionState(lease.runtimeId, { isStreaming: false, pendingMessageCount: 0 })
+    pool.emitEvent(runtimeEvent(lease.runtimeId, lease.generation, { type: 'agent_settled', aborted: true }))
+    pool.deliveryStates.set(lease.runtimeId, { revision: 1, paused: true, items: [], receipts: [] })
+    abortGate.resolve()
+    await expect(stopping).resolves.toEqual({ status: 'ready' })
+    expect(pool.commandCalls.filter(({ command }) => command.type === 'abort')).toEqual([
+      expect.objectContaining({ runtimeId: lease.runtimeId, expectedGeneration: lease.generation, timeoutMs: PI_RUNTIME_ABORT_GRACE_TIMEOUT_MS }),
+    ])
+    expect(frontend.getActiveRuntimeIdentity()).toEqual(selected)
+    expect(pool.restartCalls).toEqual([])
+    frontend.releaseControlRuntime(lease)
+    await frontend.dispose()
+  })
+
+  it('fails closed when stopping fails or work remains, and permits a later retry', async () => {
+    const { frontend, pool } = createHarness()
+    await frontend.start({ scope: projectScope, sessionFile: '/sessions/archive-failure.jsonl' })
+    const selected = frontend.getActiveRuntimeIdentity()!
+    pool.emitEvent(runtimeEvent(selected.runtimeId, selected.generation, { type: 'agent_start' }))
+    pool.abortError = new Error('The tool did not stop')
+    await expect(frontend.prepareSessionArchive(selected.sessionFile!, selected.sessionId!, true)).rejects.toThrow('The tool did not stop')
+    expect(pool.restartCalls).toEqual([])
+    pool.abortError = null
+    pool.setRuntimeSessionState(selected.runtimeId, { isStreaming: true })
+    await expect(frontend.prepareSessionArchive(selected.sessionFile!, selected.sessionId!, true)).rejects.toThrow('has not finished stopping')
+    pool.setRuntimeSessionState(selected.runtimeId, { isStreaming: false })
+    await expect(frontend.prepareSessionArchive(selected.sessionFile!, selected.sessionId!, true)).resolves.toEqual({ status: 'ready' })
+    await expect(frontend.prepareSessionArchive(selected.sessionFile!, 'another-session', true)).rejects.toThrow('task changed')
+    await frontend.dispose()
+  })
+})
+
 describe('Runtime preparation and global retention', () => {
   it('synchronizes retry policy on selected and busy background runtimes without reload or interruption', async () => {
     const { frontend, pool } = createHarness({ isPersistedSessionFile: () => true })
@@ -805,6 +886,8 @@ describe('Runtime preparation and global retention', () => {
     pool.startupUiId = 'side-startup'; pool.waitForStartupUiResponse = true
     const created = await side.create({ scope: projectScope, parentSessionId: selected.sessionId!, requestId: '11111111-1111-4111-8111-111111111111', question: 'Explain', reference: { id: 'quote', ownerKey: `project:${projectScope.workspaceId}:${selected.sessionId}`, kind: 'message', sourceId: 'answer', label: 'Answer', text: 'captured source' } })
     await expect.poll(async () => (await side.get(created.sideId)).status).toBe('interaction_required')
+    expect(pool.uiResponses).toEqual([])
+    await side.abort(created.sideId)
     await expect.poll(() => pool.disposeCalls.some((call) => call.runtimeId === 'rt_frontend_2')).toBe(true)
     expect(pool.externalSubmitCalls).toEqual([])
     expect(frontend.getActiveRuntimeIdentity()).toEqual(selected)

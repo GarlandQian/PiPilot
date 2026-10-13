@@ -76,6 +76,68 @@ async function seedTask(page: Page, prompt: string, title: string) {
   return page.evaluate(() => window.pipilot!.localPi.runtime.status())
 }
 
+test('stops the exact background task before archiving and restores it without resuming queued work', async ({}, testInfo) => {
+  test.setTimeout(90_000)
+  const userDataPath = testInfo.outputPath('user-data')
+  const projectPath = testInfo.outputPath('archive-project')
+  await Promise.all([userDataPath, projectPath].map((path) => mkdir(path, { recursive: true })))
+  const project = await realpath(projectPath)
+  await writeFile(join(userDataPath, 'settings.json'), JSON.stringify({ version: SETTINGS_SCHEMA_VERSION, settings: { ...DEFAULT_SETTINGS, locale: 'en-US' } }))
+  const runningPrompt = 'Keep this archived task running until explicitly stopped'
+  const queuedPrompt = 'Never automatically run this archived follow-up'
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  const fixture = await startPiSdkFixture({ agentDir: testInfo.outputPath('pi-agent'), completionGates: { [runningPrompt]: gate } })
+  let app: ElectronApplication | undefined
+  try {
+    app = await electron.launch({ args: [resolve(process.cwd())], env: { ...process.env, ...fixture.env, PIPILOT_E2E_USER_DATA: userDataPath } })
+    const page = await app.firstWindow()
+    await page.waitForLoadState('domcontentloaded')
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await expect(page.locator('[data-model-thinking-trigger]')).toContainText('Fake Chat', { timeout: 20_000 })
+    await addProject(app, page, project)
+    const original = await seedTask(page, 'Save the task before running', 'Running archive target')
+    const composer = page.getByRole('textbox', { name: 'Message input', exact: true })
+    await composer.fill(runningPrompt)
+    await composer.press('Enter')
+    await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible()
+    await expect(page.getByRole('log', { name: 'Conversation' })).toContainText(`Fixture response: ${runningPrompt}`)
+    await composer.fill(queuedPrompt)
+    await composer.press('Enter')
+    await expect(page.locator('[data-pending-message-rail]')).toContainText(queuedPrompt)
+    await page.getByRole('button', { name: `New task in ${basename(project)}`, exact: true }).click()
+    const selected = await seedTask(page, 'Keep this selected task intact', 'Selected archive sibling')
+    await taskMenu(page, 'Running archive target')
+    await page.getByRole('menuitem', { name: 'Archive', exact: true }).click()
+    const dialog = page.getByRole('alertdialog', { name: 'Stop and archive this task?', exact: true })
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await expect(taskRow(page, 'Running archive target')).toBeVisible()
+    const running = await page.evaluate(() => window.pipilot!.localPi.runtime.status())
+    expect(running.sessionStatuses?.find((entry) => entry.sessionId === original.sessionState!.sessionId)?.status).toBe('running')
+    await taskMenu(page, 'Running archive target')
+    await page.getByRole('menuitem', { name: 'Archive', exact: true }).click()
+    await dialog.getByRole('button', { name: 'Stop and archive', exact: true }).click()
+    await expect(dialog).toBeHidden({ timeout: 10_000 })
+    await expect(taskRow(page, 'Running archive target')).toHaveCount(0)
+    const stopped = await page.evaluate(() => window.pipilot!.localPi.runtime.status())
+    expect(stopped.sessionFile).toBe(selected.sessionFile)
+    expect(stopped.sessionStatuses?.find((entry) => entry.sessionId === original.sessionState!.sessionId)?.status).not.toBe('running')
+    await openArchived(page)
+    await archivedRow(page, 'Running archive target').click({ button: 'right' })
+    await page.getByRole('menuitem', { name: 'Unarchive', exact: true }).click()
+    await page.getByRole('button', { name: 'Archived tasks', exact: true }).click()
+    await taskRow(page, 'Running archive target').click()
+    await expect(page.getByRole('log', { name: 'Conversation' })).toContainText('Save the task before running')
+    await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0)
+    expect(fixture.prompts).not.toContain(queuedPrompt)
+    expect((await page.evaluate(() => window.pipilot!.localPi.runtime.status())).sessionState?.isStreaming).toBe(false)
+  } finally {
+    release()
+    if (app) await closeFixtureApplication(app)
+    await fixture.close()
+  }
+})
+
 test('restores an existing project task and persists pin/archive without deleting official sessions', { tag: '@core' }, async ({}, testInfo) => {
   test.setTimeout(90_000)
   const userDataPath = testInfo.outputPath('user-data')

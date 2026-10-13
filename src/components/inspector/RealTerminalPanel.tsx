@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { FitAddon } from '@xterm/addon-fit'
+import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
 import { TbArrowDown, TbArrowUp, TbCheck, TbChevronDown, TbCopy, TbEraser, TbSearch, TbX } from 'react-icons/tb'
 import '@xterm/xterm/css/xterm.css'
@@ -12,6 +13,9 @@ import { resolveTerminalFontStack } from '@/lib/terminal-fonts'
 import { applyTerminalTypography } from './terminal-typography'
 import { findTerminalMatches, splitTerminalInput, terminalBufferText, terminalShortcut, type TerminalSearchMatch } from './terminal-surface'
 import { Button } from '@/components/ui/button'
+import { ContextMenu, ContextMenuContent, ContextMenuTrigger } from '@/components/ui/context-menu'
+import { TerminalLinkMenuItems, useTerminalLinkActions, type TerminalLinkTarget } from './TerminalLinks'
+import { createLocalTerminalLinkProvider, isTerminalLinkModifier, normalizeTerminalLink } from './terminal-links'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 
 type TerminalStatus = 'starting' | 'running' | 'exited' | 'error'
@@ -106,6 +110,8 @@ export const RealTerminalPanel = React.forwardRef<RealTerminalPanelHandle, RealT
   const [searchResult, setSearchResult] = React.useState({ index: -1, total: 0 })
   const [hasNewOutput, setHasNewOutput] = React.useState(false)
   const [scrolledBack, setScrolledBack] = React.useState(false)
+  const hoveredLink = React.useRef<TerminalLinkTarget | null>(null)
+  const [menuLink, setMenuLink] = React.useState<TerminalLinkTarget | null>(null)
   const activeScopeKey = scopeKey(scope)
   const terminalFontStack = resolveTerminalFontStack(terminalSettings.fontFamily)
   const typographyRef = React.useRef({ fontFamily: terminalFontStack, fontSize: terminalSettings.fontSize })
@@ -123,6 +129,9 @@ export const RealTerminalPanel = React.forwardRef<RealTerminalPanelHandle, RealT
     setError(message)
     callbacksRef.current.onError?.(message)
   }, [])
+  const linkActions = useTerminalLinkActions(reportError, scope)
+  const linkActionsRef = React.useRef(linkActions)
+  linkActionsRef.current = linkActions
 
   const focus = React.useCallback(() => {
     if (visibleRef.current) terminalRef.current?.focus()
@@ -271,8 +280,24 @@ export const RealTerminalPanel = React.forwardRef<RealTerminalPanelHandle, RealT
     setError(undefined)
     setHasNewOutput(false)
     setScrolledBack(false)
+    hoveredLink.current = null
+    setMenuLink(null)
     setStatus('starting')
 
+    const linkHandlers = {
+      activate(event: MouseEvent, text: string) {
+        const target = normalizeTerminalLink(text)
+        if (!disposed && visibleRef.current && event.button === 0 && target && isTerminalLinkModifier(event, navigator.userAgent) && !terminal.hasSelection()) {
+          event.preventDefault()
+          void linkActionsRef.current.open(target)
+        }
+      },
+      hover(_event: MouseEvent, text: string) {
+        hoveredLink.current = normalizeTerminalLink(text) ?? null
+        container.title = hoveredLink.current ? `${text}\n${linkActionsRef.current.hint}` : ''
+      },
+      leave() { hoveredLink.current = null; container.removeAttribute('title') },
+    }
     const terminal = new Terminal({
       allowTransparency: false,
       convertEol: false,
@@ -288,9 +313,12 @@ export const RealTerminalPanel = React.forwardRef<RealTerminalPanelHandle, RealT
       scrollback: 5_000,
       scrollOnUserInput: true,
       theme: terminalTheme(),
+      linkHandler: linkHandlers,
     })
     const fitAddon = new FitAddon()
     terminal.loadAddon(fitAddon)
+    terminal.loadAddon(new WebLinksAddon(linkHandlers.activate, { hover: linkHandlers.hover, leave: linkHandlers.leave }))
+    const localLinks = terminal.registerLinkProvider(createLocalTerminalLinkProvider(terminal, linkHandlers))
     terminal.open(container)
     terminal.textarea?.setAttribute('aria-label', translateRef.current('inspector.terminal.interactiveInput'))
     // In screen-reader mode xterm takes typed text only from key presses and
@@ -443,6 +471,9 @@ export const RealTerminalPanel = React.forwardRef<RealTerminalPanelHandle, RealT
       scrollDisposable.dispose()
       parsedDisposable.dispose()
       resizeDisposable.dispose()
+      localLinks.dispose()
+      hoveredLink.current = null
+      container.removeAttribute('title')
       terminal.dispose()
       if (terminalRef.current === terminal) {
         terminalRef.current = undefined
@@ -569,7 +600,17 @@ export const RealTerminalPanel = React.forwardRef<RealTerminalPanelHandle, RealT
       ) : null}
       {error ? <div role="alert" className="flex shrink-0 items-center gap-2 px-3 py-1 text-caption text-destructive"><span className="min-w-0 flex-1">{error}</span>{status === 'error' ? <Button variant="ghost" size="xs" onClick={() => setGeneration((value) => value + 1)}>{t('terminal.surface.retry')}</Button> : <Button variant="ghost" size="icon-xs" aria-label={t('common.close')} onClick={() => setError(undefined)}><TbX aria-hidden /></Button>}</div> : null}
       <div className="relative min-h-0 flex-1 overflow-hidden p-2">
+        <ContextMenu>
+        <ContextMenuTrigger asChild onContextMenu={(event) => {
+          if (!hoveredLink.current || !visibleRef.current) { event.preventDefault(); return }
+          setMenuLink(hoveredLink.current)
+        }}>
         <div ref={containerRef} className="h-full min-h-0 w-full" role="application" aria-label={t('inspector.terminal.output')} />
+        </ContextMenuTrigger>
+        <ContextMenuContent onCloseAutoFocus={(event) => { event.preventDefault(); focus() }}>
+          {menuLink ? <TerminalLinkMenuItems target={menuLink} actions={linkActions} /> : null}
+        </ContextMenuContent>
+        </ContextMenu>
         {scrolledBack ? (
           <Button variant="secondary" size="xs" className="absolute right-4 bottom-3 gap-1 shadow-sm" onClick={() => { terminalRef.current?.scrollToBottom(); setHasNewOutput(false); focus() }}>
             <TbArrowDown aria-hidden />{t(hasNewOutput ? 'terminal.surface.newOutput' : 'workbenchReview.terminal.latest')}

@@ -7,6 +7,37 @@ import { preparePiHostChildProcessEnvironment } from '../../src/main/pi-host/pi-
 import type { LocalPiExtensionUiRequest } from '../../src/shared/local-pi'
 
 describe('RuntimeExtensionUiBridge', () => {
+  it('shares the remaining operation deadline across late and serial dialogs and restores the normal budget', async () => {
+    vi.useFakeTimers()
+    const requests: LocalPiExtensionUiRequest[] = []
+    const bridge = new RuntimeExtensionUiBridge((request) => requests.push(request))
+    try {
+      const operation = bridge.withDialogDeadline(Date.now() + 60_000, async () => {
+        await new Promise((resolve) => setTimeout(resolve, 40_000))
+        const first = await bridge.uiContext.confirm('Late question', 'Continue?')
+        const second = await bridge.uiContext.input('After the shared deadline')
+        return { first, second }
+      })
+      await vi.advanceTimersByTimeAsync(59_999)
+      expect(bridge.pendingCount).toBe(1)
+      expect(requests).toEqual([expect.objectContaining({ method: 'confirm' })])
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(operation).resolves.toEqual({ first: false, second: undefined })
+      expect(bridge.pendingCount).toBe(0)
+      expect(requests).toHaveLength(2)
+      expect(requests[1]).toMatchObject({ method: 'dismiss', reason: 'expired' })
+
+      const ordinary = bridge.uiContext.confirm('Later turn', 'Continue?')
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(bridge.pendingCount).toBe(1)
+      bridge.cancelAll()
+      await expect(ordinary).resolves.toBe(false)
+    } finally {
+      bridge.cancelAll()
+      vi.useRealTimers()
+    }
+  })
+
   it('settles cancelled and replaced dialogs with their official defaults', async () => {
     const requests: Array<{ id: string; method: string; reason?: string }> = []
     const bridge = new RuntimeExtensionUiBridge((request) => {
