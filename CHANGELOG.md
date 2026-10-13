@@ -6,6 +6,14 @@ Each version section supplies the highlights for its GitHub Release. Download li
 
 ## Unreleased
 
+### 中文
+
+- **免责声明与第三方许可**：“设置 › 关于”新增“法律信息”：免责声明（独立项目、仅限合法使用、AI 输出需自行审阅、费用与条款、数据、商标与图标、不提供担保），以及构建时自动生成的第三方许可清单，可查看此版本包含的每个开源软件包及其许可证全文。致谢列出 PiPilot 依赖的主要开源项目；“添加服务商”和 MCP 模板页面不再单独标注出处。README 同步加入免责声明和致谢。
+
+### English
+
+- **Disclaimer and third-party notices:** Settings › About adds Legal: a disclaimer (an independent project, lawful use only, review what AI produces, providers and costs, your data, trademarks, no warranty) and Third-Party Notices, generated at build time, listing every open-source package in the build with its license text. Acknowledgements name the main projects PiPilot builds on; Add Provider and the MCP templates no longer carry their own credit lines. The README gains the disclaimer and acknowledgements.
+
 ## 0.12.0
 
 ### 中文

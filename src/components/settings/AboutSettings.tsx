@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { TbAlertTriangle, TbCheck, TbDownload, TbExternalLink, TbLoader2, TbRefresh } from 'react-icons/tb'
+import { TbAlertTriangle, TbCheck, TbChevronRight, TbDownload, TbExternalLink, TbLoader2, TbRefresh } from 'react-icons/tb'
 import { Button } from '@/components/ui/button'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Progress } from '@/components/ui/progress'
@@ -9,16 +9,42 @@ import type { AppInfo } from '@/shared/ipc/contracts'
 import { SUPPORTED_PI_VERSION } from '@/shared/local-pi'
 import { useApplicationUpdate } from '@/store/application-update'
 import { SettingsGroup, SettingsPage, SettingsRow } from './kit'
+import { DisclaimerSheet, ThirdPartyNoticesSheet } from './about/LegalSheets'
 
 const REPOSITORY = 'https://github.com/GarlandQian/PiPilot'
 
-/** Projects PiPilot is built on or borrows from, credited by name and license. */
+/** Projects PiPilot is built on or borrows from, credited by name and license; every package is in Third-Party Notices. */
 const CREDITS: readonly { name: string; role: MessageKey; license: string; url: string }[] = [
   { name: 'Pi', role: 'settings.about.credit.pi', license: 'MIT', url: 'https://github.com/earendil-works/pi' },
-  { name: 'cc-switch', role: 'settings.about.credit.ccSwitch', license: 'MIT', url: 'https://github.com/farion1231/cc-switch' },
+  { name: 'Electron', role: 'settings.about.credit.electron', license: 'MIT', url: 'https://www.electronjs.org' },
+  { name: 'React', role: 'settings.about.credit.react', license: 'MIT', url: 'https://react.dev' },
+  { name: 'Radix UI', role: 'settings.about.credit.radix', license: 'MIT', url: 'https://www.radix-ui.com' },
+  { name: 'Tailwind CSS', role: 'settings.about.credit.tailwind', license: 'MIT', url: 'https://tailwindcss.com' },
+  { name: 'Tiptap', role: 'settings.about.credit.tiptap', license: 'MIT', url: 'https://tiptap.dev' },
+  { name: 'xterm.js · node-pty', role: 'settings.about.credit.terminal', license: 'MIT', url: 'https://xtermjs.org' },
+  { name: 'Pierre Diffs', role: 'settings.about.credit.diffs', license: 'Apache-2.0', url: 'https://diffs.com' },
+  { name: 'Shiki · highlight.js', role: 'settings.about.credit.highlight', license: 'MIT · BSD-3-Clause', url: 'https://shiki.style' },
+  { name: 'react-markdown', role: 'settings.about.credit.markdown', license: 'MIT', url: 'https://github.com/remarkjs/react-markdown' },
+  { name: 'Motion', role: 'settings.about.credit.motion', license: 'MIT', url: 'https://motion.dev' },
+  { name: 'Model Context Protocol SDK', role: 'settings.about.credit.mcp', license: 'Apache-2.0', url: 'https://modelcontextprotocol.io' },
+  { name: 'Tabler Icons', role: 'settings.about.credit.tabler', license: 'MIT', url: 'https://tabler.io/icons' },
+  { name: 'Material Icon Theme', role: 'settings.about.credit.materialIcons', license: 'MIT', url: 'https://github.com/material-extensions/vscode-material-icon-theme' },
   { name: 'LobeHub Icons', role: 'settings.about.credit.lobeIcons', license: 'MIT', url: 'https://github.com/lobehub/lobe-icons' },
   { name: 'models.dev', role: 'settings.about.credit.modelsDev', license: 'MIT', url: 'https://models.dev' },
+  { name: 'cc-switch', role: 'settings.about.credit.ccSwitch', license: 'MIT', url: 'https://github.com/farion1231/cc-switch' },
 ]
+
+/** A row that opens one of the About page's sheets. */
+function SheetRow({ label, note, onOpen, ...props }: { label: string; note?: string; onOpen(): void } & React.ComponentProps<'div'>) {
+  return <div data-settings-row data-pressable className="flex min-h-[40px] min-w-0 items-center gap-2.5 px-3 py-1.5" {...props}>
+    <button type="button" data-settings-row-action onClick={onOpen} aria-label={label} className="absolute inset-0 rounded-[inherit] outline-none focus-visible:focus-ring" />
+    <span className="pointer-events-none relative min-w-0 flex-1">
+      <span className="block text-app text-foreground">{label}</span>
+      {note ? <span className="mt-0.5 block text-caption leading-snug text-muted-foreground">{note}</span> : null}
+    </span>
+    <TbChevronRight className="pointer-events-none relative size-4 shrink-0 text-muted-foreground/70" aria-hidden />
+  </div>
+}
 
 function platformName(platform: string) {
   if (platform === 'darwin') return 'macOS'
@@ -81,6 +107,7 @@ export function AboutSettings() {
   const t = useT()
   const update = useApplicationUpdate()
   const [confirmInstall, setConfirmInstall] = React.useState(false)
+  const [sheet, setSheet] = React.useState<'disclaimer' | 'notices' | null>(null)
   const snapshot = update.snapshot
   const requestFailed = update.errorMessage !== null
 
@@ -200,9 +227,17 @@ export function AboutSettings() {
       <LinkRow label={t('settings.about.issues')} url={`${REPOSITORY}/issues`} />
     </SettingsGroup>
 
+    <SettingsGroup title={t('settings.about.legal')} data-about-legal>
+      <SheetRow label={t('settings.about.disclaimer')} note={t('settings.about.disclaimer.summary')} onOpen={() => setSheet('disclaimer')} data-about-disclaimer-row />
+      <SheetRow label={t('settings.about.notices')} note={t('settings.about.notices.summary')} onOpen={() => setSheet('notices')} data-about-notices-row />
+      <LinkRow label={t('settings.about.license')} note="MIT" url={`${REPOSITORY}/blob/main/LICENSE`} />
+    </SettingsGroup>
+
     <SettingsGroup title={t('settings.about.credits')} data-about-credits>
       {CREDITS.map((credit) => <LinkRow key={credit.name} label={credit.name} note={`${t(credit.role)} · ${credit.license}`} url={credit.url} />)}
     </SettingsGroup>
+    <DisclaimerSheet open={sheet === 'disclaimer'} onOpenChange={(open) => { if (!open) setSheet(null) }} />
+    <ThirdPartyNoticesSheet open={sheet === 'notices'} onOpenChange={(open) => { if (!open) setSheet(null) }} />
 
     <div className="space-y-0.5 px-2.5 text-center">
       <p className="text-micro text-muted-foreground">{t('settings.about.madeWith')}</p>

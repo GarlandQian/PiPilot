@@ -31,8 +31,7 @@ export function ProviderPresetSheet({ open, onOpenChange, added, onPick }: {
 
   return <SettingsSheet open={open} onOpenChange={onOpenChange} title={t('settings.models.presets.title')} description={t('settings.models.presets.description')}
     data-models-preset-picker onOpenAutoFocus={(event) => { event.preventDefault(); searchRef.current?.focus() }}
-    footer={<div className="flex items-center gap-3">
-      <p className="min-w-0 flex-1 text-micro leading-snug text-muted-foreground">{t('settings.models.presets.credit')}</p>
+    footer={<div className="flex items-center justify-end gap-3">
       <Button variant="outline" className="min-w-[76px]" onClick={() => onOpenChange(false)}>{t('common.cancel')}</Button>
     </div>}>
     <div className="sticky top-0 z-10 -mx-5 space-y-2 bg-surface-raised px-5 pb-3">

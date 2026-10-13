@@ -137,6 +137,24 @@ The app uses Electron Main, a sandboxed preload, and React. The renderer accesse
 
 Contributions use the frozen lockfile. Keep personal configuration, secrets, build output, and generated reports out of commits.
 
+## Disclaimer
+
+By using PiPilot you accept the following:
+
+1. **An independent project:** PiPilot is an unofficial, independent open-source project. It is not affiliated with, endorsed by, or sponsored by Pi (Earendil), OpenAI, Anthropic, Google, Cursor, or any other company or product it mentions or works with.
+2. **Lawful use only:** Use PiPilot only on systems and data you are authorized to access. Using it for unauthorized access, intrusion or penetration, attacks, fraud, creating or spreading malware, or any other unlawful purpose is prohibited. You must follow the laws where you are and the usage policies of each model provider. Whoever misuses PiPilot bears all consequences and legal responsibility; the authors and contributors accept none.
+3. **Review what AI produces:** Answers, code and commands produced by models can be wrong, insecure or destructive. Review them before running commands or changing, committing or publishing code. You are responsible for what you run and ship.
+4. **Providers, costs and terms:** Model usage is billed and governed by the providers you configure, under your agreement with them. PiPilot charges nothing and does not proxy or resell model access.
+5. **Your data:** Settings, conversations and keys stay on this computer. Prompts, code and attachments you send go to the model providers and MCP servers you choose, under their policies.
+6. **Trademarks and logos:** Product names, trademarks and logos belong to their owners and appear only to identify providers and apps.
+7. **No warranty:** PiPilot is provided "as is" under the MIT License, without warranty of any kind. The authors and contributors are not liable for any claim, damage or loss arising from its use.
+
+## Acknowledgements
+
+PiPilot is built on many open-source projects, notably [Pi](https://github.com/earendil-works/pi), [Electron](https://www.electronjs.org), [React](https://react.dev), [Radix UI](https://www.radix-ui.com), [Tailwind CSS](https://tailwindcss.com), [Tiptap](https://tiptap.dev), [xterm.js](https://xtermjs.org) and [node-pty](https://github.com/microsoft/node-pty), [Pierre Diffs](https://diffs.com), [Shiki](https://shiki.style) and [highlight.js](https://highlightjs.org), [react-markdown](https://github.com/remarkjs/react-markdown), [Motion](https://motion.dev), the [Model Context Protocol SDK](https://modelcontextprotocol.io), [Tabler Icons](https://tabler.io/icons), [Material Icon Theme](https://github.com/material-extensions/vscode-material-icon-theme), [LobeHub Icons](https://github.com/lobehub/lobe-icons) and [models.dev](https://models.dev). The provider presets and MCP templates started from [cc-switch](https://github.com/farion1231/cc-switch).
+
+Every open-source package in a build, with its license, is listed in the app under Settings › About › Third-Party Notices.
+
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) © 2026 GarlandQian and PiPilot contributors

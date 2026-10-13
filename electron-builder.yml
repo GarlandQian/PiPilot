@@ -1,6 +1,6 @@
 appId: com.pipilot.desktop
 productName: PiPilot
-copyright: Copyright © 2026 PiPilot contributors
+copyright: Copyright © 2026 GarlandQian and PiPilot contributors
 
 directories:
   output: release

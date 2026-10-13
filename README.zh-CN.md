@@ -137,6 +137,24 @@ pnpm dev
 
 贡献时使用冻结的 lockfile；请勿提交个人配置、密钥、构建产物或测试报告。
 
+## 免责声明
+
+使用 PiPilot 即表示你接受以下内容：
+
+1. **独立项目**：PiPilot 是非官方的独立开源项目，与 Pi（Earendil）、OpenAI、Anthropic、Google、Cursor，以及它提到或对接的任何公司和产品均无隶属、授权或赞助关系。
+2. **仅限合法使用**：PiPilot 只能用于你有权访问的系统和数据。严禁将其用于未经授权的访问、入侵或渗透、攻击、诈骗、制作或传播恶意软件，以及任何其他违法用途；使用时须遵守所在地法律和各模型服务商的使用政策。滥用造成的一切后果和法律责任由使用者自行承担，作者和贡献者不承担任何责任。
+3. **AI 的输出需自行审阅**：模型生成的回答、代码和命令可能出错、不安全或具有破坏性。执行命令、修改、提交或发布代码前请自行审阅；运行和发布的内容由你负责。
+4. **服务商、费用与条款**：模型调用的费用和服务条款由你与所配置的服务商直接约定。PiPilot 不收取任何费用，也不代理或转售模型调用。
+5. **你的数据**：设置、对话和密钥保存在本机。你发送的提示词、代码和附件会传给你选择的模型服务商和 MCP 服务器，并受它们各自政策的约束。
+6. **商标与图标**：产品名称、商标和图标归各自所有者所有，仅用于标识服务商和应用。
+7. **不提供担保**：PiPilot 依据 MIT 许可“按原样”提供，不附带任何形式的担保。对于因使用本软件产生的任何索赔、损害或损失，作者和贡献者均不承担责任。
+
+## 致谢
+
+PiPilot 建立在许多开源项目之上，主要包括：[Pi](https://github.com/earendil-works/pi)、[Electron](https://www.electronjs.org)、[React](https://react.dev)、[Radix UI](https://www.radix-ui.com)、[Tailwind CSS](https://tailwindcss.com)、[Tiptap](https://tiptap.dev)、[xterm.js](https://xtermjs.org) 与 [node-pty](https://github.com/microsoft/node-pty)、[Pierre Diffs](https://diffs.com)、[Shiki](https://shiki.style) 与 [highlight.js](https://highlightjs.org)、[react-markdown](https://github.com/remarkjs/react-markdown)、[Motion](https://motion.dev)、[Model Context Protocol SDK](https://modelcontextprotocol.io)、[Tabler Icons](https://tabler.io/icons)、[Material Icon Theme](https://github.com/material-extensions/vscode-material-icon-theme)、[LobeHub Icons](https://github.com/lobehub/lobe-icons)、[models.dev](https://models.dev)；服务商预设与 MCP 模板最初来自 [cc-switch](https://github.com/farion1231/cc-switch)。
+
+每个版本包含的全部开源软件及其许可证，见应用内的“设置 › 关于 › 第三方许可”。
+
 ## 许可证
 
-[MIT](LICENSE)
+[MIT](LICENSE) © 2026 GarlandQian 及 PiPilot 贡献者
