@@ -114,12 +114,15 @@ pnpm dev
 | --- | --- |
 | `pnpm typecheck` | Check TypeScript |
 | `pnpm test:unit` | Run unit and contract tests |
-| `pnpm test:electron` | Run the full Electron suite, including integration scenarios |
+| `pnpm test:electron:core` | Run the core Electron cases (`@core`), which CI runs on every push |
+| `pnpm test:electron` | Run the full Electron suite, including integration scenarios, as releases do |
 | `pnpm build` | Typecheck and build |
 | `pnpm package:dir` / `pnpm test:packaged` | Build an unpacked app / test the packaged runtime |
 | `pnpm package:mac` | Build macOS arm64 and x64 DMG/ZIP |
 | `pnpm package:win` | Build Windows x64 Setup and portable EXE/ZIP |
 | `pnpm package:linux` | Build Linux x64 AppImage/DEB/RPM |
+
+How tests are layered, how many a new feature adds, and how flaky tests are handled are in [AGENTS.md](AGENTS.md) (in Chinese).
 
 Run native package builds on the corresponding operating system. The release workflow additionally builds Linux ARM64, exercises installation/update paths on disposable runners, and assembles validated assets.
 

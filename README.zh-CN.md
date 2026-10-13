@@ -114,12 +114,15 @@ pnpm dev
 | --- | --- |
 | `pnpm typecheck` | TypeScript 检查 |
 | `pnpm test:unit` | 单元与契约测试 |
-| `pnpm test:electron` | 完整 Electron 测试，包含集成场景 |
+| `pnpm test:electron:core` | 核心 Electron 测试（`@core`），每次推送 CI 都会运行 |
+| `pnpm test:electron` | 完整 Electron 测试，包含集成场景，发布时运行 |
 | `pnpm build` | 类型检查与构建 |
 | `pnpm package:dir` / `pnpm test:packaged` | 构建未打包应用目录 / 验证打包后的 Runtime |
 | `pnpm package:mac` | macOS arm64、x64 的 DMG/ZIP |
 | `pnpm package:win` | Windows x64 安装版和便携 EXE/ZIP |
 | `pnpm package:linux` | Linux x64 AppImage/DEB/RPM |
+
+测试分层、新功能加多少测试、不稳定测试的处理办法见 [AGENTS.md](AGENTS.md)。
 
 请在对应操作系统中运行原生打包。发布流程还会构建 Linux ARM64，在一次性 runner 上验证安装与更新路径，再汇总经过校验的产物。
 
