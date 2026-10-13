@@ -226,7 +226,7 @@ async function expectRenderedOutput(page: Page, panel: Locator, marker: string) 
   }).toContain(marker)
 }
 
-test('preserves named terminals and viewport across hiding, tabs and projects, and retains natural exits', async ({}, testInfo) => {
+test('preserves named terminals and viewport across hiding, tabs and projects, and retains natural exits', { tag: '@core' }, async ({}, testInfo) => {
   test.skip(process.platform === 'win32', 'This real PTY fixture uses a deterministic POSIX shell.')
   test.setTimeout(120_000)
   const fixture = await launchTerminalFixture(testInfo)

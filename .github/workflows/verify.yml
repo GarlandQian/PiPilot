@@ -6,6 +6,10 @@ on:
       artifact_prefix:
         type: string
         default: verify
+      # core: the @core Electron cases, for every push. full: every case, for releases.
+      electron_scope:
+        type: string
+        default: full
 
 permissions:
   contents: read
@@ -87,9 +91,10 @@ jobs:
       - name: Build
         run: pnpm build
       # Integration cases are a tagged subset of the Electron suite. One full
-      # pass covers both without executing those scenarios twice.
+      # pass covers both without executing those scenarios twice; pushes run
+      # only the @core cases and releases run everything.
       - name: Electron E2E and integration contracts
-        run: pnpm test:electron --shard=${{ matrix.shard }}/2
+        run: pnpm test:electron --shard=${{ matrix.shard }}/2 ${{ inputs.electron_scope == 'core' && '--grep @core' || '' }}
       - name: Upload failure artifacts
         if: ${{ failure() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

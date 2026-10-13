@@ -45,7 +45,7 @@ export default function welcomeStarts(pi) {
   }
 }
 
-test('Start writing waits for startup and focuses the existing draft without creating another session', async ({}, testInfo) => {
+test('Start writing waits for startup and focuses the existing draft without creating another session', { tag: '@core' }, async ({}, testInfo) => {
   test.setTimeout(60_000)
   const { app, page, fixture, startsPath } = await launchWelcomeFixture(testInfo, 3_000)
   try {

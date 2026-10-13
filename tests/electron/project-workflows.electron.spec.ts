@@ -98,7 +98,7 @@ async function archiveFromSidebar(page: Page, childName: string, taskName: strin
 const output = (page: Page) => page.getByRole('region', { name: 'Command output', exact: true })
 const runButton = (page: Page) => page.locator('[data-project-run]')
 
-test('creates a managed branch with confirmed setup and preserves dirty files and official sessions through guarded archive and restore', async ({}, testInfo) => {
+test('creates a managed branch with confirmed setup and preserves dirty files and official sessions through guarded archive and restore', { tag: '@core' }, async ({}, testInfo) => {
   test.setTimeout(150_000)
   const f = await launch(testInfo), { app, page, fixture, project, projectId, agentDir, errors } = f
   const taskName = 'Independent task', branch = 'feature/managed-workflow', childName = `${taskName} · ${branch}`

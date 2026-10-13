@@ -420,210 +420,6 @@ test('supports real clipboard editing in Composer and standard text inputs', asy
   }
 })
 
-test('keeps the active Session ready after the official write result omits details', async ({}, testInfo) => {
-  test.setTimeout(60_000)
-  const userDataPath = testInfo.outputPath('user-data')
-  const fakeAgentDir = testInfo.outputPath('pi-agent')
-  const writeTarget = testInfo.outputPath('workspace', 'official-write.txt')
-  const writePrompt = 'exercise the official write result projection'
-  const followUpPrompt = 'continue after the official write result'
-  const writeContent = 'PiPilot write projection regression\n'
-  await Promise.all([
-    mkdir(userDataPath, { recursive: true }),
-    mkdir(testInfo.outputPath('workspace'), { recursive: true }),
-  ])
-  await writeFile(
-    join(userDataPath, 'settings.json'),
-    `${JSON.stringify({
-      version: SETTINGS_SCHEMA_VERSION,
-      settings: {
-        ...DEFAULT_SETTINGS,
-        locale: 'en-US',
-      },
-    }, null, 2)}\n`,
-  )
-  const piFixture = await startPiSdkFixture({
-    agentDir: fakeAgentDir,
-    writeToolPrompts: {
-      [writePrompt]: { path: writeTarget, content: writeContent },
-    },
-  })
-  const electronApp = await electron.launch({
-    args: [resolve(process.cwd())],
-    env: {
-      ...process.env,
-      ...piFixture.env,
-      PIPILOT_E2E_DISABLE_AUTO_RESTART: '1',
-      PIPILOT_E2E_USER_DATA: userDataPath,
-    },
-  })
-
-  try {
-    const page = await electronApp.firstWindow()
-    await page.waitForLoadState('domcontentloaded')
-    const composer = page.getByRole('textbox', { name: 'Message input' })
-    await expect.poll(async () => (
-      await page.evaluate(() => window.pipilot!.localPi.runtime.status())
-    ).state).toBe('ready')
-    const before = await page.evaluate(() => window.pipilot!.localPi.runtime.status())
-    expect(before.sessionState?.sessionId).toEqual(expect.any(String))
-
-    await composer.fill(writePrompt)
-    await page.getByRole('button', { name: 'Send', exact: true }).click()
-    await expect.poll(
-      () => readFile(writeTarget, 'utf8').catch(() => ''),
-      { timeout: 20_000 },
-    ).toBe(writeContent)
-    await expect(page.getByText(
-      `Fixture response: ${writePrompt}`,
-      { exact: true },
-    )).toBeVisible({ timeout: 20_000 })
-    await expect.poll(async () => {
-      const runtime = await page.evaluate(() => window.pipilot!.localPi.runtime.status())
-      return {
-        isStreaming: runtime.sessionState?.isStreaming,
-        sessionId: runtime.sessionState?.sessionId,
-        state: runtime.state,
-      }
-    }).toEqual({
-      isStreaming: false,
-      sessionId: before.sessionState?.sessionId,
-      state: 'ready',
-    })
-    const afterWrite = await page.evaluate(() => window.pipilot!.localPi.runtime.status())
-    expect(afterWrite.sessionFile).toEqual(expect.any(String))
-    await expect(page.getByText('No session selected', { exact: true })).toHaveCount(0)
-    await expect(page.getByText('Operation failed', { exact: true })).toHaveCount(0)
-    expect(piFixture.prompts.filter((prompt) => prompt === writePrompt)).toHaveLength(2)
-
-    await composer.fill(followUpPrompt)
-    await page.getByRole('button', { name: 'Send', exact: true }).click()
-    await expect(page.getByRole('log', { name: 'Conversation' }).getByText(
-      `Fixture response: ${followUpPrompt}`,
-      { exact: true },
-    )).toBeVisible({ timeout: 20_000 })
-    await expect(page.evaluate(() => window.pipilot!.localPi.runtime.status()))
-      .resolves.toMatchObject({
-        state: 'ready',
-        sessionFile: afterWrite.sessionFile,
-        sessionState: {
-          isStreaming: false,
-          sessionId: before.sessionState?.sessionId,
-        },
-      })
-    await expect(page.getByText('No session selected', { exact: true })).toHaveCount(0)
-    expect(piFixture.prompts).toContain(followUpPrompt)
-  } finally {
-    await electronApp.close()
-    await piFixture.close()
-  }
-})
-
-test('releases prompt acceptance after authoritative progress without allowing a double submit', async ({}, testInfo) => {
-  test.setTimeout(60_000)
-  const userDataPath = testInfo.outputPath('user-data')
-  const fakeAgentDir = testInfo.outputPath('pi-agent')
-  const doubleSubmitPrompt = 'double submit acceptance guard'
-  const afterCommandPrompt = 'prompt after immediate extension command'
-  const streamingPrompt = 'stream while accepting follow-up'
-  const followUpPrompt = 'queued while first prompt streams'
-  await mkdir(userDataPath, { recursive: true })
-  await writeFile(
-    join(userDataPath, 'settings.json'),
-    `${JSON.stringify({
-      version: SETTINGS_SCHEMA_VERSION,
-      settings: {
-        ...DEFAULT_SETTINGS,
-        locale: 'en-US',
-      },
-    }, null, 2)}\n`,
-  )
-  const piFixture = await startPiSdkFixture({
-    agentDir: fakeAgentDir,
-    promptDelays: { [streamingPrompt]: 2_000 },
-  })
-  const electronApp = await electron.launch({
-    args: [resolve(process.cwd())],
-    env: {
-      ...process.env,
-      ...piFixture.env,
-      PIPILOT_E2E_ACCEPTANCE_DELAY_PROMPT: doubleSubmitPrompt,
-      PIPILOT_E2E_ACCEPTANCE_DELAY_MS: '500',
-      PIPILOT_E2E_USER_DATA: userDataPath,
-    },
-  })
-
-  try {
-    const page = await electronApp.firstWindow()
-    await page.waitForLoadState('domcontentloaded')
-    const composer = page.getByRole('textbox', { name: 'Message input' })
-    const sendButton = page.getByRole('button', { name: 'Send', exact: true })
-    await expect.poll(async () => (
-      await page.evaluate(() => window.pipilot!.localPi.runtime.status())
-    ).state).toBe('ready')
-
-    await composer.fill('/fixture-options-command r')
-    const argumentMenu = page.locator(
-      '[data-slot="command"][aria-label="Command options"]',
-    )
-    await expect(argumentMenu).toBeVisible()
-    await expect(argumentMenu.getByText('Options', { exact: true })).toBeVisible()
-    await expect(argumentMenu.getByText('Resume', { exact: true })).toBeVisible()
-    await expect(argumentMenu.getByText('Restart', { exact: true })).toBeVisible()
-    await composer.press('Home')
-    await composer.press('Enter')
-    await expect(composer).toHaveText('/fixture-options-command resume')
-    await expect(argumentMenu).toBeHidden()
-    await composer.fill('')
-
-    await composer.fill('/fixture-command')
-    await page.getByRole('button', { name: 'Send', exact: true }).click()
-    await expect(composer).toHaveText('')
-    const commandNotice = page.locator('[data-conversation-notices]')
-    await expect(commandNotice.getByText('Fixture command ran', { exact: true }))
-      .toBeVisible({ timeout: 20_000 })
-    await commandNotice.getByRole('button', { name: 'Dismiss notification', exact: true }).click()
-    await expect(commandNotice.getByText('Fixture command ran', { exact: true })).toBeHidden()
-
-    await composer.fill(doubleSubmitPrompt)
-    await expect(sendButton).toBeEnabled({ timeout: 20_000 })
-    await composer.press('Enter')
-    await composer.press('Enter')
-    await expect.poll(() => piFixture.prompts.filter(
-      (prompt) => prompt === doubleSubmitPrompt,
-    ).length).toBe(1)
-    await expect(page.getByRole('log', { name: 'Conversation', exact: true }).getByText(
-      `Fixture response: ${doubleSubmitPrompt}`,
-      { exact: true },
-    )).toBeVisible({ timeout: 20_000 })
-
-    await composer.fill('/fixture-silent-command')
-    await page.getByRole('button', { name: 'Send', exact: true }).click()
-    await expect(composer).toHaveText('')
-    await composer.fill(afterCommandPrompt)
-    await page.getByRole('button', { name: 'Send', exact: true }).click()
-    await expect.poll(() => piFixture.prompts.includes(afterCommandPrompt)).toBe(true)
-    await expect(page.getByRole('log', { name: 'Conversation', exact: true }).getByText(
-      `Fixture response: ${afterCommandPrompt}`,
-      { exact: true },
-    )).toBeVisible({ timeout: 20_000 })
-
-    await composer.fill(streamingPrompt)
-    await page.getByRole('button', { name: 'Send', exact: true }).click()
-    await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible()
-    await composer.fill(followUpPrompt)
-    await composer.press('Enter')
-    await expect.poll(() => piFixture.prompts.includes(followUpPrompt), {
-      timeout: 20_000,
-    }).toBe(true)
-    await expect(page.getByText('Pi is still accepting the previous prompt.'))
-      .toHaveCount(0)
-  } finally {
-    await electronApp.close()
-    await piFixture.close()
-  }
-})
-
 test('keeps rich-editor text and images visible across default queueing, editing, and per-message direction changes', async ({}, testInfo) => {
   test.setTimeout(60_000)
   const userDataPath = testInfo.outputPath('user-data')
@@ -957,7 +753,7 @@ test('clears a captured draft before acknowledgement and preserves a new draft a
   }
 })
 
-test('keeps active Pi work running when the main window closes to the tray', async ({}, testInfo) => {
+test('keeps active Pi work running when the main window closes to the tray', { tag: '@core' }, async ({}, testInfo) => {
   test.setTimeout(60_000)
   const userDataPath = testInfo.outputPath('user-data')
   const fakeAgentDir = testInfo.outputPath('pi-agent')
@@ -2253,7 +2049,7 @@ test('opens a persisted project session on the first click while Pi initializes'
   }
 })
 
-test('runs Composer mentions and the local Pi RPC workflow through the renderer provider with conversation outline navigation, session catalog, and session loading', { tag: '@integration' }, async ({}, testInfo) => {
+test('runs Composer mentions and the local Pi RPC workflow through the renderer provider with conversation outline navigation, session catalog, and session loading', { tag: ['@integration', '@core'] }, async ({}, testInfo) => {
   test.setTimeout(120_000)
   const userDataPath = testInfo.outputPath('user-data')
   const workspacePath = testInfo.outputPath('workspace')
@@ -3784,7 +3580,7 @@ test('applies terminal font settings live without replacing the active PTY', { t
   }
 })
 
-test('launches a sandboxed shell with a narrow validated bridge', { tag: '@integration' }, async ({}, testInfo) => {
+test('launches a sandboxed shell with a narrow validated bridge', { tag: ['@integration', '@core'] }, async ({}, testInfo) => {
   test.setTimeout(90_000)
   const userDataPath = testInfo.outputPath('user-data')
   const launch = () =>

@@ -18,7 +18,7 @@ async function send(page: Page, prompt: string) {
   await page.getByRole('button', { name: 'Send', exact: true }).click()
 }
 
-test('explains a permanent error and retries the response without duplicating the prompt or completed tools', async ({}, testInfo) => {
+test('explains a permanent error and retries the response without duplicating the prompt or completed tools', { tag: '@core' }, async ({}, testInfo) => {
   test.setTimeout(90_000)
   const userData = testInfo.outputPath('user-data')
   const agentDir = testInfo.outputPath('pi-agent')

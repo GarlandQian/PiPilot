@@ -11,7 +11,7 @@ async function projectSkillLoaded(page: Page) {
   return commands.some((command) => command.name.includes('trust-fixture-skill'))
 }
 
-test('an added project with Pi resources asks for trust and loads them only once trusted', async ({}, testInfo) => {
+test('an added project with Pi resources asks for trust and loads them only once trusted', { tag: '@core' }, async ({}, testInfo) => {
   test.setTimeout(90_000)
   const userData = testInfo.outputPath('user-data')
   const agentDir = testInfo.outputPath('pi-agent')

@@ -27,6 +27,7 @@
     "test:unit": "node build/verify-test-fixtures.cjs && vitest run",
     "test:integration": "playwright test --config=playwright.integration.config.ts",
     "test:electron": "playwright test --config=playwright.electron.config.ts",
+    "test:electron:core": "playwright test --config=playwright.electron.config.ts --grep @core",
     "test:packaged": "playwright test --config=playwright.packaged.config.ts"
   },
   "dependencies": {

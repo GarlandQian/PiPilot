@@ -5,7 +5,7 @@ import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from '../../src/shared/sett
 import { startPiSdkFixture } from './pi-sdk-fixture'
 import { closeFixtureApplication } from './close-fixture-application'
 
-test('settings preferences support search, custom fonts, reset confirmation and compact layouts', async ({}, testInfo) => {
+test('settings preferences support search, custom fonts, reset confirmation and compact layouts', { tag: '@core' }, async ({}, testInfo) => {
   test.setTimeout(90_000)
   const userDataPath = testInfo.outputPath('user-data')
   await mkdir(userDataPath, { recursive: true })

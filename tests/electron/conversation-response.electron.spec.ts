@@ -44,7 +44,7 @@ async function expectNoHorizontalOverflow(page: Page) {
   }
 }
 
-test('restores in-flight thinking and text across repeated conversation switches and background completion', async ({}, testInfo) => {
+test('restores in-flight thinking and text across repeated conversation switches and background completion', { tag: '@core' }, async ({}, testInfo) => {
   test.setTimeout(90_000)
   const userData = testInfo.outputPath('user-data')
   const agentDir = testInfo.outputPath('pi-agent')

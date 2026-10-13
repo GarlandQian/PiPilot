@@ -9,7 +9,7 @@ import { startPiSdkFixture } from './pi-sdk-fixture'
 
 const run = promisify(execFile)
 
-test('links project files with every uncommitted stage and refreshes without replacing the reader', async ({}, testInfo) => {
+test('links project files with every uncommitted stage and refreshes without replacing the reader', { tag: '@core' }, async ({}, testInfo) => {
   test.setTimeout(90_000)
   const userData = testInfo.outputPath('user-data')
   const project = testInfo.outputPath('Resource project')

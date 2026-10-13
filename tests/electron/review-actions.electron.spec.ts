@@ -11,7 +11,7 @@ import { selectInspectorView } from './select-inspector-view'
 const run = promisify(execFile)
 const git = (cwd: string, args: string[]) => run('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', ...args], { cwd })
 
-test('stages, unstages and discards from the review, file by file and hunk by hunk', async ({}, testInfo) => {
+test('stages, unstages and discards from the review, file by file and hunk by hunk', { tag: '@core' }, async ({}, testInfo) => {
   test.setTimeout(90_000)
   const userData = testInfo.outputPath('user-data')
   const projectPath = testInfo.outputPath('Review project')

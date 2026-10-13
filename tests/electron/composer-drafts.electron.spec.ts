@@ -80,7 +80,7 @@ async function expectDraft(page: Page, text: string, imageName: string) {
   await expect.poll(() => image.evaluate((element: HTMLImageElement) => element.complete && element.naturalWidth > 0)).toBe(true)
 }
 
-test('persists complete per-session drafts across reload and restart, and durably clears only the intended session', async ({}, testInfo) => {
+test('persists complete per-session drafts across reload and restart, and durably clears only the intended session', { tag: '@core' }, async ({}, testInfo) => {
   test.setTimeout(120_000)
   const userData = testInfo.outputPath('user-data')
   const agentDir = testInfo.outputPath('pi-agent')

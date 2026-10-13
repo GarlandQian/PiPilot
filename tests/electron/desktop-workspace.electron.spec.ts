@@ -5,7 +5,7 @@ import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from '../../src/shared/sett
 import { closeFixtureApplication } from './close-fixture-application'
 import { startPiSdkFixture } from './pi-sdk-fixture'
 
-test('keeps the unified desktop workspace usable with the official Pi configuration', async ({}, testInfo) => {
+test('keeps the unified desktop workspace usable with the official Pi configuration', { tag: '@core' }, async ({}, testInfo) => {
   test.setTimeout(60_000)
   const userData = testInfo.outputPath('user-data')
   const agentDir = testInfo.outputPath('pi-agent')

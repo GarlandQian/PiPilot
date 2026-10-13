@@ -5,7 +5,7 @@ import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from '../../src/shared/sett
 import { closeFixtureApplication } from './close-fixture-application'
 import { startPiSdkFixture } from './pi-sdk-fixture'
 
-test('adds MCP servers from a template, pasted configuration and other apps, and manages them in place', async ({}, testInfo) => {
+test('adds MCP servers from a template, pasted configuration and other apps, and manages them in place', { tag: '@core' }, async ({}, testInfo) => {
   test.setTimeout(90_000)
   const userData = testInfo.outputPath('user-data')
   const agentDir = testInfo.outputPath('pi-agent')

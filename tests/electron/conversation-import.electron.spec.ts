@@ -226,7 +226,7 @@ test('imports an ordinary Markdown file as inert background through the global m
   } finally { await closeFixtureApplication(app); await fixture.close() }
 })
 
-test('exports the Pi session file and imports it back into the project it was recorded in', async ({}, testInfo) => {
+test('exports the Pi session file and imports it back into the project it was recorded in', { tag: '@core' }, async ({}, testInfo) => {
   test.setTimeout(95_000)
   const { app, page, fixture, errors, project, cwd, sessionPath } = await startFixture(testInfo)
   const transcript = page.getByRole('log', { name: 'Conversation', exact: true })

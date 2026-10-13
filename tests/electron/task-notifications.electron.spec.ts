@@ -143,7 +143,7 @@ async function expectNoHorizontalOverflow(page: Page) {
   expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true)
 }
 
-test('keeps background completion unread until its exact task is opened, while viewed work and plugin notices stay quiet', async ({}, testInfo) => {
+test('keeps background completion unread until its exact task is opened, while viewed work and plugin notices stay quiet', { tag: '@core' }, async ({}, testInfo) => {
   test.setTimeout(90_000)
   const backgroundPrompt = 'Finish the background notification task'
   let release!: () => void

@@ -76,7 +76,7 @@ async function seedTask(page: Page, prompt: string, title: string) {
   return page.evaluate(() => window.pipilot!.localPi.runtime.status())
 }
 
-test('restores an existing project task and persists pin/archive without deleting official sessions', async ({}, testInfo) => {
+test('restores an existing project task and persists pin/archive without deleting official sessions', { tag: '@core' }, async ({}, testInfo) => {
   test.setTimeout(90_000)
   const userDataPath = testInfo.outputPath('user-data')
   const agentDir = testInfo.outputPath('pi-agent')
@@ -210,7 +210,7 @@ test('restores an existing project task and persists pin/archive without deletin
   }
 })
 
-test('deletes the named background task while preserving the active task, then clears an explicitly deleted active task', async ({}, testInfo) => {
+test('deletes the named background task while preserving the active task, then clears an explicitly deleted active task', { tag: '@core' }, async ({}, testInfo) => {
   test.setTimeout(90_000)
   const userDataPath = testInfo.outputPath('user-data')
   const agentDir = testInfo.outputPath('pi-agent')

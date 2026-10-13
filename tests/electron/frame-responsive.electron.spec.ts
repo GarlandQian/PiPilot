@@ -5,7 +5,7 @@ import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from '../../src/shared/sett
 import { startPiSdkFixture } from './pi-sdk-fixture'
 import { closeFixtureApplication } from './close-fixture-application'
 
-test('keeps the compact conversation usable until Inspector is explicitly opened', async ({}, testInfo) => {
+test('keeps the compact conversation usable until Inspector is explicitly opened', { tag: '@core' }, async ({}, testInfo) => {
   test.setTimeout(60_000)
   const userDataPath = testInfo.outputPath('user-data')
   const agentDir = testInfo.outputPath('pi-agent')

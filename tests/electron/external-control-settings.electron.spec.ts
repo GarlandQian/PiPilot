@@ -9,7 +9,7 @@ import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from '../../src/shared/sett
 import { ConversationMcpBridgeClient } from '../../src/main/external-control/bridge-client'
 import { ExternalControlDescriptorRepository } from '../../src/main/external-control/descriptor-repository'
 
-test('manages External Control in its own Settings pane', async ({}, testInfo) => {
+test('manages External Control in its own Settings pane', { tag: '@core' }, async ({}, testInfo) => {
   test.setTimeout(60_000)
   const userDataPath = testInfo.outputPath('user-data')
   const launcherDirectory = join(userDataPath, 'launcher-bin')

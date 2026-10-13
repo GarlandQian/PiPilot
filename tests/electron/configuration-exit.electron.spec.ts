@@ -1,9 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { _electron as electron, expect, test, type ElectronApplication, type Page, type TestInfo } from '@playwright/test'
-import type { IpcMainInvokeEvent } from 'electron'
 import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from '../../src/shared/settings'
-import { ipcChannels } from '../../src/shared/ipc/contracts'
 import { startPiSdkFixture } from './pi-sdk-fixture'
 
 async function setup(testInfo: TestInfo) {
@@ -43,120 +41,6 @@ async function requestQuit(app: ElectronApplication) {
   await app.evaluate(({ app }) => { app.quit() })
 }
 
-async function modelsWorkspace(page: Page) {
-  await page.getByRole('button', { name: 'Settings', exact: true }).click()
-  await page.locator('[data-context-panel-nav-id="models"]').click()
-  return page.getByRole('main', { name: 'Models', exact: true })
-}
-
-test('protects an unsubmitted provider page and keeps invalid fields after cancelled Quit', async ({}, testInfo) => {
-  const { app, page, fixture, modelPath } = await setup(testInfo)
-  try {
-    const before = await readFile(modelPath, 'utf8')
-    const workspace = await modelsWorkspace(page)
-    await workspace.getByRole('button', { name: 'Add Provider…', exact: true }).click()
-    await page.locator('[data-models-preset-picker] [data-models-preset="custom"]').click()
-    const form = workspace.locator('[data-models-custom-editor="new"]')
-    await form.getByRole('textbox', { name: 'Address', exact: true }).fill('unsubmitted.example/v1')
-    await requestQuit(app)
-    const quit = page.getByRole('alertdialog', { name: 'Save configuration before quitting?', exact: true })
-    await expect(quit).toBeVisible()
-    await quit.getByRole('button', { name: 'Save', exact: true }).click()
-    await expect(quit.getByRole('alert')).toBeVisible()
-    expect(await readFile(modelPath, 'utf8')).toBe(before)
-    await quit.getByRole('button', { name: 'Cancel', exact: true }).click()
-    await expect(form.getByRole('textbox', { name: 'Address', exact: true })).toHaveValue('unsubmitted.example/v1')
-    await expect(form.getByText('Enter an http:// or https:// address.', { exact: true })).toBeVisible()
-    await requestQuit(app)
-    const closed = app.waitForEvent('close')
-    await quit.getByRole('button', { name: 'Discard', exact: true }).click()
-    await closed
-    expect(await readFile(modelPath, 'utf8')).toBe(before)
-  } finally {
-    await cleanup(app)
-    await fixture.close()
-  }
-})
-
-test('saves an unsubmitted provider page as part of the explicit Quit transaction', async ({}, testInfo) => {
-  const { app, page, fixture, modelPath } = await setup(testInfo)
-  try {
-    const workspace = await modelsWorkspace(page)
-    await workspace.locator('[data-models-provider-card="fixture"] [data-settings-row-action]').click()
-    // The model sheet hands its change back to the provider page, which is saved at Quit.
-    await workspace.locator('[data-model-row="fake-chat"] [data-settings-row-action]').click()
-    const sheet = page.locator('[data-models-model-sheet]')
-    await sheet.getByRole('textbox', { name: 'Display name', exact: true }).fill('Saved from open form')
-    await sheet.getByRole('button', { name: 'Done', exact: true }).click()
-    await expect(sheet).toHaveCount(0)
-    await requestQuit(app)
-    const quit = page.getByRole('alertdialog', { name: 'Save configuration before quitting?', exact: true })
-    await expect(quit).toBeVisible()
-    const closed = app.waitForEvent('close')
-    await quit.getByRole('button', { name: 'Save', exact: true }).click()
-    await closed
-    const saved = JSON.parse(await readFile(modelPath, 'utf8'))
-    expect(saved.providers.fixture.models.find((model: { id: string }) => model.id === 'fake-chat').name).toBe('Saved from open form')
-  } finally {
-    await cleanup(app)
-    await fixture.close()
-  }
-})
-
-test('saves an unsubmitted MCP server form without starting its command on Quit', async ({}, testInfo) => {
-  const { app, page, fixture, mcpPath } = await setup(testInfo)
-  try {
-    await page.getByRole('button', { name: 'Settings', exact: true }).click()
-    await page.locator('[data-context-panel-nav-id="mcp"]').click()
-    const workspace = page.getByRole('main', { name: 'MCP Servers', exact: true })
-    await workspace.locator('[data-mcp-empty]').getByRole('button', { name: 'Add Server…', exact: true }).click()
-    await page.locator('[data-mcp-add-page] [data-mcp-blank="stdio"]').click()
-    const form = workspace.locator('[data-mcp-server-editor="new"]')
-    await form.getByRole('textbox', { name: 'Server name', exact: true }).fill('quit-fixture')
-    await form.getByRole('textbox', { name: 'Command', exact: true }).fill('pipilot-test-command-must-not-run')
-    await requestQuit(app)
-    const quit = page.getByRole('alertdialog', { name: 'Save configuration before quitting?', exact: true })
-    await expect(quit).toBeVisible()
-    const closed = app.waitForEvent('close')
-    await quit.getByRole('button', { name: 'Save', exact: true }).click()
-    await closed
-    expect(JSON.parse(await readFile(mcpPath, 'utf8')).mcpServers['quit-fixture'].command).toBe('pipilot-test-command-must-not-run')
-  } finally {
-    await cleanup(app)
-    await fixture.close()
-  }
-})
-
-async function holdNextModelsSaveAcknowledgement(app: ElectronApplication) {
-  return app.evaluateHandle(({ ipcMain }, channel) => {
-    // Keep the actual validation and disk write. Only the final acknowledgement
-    // is gated, reproducing Quit between a durable write and Renderer hydration.
-    type Handler = (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown
-    const handlers = (ipcMain as unknown as { _invokeHandlers: Map<string, Handler> })._invokeHandlers
-    const original = handlers.get(channel)
-    if (!original) throw new Error('The models save IPC handler is not registered')
-    let release!: () => void
-    const acknowledgement = new Promise<void>((resolve) => { release = resolve })
-    const gate = { persisted: false, release, restore: () => {
-      ipcMain.removeHandler(channel)
-      ipcMain.handle(channel, original)
-    } }
-    ipcMain.removeHandler(channel)
-    ipcMain.handle(channel, async (event, ...args: unknown[]) => {
-      // One shot: subsequent saves immediately use the original handler.
-      gate.restore()
-      const result = await original(event, ...args)
-      if (!(result && typeof result === 'object' && 'ok' in result && result.ok === true)) {
-        throw new Error('The isolated models save did not succeed')
-      }
-      gate.persisted = true
-      await acknowledgement
-      return result
-    })
-    return gate
-  }, ipcChannels.modelsConfigSaveAndRestart)
-}
-
 async function cleanup(app: ElectronApplication) {
   // Teardown is not a user Quit: a failed assertion must not leave an isolated
   // application's intentional dirty-draft confirmation blocking the test runner.
@@ -164,7 +48,7 @@ async function cleanup(app: ElectronApplication) {
   await app.close().catch(() => undefined)
 }
 
-test('preserves work on cancelled Quit and saves all configuration only after explicit approval', async ({}, testInfo) => {
+test('preserves work on cancelled Quit and saves all configuration only after explicit approval', { tag: '@core' }, async ({}, testInfo) => {
   test.setTimeout(60_000)
   const { app, page, fixture, mcpPath, modelPath } = await setup(testInfo)
   try {
@@ -217,110 +101,6 @@ test('preserves work on cancelled Quit and saves all configuration only after ex
     expect(await readFile(mcpPath, 'utf8')).toBe(savedMcp)
     expect(fixture.prompts).toEqual(['Continue during cancelled quit'])
   } finally {
-    await cleanup(app)
-    await fixture.close()
-  }
-})
-
-test('discards dirty configuration on explicit Quit without writing it to disk', async ({}, testInfo) => {
-  const { app, page, fixture, modelPath } = await setup(testInfo)
-  try {
-    const editor = await modelsEditor(page)
-    const before = await readFile(modelPath, 'utf8')
-    await editor.fill('{ invalid but intentionally discarded')
-    await requestQuit(app)
-    const dialog = page.getByRole('alertdialog', { name: 'Save configuration before quitting?', exact: true })
-    await expect(dialog).toBeVisible()
-    const closed = app.waitForEvent('close')
-    await dialog.getByRole('button', { name: 'Discard', exact: true }).click()
-    await closed
-    expect(await readFile(modelPath, 'utf8')).toBe(before)
-  } finally {
-    await cleanup(app)
-    await fixture.close()
-  }
-})
-
-test('waits for an in-flight configuration acknowledgement and then quits automatically', async ({}, testInfo) => {
-  const { app, page, fixture, modelPath } = await setup(testInfo)
-  let gate: Awaited<ReturnType<typeof holdNextModelsSaveAcknowledgement>> | undefined
-  try {
-    const acknowledgement = await holdNextModelsSaveAcknowledgement(app)
-    gate = acknowledgement
-    const editor = await modelsEditor(page)
-    const savedModels = `${(await editor.inputValue()).trim()}\n// Saved before Quit acknowledgement\n`
-    await editor.fill(savedModels)
-    await page.getByRole('main', { name: 'Models', exact: true }).locator('[data-settings-actions]').getByRole('button', { name: 'Save', exact: true }).click()
-    await expect.poll(() => acknowledgement.evaluate((state) => state.persisted)).toBe(true)
-    expect((await readFile(modelPath, 'utf8')).trim()).toBe(savedModels.trim())
-    await expect(editor).toBeDisabled()
-
-    await requestQuit(app)
-    const dialog = page.getByRole('alertdialog', { name: 'Save configuration before quitting?', exact: true })
-    await expect(dialog).toBeVisible()
-    await expect(dialog.getByRole('status')).toHaveText('Finishing configuration changes…')
-    await expect(dialog.getByRole('button', { name: 'Save', exact: true })).toBeDisabled()
-    await expect(dialog.getByRole('button', { name: 'Discard', exact: true })).toBeDisabled()
-    await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeEnabled()
-
-    const closed = app.waitForEvent('close', { timeout: 5_000 })
-    await acknowledgement.evaluate((state) => state.release())
-    await closed
-    expect((await readFile(modelPath, 'utf8')).trim()).toBe(savedModels.trim())
-  } finally {
-    await gate?.evaluate((state) => { state.release(); state.restore() }).catch(() => undefined)
-    await gate?.dispose().catch(() => undefined)
-    await cleanup(app)
-    await fixture.close()
-  }
-})
-
-test('cancels Quit during a save and preserves another draft when the acknowledgement arrives', async ({}, testInfo) => {
-  const { app, page, fixture, modelPath, mcpPath } = await setup(testInfo)
-  let gate: Awaited<ReturnType<typeof holdNextModelsSaveAcknowledgement>> | undefined
-  try {
-    const acknowledgement = await holdNextModelsSaveAcknowledgement(app)
-    gate = acknowledgement
-    const editor = await modelsEditor(page)
-    const savedModels = `${(await editor.inputValue()).trim()}\n// Save remains valid after cancelled Quit\n`
-    await editor.fill(savedModels)
-    await page.getByRole('main', { name: 'Models', exact: true }).locator('[data-settings-actions]').getByRole('button', { name: 'Save', exact: true }).click()
-    await expect.poll(() => acknowledgement.evaluate((state) => state.persisted)).toBe(true)
-    await requestQuit(app)
-    const dialog = page.getByRole('alertdialog', { name: 'Save configuration before quitting?', exact: true })
-    await expect(dialog.getByRole('status')).toHaveText('Finishing configuration changes…')
-    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
-    await expect(dialog).toBeHidden()
-
-    await page.locator('[data-context-panel-nav-id="mcp"]').click()
-    const panel = page.getByRole('main', { name: 'MCP Servers', exact: true })
-    await panel.locator('[data-mcp-server-list] header').getByRole('button', { name: 'More', exact: true }).click()
-    await page.getByRole('menuitem', { name: 'Edit global mcp.json…', exact: true }).click()
-    const mcpEditor = panel.getByRole('textbox', { name: 'mcp.json', exact: true })
-    const initialMcp = await readFile(mcpPath, 'utf8')
-    await expect(mcpEditor).toHaveValue(initialMcp)
-    const newDraft = `// Draft made after cancelling Quit\n${initialMcp}`
-    await mcpEditor.fill(newDraft)
-
-    await acknowledgement.evaluate((state) => state.release())
-    await page.locator('[data-context-panel-nav-id="models"]').click()
-    // Saved: the page returns to the provider list, and the file opens with what was saved.
-    await expect(page.getByRole('main', { name: 'Models', exact: true }).locator('[data-models-provider-list]')).toBeVisible()
-    await expect(dialog).toBeHidden()
-    expect((await readFile(modelPath, 'utf8')).trim()).toBe(savedModels.trim())
-    await page.getByRole('main', { name: 'Models', exact: true }).getByRole('button', { name: 'More', exact: true }).click()
-    await page.getByRole('menuitem', { name: 'Edit models.json…', exact: true }).click()
-    const reopened = page.getByRole('main', { name: 'Models', exact: true }).getByRole('textbox', { name: 'models.json', exact: true })
-    await expect(reopened).toHaveValue(savedModels)
-    await reopened.fill(`${savedModels}// Still editable after acknowledgement\n`)
-    await expect(page.getByRole('main', { name: 'Models', exact: true }).locator('[data-settings-actions]').getByRole('button', { name: 'Save', exact: true })).toBeEnabled()
-    await page.locator('[data-context-panel-nav-id="mcp"]').click()
-    await expect(mcpEditor).toHaveValue(newDraft)
-    expect(await readFile(mcpPath, 'utf8')).toBe(initialMcp)
-    expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isDestroyed())).toBe(false)
-  } finally {
-    await gate?.evaluate((state) => { state.release(); state.restore() }).catch(() => undefined)
-    await gate?.dispose().catch(() => undefined)
     await cleanup(app)
     await fixture.close()
   }

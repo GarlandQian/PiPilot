@@ -34,7 +34,7 @@ function footer(page: Page) {
   return page.getByRole('main', { name: 'Models', exact: true }).locator('[data-settings-actions]')
 }
 
-test('manages providers through the list, the preset picker and full-page editors', async ({}, testInfo) => {
+test('manages providers through the list, the preset picker and full-page editors', { tag: '@core' }, async ({}, testInfo) => {
   test.setTimeout(90_000)
   const { app, fixture, agentDir, modelPath, initial } = await launch(testInfo, (models) => {
     models.providers.secondary = { ...models.providers.fixture, name: 'Secondary Gateway', models: [{ id: 'secondary-model', name: 'Secondary Model' }] }
