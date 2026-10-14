@@ -150,9 +150,9 @@ for (const extension of ['exe', 'zip']) {
       })
     }
     const quit = async () => {
-      // Exercise File > Quit, not the close button (which intentionally hides
-      // to the tray). Send native keys to this fixture's actual GUI process;
-      // the self-extracting launcher PID does not own the window.
+      // Invoke the named native File > Quit items. A blind key sequence does
+      // not acknowledge the auto-hidden menu, and Close only hides to the tray.
+      // The self-extracting launcher PID does not own the GUI window.
       await powershell(`$candidate = Get-CimInstance Win32_Process -Filter "Name='PiPilot.exe'" |
         Where-Object { $_.CommandLine -like "*--remote-debugging-port=$env:PIPILOT_TEST_DEBUG_PORT*" } |
         ForEach-Object { Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue } |
@@ -160,7 +160,32 @@ for (const extension of ['exe', 'zip']) {
         if (-not $candidate) { throw 'Portable fixture window not found' };
         $shell = New-Object -ComObject WScript.Shell;
         if (-not $shell.AppActivate($candidate.Id)) { throw 'Portable fixture window could not be activated' };
-        $shell.SendKeys('{F10}{DOWN}{END}{ENTER}')`,
+        Add-Type -AssemblyName UIAutomationClient;
+        Add-Type -AssemblyName UIAutomationTypes;
+        $window = [System.Windows.Automation.AutomationElement]::FromHandle($candidate.MainWindowHandle);
+        function Find-MenuItem($root, $name) {
+          $condition = [System.Windows.Automation.AndCondition]::new(
+            [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, $name),
+            [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ProcessIdProperty, [int]$candidate.Id),
+            [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::MenuItem));
+          $deadline = [DateTime]::UtcNow.AddSeconds(15);
+          do {
+            $item = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition);
+            if ($item) { return $item };
+            Start-Sleep -Milliseconds 100;
+          } while ([DateTime]::UtcNow -lt $deadline);
+          throw "Native menu item not found: $name";
+        };
+        $shell.SendKeys('{F10}');
+        $file = Find-MenuItem $window 'File';
+        $pattern = $null;
+        if ($file.TryGetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern, [ref]$pattern)) {
+          $pattern.Expand();
+        } else {
+          $file.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke();
+        };
+        $quitItem = Find-MenuItem ([System.Windows.Automation.AutomationElement]::RootElement) 'Quit PiPilot';
+        $quitItem.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()`,
       { ...process.env, PIPILOT_TEST_DEBUG_PORT: String(debuggingPort) })
       await expect.poll(() => child!.exitCode, { timeout: 60_000, message: 'File > Quit must cleanly exit the portable app before overwrite.' }).toBe(0)
       await expect.poll(async () => (await portableProcesses()).filter((process) => !preexistingPids.has(process.ProcessId)),
