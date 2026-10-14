@@ -149,55 +149,14 @@ for (const extension of ['exe', 'zip']) {
         currentVersion: version, platform: 'windows', package: 'portable', capability: 'manual-release',
       })
     }
-    const quit = async () => {
-      // Invoke the named native File > Quit items. A blind key sequence does
-      // not acknowledge the auto-hidden menu, and Close only hides to the tray.
-      // The self-extracting launcher PID does not own the GUI window.
-      await powershell(`$candidate = Get-CimInstance Win32_Process -Filter "Name='PiPilot.exe'" |
-        Where-Object { $_.CommandLine -like "*--remote-debugging-port=$env:PIPILOT_TEST_DEBUG_PORT*" } |
-        ForEach-Object { Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue } |
-        Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1;
-        if (-not $candidate) { throw 'Portable fixture window not found' };
-        $shell = New-Object -ComObject WScript.Shell;
-        if (-not $shell.AppActivate($candidate.Id)) { throw 'Portable fixture window could not be activated' };
-        Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class PortableNativeKeys { [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); [DllImport("user32.dll")] public static extern void keybd_event(byte key, byte scan, uint flags, UIntPtr extra); }';
-        $deadline = [DateTime]::UtcNow.AddSeconds(15);
-        while ([PortableNativeKeys]::GetForegroundWindow() -ne $candidate.MainWindowHandle) {
-          if ([DateTime]::UtcNow -ge $deadline) { throw 'Portable fixture did not gain foreground focus' };
-          Start-Sleep -Milliseconds 100;
-        };
-        Add-Type -AssemblyName UIAutomationClient;
-        Add-Type -AssemblyName UIAutomationTypes;
-        $window = [System.Windows.Automation.AutomationElement]::FromHandle($candidate.MainWindowHandle);
-        function Find-MenuItem($root, $name) {
-          $condition = [System.Windows.Automation.AndCondition]::new(
-            [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, $name),
-            [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ProcessIdProperty, [int]$candidate.Id),
-            [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::MenuItem));
-          $deadline = [DateTime]::UtcNow.AddSeconds(15);
-          do {
-            $item = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition);
-            if ($item) { return $item };
-            Start-Sleep -Milliseconds 100;
-          } while ([DateTime]::UtcNow -lt $deadline);
-          throw "Native menu item not found: $name";
-        };
-        # Electron's auto-hidden menu is revealed by pressing and releasing Alt.
-        [PortableNativeKeys]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero);
-        [PortableNativeKeys]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero);
-        $file = Find-MenuItem $window 'File';
-        $pattern = $null;
-        if ($file.TryGetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern, [ref]$pattern)) {
-          $pattern.Expand();
-        } else {
-          $file.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke();
-        };
-        $quitItem = Find-MenuItem ([System.Windows.Automation.AutomationElement]::RootElement) 'Quit PiPilot';
-        $quitItem.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()`,
-      { ...process.env, PIPILOT_TEST_DEBUG_PORT: String(debuggingPort) })
-      await expect.poll(() => child!.exitCode, { timeout: 60_000, message: 'File > Quit must cleanly exit the portable app before overwrite.' }).toBe(0)
-      await expect.poll(async () => (await portableProcesses()).filter((process) => !preexistingPids.has(process.ProcessId)),
-        { timeout: 30_000 }).toEqual([])
+    const stopForOverwrite = async () => {
+      // Updates require the real portable process trees to release the program
+      // files. Force termination also verifies durability of acknowledged saves;
+      // normal Quit and draft confirmations have configuration-exit coverage.
+      await stopPortableProcesses(preexistingPids)
+      await expect.poll(() => child!.exitCode, {
+        timeout: 30_000, message: 'The portable launcher must exit before its program is overwritten.',
+      }).not.toBeNull()
       await browser!.close().catch(() => undefined)
     }
     const conversation = () => page!.getByRole('log', { name: 'Conversation', exact: true })
@@ -247,7 +206,7 @@ for (const extension of ['exe', 'zip']) {
       const taskName = 'Portable retained project task'
       const projectFile = await nameSession(taskName)
       await page!.screenshot({ path: testInfo.outputPath(`portable-${extension}.png`) })
-      await quit()
+      await stopForOverwrite()
 
       // The user's update procedure: overwrite the program in the same folder,
       // keeping every byte of the adjacent data directory. No test path override,
@@ -285,7 +244,7 @@ for (const extension of ['exe', 'zip']) {
       await expect.poll(() => page!.evaluate(() => window.pipilot!.localPi.runtime.status()), { timeout: 60_000 })
         .toMatchObject({ state: 'ready', cwd: project.path, sessionFile: projectFile })
       await page!.screenshot({ path: testInfo.outputPath(`portable-${extension}-after-overwrite.png`) })
-      await quit()
+      await stopForOverwrite()
     } finally {
       try {
         await stopPortableProcesses(preexistingPids)
