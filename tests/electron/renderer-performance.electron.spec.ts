@@ -88,13 +88,13 @@ test('measures input, frame gaps and session switches with 1000 replies and 32KB
     await page.locator('[data-composer-submit]').click()
     await expect(input).toHaveText('')
     phase = 'provider acceptance'
-    // Clearing the input acknowledges queueing, not provider acceptance. Hold
-    // the response at its real HTTP gate until both the SDK and renderer have
-    // established this turn, then measure only the controlled live stream.
+    // Clearing the input acknowledges queueing, not provider acceptance. Open
+    // the stream only after the real request arrives, then identify this turn
+    // by its prompt rather than assuming the last historical row is live.
     await expect.poll(() => fixture.prompts, { timeout: 30_000 }).toContain(prompt)
-    await expect(page.locator('[data-conversation-response]')).toHaveCount(HISTORY_REPLIES + 1)
-    const liveResponse = page.locator('[data-conversation-response]').last()
-    await expect(liveResponse).toContainText(prompt)
+    const liveResponse = page.locator('[data-conversation-response]').filter({
+      has: page.locator('[data-conversation-question]').filter({ hasText: prompt }),
+    })
     phase = 'live stream measurement'
     const probe = await page.evaluateHandle(() => {
       const frameGaps: number[] = [], inputPaint: number[] = [], longTasks: number[] = []
@@ -116,6 +116,7 @@ test('measures input, frame gaps and session switches with 1000 replies and 32KB
     await cdp.send('Profiler.start')
     release()
     await expect(liveResponse.locator('.conversation-answer-content')).toContainText('Live section 0', { timeout: 15_000 })
+    await expect(page.locator('[data-conversation-response]')).toHaveCount(HISTORY_REPLIES + 1)
     await input.pressSequentially('typing during the live answer', { delay: 80 })
     await expect(input).toHaveText('typing during the live answer')
     await expect(liveResponse.locator('.conversation-answer-content')).toContainText('PERFORMANCE_RESPONSE_COMPLETE', { timeout: 60_000 })

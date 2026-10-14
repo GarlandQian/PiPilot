@@ -103,13 +103,23 @@ function SessionConversationRail({ items, scrollRef, anchorNodes, onNavigate, on
       frame = 0
       const bounds = viewport.getBoundingClientRect()
       const toolbarInset = Number.parseFloat(getComputedStyle(viewport).scrollPaddingTop) || 12
+      const atBottom = viewport.scrollHeight > viewport.clientHeight + 2
+        && viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 3
+      if (atBottom) {
+        // Following the latest reply never needs geometry for every historical
+        // row. Keep offscreen content eligible for the browser's layout skip.
+        let lastEntryId: string | null = null
+        for (let index = entryIds.length - 1; index >= 0; index -= 1) {
+          if (anchorNodes.get(entryIds[index])?.isConnected) { lastEntryId = entryIds[index]; break }
+        }
+        setReadingEntryId(lastEntryId)
+        return
+      }
       const positions = entryIds.flatMap((entryId) => {
         const node = anchorNodes.get(entryId)
         return node?.isConnected ? [{ entryId, top: node.getBoundingClientRect().top }] : []
       })
-      const atBottom = viewport.scrollHeight > viewport.clientHeight + 2
-        && viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 3
-      setReadingEntryId(conversationRailReadingEntry(positions, bounds.top + toolbarInset + 12, atBottom))
+      setReadingEntryId(conversationRailReadingEntry(positions, bounds.top + toolbarInset + 12))
     }
     const queueMeasure = () => {
       if (!frame) frame = requestAnimationFrame(measure)

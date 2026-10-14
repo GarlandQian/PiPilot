@@ -31,6 +31,9 @@ export function ConversationResponse({ response, highlighted, anchorRef, renderP
     // spread (tint) and an offset outline (edge) draw it without widening the layout.
     className={cn(
       'min-w-0 rounded-[4px] pb-2 transition-[background-color,box-shadow,outline-color] duration-(--duration-base) [outline:1px_solid_transparent] [outline-offset:12px] motion-reduce:transition-none',
+      // Retain searchable/navigable DOM while the browser skips layout and
+      // paint for completed replies outside a long conversation's viewport.
+      !response.isActive && '[content-visibility:auto] [contain-intrinsic-size:auto_240px]',
       highlighted && 'bg-primary/[0.05] shadow-[0_0_0_12px_color-mix(in_srgb,var(--color-primary)_5%,transparent)] outline-[color-mix(in_srgb,var(--color-primary)_28%,transparent)]',
     )}
   >

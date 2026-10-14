@@ -9,13 +9,13 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { UserMessageContent } from './UserMessageContent'
 import { QuestionBranchesContext } from './question-branches'
 import { MarkdownContent } from './markdown/MarkdownContent'
-import { useT } from '@/i18n'
+import { useLocale, useT } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { primaryShortcut } from '@/lib/keyboard-shortcuts'
 import { nextTypewriterText, shouldStartTypewriterFromEmpty, transientTurnAnimationKey } from '@/renderer/pi-rpc/live-typewriter'
 import { userMessageMarkdown } from '@/renderer/composer/message-context'
 import { MessageContextMenu } from './MessageContextMenu'
-import { useSettings } from '@/store/settings'
+import { formatConversationMessageTime } from '@/renderer/conversation-message-time'
 import type { Turn } from '@/types/chat'
 import { Collapse } from '@/components/ui/motion'
 import {
@@ -33,7 +33,7 @@ export const UserMessage = React.memo(function UserMessage({ turn, onExport }: {
   onExport?: (entryId: string) => void
 }) {
   const t = useT()
-  const { locale } = useSettings()
+  const locale = useLocale()
   const [copied, setCopied] = React.useState(false)
   const [copyFailed, setCopyFailed] = React.useState(false)
   const [expanded, setExpanded] = React.useState(false)
@@ -45,10 +45,9 @@ export const UserMessage = React.memo(function UserMessage({ turn, onExport }: {
   const longQuestion = questionText.length > 600 || questionText.split('\n').length > 7
   const copyTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   React.useEffect(() => () => { if (copyTimer.current) clearTimeout(copyTimer.current) }, [])
-  const time = turn.timestamp === undefined
+  const time = React.useMemo(() => turn.timestamp === undefined
     ? turn.time
-    : new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' })
-        .format(turn.timestamp)
+    : formatConversationMessageTime(locale, turn.timestamp), [locale, turn.timestamp, turn.time])
   return (
     <MessageContextMenu source={source} markdown={questionText}
       onEdit={branches && turn.anchorEntryId ? () => branches.edit(turn.anchorEntryId!) : undefined} editDisabled={branches?.busy}

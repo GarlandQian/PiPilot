@@ -16,6 +16,7 @@ Each version section supplies the highlights for its GitHub Release. Download li
 - **停止后编辑消息**：正确对应 Pi 原生重试排除的失败回复与会话历史，停止等待或重试结束后仍可编辑原问题并重新发送，保留原有分支记录。
 - **添加项目**：Git 分支与变更信息改为独立后台读取，短暂的索引冲突不再阻止打开项目或跳过信任提示；迟到的读取结果不会污染其他项目。
 - **思考与模型保存**：思考默认折叠，手动展开后回复结束不会自动收回；模型配置写入后立即确认，Runtime 重载单独跟踪，避免耗时重载一直占用保存按钮。
+- **长对话显示**：复用消息时间格式化器，跳过离屏已完成回复的布局与绘制；跟随最新回复时不再逐条测量全部历史，减少大量历史消息下的界面阻塞。
 - **Windows 数据读取与后台进程**：支持带 UTF-8 BOM 的项目、会话索引、模型和信任设置；读取失败不再被当成损坏元数据并重置。Pi SDK 后台包管理、命令与工具探测补齐隐藏控制台窗口的参数。
 - **原生重试**：移除 PiPilot 对自动重试判断的覆盖，统一使用 Pi 原生重试流程，保留次数设置、状态展示、取消和手动恢复入口。
 - **消息右键菜单**：复制选中内容、完整消息 Markdown、代码和链接，引用消息或选区，编辑并重新提问，或从当前问题创建分叉；支持键盘打开菜单。
@@ -33,6 +34,7 @@ Each version section supplies the highlights for its GitHub Release. Download li
 - **Editing after stopping:** Align conversation history with failed attempts omitted by Pi's native retries, keeping questions editable after stopping a retry or finishing retries. Edited questions can be sent again without deleting the original branches.
 - **Adding projects:** Read Git branch and change information independently in the background, so a transient index conflict cannot block opening the project or its trust prompt. Late results cannot update another project.
 - **Thinking and model saves:** Thinking starts collapsed and manually expanded content stays open after completion. Model file saves are acknowledged separately from Runtime reload, so reload latency no longer holds the save button.
+- **Long conversations:** Reuse message clocks and skip layout and painting for completed replies outside the viewport. Following the latest reply no longer measures every historical row, reducing UI stalls in conversations with extensive history.
 - **Windows storage and background processes:** Accept UTF-8 BOMs in project metadata, session indexes, models and trust settings. Read failures no longer reset metadata as though it were corrupt. Hide console windows for Pi SDK background package management, commands and tool probes.
 - **Native retries:** Remove PiPilot's automatic retry classification override and use Pi's native retry flow, retaining retry settings, status, cancellation and manual recovery actions.
 - **Message context menus:** Copy selected text, complete message Markdown, code or links; quote a message or selection, edit and ask again, or fork from the current question. Menus also open from the keyboard.
