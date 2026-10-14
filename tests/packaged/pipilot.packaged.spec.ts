@@ -31,6 +31,7 @@ import { createWindowsUserPathAdapter } from '../../src/main/external-control/la
 import { startPiSdkFixture } from '../electron/pi-sdk-fixture'
 import { NATIVE_MCP_CANARY_TEXT, NATIVE_MCP_CANARY_TOOL, startNativeMcpFixture } from '../helpers/native-mcp-fixture'
 import { createNpxMcpFixture, NPX_MCP_CANARY_TEXT, NPX_MCP_CANARY_TOOL } from '../helpers/npx-mcp-fixture'
+import { packagedMcpDiagnostics } from '../helpers/packaged-mcp-diagnostics'
 import { resolvePackagedExecutable as resolvePackagedTarget, verifyPackagedArchitecture } from './resolve-packaged-executable'
 
 const require = createRequire(import.meta.url)
@@ -341,24 +342,6 @@ async function settleWithin(task: Promise<unknown>, timeoutMs: number) {
     task.catch(() => undefined),
     delay(timeoutMs),
   ])
-}
-
-function unexpectedPackagedMcpStderr(stderr: string) {
-  return stderr
-    .split(/\r?\n/u)
-    .filter(Boolean)
-    .filter((line) => !(
-      line.includes('dbus/bus.cc:') ||
-      line.includes('dbus/object_proxy.cc:') ||
-      line.includes('Failed to connect to the bus:') ||
-      line.includes('org.freedesktop.DBus') ||
-      line.includes('Network service crashed or was terminated, restarting service.') ||
-      line.includes('ui/gl/gl_display.cc:') ||
-      line.includes('ui/gl/init/gl_initializer_mac.cc:') ||
-      /^\[\d+:\d+:\d+\.\d+:ERROR:net\\disk_cache\\blockfile\\block_files\.cc:\d+\] Failed to open .*\\GrShaderCache\\data_\d+$/u.test(line) ||
-      line.includes('Exiting GPU process due to errors during initialization')
-    ))
-    .join('\n')
 }
 
 function unexpectedPackagedMcpStdout(stdout: string) {
@@ -1423,7 +1406,7 @@ test('runs the installed stable MCP command headlessly through the private bridg
       window.pipilot!.externalControl.get()
     ))).toMatchObject({ connectedClients: 1 })
     expect(messages.every((message) => message.jsonrpc === '2.0')).toBe(true)
-    const unexpectedStderr = unexpectedPackagedMcpStderr(stderr)
+    const unexpectedStderr = packagedMcpDiagnostics(stderr)
     if (unexpectedStderr) {
       throw new Error(`Unexpected packaged MCP stderr:\n${unexpectedStderr}`)
     }
@@ -1466,7 +1449,7 @@ test('runs the installed stable MCP command headlessly through the private bridg
     expect(await waitForProcessExit(unavailable, PACKAGED_MCP_EXIT_TIMEOUT_MS)).toBe(true)
     expect(unavailable.exitCode).toBe(1)
     expect(unexpectedPackagedMcpStdout(unavailableStdout)).toBe('')
-    expect(unexpectedPackagedMcpStderr(unavailableStderr)).toBe(
+    expect(packagedMcpDiagnostics(unavailableStderr)).toBe(
       '[PiPilot MCP] PiPilot External Control is unavailable.',
     )
     expect(browser.contexts().flatMap((context) => context.pages())).toHaveLength(1)
@@ -1497,7 +1480,7 @@ test('runs the installed stable MCP command headlessly through the private bridg
     expect(await waitForProcessExit(stopped, PACKAGED_MCP_EXIT_TIMEOUT_MS)).toBe(true)
     expect(stopped.exitCode).toBe(1)
     expect(unexpectedPackagedMcpStdout(stoppedStdout)).toBe('')
-    expect(unexpectedPackagedMcpStderr(stoppedStderr)).toBe(
+    expect(packagedMcpDiagnostics(stoppedStderr)).toBe(
       '[PiPilot MCP] PiPilot External Control is unavailable.',
     )
 
