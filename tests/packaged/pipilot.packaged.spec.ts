@@ -355,6 +355,7 @@ function unexpectedPackagedMcpStderr(stderr: string) {
       line.includes('Network service crashed or was terminated, restarting service.') ||
       line.includes('ui/gl/gl_display.cc:') ||
       line.includes('ui/gl/init/gl_initializer_mac.cc:') ||
+      /^\[\d+:\d+:\d+\.\d+:ERROR:net\\disk_cache\\blockfile\\block_files\.cc:\d+\] Failed to open .*\\GrShaderCache\\data_\d+$/u.test(line) ||
       line.includes('Exiting GPU process due to errors during initialization')
     ))
     .join('\n')
@@ -376,10 +377,32 @@ async function stopPackagedApp(
 ) {
   if (process.platform === 'win32' && appProcess.exitCode === null && appProcess.signalCode === null) {
     if (!appProcess.pid) throw new Error('The packaged fixture has no process ID.')
+    const run = promisify(execFile)
+    const powershell = async (script: string) => run('powershell.exe', [
+      '-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand',
+      Buffer.from(`$ErrorActionPreference = 'Stop'; ${script}`, 'utf16le').toString('base64'),
+    ], { windowsHide: true, timeout: 30_000 })
+    // Record descendants while parentage still exists; taskkill completing and
+    // the parent exiting do not acknowledge every descendant's handle release.
+    const { stdout } = await powershell(`$processes = @(Get-CimInstance Win32_Process);
+      $ids = [System.Collections.Generic.HashSet[int]]::new();
+      [void]$ids.Add(${appProcess.pid});
+      do {
+        $changed = $false;
+        foreach ($process in $processes) {
+          if ($ids.Contains([int]$process.ParentProcessId) -and $ids.Add([int]$process.ProcessId)) { $changed = $true };
+        };
+      } while ($changed);
+      ConvertTo-Json -InputObject ([int[]]$ids)`)
+    const ownedPids = JSON.parse(stdout) as number[]
     // Closing a CDP target does not own Electron's utility processes. Killing
     // only the parent can orphan them with the fixture workspace as their cwd.
     // Terminate this fixture's exact process tree while its parent is still alive.
-    await promisify(execFile)('taskkill.exe', ['/PID', String(appProcess.pid), '/T', '/F'], { windowsHide: true })
+    await run('taskkill.exe', ['/PID', String(appProcess.pid), '/T', '/F'], { windowsHide: true })
+    await expect.poll(async () => {
+      const { stdout } = await powershell(`@(Get-Process -Id ${ownedPids.join(',')} -ErrorAction SilentlyContinue).Count`)
+      return Number(stdout.trim())
+    }, { timeout: 15_000, message: 'Every recorded packaged fixture process must exit before removing its directories.' }).toBe(0)
     if (!await waitForProcessExit(appProcess, 3_000)) {
       throw new Error('The packaged fixture process tree did not terminate.')
     }

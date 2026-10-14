@@ -160,6 +160,12 @@ for (const extension of ['exe', 'zip']) {
         if (-not $candidate) { throw 'Portable fixture window not found' };
         $shell = New-Object -ComObject WScript.Shell;
         if (-not $shell.AppActivate($candidate.Id)) { throw 'Portable fixture window could not be activated' };
+        Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class PortableNativeKeys { [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); [DllImport("user32.dll")] public static extern void keybd_event(byte key, byte scan, uint flags, UIntPtr extra); }';
+        $deadline = [DateTime]::UtcNow.AddSeconds(15);
+        while ([PortableNativeKeys]::GetForegroundWindow() -ne $candidate.MainWindowHandle) {
+          if ([DateTime]::UtcNow -ge $deadline) { throw 'Portable fixture did not gain foreground focus' };
+          Start-Sleep -Milliseconds 100;
+        };
         Add-Type -AssemblyName UIAutomationClient;
         Add-Type -AssemblyName UIAutomationTypes;
         $window = [System.Windows.Automation.AutomationElement]::FromHandle($candidate.MainWindowHandle);
@@ -176,7 +182,9 @@ for (const extension of ['exe', 'zip']) {
           } while ([DateTime]::UtcNow -lt $deadline);
           throw "Native menu item not found: $name";
         };
-        $shell.SendKeys('{F10}');
+        # Electron's auto-hidden menu is revealed by pressing and releasing Alt.
+        [PortableNativeKeys]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero);
+        [PortableNativeKeys]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero);
         $file = Find-MenuItem $window 'File';
         $pattern = $null;
         if ($file.TryGetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern, [ref]$pattern)) {
