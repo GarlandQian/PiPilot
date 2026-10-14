@@ -54,6 +54,7 @@ test('measures input, frame gaps and session switches with 1000 replies and 32KB
     PIPILOT_E2E_USER_DATA: userData, PIPILOT_E2E_DISABLE_AUTO_RESTART: '1' } })
   let previousClipboard: string | undefined
   let bodyFailed = false
+  let phase = 'history switches'
   try {
     const page = await app.firstWindow()
     await page.setViewportSize({ width: 1440, height: 900 })
@@ -86,6 +87,15 @@ test('measures input, frame gaps and session switches with 1000 replies and 32KB
     await input.fill(prompt)
     await page.locator('[data-composer-submit]').click()
     await expect(input).toHaveText('')
+    phase = 'provider acceptance'
+    // Clearing the input acknowledges queueing, not provider acceptance. Hold
+    // the response at its real HTTP gate until both the SDK and renderer have
+    // established this turn, then measure only the controlled live stream.
+    await expect.poll(() => fixture.prompts, { timeout: 30_000 }).toContain(prompt)
+    await expect(page.locator('[data-conversation-response]')).toHaveCount(HISTORY_REPLIES + 1)
+    const liveResponse = page.locator('[data-conversation-response]').last()
+    await expect(liveResponse).toContainText(prompt)
+    phase = 'live stream measurement'
     const probe = await page.evaluateHandle(() => {
       const frameGaps: number[] = [], inputPaint: number[] = [], longTasks: number[] = []
       let last = performance.now(), active = true, frame = 0
@@ -105,10 +115,10 @@ test('measures input, frame gaps and session switches with 1000 replies and 32KB
     await cdp.send('Profiler.enable')
     await cdp.send('Profiler.start')
     release()
-    await expect(page.locator('.conversation-answer-content').last()).toContainText('Live section 0', { timeout: 15_000 })
+    await expect(liveResponse.locator('.conversation-answer-content')).toContainText('Live section 0', { timeout: 15_000 })
     await input.pressSequentially('typing during the live answer', { delay: 80 })
     await expect(input).toHaveText('typing during the live answer')
-    await expect(page.locator('.conversation-answer-content').last()).toContainText('PERFORMANCE_RESPONSE_COMPLETE', { timeout: 60_000 })
+    await expect(liveResponse.locator('.conversation-answer-content')).toContainText('PERFORMANCE_RESPONSE_COMPLETE', { timeout: 60_000 })
     await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0)
     const { profile } = await cdp.send('Profiler.stop')
     const profilePath = testInfo.outputPath('renderer.cpuprofile')
@@ -151,6 +161,10 @@ test('measures input, frame gaps and session switches with 1000 replies and 32KB
     await input.fill('')
   } catch (error) {
     bodyFailed = true
+    await testInfo.attach('performance-readiness', {
+      body: JSON.stringify({ phase, receivedPrompts: fixture.prompts }),
+      contentType: 'application/json',
+    })
     throw error
   } finally {
     release()
