@@ -1,6 +1,6 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -166,7 +166,9 @@ for (const extension of ['exe', 'zip']) {
       const sessionFile = (await page!.evaluate(() => window.pipilot!.localPi.runtime.status())).sessionFile
       expect(sessionFile).toBeTruthy()
       await expect(page!.getByRole('button', { name, exact: true })).toBeVisible()
-      return sessionFile!
+      // The portable launcher may initially report an 8.3 TEMP path. Reopening
+      // uses the canonical long path; compare the actual file rather than aliases.
+      return realpath(sessionFile!)
     }
     try {
       await launch()
@@ -241,7 +243,13 @@ for (const extension of ['exe', 'zip']) {
       await page!.getByRole('button', { name: taskName, exact: true }).click()
       await expect(conversation()).toContainText(projectPrompt)
       await expect(conversation()).toContainText(`Fixture response: ${projectPrompt}`)
-      await expect.poll(() => page!.evaluate(() => window.pipilot!.localPi.runtime.status()), { timeout: 60_000 })
+      await expect.poll(async () => {
+        const status = await page!.evaluate(() => window.pipilot!.localPi.runtime.status())
+        return {
+          state: status.state, cwd: status.cwd,
+          sessionFile: status.sessionFile ? await realpath(status.sessionFile) : null,
+        }
+      }, { timeout: 60_000 })
         .toMatchObject({ state: 'ready', cwd: project.path, sessionFile: projectFile })
       await page!.screenshot({ path: testInfo.outputPath(`portable-${extension}-after-overwrite.png`) })
       await stopForOverwrite()
